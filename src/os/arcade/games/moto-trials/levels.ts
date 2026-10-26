@@ -69,9 +69,10 @@ export function track() {
   let finishX = 0;
   let minY = 0;
 
-  const seg = (bx: number, by: number, kind?: string) => {
+  let planks = 0;
+  const seg = (bx: number, by: number, kind?: string, crumble?: number) => {
     const { nx, ny, len } = norm(x, y, bx, by);
-    segs.push({ ax: x, ay: y, bx, by, nx, ny, len, kind });
+    segs.push({ ax: x, ay: y, bx, by, nx, ny, len, kind, ...(crumble === undefined ? {} : { crumble }) });
     if (by < minY) minY = by;
     if (y < minY) minY = y;
     x = bx;
@@ -187,6 +188,19 @@ export function track() {
       saws.push({ x: x + dx, y: y + dy, r, mx, my, period, phase });
       return api;
     },
+    /** A crumbling plank bridge over a chasm, falling dh over len: each plank drops just after it is ridden. */
+    bridge(len: number, dh = 0) {
+      const n = Math.max(2, Math.round(len / 1.6));
+      const x0 = x;
+      const y0 = y;
+      for (let i = 1; i <= n; i++) seg(x0 + (len * i) / n, y0 + (dh * i) / n, 'plank', planks++);
+      return api;
+    },
+    /** A TNT barrel standing on the ground just laid, dx meters from the cursor. */
+    tnt(dx: number) {
+      saws.push({ x: x + dx, y: y + 0.45, r: 0.45, kind: 'tnt' });
+      return api;
+    },
     /** A mine on the ground just laid, dx meters from the cursor (negative is behind it). */
     mine(dx: number) {
       saws.push({ x: x + dx, y: y + 0.32, r: 0.32, kind: 'mine' });
@@ -255,7 +269,7 @@ export function propsFor(id: string, segs: Seg[], finishX: number): Prop[] {
         best = s;
       }
     }
-    return best ? { y: by, wood: best.kind === 'wood' } : null;
+    return best ? { y: by, wood: best.kind === 'wood' || best.kind === 'plank' } : null;
   };
   const out: Prop[] = [];
   let x = 6;
@@ -308,6 +322,41 @@ const ledges =
   (t) => {
     for (let i = 0; i < n; i++) t.flat(9).drop(h);
     return t.flat(12);
+  };
+/** A crumbling plank bridge over a chasm: stop on it and it drops you. */
+const bridgeRun =
+  (len: number, dh = 0): Piece =>
+  (t) =>
+    t.flat(12).bridge(len, dh).flat(12).slope(8, -dh);
+/** Kick up and land on a bridge that sags down to the far bank. */
+const bridgeJump: Piece = (t) => t.slope(14, 6).flat(10).kicker(5, 25).gap(3, -1).bridge(16, -3).land(12, 3).flat(10);
+/** A bridge with a saw sweeping over it: no stopping to wait, so time the run-up. */
+const sawBridge =
+  (period: number, phase = 0): Piece =>
+  (t) =>
+    t.flat(14).bridge(14).swing(-7, 1.9, 0.8, 0, 1.7, period, phase).flat(12);
+/** Ride off a cliff onto a long landing ramp below, then climb back up. */
+const cliff =
+  (h: number): Piece =>
+  (t) =>
+    t.slope(18, h).flat(8).gap(3, -h * 0.4).land(18, h * 0.6).flat(10);
+/** A rhythm section of whoops: pump them or get bucked. */
+const whoops =
+  (n: number, h = 1.2): Piece =>
+  (t) => {
+    t.flat(8);
+    for (let i = 0; i < n; i++) t.bump(7, h);
+    return t.flat(10);
+  };
+/** A launch tower: up a wooden ramp to a high deck, then a long fall onto a downslope. */
+const tower: Piece = (t) => t.slope(10, 2).ramp(8, 4).flat(10, 'wood').kicker(4, 20).gap(5, -4).land(26, 12).flat(6).slope(20, 10).flat(10);
+/** Little kickers, each with a pair of TNT barrels past the lip: fly long or blow up. */
+const tntRow =
+  (n: number): Piece =>
+  (t) => {
+    t.flat(14);
+    for (let i = 0; i < n; i++) t.kicker(3, 28).flat(24).tnt(-18.4).tnt(-17.5);
+    return t.flat(4);
   };
 const course =
   (...ps: Piece[]) =>
@@ -736,30 +785,30 @@ const BUILDERS: Record<string, () => Built> = {
       .finish()
       .flat(10)
       .done(),
-  // 11-12 close out the night world with mines and longer chains
-  'level-11': course(hop, mines(1), cp, bigAir, lowHop, cp, steep, looper, hop),
-  'level-12': course(steep, mines(2), cp, huge, sawHop, cp, curl, lowHop, hop),
-  // 13-18 the lumber world: moving saws, ledges and tighter timing
-  'level-13': course(sawHop, swingHop(2.4), cp, bigAir, sawGate(2.4), cp, curl, swingHop(2.0, 0.5), hop),
-  'level-14': course(ledges(3, 2), hop, cp, huge, mines(2), cp, sawHop, steep, looper, swingHop(2.2)),
-  'level-15': course(curl, sawHop, sawGate(2.0), cp, bigAir, lowHop, swingHop(1.8), cp, steep, mines(3), hop),
-  'level-16': course(ledges(4, 2.5), hop, cp, huge, curl, cp, swingHop(2.4, 0.25), sawGate(2.2), lowHop, bigAir),
-  'level-17': course(hop, looper, looper, cp, sawHop, mines(2), steep, cp, huge, swingHop(2.0), curl, cp, bigAir, hop),
-  'level-18': course(swingHop(2.0), swingHop(1.6, 0.3), cp, sawGate(1.8), sawGate(2.2, 0.5), huge, cp, curl, sawHop, mines(3), cp, steep, hop),
-  // 19-24 ice and iron: big air, fast saws, long runs between checkpoints
-  'level-19': course(bigAir, mines(2), cp, ledges(3, 3), steep, looper, cp, huge, swingHop(2.2), hop),
-  'level-20': course(curl, curl, cp, sawHop, swingHop(1.8), bigAir, cp, sawGate(2.0), mines(3), cp, huge, steep),
-  'level-21': course(huge, huge, cp, ledges(4, 2.5), lowHop, sawHop, cp, swingHop(1.6), curl, looper, cp, bigAir, hop),
-  'level-22': course(sawGate(1.8), sawHop, mines(2), cp, swingHop(1.6, 0.5), swingHop(2.0), huge, cp, curl, steep, sawGate(1.6), cp, bigAir, sawHop),
-  'level-23': course(looper, steep, curl, cp, swingHop(1.8), mines(3), sawGate(2.0), cp, huge, sawHop, lowHop, cp, bigAir, swingHop(1.6, 0.4), hop),
-  'level-24': course(huge, sawHop, swingHop(2.0), cp, ledges(4, 3), curl, mines(3), cp, bigAir, sawGate(1.8), steep, cp, huge, swingHop(1.6), curl, hop),
-  // 25-30 the volcano: everything at once, few checkpoints, no room to coast
-  'level-25': course(bigAir, sawHop, mines(3), cp, swingHop(1.6), huge, curl, cp, sawGate(1.6), steep, looper, cp, huge, sawHop, hop),
-  'level-26': course(ledges(5, 3), huge, cp, curl, curl, sawHop, swingHop(1.5), cp, mines(4), bigAir, sawGate(1.6), cp, huge, steep, swingHop(1.8, 0.5)),
-  'level-27': course(huge, huge, huge, cp, sawHop, swingHop(1.5), swingHop(1.7, 0.5), cp, curl, mines(3), sawGate(1.5), cp, bigAir, steep, curl, hop),
-  'level-28': course(sawGate(1.5), sawHop, curl, cp, looper, huge, swingHop(1.4), mines(4), cp, steep, curl, sawGate(1.6), cp, huge, swingHop(1.6, 0.3), bigAir, hop),
-  'level-29': course(swingHop(1.4), swingHop(1.6, 0.5), huge, cp, ledges(5, 3), curl, sawHop, mines(4), cp, sawGate(1.4), sawGate(1.8, 0.5), huge, cp, curl, steep, bigAir, swingHop(1.5)),
-  'level-30': course(huge, sawHop, swingHop(1.4), curl, cp, mines(4), looper, sawGate(1.5), huge, cp, swingHop(1.5, 0.3), swingHop(1.7, 0.6), curl, steep, cp, huge, sawGate(1.4), mines(3), bigAir, cp, curl, swingHop(1.4), hop),
+  // 11-12 close out the night world: TNT and the first cliff drops
+  'level-11': course(hop, tntRow(1), cp, bigAir, cliff(7), cp, steep, looper, hop),
+  'level-12': course(steep, tntRow(2), cp, huge, whoops(4), cp, curl, cliff(8), hop),
+  // 13-18 the lumber world: crumbling bridges, saws over them, the launch tower
+  'level-13': course(hop, bridgeRun(12), cp, bigAir, sawHop, cp, bridgeJump, curl, hop),
+  'level-14': course(ledges(3, 2), bridgeRun(16), hop, cp, huge, bridgeJump, cp, swingHop(2.2), sawBridge(2.4), lowHop),
+  'level-15': course(curl, sawHop, bridgeRun(14, -2), cp, tower, cp, sawBridge(2.0), steep, bigAir),
+  'level-16': course(ledges(4, 2.5), bridgeJump, cp, huge, curl, sawGate(2.2), cp, bridgeRun(18), swingHop(2.4, 0.25), bigAir),
+  'level-17': course(hop, looper, bridgeRun(12), cp, tower, sawHop, cp, bridgeJump, sawBridge(1.8), curl, hop),
+  'level-18': course(swingHop(2.0), bridgeJump, cp, sawBridge(1.8), huge, cp, curl, bridgeRun(20, -2), sawHop, cp, tower, hop),
+  // 19-24 ice and iron: towers, cliffs and whoops, big air everywhere
+  'level-19': course(bigAir, cliff(8), cp, tower, whoops(4), cp, huge, steep, hop),
+  'level-20': course(curl, whoops(5, 1.4), cp, tower, sawHop, cp, cliff(10), swingHop(1.8), huge),
+  'level-21': course(huge, cliff(9), cp, ledges(4, 2.5), bridgeJump, cp, tower, curl, looper, cp, bigAir, hop),
+  'level-22': course(sawGate(1.8), tower, cp, whoops(5, 1.4), swingHop(1.6, 0.5), cp, cliff(10), sawBridge(1.8), cp, huge, sawHop),
+  'level-23': course(looper, steep, cliff(8), cp, tower, sawBridge(2.0), cp, whoops(6, 1.3), curl, cp, huge, hop),
+  'level-24': course(huge, tower, cp, ledges(4, 3), curl, cliff(10), cp, bridgeJump, sawGate(1.8), cp, tower, swingHop(1.6), hop),
+  // 25-30 the volcano: TNT and everything at once
+  'level-25': course(bigAir, tntRow(2), cp, tower, curl, cp, sawBridge(1.6), cliff(9), cp, huge, hop),
+  'level-26': course(ledges(5, 3), huge, cp, tntRow(3), bridgeJump, cp, tower, sawGate(1.6), cp, whoops(5, 1.4), swingHop(1.8, 0.5)),
+  'level-27': course(tower, huge, cp, tntRow(2), swingHop(1.5), cp, cliff(10), sawBridge(1.6), cp, curl, bridgeRun(20, -2), hop),
+  'level-28': course(sawGate(1.5), tower, cp, looper, tntRow(3), cp, bridgeJump, curl, sawBridge(1.6), cp, huge, swingHop(1.6, 0.3), hop),
+  'level-29': course(swingHop(1.4), tower, cp, ledges(5, 3), tntRow(3), cp, sawBridge(1.5), cliff(10), cp, whoops(6, 1.4), huge, hop),
+  'level-30': course(tower, sawHop, tntRow(2), cp, bridgeJump, sawBridge(1.5), cp, cliff(10), swingHop(1.5, 0.3), cp, tower, tntRow(3), cp, huge, curl, hop),
 };
 
 // Star times from the test autopilot: silver sits a little over a clean ride with no flips, gold needs that
@@ -775,26 +824,26 @@ const META_ROWS: [string, string, Theme, [number, number, number]][] = [
   ['level-8', 'Frostbite', THEMES.frost, [28_000, 37_000, 50_000]],
   ['level-9', 'Canyon Cross', THEMES.canyon, [25_500, 34_500, 47_000]],
   ['level-10', 'Last Lap', THEMES.storm, [36_000, 48_000, 64_000]],
-  ['level-11', 'Night Shift', THEMES.neon, [22_000, 35_500, 47_000]],
-  ['level-12', 'Dust Devil', THEMES.dusk, [39_500, 45_000, 59_500]],
-  ['level-13', 'Lumber Yard', THEMES.autumn, [30_500, 52_000, 69_000]],
-  ['level-14', 'Timber Falls', THEMES.forest, [40_500, 44_500, 59_000]],
-  ['level-15', 'Splinter', THEMES.autumn, [40_500, 54_000, 71_500]],
-  ['level-16', 'Rockslide', THEMES.quarry, [31_000, 48_500, 64_000]],
-  ['level-17', 'Pine Run', THEMES.forest, [46_000, 63_000, 83_500]],
-  ['level-18', 'Sawdust', THEMES.autumn, [42_500, 57_500, 76_000]],
-  ['level-19', 'Cold Open', THEMES.frost, [26_500, 44_000, 58_500]],
-  ['level-20', 'Black Ice', THEMES.frost, [46_000, 55_000, 72_500]],
-  ['level-21', 'Glacier Gap', THEMES.lagoon, [36_000, 61_500, 81_000]],
-  ['level-22', 'Iron Works', THEMES.storm, [37_500, 59_500, 78_500]],
-  ['level-23', 'Neon Maze', THEMES.neon, [47_000, 70_500, 93_000]],
-  ['level-24', 'Whiteout', THEMES.frost, [71_000, 78_000, 103_000]],
-  ['level-25', 'Ash Road', THEMES.volcano, [51_000, 71_000, 94_000]],
-  ['level-26', 'Ember Drop', THEMES.volcano, [68_500, 75_500, 100_000]],
-  ['level-27', 'Red Canyon', THEMES.canyon, [60_000, 82_000, 108_500]],
-  ['level-28', 'Thunder Run', THEMES.storm, [77_000, 84_500, 111_500]],
-  ['level-29', 'Lava Lamp', THEMES.volcano, [53_500, 84_000, 111_000]],
-  ['level-30', 'The Summit', THEMES.dusk, [68_000, 112_500, 149_000]],
+  ['level-11', 'Night Shift', THEMES.neon, [23_500, 39_000, 52_000]],
+  ['level-12', 'Dust Devil', THEMES.dusk, [35_000, 43_000, 57_500]],
+  ['level-13', 'Lumber Yard', THEMES.autumn, [29_000, 42_500, 57_000]],
+  ['level-14', 'Timber Falls', THEMES.forest, [27_500, 40_500, 54_000]],
+  ['level-15', 'Splinter', THEMES.autumn, [31_500, 49_500, 66_000]],
+  ['level-16', 'Rockslide', THEMES.quarry, [33_000, 45_500, 61_000]],
+  ['level-17', 'Pine Run', THEMES.forest, [43_000, 57_000, 76_000]],
+  ['level-18', 'Sawdust', THEMES.autumn, [48_000, 60_500, 80_500]],
+  ['level-19', 'Cold Open', THEMES.frost, [35_500, 47_000, 63_000]],
+  ['level-20', 'Black Ice', THEMES.frost, [44_000, 54_500, 72_500]],
+  ['level-21', 'Glacier Gap', THEMES.lagoon, [33_500, 56_500, 75_500]],
+  ['level-22', 'Iron Works', THEMES.storm, [43_500, 54_000, 72_000]],
+  ['level-23', 'Neon Maze', THEMES.neon, [37_500, 57_000, 76_000]],
+  ['level-24', 'Whiteout', THEMES.frost, [45_500, 62_000, 82_500]],
+  ['level-25', 'Ash Road', THEMES.volcano, [36_000, 52_500, 70_000]],
+  ['level-26', 'Ember Drop', THEMES.volcano, [31_500, 53_000, 70_500]],
+  ['level-27', 'Red Canyon', THEMES.canyon, [44_000, 54_000, 72_000]],
+  ['level-28', 'Thunder Run', THEMES.storm, [46_000, 61_500, 82_000]],
+  ['level-29', 'Lava Lamp', THEMES.volcano, [48_500, 59_500, 79_500]],
+  ['level-30', 'The Summit', THEMES.dusk, [65_500, 87_000, 116_000]],
 ];
 
 export const LEVEL_IDS = Object.keys(BUILDERS);

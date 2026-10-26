@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { roomApp } from '../src/os/arcade/apps.ts';
-import { advanceOnlineRound, botPlayers, canStartNext, MAX_SEATS, nextOnlineRound, RoundRouter, tagRound, openRoomAction, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, parseRacePacket, raceStandings, type OpenRoom } from '../src/os/arcade/kit/online-core.ts';
+import { advanceOnlineRound, botPlayers, canStartNext, MAX_SEATS, nextOnlineRound, RoundRouter, tagRound, openRoomAction, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, handOffSettled, parseRacePacket, raceSeats, raceStandings, raceVerdict, type OpenRoom, type RaceScores, type SettledRace } from '../src/os/arcade/kit/online-core.ts';
 import { createRoom, listRooms, quickRoom, RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
 import { agreedWinner, agreedWinners, isPool, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, canWatchRoom, endRound, GATHER_FULL_MS, GATHER_MS, gatherFull, gathering, joinable, LISTING_REFRESH_MS, lowestFreeSeat, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, pickQuick, QUICK_LATE_MS, QUICK_PENDING_MS, roomListing, roundPlayable, roundSeats, seatsFor, sortListings, WATCHERS_MAX, type LobbyRow, type RoomState } from '../worker/src/room-core.ts';
 import { ONLINE_SPECS } from '../worker/src/specs.gen.ts';
+import { handOffScores, handOffSeat } from '../src/os/arcade/kit/online-core.ts';
 
 /** A stand-in for the browser's WebSocket: records what RoomLink sends and lets a test play the server's side. */
 class FakeWebSocket {
@@ -285,6 +286,140 @@ test('score races rank the best score and wait for every seat', () => {
   assert.equal(raceStandings({ 0: 9000, 1: 7000 }, [0, 1], true).winner, 1, 'times: lower wins');
   assert.equal(raceStandings({ 0: 10, 1: 5 }, [0]).done, false, 'a race needs two players');
   assert.equal(raceStandings({ 0: 10, 1: 5, 2: 1 }, [0, 1]).winner, 0, 'players who left do not count');
+});
+
+test('a settled race keeps its result after someone leaves', () => {
+  const settled = { round: 3, seats: [0, 1], names: { 0: 'Ann', 1: 'Ben' } };
+  assert.deepEqual(raceSeats([0], settled, 3), [0, 1], 'the finished lineup stays');
+  assert.deepEqual(raceSeats([0], settled, 4), [0], 'a new round goes back to who is here');
+  assert.deepEqual(raceSeats([0, 1], null, 3), [0, 1]);
+  const after = raceStandings({ 0: 6, 1: 6 }, raceSeats([0], settled, 3));
+  assert.equal(after.done, true);
+  assert.equal(after.winner, null, 'still a tie');
+  assert.deepEqual(after.standings.map((s) => [s.seat, s.score]), [[0, 6], [1, 6]]);
+});
+
+test('the last racer still here settles a race the others left before finishing', () => {
+  assert.equal(raceStandings({ 0: 12 }, [0]).done, false, 'by default a race needs two players');
+  const alone = raceStandings({ 0: 12 }, [0], false, 1);
+  assert.equal(alone.done, true);
+  assert.equal(alone.winner, 0);
+  assert.deepEqual(alone.standings.map((s) => [s.seat, s.score, s.place]), [[0, 12, 1]]);
+  assert.equal(raceStandings({}, [0], false, 1).done, false, 'still playing');
+  assert.equal(raceStandings({ 0: null }, [0], false, 1).winner, null, 'cut short without a score');
+  assert.equal(raceStandings({}, [], false, 1).done, false, 'nobody to settle');
+});
+
+/** A race as the shell holds it: the round's lineup, everyone's scores, the settled result and who is still here. */
+type RaceView = { roundSeats: number[]; scores: RaceScores; settled: SettledRace | null; players: { seat: number; name: string }[] };
+const ROUND = 4;
+/** The shell's race card for seat `mine`: the verdict line, the rows in order and which row is theirs. */
+function raceCard(view: RaceView, mine: number) {
+  const present = view.players.filter((p) => view.roundSeats.includes(p.seat)).map((p) => p.seat);
+  const racers = raceSeats(present, view.settled, ROUND);
+  const race = raceStandings(view.scores, racers, false, view.roundSeats.length >= 2 ? 1 : 2);
+  const name = (seat: number) => (view.settled?.round === ROUND ? view.settled.names[seat] : undefined) ?? view.players.find((p) => p.seat === seat)?.name;
+  return {
+    verdict: raceVerdict(race, racers.length < 2, mine, name),
+    rows: race.standings.map((s) => `${name(s.seat)} ${s.score}`),
+    mine: name(race.standings.find((s) => s.seat === mine)?.seat ?? -1),
+  };
+}
+/** Everyone has finished: the shell saves the result. */
+function settle(view: RaceView): RaceView {
+  const seats = view.roundSeats.filter((seat) => view.players.some((p) => p.seat === seat));
+  return { ...view, settled: { round: ROUND, seats, names: Object.fromEntries(view.players.filter((p) => seats.includes(p.seat)).map((p) => [p.seat, p.name])) } };
+}
+/** A guest leaves: the room just drops them. */
+function guestLeaves(view: RaceView, seat: number): RaceView {
+  return { ...view, players: view.players.filter((p) => p.seat !== seat) };
+}
+/** The host leaves: the worker moves the lowest seat still here to seat 0 (nextHost), and the shell's 'host' handler remaps. */
+function hostLeaves(view: RaceView): { view: RaceView; from: number } {
+  const from = nextHost(view.players.filter((p) => p.seat !== 0))!.seat;
+  const players = view.players.filter((p) => p.seat !== 0).map((p) => ({ ...p, seat: handOffSeat(p.seat, from) })).sort((a, b) => a.seat - b.seat);
+  return {
+    from,
+    view: { roundSeats: view.roundSeats.map((s) => handOffSeat(s, from)), scores: handOffScores(view.scores, from), settled: view.settled && handOffSettled(view.settled, from), players },
+  };
+}
+const seated = (...names: string[]) => names.map((name, seat) => ({ seat, name }));
+
+test('a host hand-off keeps a settled race: the winner, the standings and your own row', () => {
+  // 2 players, the reported failure: PublicHost 3, PublicGuest 2, then PublicHost leaves
+  const two = settle({ roundSeats: [0, 1], scores: { 0: 3, 1: 2 }, settled: null, players: seated('PublicHost', 'PublicGuest') });
+  assert.equal(raceCard(two, 1).verdict, 'PublicHost Wins the Race');
+  const { view: afterTwo, from } = hostLeaves(two);
+  assert.equal(from, 1);
+  assert.deepEqual(afterTwo.settled, { round: ROUND, seats: [1, 0], names: { 1: 'PublicHost', 0: 'PublicGuest' } });
+  assert.deepEqual(raceCard(afterTwo, 0), { verdict: 'PublicHost Wins the Race', rows: ['PublicHost 3', 'PublicGuest 2'], mine: 'PublicGuest' });
+
+  // a 2-2 tie stays a tie, and your row stays yours
+  const tie = hostLeaves(settle({ roundSeats: [0, 1], scores: { 0: 2, 1: 2 }, settled: null, players: seated('Ann', 'Ben') })).view;
+  assert.deepEqual(raceCard(tie, 0), { verdict: 'A Tie', rows: ['Ann 2', 'Ben 2'], mine: 'Ben' });
+
+  // the guest who won is the host now and still wins
+  const guestWon = hostLeaves(settle({ roundSeats: [0, 1], scores: { 0: 1, 1: 9 }, settled: null, players: seated('Ann', 'Ben') })).view;
+  assert.deepEqual(raceCard(guestWon, 0), { verdict: 'You Win the Race', rows: ['Ben 9', 'Ann 1'], mine: 'Ben' });
+
+  // 3 players: Cat (seat 2) keeps her seat, Ben (seat 1) becomes the host
+  const three = settle({ roundSeats: [0, 1, 2], scores: { 0: 4, 1: 7, 2: 5 }, settled: null, players: seated('Ann', 'Ben', 'Cat') });
+  const afterThree = hostLeaves(three).view;
+  assert.deepEqual(raceCard(afterThree, 0), { verdict: 'You Win the Race', rows: ['Ben 7', 'Cat 5', 'Ann 4'], mine: 'Ben' });
+  assert.deepEqual(raceCard(afterThree, 2), { verdict: 'Ben Wins the Race', rows: ['Ben 7', 'Cat 5', 'Ann 4'], mine: 'Cat' });
+
+  // 4 players: Ben leaves the card first, then the host does, so Cat (seat 2) is the host; then Cat leaves too
+  let four = settle({ roundSeats: [0, 1, 2, 3], scores: { 0: 9, 1: 3, 2: 6, 3: 6 }, settled: null, players: seated('Ann', 'Ben', 'Cat', 'Dan') });
+  four = guestLeaves(four, 1);
+  const handed = hostLeaves(four);
+  assert.equal(handed.from, 2);
+  four = handed.view;
+  const rows = ['Ann 9', 'Cat 6', 'Dan 6', 'Ben 3'];
+  assert.deepEqual(raceCard(four, 0), { verdict: 'Ann Wins the Race', rows, mine: 'Cat' });
+  assert.deepEqual(raceCard(four, 3), { verdict: 'Ann Wins the Race', rows, mine: 'Dan' });
+  four = hostLeaves(four).view;
+  assert.deepEqual(raceCard(four, 0), { verdict: 'Ann Wins the Race', rows, mine: 'Dan' }, 'a second hand-off, everyone still in place');
+});
+
+test('a guest leaving a settled race keeps it, in rooms of 2, 3 and 4', () => {
+  for (const names of [['Ann', 'Ben'], ['Ann', 'Ben', 'Cat'], ['Ann', 'Ben', 'Cat', 'Dan']]) {
+    const seats = names.map((_, seat) => seat);
+    const scores = Object.fromEntries(seats.map((seat) => [seat, 10 - seat]));
+    const done = settle({ roundSeats: seats, scores, settled: null, players: seated(...names) });
+    const rows = names.map((name, seat) => `${name} ${10 - seat}`);
+    const left = guestLeaves(done, seats.at(-1)!);
+    assert.deepEqual(raceCard(left, 0), { verdict: 'You Win the Race', rows, mine: 'Ann' }, `${names.length} players, host's card`);
+    if (names.length > 2) assert.deepEqual(raceCard(left, 1), { verdict: 'Ann Wins the Race', rows, mine: 'Ben' }, `${names.length} players, a guest's card`);
+  }
+});
+
+test('a host hand-off mid-round keeps everyone on their own score', () => {
+  // 2 players, both still playing: the new host's round ends, and nobody else is left in it
+  let two = hostLeaves({ roundSeats: [0, 1], scores: {}, settled: null, players: seated('Ann', 'Ben') }).view;
+  assert.equal(raceCard(two, 0).verdict, 'Waiting For Everyone to Finish');
+  two = { ...two, scores: { ...two.scores, 0: 5 } };
+  assert.deepEqual(raceCard(two, 0), { verdict: 'Everyone Else Left Before Finishing', rows: ['Ben 5'], mine: 'Ben' });
+
+  // 3 players: Cat finished with 5, the host with 9, Ben was still playing when the host left; his round ends with 4
+  let three = hostLeaves({ roundSeats: [0, 1, 2], scores: { 0: 9, 2: 5 }, settled: null, players: seated('Ann', 'Ben', 'Cat') }).view;
+  assert.deepEqual(three.scores, { 1: 9, 2: 5 }, "the old host's score moves to the seat Ben left, and Ben's seat 0 has none yet");
+  assert.deepEqual(raceCard(three, 2), { verdict: 'Waiting For Everyone to Finish', rows: ['Cat 5', 'Ben null'], mine: 'Cat' });
+  three = { ...three, scores: { ...three.scores, 0: 4 } };
+  assert.deepEqual(raceCard(three, 0), { verdict: 'Cat Wins the Race', rows: ['Cat 5', 'Ben 4'], mine: 'Ben' });
+  assert.deepEqual(raceCard(three, 2), { verdict: 'You Win the Race', rows: ['Cat 5', 'Ben 4'], mine: 'Cat' });
+
+  // 4 players, a guest leaves mid-round, then the host: the two still here race on
+  let four = guestLeaves({ roundSeats: [0, 1, 2, 3], scores: { 3: 2 }, settled: null, players: seated('Ann', 'Ben', 'Cat', 'Dan') }, 1);
+  four = hostLeaves(four).view;
+  four = { ...four, scores: { ...four.scores, 0: 8 } };
+  assert.deepEqual(raceCard(four, 0), { verdict: 'You Win the Race', rows: ['Cat 8', 'Dan 2'], mine: 'Cat' });
+  assert.deepEqual(raceCard(four, 3), { verdict: 'Cat Wins the Race', rows: ['Cat 8', 'Dan 2'], mine: 'Dan' });
+});
+
+test('a settled race hands off with its round', () => {
+  const settled = { round: 2, seats: [0, 1, 2], names: { 0: 'Ann', 1: 'Ben', 2: 'Cat' } };
+  assert.deepEqual(handOffSettled(settled, 2), { round: 2, seats: [2, 1, 0], names: { 2: 'Ann', 1: 'Ben', 0: 'Cat' } });
+  assert.deepEqual(settled.seats, [0, 1, 2], 'the old snapshot is left alone');
 });
 
 test('the host starts the next round only once it is over for everyone', () => {
@@ -749,4 +884,16 @@ test('a team’s win: every seat on it is reported, and once everyone agrees eac
     assert.deepEqual(JSON.parse(socket.sent.at(-1)!), { t: 'result', round: 1, winner: 1 });
     link.close();
   });
+});
+
+test('a host hand-off keeps each finished racer on their own score', () => {
+  // the host (seat 0) scored 0 and left; the guest in seat 1 scored 110 and is seat 0 now
+  const scores = handOffScores({ 0: 0, 1: 110 }, 1);
+  assert.equal(scores[0], 110, 'the new host keeps their score');
+  assert.equal(scores[1], 0, "the old host's score moves to the seat they left");
+  assert.deepEqual(handOffScores({ 0: 5, 1: 7, 2: null }, 1), { 0: 7, 1: 5, 2: null }, 'other seats stay put');
+  assert.deepEqual(handOffScores({ 0: 5, 2: 9 }, 2), { 0: 9, 2: 5 }, 'a host from a higher seat');
+  assert.deepEqual([0, 1, 2].map((s) => handOffSeat(s, 2)), [2, 1, 0]);
+  const after = raceStandings(scores, [0]);
+  assert.deepEqual(after.standings.map((s) => [s.seat, s.score]), [[0, 110]]);
 });

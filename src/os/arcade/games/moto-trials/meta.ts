@@ -10,7 +10,8 @@ export const meta: GameMeta = {
   howTo: [
     "Ride from the start to the finish line as fast as you can.",
     "Lean back and forward to keep the bike balanced over ramps, gaps and loops.",
-    "Bump your head, hit a saw or a mine, or fall off the track and you crash, then respawn at the last checkpoint you passed while the clock keeps running.",
+    "Bump your head, hit a saw, a mine or a TNT barrel, or fall off the track and you crash, then respawn at the last checkpoint you passed while the clock keeps running.",
+    "Wooden bridges crumble right behind you, so keep the gas on and never stop on one.",
     "Hold gas and lean back on the ground for a wheelie. Some saws swing up and down, so time your run.",
     "Land a full flip on your wheels to knock a second off your time for each flip.",
     "Beat the bronze, silver and gold times to earn stars. Clearing a level unlocks the next one, across five worlds of six levels.",
