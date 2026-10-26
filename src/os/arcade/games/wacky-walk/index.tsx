@@ -169,6 +169,10 @@ function Play() {
   const [courseChoice] = useSetting(COURSE);
   const [hud, setHud] = useState<Hud>(emptyHud);
   const [tagIds, setTagIds] = useState<number[]>([]);
+  const [hintDismissed, setHintDismissed] = useState(false);
+  const [hitFlash, setHitFlash] = useState(false);
+  const hintDismissedRef = useRef(false);
+  const hitShakeRef = useRef(0);
   const tagLayoutRef = useRef(Array.from({ length: 9 }, () => ({ x: 0, y: 0 })));
   const [stick, setStick] = useState<Stick | null>(null);
   const [watchTarget, setWatchTarget] = useState<number | null>(null);
@@ -198,7 +202,7 @@ function Play() {
   const renderDtRef = useRef(0);
   const netClockRef = useRef(0);
   const hudClockRef = useRef(0);
-  const cameraRef = useRef<CamState>({ yaw: 0, pitch: 0.4, dist: 9 });
+  const cameraRef = useRef<CamState>({ yaw: 0, pitch: 0.32, dist: 11 });
   const manualOrbitAtRef = useRef(0);
   const lastCountRef = useRef(-1);
   const pendingJumpRef = useRef(false);
@@ -221,6 +225,7 @@ function Play() {
   const winTimeRef = useRef(0);
   const winConfettiRef = useRef(0);
   const tagNodesRef = useRef(new Map<number, HTMLDivElement>());
+  const playerArrowRef = useRef<HTMLDivElement | null>(null);
   const latestPacketHandlerRef = useRef<(from: number, value: unknown) => void>(() => {});
   const portraitPhone = shell.touch && size.h > size.w;
   const mode: Mode = shell.status === 'playing' || (shell.status === 'over' && room) ? (room ? 'online' : 'solo') : 'idle';
@@ -274,8 +279,8 @@ function Play() {
     remoteClockRef.current = show.clock;
     clockErrorRef.current = 0;
     cameraRef.current.yaw = course.startYaw;
-    cameraRef.current.pitch = 0.4;
-    cameraRef.current.dist = course.id === 'hoover' ? 10 : portraitPhone ? 10.5 : 9;
+    cameraRef.current.pitch = course.id === 'hoover' ? 0.42 : 0.32;
+    cameraRef.current.dist = course.id === 'hoover' ? 12 : portraitPhone ? 12 : 11;
     cameraRef.current.lookY = 0;
     cameraRef.current.lookAt = undefined;
     cameraDistanceOverrideRef.current = null;
@@ -357,6 +362,7 @@ function Play() {
         return course.id === 'fountain';
       },
       camera(yaw: number, dist: number, pitch?: number, lookY = 0) {
+        captureFocusRef.current = localId();
         cameraRef.current.yaw = yaw;
         cameraRef.current.dist = dist;
         if (pitch !== undefined) cameraRef.current.pitch = pitch;
@@ -364,6 +370,25 @@ function Play() {
         cameraRef.current.lookAt = undefined;
         cameraDistanceOverrideRef.current = dist;
         shell.invalidate();
+      },
+      teleportPlayer(x: number, y: number, z: number) {
+        const course = courseRef.current;
+        const id = localId();
+        const body = id == null ? undefined : bodiesRef.current.get(id);
+        if (!course || !body) return false;
+        const ground = course.colliders.findIndex((collider) =>
+          collider.on && collider.shape.kind === 'box' &&
+          Math.abs(collider.pose.y + collider.shape.hy - y) < 0.1 &&
+          Math.abs(collider.pose.x - x) <= collider.shape.hx &&
+          Math.abs(collider.pose.z - z) <= collider.shape.hz);
+        if (ground < 0) return false;
+        body.x = x; body.y = y; body.z = z;
+        body.vx = 0; body.vy = 0; body.vz = 0; body.yaw = course.startYaw;
+        body.state = 'run'; body.stateT = 0; body.ground = ground;
+        body.coyote = 0; body.buffer = 0; body.slip = 0;
+        body.squash = 0; body.squashV = 0; body.ev = 0;
+        shell.invalidate();
+        return true;
       },
       spectate(dist = 9, pitch = 0.45, lookY = 0) {
         const show = showRef.current;
@@ -768,6 +793,10 @@ function Play() {
     }
     const cam = cameraRef.current;
     const { mx, mz } = cameraRelative(localX, localZ, cam.yaw);
+    if (!hintDismissedRef.current && (Math.abs(mx) + Math.abs(mz) > 0.05 || jumpPressed || divePressed)) {
+      hintDismissedRef.current = true;
+      setHintDismissed(true);
+    }
     const jump = pendingJumpRef.current;
     const dive = pendingDiveRef.current;
     pendingJumpRef.current = false;
@@ -782,6 +811,10 @@ function Play() {
     if (body.ev & EV.DIVE) sfx.play('jump', 0.65);
     if (body.ev & EV.HIT) sfx.play('hit');
     if (body.ev & EV.BIG_HIT) sfx.play('boom');
+    if (body.ev & (EV.HIT | EV.BIG_HIT)) {
+      hitShakeRef.current = 0.2;
+      setHitFlash(true);
+    }
     if (body.ev & EV.SPRING) sfx.play('coin', 0.75);
     if (body.ev & EV.SPLASH) sfx.noise(0.12, 0.1);
   }
@@ -978,7 +1011,7 @@ function Play() {
       if (keys.pressed('ArrowRight')) cycleWatch(1);
     }
     cameraRef.current.pitch = Math.max(0.05, Math.min(1.1, cameraRef.current.pitch));
-    cameraRef.current.dist = cameraDistanceOverrideRef.current ?? (course.id === 'hoover' ? 10 : portraitPhone ? 10.5 : 9);
+    cameraRef.current.dist = cameraDistanceOverrideRef.current ?? (course.id === 'hoover' ? 12 : portraitPhone ? 12 : 11);
 
     if (mode === 'online' && currentRoom && !currentRoom.isHost) {
       const jumpPressed = keys.pressed('Space') || touchJumpRef.current;
@@ -1077,8 +1110,8 @@ function Play() {
           const fx = focus?.x ?? 0, fz = focus?.z ?? 0;
           return (ba.x - fx) ** 2 + (ba.z - fz) ** 2 - ((bb.x - fx) ** 2 + (bb.z - fz) ** 2);
         })
-        .slice(0, mine != null ? 7 : 8);
-      setTagIds(mine != null && bodiesRef.current.has(mine) ? [mine, ...ids] : ids.slice(0, 8));
+        .slice(0, 6);
+      setTagIds(ids);
     }
   }
 
@@ -1116,11 +1149,36 @@ function Play() {
     for (const id of show.inRound) {
       if (!hiddenRef.current.has(id)) bodies[id] = bodiesRef.current.get(id) ?? null;
     }
-    const focus = focusFor(show);
-    view.frame(course, time, bodies, focus, cameraRef.current, renderDtRef.current);
+    let focus = focusFor(show);
+    const captureFocus = import.meta.env.DEV && captureFocusRef.current != null;
+    if (show.phase === 'intro' && course.path.length > 1 && !captureFocus) {
+      focus = null;
+      const t = Math.min(1, Math.max(0, show.phaseT / 2.4));
+      const from = course.path[course.path.length - 1];
+      const to = course.path[0];
+      cameraRef.current.lookAt = {
+        x: from.x + (to.x - from.x) * t,
+        y: from.y + 7 + (to.y - from.y) * t,
+        z: from.z + (to.z - from.z) * t,
+      };
+    } else {
+      cameraRef.current.lookAt = undefined;
+    }
+    const shake = hitShakeRef.current;
+    const camera = shake > 0
+      ? {
+        ...cameraRef.current,
+        yaw: cameraRef.current.yaw + Math.sin(time * 72) * 0.012 * (shake / 0.2),
+        pitch: cameraRef.current.pitch + Math.cos(time * 61) * 0.008 * (shake / 0.2),
+      }
+      : cameraRef.current;
+    hitShakeRef.current = Math.max(0, shake - renderDtRef.current);
+    view.frame(course, time, bodies, focus, camera, renderDtRef.current);
     const stageRect = ref.current?.getBoundingClientRect();
     const pillRect = ref.current?.querySelector('.g-wacky-walk-pill')?.getBoundingClientRect();
-    const hudClearance = stageRect && pillRect ? pillRect.bottom - stageRect.top + 24 : shell.touch ? 132 : 108;
+    const progressRect = ref.current?.querySelector('.g-wacky-walk-progress')?.getBoundingClientRect();
+    const hudBottom = Math.max(pillRect?.bottom ?? 0, progressRect?.bottom ?? 0);
+    const hudClearance = stageRect && (pillRect || progressRect) ? hudBottom - stageRect.top + 16 : shell.touch ? 132 : 108;
     let placedTags = 0;
     for (const id of tagIds) {
       const node = tagNodesRef.current.get(id);
@@ -1151,8 +1209,21 @@ function Play() {
       placed.x = point.x;
       placed.y = labelY;
       node.style.visibility = 'visible';
+      const localBody = localId(show) == null ? undefined : bodiesRef.current.get(localId(show)!);
+      const distance = localBody ? Math.hypot(body!.x - localBody.x, body!.z - localBody.z) : 0;
+      node.style.opacity = String(Math.max(0.2, 1 - distance / 45));
       node.style.transform = `translate3d(${point.x}px, ${labelY}px, 0) translate(-50%, -100%)`;
     }
+    const arrow = playerArrowRef.current;
+    const playerId = localId(show);
+    const playerBody = playerId == null ? undefined : bodiesRef.current.get(playerId);
+    const playerPoint = playerBody ? view.project(playerBody.x, playerBody.y + 1.75, playerBody.z) : null;
+    if (arrow && playerPoint && playerPoint.y > hudClearance && playerPoint.y < size.h - 12) {
+      arrow.style.visibility = 'visible';
+      arrow.style.transform = `translate3d(${playerPoint.x}px, ${playerPoint.y}px, 0) translate(-50%, -50%)`;
+      const color = show.entrants.find((entrant) => entrant.id === playerId)?.color ?? 0xffffff;
+      arrow.style.setProperty('--ww-player-color', `#${color.toString(16).padStart(6, '0')}`);
+    } else if (arrow) arrow.style.visibility = 'hidden';
     view.render();
   }
 
@@ -1230,12 +1301,29 @@ function Play() {
   const isWatching = !!room?.watching || mine == null || !!(show && (show.finished.includes(mine) || show.fallen.includes(mine) || show.out.includes(mine)));
   const watchedName = watchTarget == null ? 'a runner' : entrant(watchTarget, show)?.name ?? 'a runner';
   const showTags = show?.entrants ?? [];
+  const course = courseRef.current;
+  const progressDots = show && course && hud.round !== 1
+    ? show.inRound.map((id) => {
+      const body = bodiesRef.current.get(id);
+      const entrant = show.entrants.find((item) => item.id === id);
+      const progress = body
+        ? course.id === 'hoover'
+          ? Math.max(0, Math.min(1, (body.y + 1) / 38))
+          : progressOf(course, body.x, body.y, body.z)
+        : 0;
+      return { id, progress, color: entrant?.color ?? 0xffffff, qualified: show.finished.includes(id) || show.qualified.includes(id) };
+    })
+    : [];
+  const place = progressDots.filter((dot) => dot.id === mine).length
+    ? [...progressDots].sort((a, b) => b.progress - a.progress).findIndex((dot) => dot.id === mine) + 1
+    : 0;
+  const placeText = place ? `${place}${place === 1 ? 'st' : place === 2 ? 'nd' : place === 3 ? 'rd' : 'th'}` : '';
   const activeTouch = shell.touch && !isWatching && shell.status === 'playing';
   const remainingCount = hud.round === 1 ? `${hud.standing} standing` : `${hud.count} qualified`;
   const intro = hud.phase === 'intro';
   const count = hud.phase === 'count';
   const outro = hud.phase === 'outro';
-  const hint = !shell.touch && hud.playClock < 6 && !isWatching;
+  const hint = !shell.touch && !hintDismissed && hud.playClock < 6 && !isWatching;
   const eliminatedOffline = mode === 'solo' && hud.localOut && hud.phase !== 'done';
 
   return (
@@ -1249,7 +1337,11 @@ function Play() {
       onLostPointerCapture={endPointer}
       onContextMenu={(e) => e.preventDefault()}
     >
-      <div className="g-wacky-walk-vignette" aria-hidden="true" />
+      <div
+        className={`g-wacky-walk-vignette${hitFlash ? ' is-hit' : ''}`}
+        aria-hidden="true"
+        onAnimationEnd={() => setHitFlash(false)}
+      />
       {show && (
         <>
           <div className="g-wacky-walk-top">
@@ -1258,6 +1350,23 @@ function Play() {
               <span className="g-wacky-walk-clock">{timeLabel(hud.time)}</span>
               <span className="g-wacky-walk-standing">{remainingCount} / {hud.quota}</span>
             </div>
+            {progressDots.length > 1 && (
+              <div className="g-wacky-walk-progress">
+                <div className="g-wacky-walk-progress-track">
+                  {progressDots.map((dot) => (
+                    <i
+                      key={dot.id}
+                      className={`${dot.qualified ? 'is-qualified ' : ''}${dot.id === mine ? 'is-local' : ''}`}
+                      style={{
+                        left: `${dot.qualified ? 98 : dot.progress * 100}%`,
+                        backgroundColor: dot.qualified ? '#87939a' : `#${dot.color.toString(16).padStart(6, '0')}`,
+                      }}
+                    />
+                  ))}
+                </div>
+                {placeText && <b>{placeText}</b>}
+              </div>
+            )}
             {isWatching && <div className="g-wacky-walk-watch-label">watching {watchedName}</div>}
           </div>
           {intro && (
@@ -1284,7 +1393,8 @@ function Play() {
             </div>
           )}
           {hint && <div className="g-wacky-walk-hint">wasd move, space jump, shift dive, drag or q/e camera</div>}
-          {showTags.map((player) => tagIds.includes(player.id) && (
+          {mine != null && <div className="g-wacky-walk-player-arrow" ref={playerArrowRef} aria-hidden="true">▲</div>}
+          {showTags.map((player) => player.id !== mine && tagIds.includes(player.id) && (
             <div
               className={`g-wacky-walk-tag${player.id === mine ? ' is-you' : ''}`}
               key={player.id}
@@ -1293,7 +1403,7 @@ function Play() {
                 else tagNodesRef.current.delete(player.id);
               }}
             >
-              {player.id === mine ? 'you' : player.name}
+              {player.name}
             </div>
           ))}
           {activeTouch && stick && (

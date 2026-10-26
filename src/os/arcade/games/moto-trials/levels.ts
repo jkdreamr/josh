@@ -69,9 +69,10 @@ export function track() {
   let finishX = 0;
   let minY = 0;
 
-  const seg = (bx: number, by: number, kind?: string) => {
+  let planks = 0;
+  const seg = (bx: number, by: number, kind?: string, crumble?: number) => {
     const { nx, ny, len } = norm(x, y, bx, by);
-    segs.push({ ax: x, ay: y, bx, by, nx, ny, len, kind });
+    segs.push({ ax: x, ay: y, bx, by, nx, ny, len, kind, ...(crumble === undefined ? {} : { crumble }) });
     if (by < minY) minY = by;
     if (y < minY) minY = y;
     x = bx;
@@ -182,6 +183,29 @@ export function track() {
       saws.push({ x: x + dx, y: y + dy, r });
       return api;
     },
+    /** A saw that swings mx, my either side of (dx, dy) once every `period` seconds. */
+    swing(dx: number, dy: number, r: number, mx: number, my: number, period: number, phase = 0) {
+      saws.push({ x: x + dx, y: y + dy, r, mx, my, period, phase });
+      return api;
+    },
+    /** A crumbling plank bridge over a chasm, falling dh over len: each plank drops just after it is ridden. */
+    bridge(len: number, dh = 0) {
+      const n = Math.max(2, Math.round(len / 1.6));
+      const x0 = x;
+      const y0 = y;
+      for (let i = 1; i <= n; i++) seg(x0 + (len * i) / n, y0 + (dh * i) / n, 'plank', planks++);
+      return api;
+    },
+    /** A TNT barrel standing on the ground just laid, dx meters from the cursor. */
+    tnt(dx: number) {
+      saws.push({ x: x + dx, y: y + 0.45, r: 0.45, kind: 'tnt' });
+      return api;
+    },
+    /** A mine on the ground just laid, dx meters from the cursor (negative is behind it). */
+    mine(dx: number) {
+      saws.push({ x: x + dx, y: y + 0.32, r: 0.32, kind: 'mine' });
+      return api;
+    },
     checkpoint() {
       checkpoints.push(x);
       return api;
@@ -220,6 +244,8 @@ const THEMES: Record<string, Theme> = {
   neon: { skyTop: '#1b2140', skyBot: '#4a2a6e', far: '#352a55', mid: '#2a2144', near: '#1e1834', ground: '#241f33', edge: '#8f7ae0', dust: '#6a5a9e', wood: '#4a3a66', saw: '#c8c8f0', soil: '#332a4a', speckle: 'rgba(0,0,0,0.3)', sun: '#e8e2ff', cloud: 'rgba(60,50,100,0.5)', prop: 'cone', scenery: 'city', night: true },
   frost: { skyTop: '#b8cfe8', skyBot: '#eef4fb', far: '#9db6d4', mid: '#7d9cc0', near: '#5d7da0', ground: '#e8eef6', edge: '#ffffff', dust: '#dceaf8', wood: '#7a6248', saw: '#b8c8d8', soil: '#c2d2e4', speckle: 'rgba(90,110,140,0.18)', sun: '#ffffff', cloud: 'rgba(255,255,255,0.75)', prop: 'pine', scenery: 'snow' },
   canyon: { skyTop: '#e8633f', skyBot: '#ffc98a', far: '#b04a38', mid: '#8a3a30', near: '#5f2b24', ground: '#54281e', edge: '#ffab6e', dust: '#c97a50', wood: '#7a4a2e', saw: '#d8d8e0', soil: '#6d3624', speckle: 'rgba(0,0,0,0.2)', sun: '#ffe4c0', cloud: 'rgba(255,224,190,0.5)', prop: 'cactus', scenery: 'rocks' },
+  dusk: { skyTop: '#5b4b8a', skyBot: '#f7a072', far: '#8a5a86', mid: '#6b4470', near: '#4c3156', ground: '#3b2a3e', edge: '#ffc49b', dust: '#c98e8e', wood: '#6e4a3e', saw: '#dcd8e8', soil: '#4e3650', speckle: 'rgba(0,0,0,0.2)', sun: '#ffe2c4', cloud: 'rgba(255,214,200,0.5)', prop: 'cactus', scenery: 'hills' },
+  volcano: { skyTop: '#2a1414', skyBot: '#8a2e1c', far: '#4a1e1a', mid: '#381614', near: '#260e0e', ground: '#2a1a18', edge: '#ff7a3a', dust: '#8a4a3a', wood: '#5a3426', saw: '#e0d0c8', soil: '#3e2420', speckle: 'rgba(255,90,30,0.14)', sun: '#ffb27a', cloud: 'rgba(90,40,30,0.5)', prop: 'rock', scenery: 'rocks', night: true },
   storm: { skyTop: '#2e3444', skyBot: '#6a5a70', far: '#3c3a50', mid: '#302e42', near: '#242234', ground: '#2c2434', edge: '#9a8ab0', dust: '#6a5a80', wood: '#4a3a52', saw: '#d0d0e8', soil: '#3a3348', speckle: 'rgba(0,0,0,0.3)', sun: '#d8d4e8', cloud: 'rgba(70,64,92,0.5)', prop: 'cone', scenery: 'city', night: true },
 };
 
@@ -243,7 +269,7 @@ export function propsFor(id: string, segs: Seg[], finishX: number): Prop[] {
         best = s;
       }
     }
-    return best ? { y: by, wood: best.kind === 'wood' } : null;
+    return best ? { y: by, wood: best.kind === 'wood' || best.kind === 'plank' } : null;
   };
   const out: Prop[] = [];
   let x = 6;
@@ -259,11 +285,92 @@ export function propsFor(id: string, segs: Seg[], finishX: number): Prop[] {
   return out;
 }
 
+type T = ReturnType<typeof track>;
+type Piece = (t: T) => T;
+
+// Track pieces shared by the later levels. Every jump climbs back to where it started, so they chain.
+const cp: Piece = (t) => t.checkpoint().flat(4);
+const hop: Piece = (t) => t.slope(16, 5).flat(12).kicker(5, 25).gap(3, -1).land(14, 5).flat(12);
+const bigAir: Piece = (t) => t.slope(18, 6).flat(14).kicker(6, 32).gap(3, -2).land(20, 9).flat(12);
+const huge: Piece = (t) => t.slope(18, 6).flat(14).kicker(6, 35).gap(4, -3).land(22, 11).flat(12);
+const steep: Piece = (t) => t.slope(14, 4).flat(14).kicker(3, 45).gap(3, -1).land(14, 5).flat(12);
+const curl: Piece = (t) => t.slope(16, 5).flat(14).kicker(2.5, 50).gap(3, -1).land(14, 5).flat(12);
+const sawHop: Piece = (t) => t.slope(16, 5).flat(12).kicker(5, 25).saw(10, 2.6, 0.9).gap(3, -1).land(14, 5).flat(12);
+const lowHop: Piece = (t) => t.slope(6, 1.5).kicker(4, 25).gap(3, -1.5).land(16, 6).flat(12);
+const looper: Piece = (t) => t.flat(28).loop(3.0).flat(6);
+/** A jump with a saw bobbing up and down over the gap: time the takeoff. */
+const swingHop =
+  (period: number, phase = 0): Piece =>
+  (t) =>
+    t.slope(16, 5).flat(12).kicker(5, 25).swing(10, 2.8, 0.9, 0, 1.4, period, phase).gap(3, -1).land(14, 5).flat(12);
+/** A saw rising and dropping over flat ground: pass it while it is up. */
+const sawGate =
+  (period: number, phase = 0): Piece =>
+  (t) =>
+    t.flat(12).swing(-5, 1.9, 0.8, 0, 1.7, period, phase).flat(10);
+/** Little kickers, each with a mine just past the lip: carry speed or land on it. */
+const mines =
+  (n: number): Piece =>
+  (t) => {
+    t.flat(14);
+    for (let i = 0; i < n; i++) t.kicker(3, 28).flat(24).mine(-18);
+    return t.flat(4);
+  };
+/** A staircase of ledges down. */
+const ledges =
+  (n: number, h: number): Piece =>
+  (t) => {
+    for (let i = 0; i < n; i++) t.flat(9).drop(h);
+    return t.flat(12);
+  };
+/** A crumbling plank bridge over a chasm: stop on it and it drops you. */
+const bridgeRun =
+  (len: number, dh = 0): Piece =>
+  (t) =>
+    t.flat(12).bridge(len, dh).flat(12).slope(8, -dh);
+/** Kick up and land on a bridge that sags down to the far bank. */
+const bridgeJump: Piece = (t) => t.slope(14, 6).flat(10).kicker(5, 25).gap(3, -1).bridge(16, -3).land(12, 3).flat(10);
+/** A bridge with a saw sweeping over it: no stopping to wait, so time the run-up. */
+const sawBridge =
+  (period: number, phase = 0): Piece =>
+  (t) =>
+    t.flat(14).bridge(14).swing(-7, 1.9, 0.8, 0, 1.7, period, phase).flat(12);
+/** Ride off a cliff onto a long landing ramp below, then climb back up. */
+const cliff =
+  (h: number): Piece =>
+  (t) =>
+    t.slope(18, h).flat(8).gap(3, -h * 0.4).land(18, h * 0.6).flat(10);
+/** A rhythm section of whoops: pump them or get bucked. */
+const whoops =
+  (n: number, h = 1.2): Piece =>
+  (t) => {
+    t.flat(8);
+    for (let i = 0; i < n; i++) t.bump(7, h);
+    return t.flat(10);
+  };
+/** A launch tower: up a wooden ramp to a high deck, then a long fall onto a downslope. */
+const tower: Piece = (t) => t.slope(10, 2).ramp(8, 4).flat(10, 'wood').kicker(4, 20).gap(5, -4).land(26, 12).flat(6).slope(20, 10).flat(10);
+/** Little kickers, each with a pair of TNT barrels past the lip: fly long or blow up. */
+const tntRow =
+  (n: number): Piece =>
+  (t) => {
+    t.flat(14);
+    for (let i = 0; i < n; i++) t.kicker(3, 28).flat(24).tnt(-18.4).tnt(-17.5);
+    return t.flat(4);
+  };
+const course =
+  (...ps: Piece[]) =>
+  (): Built => {
+    let t = track().flat(16);
+    for (const p of ps) t = p(t);
+    return t.flat(10).finish().flat(10).done();
+  };
+
 function lvl(id: string, name: string, theme: Theme, stars: [number, number, number], built: Built): Level {
   return { id, name, theme, stars, ...built, props: propsFor(id, built.segs, built.finishX) };
 }
 
-/** The ten tracks. Each is built fresh per run through freshLevel below. */
+/** The tracks, easiest first. Each is built fresh per run through getLevel below. */
 const BUILDERS: Record<string, () => Built> = {
   // 1-2 teach the kicker: big soft jumps that land on gas alone, room to try a first flip
   'level-1': () =>
@@ -678,6 +785,30 @@ const BUILDERS: Record<string, () => Built> = {
       .finish()
       .flat(10)
       .done(),
+  // 11-12 close out the night world: TNT and the first cliff drops
+  'level-11': course(hop, tntRow(1), cp, bigAir, cliff(7), cp, steep, looper, hop),
+  'level-12': course(steep, tntRow(2), cp, huge, whoops(4), cp, curl, cliff(8), hop),
+  // 13-18 the lumber world: crumbling bridges, saws over them, the launch tower
+  'level-13': course(hop, bridgeRun(12), cp, bigAir, sawHop, cp, bridgeJump, curl, hop),
+  'level-14': course(ledges(3, 2), bridgeRun(16), hop, cp, huge, bridgeJump, cp, swingHop(2.2), sawBridge(2.4), lowHop),
+  'level-15': course(curl, sawHop, bridgeRun(14, -2), cp, tower, cp, sawBridge(2.0), steep, bigAir),
+  'level-16': course(ledges(4, 2.5), bridgeJump, cp, huge, curl, sawGate(2.2), cp, bridgeRun(18), swingHop(2.4, 0.25), bigAir),
+  'level-17': course(hop, looper, bridgeRun(12), cp, tower, sawHop, cp, bridgeJump, sawBridge(1.8), curl, hop),
+  'level-18': course(swingHop(2.0), bridgeJump, cp, sawBridge(1.8), huge, cp, curl, bridgeRun(20, -2), sawHop, cp, tower, hop),
+  // 19-24 ice and iron: towers, cliffs and whoops, big air everywhere
+  'level-19': course(bigAir, cliff(8), cp, tower, whoops(4), cp, huge, steep, hop),
+  'level-20': course(curl, whoops(5, 1.4), cp, tower, sawHop, cp, cliff(10), swingHop(1.8), huge),
+  'level-21': course(huge, cliff(9), cp, ledges(4, 2.5), bridgeJump, cp, tower, curl, looper, cp, bigAir, hop),
+  'level-22': course(sawGate(1.8), tower, cp, whoops(5, 1.4), swingHop(1.6, 0.5), cp, cliff(10), sawBridge(1.8), cp, huge, sawHop),
+  'level-23': course(looper, steep, cliff(8), cp, tower, sawBridge(2.0), cp, whoops(6, 1.3), curl, cp, huge, hop),
+  'level-24': course(huge, tower, cp, ledges(4, 3), curl, cliff(10), cp, bridgeJump, sawGate(1.8), cp, tower, swingHop(1.6), hop),
+  // 25-30 the volcano: TNT and everything at once
+  'level-25': course(bigAir, tntRow(2), cp, tower, curl, cp, sawBridge(1.6), cliff(9), cp, huge, hop),
+  'level-26': course(ledges(5, 3), huge, cp, tntRow(3), bridgeJump, cp, tower, sawGate(1.6), cp, whoops(5, 1.4), swingHop(1.8, 0.5)),
+  'level-27': course(tower, huge, cp, tntRow(2), swingHop(1.5), cp, cliff(10), sawBridge(1.6), cp, curl, bridgeRun(20, -2), hop),
+  'level-28': course(sawGate(1.5), tower, cp, looper, tntRow(3), cp, bridgeJump, curl, sawBridge(1.6), cp, huge, swingHop(1.6, 0.3), hop),
+  'level-29': course(swingHop(1.4), tower, cp, ledges(5, 3), tntRow(3), cp, sawBridge(1.5), cliff(10), cp, whoops(6, 1.4), huge, hop),
+  'level-30': course(tower, sawHop, tntRow(2), cp, bridgeJump, sawBridge(1.5), cp, cliff(10), swingHop(1.5, 0.3), cp, tower, tntRow(3), cp, huge, curl, hop),
 };
 
 // Star times from the test autopilot: silver sits a little over a clean ride with no flips, gold needs that
@@ -693,6 +824,26 @@ const META_ROWS: [string, string, Theme, [number, number, number]][] = [
   ['level-8', 'Frostbite', THEMES.frost, [28_000, 37_000, 50_000]],
   ['level-9', 'Canyon Cross', THEMES.canyon, [25_500, 34_500, 47_000]],
   ['level-10', 'Last Lap', THEMES.storm, [36_000, 48_000, 64_000]],
+  ['level-11', 'Night Shift', THEMES.neon, [23_500, 39_000, 52_000]],
+  ['level-12', 'Dust Devil', THEMES.dusk, [35_000, 43_000, 57_500]],
+  ['level-13', 'Lumber Yard', THEMES.autumn, [29_000, 42_500, 57_000]],
+  ['level-14', 'Timber Falls', THEMES.forest, [27_500, 40_500, 54_000]],
+  ['level-15', 'Splinter', THEMES.autumn, [31_500, 49_500, 66_000]],
+  ['level-16', 'Rockslide', THEMES.quarry, [33_000, 45_500, 61_000]],
+  ['level-17', 'Pine Run', THEMES.forest, [43_000, 57_000, 76_000]],
+  ['level-18', 'Sawdust', THEMES.autumn, [48_000, 60_500, 80_500]],
+  ['level-19', 'Cold Open', THEMES.frost, [35_500, 47_000, 63_000]],
+  ['level-20', 'Black Ice', THEMES.frost, [44_000, 54_500, 72_500]],
+  ['level-21', 'Glacier Gap', THEMES.lagoon, [33_500, 56_500, 75_500]],
+  ['level-22', 'Iron Works', THEMES.storm, [43_500, 54_000, 72_000]],
+  ['level-23', 'Neon Maze', THEMES.neon, [37_500, 57_000, 76_000]],
+  ['level-24', 'Whiteout', THEMES.frost, [45_500, 62_000, 82_500]],
+  ['level-25', 'Ash Road', THEMES.volcano, [36_000, 52_500, 70_000]],
+  ['level-26', 'Ember Drop', THEMES.volcano, [31_500, 53_000, 70_500]],
+  ['level-27', 'Red Canyon', THEMES.canyon, [44_000, 54_000, 72_000]],
+  ['level-28', 'Thunder Run', THEMES.storm, [46_000, 61_500, 82_000]],
+  ['level-29', 'Lava Lamp', THEMES.volcano, [48_500, 59_500, 79_500]],
+  ['level-30', 'The Summit', THEMES.dusk, [65_500, 87_000, 116_000]],
 ];
 
 export const LEVEL_IDS = Object.keys(BUILDERS);
@@ -705,6 +856,15 @@ export function getLevel(id: string): Level {
 }
 
 export const LEVELS: Level[] = META_ROWS.map((r) => getLevel(r[0]));
+
+/** Six levels to a world, in order. */
+export const WORLDS: { id: string; name: string; levels: string[] }[] = ['Sunny Hills', 'After Dark', 'Lumber Yard', 'Ice and Iron', 'Fire Mountain'].map((name, i) => ({
+  id: `world-${i + 1}`,
+  name,
+  levels: LEVEL_IDS.slice(i * 6, i * 6 + 6),
+}));
+
+export const worldIndexOf = (id: string) => Math.max(0, Math.floor(LEVEL_IDS.indexOf(id) / 6));
 
 /** A physics world for a level with fresh loop gate state. */
 export function worldOf(level: Level): PhysWorld {

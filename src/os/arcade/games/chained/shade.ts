@@ -295,6 +295,152 @@ function decide(g: Game, sh: Shade, dt: number): boolean {
   return waiting;
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// The partner: a shade that climbs your second soul for you on a solo climb. It keeps a ledge behind you at most,
+// climbs after you, hauls when you hang, gives slack when the chain runs short, and never leads.
+
+export type Partner = {
+  /** The soul it steers and the soul it follows (soul indices). */
+  me: number;
+  you: number;
+  /** The route step each soul last stood on, by soul index. */
+  last: number[];
+  holdUntil: number;
+  jumpedAt: number;
+  stuck: number;
+  stuckX: number;
+  stuckZ: number;
+  rng: () => number;
+};
+
+export const PARTNER_NAME = 'Ash';
+
+export function createPartner(g: Game, me: number, you: number, seed = 11): Partner {
+  return { me, you, last: g.souls.map(() => 0), holdUntil: 0, jumpedAt: -9, stuck: 0, stuckX: 0, stuckZ: 0, rng: mulberry(seed * 6007 + 17) };
+}
+
+/** Which route step a soul is on, for the partner's own book keeping. */
+function partnerStep(g: Game, s: Soul, p: Partner) {
+  if (s.grounded && s.ground >= 0) {
+    const pl = g.level.platforms[s.ground];
+    if (pl.seq >= 0) p.last[s.idx] = pl.seq;
+  }
+  return p.last[s.idx];
+}
+
+/** Decides this frame's input for the partner soul. Never touches the soul it follows. */
+export function drivePartner(g: Game, p: Partner, dt: number): void {
+  const me = g.souls[p.me];
+  const you = g.souls[p.you];
+  if (!me || !you) return;
+  me.input = { ...idle };
+  if (g.time < 0 || me.burned >= 0 || g.won !== null || g.lost) return;
+  const myStep = partnerStep(g, me, p);
+  const yourStep = partnerStep(g, you, p);
+  const r = Math.max(1, Math.hypot(me.x, me.z));
+  const myA = arcOf(me);
+  const speed = Math.hypot(me.vx, me.vz);
+  const onward = me.vx * (me.z / r) - me.vz * (me.x / r);
+  const brake = (): Input => ({ side: onward > 0 ? -1 : 1, fwd: 0, jump: false, hold: false });
+  const apart = Math.hypot(me.x - you.x, me.y - you.y, me.z - you.z);
+  const route = g.level.route;
+  const goal = route[Math.min(route.length - 1, myStep + 1)];
+  if (!me.grounded) {
+    // hanging, you haul; in the air, steer for the landing spot of the next step
+    if (me.hanging) return;
+    const nq = pose(goal, g.time);
+    const land = nq.a - DIR * goal.span + DIR * (0.9 / r);
+    const ahead = angDiff(land, myA) * DIR * r;
+    const stop = (onward * onward) / (2 * 18);
+    const side: -1 | 0 | 1 = ahead > stop + 0.25 ? 1 : ahead < -0.25 || onward > 1.5 ? -1 : 0;
+    const fwd: -1 | 0 | 1 = r > goal.r0 + 1.4 ? 1 : r < goal.r0 + 0.8 ? -1 : 0;
+    me.input = { side, fwd, jump: false, hold: g.time < p.holdUntil };
+    return;
+  }
+  if (you.hanging) {
+    // haul: walk onwards and inwards, away from the rim
+    me.input = { side: 1, fwd: r > R_CORE + 1.0 ? 1 : 0, jump: false, hold: false };
+    return;
+  }
+  const here = g.level.platforms[me.ground];
+  const hq = pose(here, g.time);
+  // metres to the far edge of this ledge and back to its near edge (the floor goes all the way round)
+  const edge = here.kind === 'floor' ? 99 : angDiff(hq.a + DIR * here.span, myA) * DIR * r;
+  const edgeBack = here.kind === 'floor' ? 99 : angDiff(myA, hq.a - DIR * here.span) * DIR * r;
+  if (yourStep < myStep || (yourStep === myStep && !you.grounded && you.y < me.y - 1)) {
+    // you are behind or have fallen: stand, and walk back when the chain runs short
+    if (apart > CHAIN_L - 1.4 && edgeBack > 0.5) me.input = { side: -1, fwd: 0, jump: false, hold: false };
+    else if (here.kind === 'ice' && speed > 0.8) me.input = brake();
+    return;
+  }
+  if (yourStep === myStep) {
+    // the same ledge: keep a stride or two behind you, at your radius, and never jump
+    const yourA = arcOf(you);
+    const yourAhead = angDiff(yourA, myA) * DIR * r;
+    const yourR = Math.hypot(you.x, you.z);
+    const wantR = Math.min(here.r1 - 0.5, Math.max(here.r0 + 0.9, yourR));
+    const fwd: -1 | 0 | 1 = r > wantR + 0.35 ? 1 : r < wantR - 0.35 ? -1 : 0;
+    let side: -1 | 0 | 1 = 0;
+    if (yourAhead < 0.7 && edgeBack > 0.5) side = -1;
+    else if (yourAhead > 2.0 && edge > 0.5) side = 1;
+    if (here.kind === 'ice' && side === 0 && speed > 0.8) me.input = brake();
+    else me.input = { side, fwd, jump: false, hold: false };
+    unstick(g, me, p, dt);
+    return;
+  }
+  // you are ahead: climb to the next step, the way the shades do
+  const target = goal;
+  if (target.seq <= myStep) return;
+  const v0 = here.kind === 'spring' ? SPRING_V : JUMP_V;
+  const riseNow = Math.max(0, pose(target, g.time).y - me.y);
+  const airTime = (v0 + Math.sqrt(Math.max(0, v0 * v0 - 2 * GRAVITY * riseNow))) / GRAVITY;
+  const q = pose(target, target.kind === 'lift' || target.kind === 'swing' ? g.time + airTime : g.time);
+  const landing = q.a - DIR * target.span + DIR * ((target.kind === 'spring' ? 0.6 : 0.9) / r);
+  const dist = angDiff(landing, myA) * DIR * r;
+  const rise = q.y - me.y;
+  const wantR = target.r0 + 1.1;
+  const fwd: -1 | 0 | 1 = r > wantR + 0.25 ? 1 : r < wantR - 0.25 ? -1 : 0;
+  const air = dist - 0.9;
+  const canReach = rise <= (v0 > JUMP_V ? 4.3 : MAX_RISE + 0.05) && air <= reach(Math.max(0, rise), v0, RUN * me.pace) * (edge < 0.5 ? 0.95 : 0.78) && dist > -0.4;
+  // a crumbled ledge is not there to land on, and one you are standing on is not for two: wait at the edge
+  if (target.kind === 'crumble' && (crumbleState(g, target.id).phase !== 'none' || (you.grounded && you.ground === target.id))) {
+    me.input = { side: edge < 0.6 ? -1 : edge < 1.2 ? 0 : 1, fwd, jump: false, hold: false };
+    return;
+  }
+  const jump = canReach && (speed > 4.5 || dist < 0.6 || edge < 0.5) && (edge < 1.6 || dist < 2.2);
+  if (target.kind === 'lift' || target.kind === 'swing' || here.kind === 'lift' || here.kind === 'swing') {
+    const wait = !canReach && edge < 1.2;
+    me.input = { side: wait ? (edge > 0.4 ? 1 : edge < 0.15 ? -1 : 0) : 1, fwd, jump, hold: true };
+  } else {
+    let side: -1 | 0 | 1 = dist > 0.15 ? (edge < 0.45 && !jump ? 0 : 1) : dist < -0.3 ? -1 : 0;
+    if (here.kind === 'ice' && !jump && side === 1 && edge < 3.2 && speed > 2 && !canReach) side = -1;
+    me.input = { side, fwd, jump, hold: true };
+  }
+  if (jump && g.time - p.jumpedAt < 0.35) me.input.jump = false;
+  else if (jump) {
+    p.jumpedAt = g.time;
+    p.holdUntil = g.time + 0.3;
+  }
+  unstick(g, me, p, dt);
+}
+
+/** Pushing against the side of a slab without getting anywhere: a hop, and the air steering carries the soul over. */
+function unstick(g: Game, me: Soul, p: Partner, dt: number) {
+  const pushing = me.grounded && me.input.side !== 0 && !me.input.jump;
+  if (!pushing || Math.hypot(me.x - p.stuckX, me.z - p.stuckZ) > 0.3) {
+    p.stuck = 0;
+    p.stuckX = me.x;
+    p.stuckZ = me.z;
+  } else p.stuck += dt;
+  if (p.stuck > 0.7 && g.time - p.jumpedAt > 0.5) {
+    p.stuck = 0;
+    p.jumpedAt = g.time;
+    p.holdUntil = g.time + 0.25;
+    me.input.jump = true;
+    me.input.hold = true;
+  }
+}
+
 /** The tests' careful pair: two souls on one chain, climbed like a solo player, without pauses. */
 export function climb(mode: Mode, limit = 900, onStuck?: (g: Game, sh: Shade) => void) {
   const lv = buildLevel();

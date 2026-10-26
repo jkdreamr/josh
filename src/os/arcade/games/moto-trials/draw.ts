@@ -1,9 +1,9 @@
 // Canvas renderer for Moto Trials. Draws the world, bike, ghosts, particles and HUD.
-import { HEAD_R, TOP_SPEED, WHEEL_R, segActive, type PhysWorld, type Seg } from './physics.ts';
+import { CRUMBLE_DELAY, HEAD_R, TOP_SPEED, WHEEL_R, sawAt, segActive, type PhysWorld, type Seg } from './physics.ts';
 import type { Run } from './logic.ts';
 import type { Level, Theme } from './levels.ts';
 
-export type Cam = { x: number; y: number; scale: number };
+export type Cam = { x: number; y: number; scale: number; drop: number };
 
 export type Ghost = {
   x: number;
@@ -24,7 +24,7 @@ const FONT = '-apple-system, system-ui, sans-serif';
 const OUTLINE = 'rgba(16,14,18,0.85)';
 
 export function newCam(): Cam {
-  return { x: 0, y: 0, scale: 0 };
+  return { x: 0, y: 0, scale: 0, drop: 0 };
 }
 
 /** How the frame should look for this canvas size. The bike stays big. */
@@ -51,15 +51,19 @@ export function render(
   const th = level.theme;
   const fit = viewFit(w, h);
   const spd = Math.hypot(bike.v.x, bike.v.y);
-  const targetScale = fit.scale / (1 + Math.max(0, bike.v.x - 7) * 0.022);
+  const lookX = clamp(bike.v.x * 0.4, 0, 5.5) + 1.4;
+  // big air: zoom out and lead down so the landing stays in view
+  const air = !bike.fw.on && !bike.rw.on;
+  const drop = air ? clamp(bike.p.y - levelBaseY(level, bike.p.x + lookX + 3) - 2, 0, 9) : 0;
+  cam.drop = lerp(cam.drop, drop, Math.min(1, dt * 2));
+  const targetScale = fit.scale / (1 + Math.max(0, bike.v.x - 7) * 0.022) / (1 + cam.drop * 0.07);
   cam.scale = cam.scale ? lerp(cam.scale, targetScale, Math.min(1, dt * 3)) : targetScale;
   const scale = cam.scale;
 
   // camera: lookahead down the track, soft vertical follow, bike sits left of center
-  const lookX = clamp(bike.v.x * 0.4, 0, 5.5) + 1.4;
   const tx = bike.p.x + lookX;
   // on descents the camera lags above the dive line, so lead downward a little
-  const ty = bike.p.y + 1.5 + clamp(-bike.v.y * 0.22, 0, 2.4);
+  const ty = bike.p.y + 1.5 + clamp(-bike.v.y * 0.22, 0, 2.4) - cam.drop * 0.35;
   cam.x = cam.x ? lerp(cam.x, tx, Math.min(1, dt * 5)) : tx;
   cam.y = cam.y ? lerp(cam.y, ty, Math.min(1, dt * 2.5)) : ty;
   const shake = run.shake;
@@ -284,7 +288,7 @@ function groundRuns(world: PhysWorld, xMin: number, xMax: number): Seg[][] {
   const runs: Seg[][] = [];
   let cur: Seg[] = [];
   for (const s of world.segs) {
-    if (s.kind === 'loop' || Math.max(s.ax, s.bx) < xMin || Math.min(s.ax, s.bx) > xMax) continue;
+    if (s.kind === 'loop' || s.kind === 'plank' || Math.max(s.ax, s.bx) < xMin || Math.min(s.ax, s.bx) > xMax) continue;
     const prev = cur[cur.length - 1];
     if (prev && (Math.abs(s.ax - prev.bx) > 0.01 || Math.abs(s.ay - prev.by) > 0.01)) {
       runs.push(cur);
@@ -424,6 +428,8 @@ function terrain(c: CanvasRenderingContext2D, h: number, world: PhysWorld, level
     c.stroke();
   }
 
+  planks(c, world, th, sx, sy, scale, xMin, xMax);
+
   // loops: a thick banded ring on supports
   for (const l of world.loops) {
     const cx = sx(l.cx);
@@ -559,11 +565,98 @@ function props(c: CanvasRenderingContext2D, level: Level, sx: (x: number) => num
   }
 }
 
+/** Crumbling bridge planks: rope rails, a shiver once ridden, then a tumbling fall. */
+function planks(c: CanvasRenderingContext2D, world: PhysWorld, th: Theme, sx: (x: number) => number, sy: (y: number) => number, scale: number, xMin: number, xMax: number) {
+  const list = world.segs.filter((s) => s.crumble !== undefined && Math.max(s.ax, s.bx) > xMin - 2 && Math.min(s.ax, s.bx) < xMax + 2);
+  if (!list.length) return;
+  // rope along the deck, slack between the planks still standing
+  c.strokeStyle = 'rgba(60,40,24,0.75)';
+  c.lineWidth = Math.max(1, 0.05 * scale);
+  c.beginPath();
+  for (const s of list) {
+    if (!segActive(world, s)) continue;
+    const mx = (s.ax + s.bx) / 2;
+    const my = (s.ay + s.by) / 2;
+    c.moveTo(sx(s.ax), sy(s.ay + 0.5));
+    c.quadraticCurveTo(sx(mx), sy(my + 0.38), sx(s.bx), sy(s.by + 0.5));
+  }
+  c.stroke();
+  for (const s of list) {
+    const touched = world.crumbles[s.crumble!];
+    const age = touched < 0 ? -1 : world.clock - touched;
+    const fall = age - CRUMBLE_DELAY;
+    if (fall > 1.4) continue;
+    const drop = fall > 0 ? 9 * fall * fall : 0;
+    const shiver = age >= 0 && fall <= 0 ? Math.sin(world.clock * 90 + s.ax) * 0.04 : 0;
+    const spin = fall > 0 ? fall * (s.crumble! % 2 ? 2.2 : -1.8) : 0;
+    c.save();
+    c.globalAlpha = fall > 0 ? Math.max(0, 1 - fall / 1.4) : 1;
+    c.translate(sx((s.ax + s.bx) / 2), sy((s.ay + s.by) / 2 - drop + shiver));
+    c.rotate(-Math.atan2(s.by - s.ay, s.bx - s.ax) + spin);
+    const w = s.len * scale - Math.max(1, 0.06 * scale);
+    const hh = 0.24 * scale;
+    c.fillStyle = th.wood;
+    c.strokeStyle = 'rgba(0,0,0,0.35)';
+    c.lineWidth = Math.max(1, 0.04 * scale);
+    c.beginPath();
+    c.roundRect(-w / 2, 0, w, hh, Math.max(1, 0.04 * scale));
+    c.fill();
+    c.stroke();
+    c.fillStyle = 'rgba(0,0,0,0.4)';
+    for (const nx of [-w / 2 + 0.16 * scale, w / 2 - 0.16 * scale]) {
+      c.beginPath();
+      c.arc(nx, hh * 0.45, Math.max(1, 0.035 * scale), 0, Math.PI * 2);
+      c.fill();
+    }
+    c.restore();
+  }
+  c.globalAlpha = 1;
+}
+
+/** A red TNT barrel with hoops and a stencil. */
+function tntBarrel(c: CanvasRenderingContext2D, cx: number, cy: number, r: number, scale: number) {
+  const w = r * 1.5;
+  const h = r * 2;
+  c.fillStyle = '#c8322a';
+  c.strokeStyle = OUTLINE;
+  c.lineWidth = Math.max(1, 0.04 * scale);
+  c.beginPath();
+  c.roundRect(cx - w / 2, cy - h / 2, w, h, r * 0.25);
+  c.fill();
+  c.stroke();
+  c.fillStyle = '#4a1e1a';
+  for (const k of [-0.36, 0.36]) c.fillRect(cx - w / 2, cy + k * h - r * 0.07, w, r * 0.14);
+  c.fillStyle = '#ffe9c8';
+  c.font = `800 ${Math.max(6, r * 0.62)}px ${FONT}`;
+  c.textAlign = 'center';
+  c.textBaseline = 'middle';
+  c.fillText('TNT', cx, cy + r * 0.02);
+  c.textBaseline = 'alphabetic';
+}
+
 function saws(c: CanvasRenderingContext2D, world: PhysWorld, run: Run, sx: (x: number) => number, sy: (y: number) => number, scale: number) {
   for (const s of world.saws) {
-    const cx = sx(s.x);
-    const cy = sy(s.y);
+    const at = sawAt(s, world.clock);
+    if (s.kind === 'tnt') {
+      tntBarrel(c, sx(at.x), sy(at.y), s.r * scale, scale);
+      continue;
+    }
+    if (s.kind === 'mine') {
+      mine(c, sx(at.x), sy(at.y), s.r * scale, scale, run.t + s.x);
+      continue;
+    }
+    const cx = sx(at.x);
+    const cy = sy(at.y);
     const r = s.r * scale;
+    if (s.period) {
+      // the rail a moving saw rides on
+      c.strokeStyle = 'rgba(0,0,0,0.35)';
+      c.lineWidth = Math.max(2, 0.12 * scale);
+      c.beginPath();
+      c.moveTo(sx(s.x - (s.mx ?? 0)), sy(s.y - (s.my ?? 0)) + (s.my ? r * 1.2 : 0));
+      c.lineTo(sx(s.x + (s.mx ?? 0)), sy(s.y + (s.my ?? 0)) - (s.my ? r * 1.2 : 0));
+      c.stroke();
+    }
     // motion blur halo
     c.strokeStyle = 'rgba(220,220,230,0.28)';
     c.lineWidth = Math.max(2, 0.16 * scale);
@@ -602,6 +695,36 @@ function saws(c: CanvasRenderingContext2D, world: PhysWorld, run: Run, sx: (x: n
     c.moveTo(cx, cy - r * 1.1);
     c.lineTo(cx, cy - r * 1.1 - 2.2 * scale);
     c.stroke();
+  }
+}
+
+/** A round mine sitting on the ground, with a blinking light on top. */
+function mine(c: CanvasRenderingContext2D, cx: number, cy: number, r: number, scale: number, t: number) {
+  c.fillStyle = '#2b2b33';
+  c.strokeStyle = OUTLINE;
+  c.lineWidth = Math.max(1, 0.04 * scale);
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + Math.PI / 6;
+    c.beginPath();
+    c.arc(cx + Math.cos(a) * r * 0.95, cy + Math.sin(a) * r * 0.95, r * 0.2, 0, Math.PI * 2);
+    c.fill();
+  }
+  c.beginPath();
+  c.arc(cx, cy, r, 0, Math.PI * 2);
+  c.fill();
+  c.stroke();
+  c.fillStyle = '#d9473a';
+  c.fillRect(cx - r, cy - r * 0.18, r * 2, r * 0.36);
+  const on = Math.sin(t * 7) > 0;
+  c.fillStyle = on ? '#ff5a4a' : '#7a2a24';
+  c.beginPath();
+  c.arc(cx, cy - r * 0.95, r * 0.22, 0, Math.PI * 2);
+  c.fill();
+  if (on) {
+    c.fillStyle = 'rgba(255,90,74,0.25)';
+    c.beginPath();
+    c.arc(cx, cy - r * 0.95, r * 0.6, 0, Math.PI * 2);
+    c.fill();
   }
 }
 
@@ -668,8 +791,8 @@ function particles(c: CanvasRenderingContext2D, run: Run, sx: (x: number) => num
       c.fillRect(-0.09 * scale, -0.05 * scale, 0.18 * scale, 0.1 * scale);
       c.restore();
     } else {
-      c.fillStyle = p.kind === 'debris' ? '#3a3230' : th.dust;
-      const r = (p.kind === 'dust' ? 0.09 + (1 - k) * 0.16 : 0.1) * scale;
+      c.fillStyle = p.kind === 'fire' ? (p.c ?? '#ff8a2a') : p.kind === 'debris' ? '#3a3230' : th.dust;
+      const r = (p.kind === 'dust' ? 0.09 + (1 - k) * 0.16 : p.kind === 'fire' ? 0.14 + (1 - k) * 0.3 : 0.1) * scale;
       c.beginPath();
       c.arc(px, py, Math.max(1, r), 0, Math.PI * 2);
       c.fill();

@@ -73,6 +73,11 @@
 }
 
 
+/* world picker: five short segments above the level strip */
+.g-moto-trials .g-moto-trials-worlds {
+  align-self: center;
+}
+
 /* the strip's field wrapper must not claim the buttons' intrinsic width either */
 .g-moto-trials .arcade-field:has(.g-moto-trials-strip) {
   min-width: 0;
@@ -104,8 +109,12 @@
 /* touch: finger sized buttons and readable text, grown by --g-moto-trials-u (1 / the phone or iPad frame scale) */
 @media (pointer: coarse) {
   .g-moto-trials .g-moto-trials-pick {
-    width: calc(40px * var(--g-moto-trials-u, 1));
-    height: calc(40px * var(--g-moto-trials-u, 1));
+    /* six buttons share a narrow phone card, never under 40px */
+    flex: 1 1 0;
+    width: auto;
+    min-width: calc(40px * var(--g-moto-trials-u, 1));
+    max-width: calc(44px * var(--g-moto-trials-u, 1));
+    height: calc(44px * var(--g-moto-trials-u, 1));
     border-radius: calc(9px * var(--g-moto-trials-u, 1));
     font-size: calc(13px * var(--g-moto-trials-u, 1));
   }
@@ -121,7 +130,8 @@
 /* short cards: drop the extras so Play stays in view */
 @container arcade-ov (max-height: 340px) {
   .g-moto-trials .g-moto-trials-info,
-  .g-moto-trials .arcade-field:has(.g-moto-trials-strip) > span {
+  .g-moto-trials .arcade-field:has(.g-moto-trials-strip) > span,
+  .g-moto-trials .arcade-field:has(.g-moto-trials-worlds) > span {
     display: none;
   }
 }
