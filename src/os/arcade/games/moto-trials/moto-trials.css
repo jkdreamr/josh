@@ -164,6 +164,13 @@
     border-radius: calc(10px * var(--g-moto-trials-u, 1));
     font-size: calc(14px * var(--g-moto-trials-u, 1));
   }
+  .g-moto-trials.arcade-shell .arcade-card p {
+    font-size: calc(13px * var(--g-moto-trials-u, 1));
+  }
+  .g-moto-trials.arcade-shell .arcade-card small,
+  .g-moto-trials.arcade-shell .arcade-field > span {
+    font-size: calc(12px * var(--g-moto-trials-u, 1));
+  }
 }
 
 /*
@@ -193,7 +200,7 @@
     display: block;
     flex: 0 1 auto;
     margin: 0;
-    font-size: 13px;
+    font-size: calc(13px * var(--g-moto-trials-u, 1));
     line-height: 1.35;
     color: rgba(245, 245, 247, 0.85);
   }
