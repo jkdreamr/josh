@@ -95,7 +95,7 @@ function waterStrip(THREE: Three, t: Track, s0: number, s1: number, a: (s: numbe
  * A tiling normal map of small wind ripples over a longer swell, made once: the height field is a few octaves of
  * wrapping value noise and some wave trains that tile, and the normals come from its slopes.
  */
-function rippleNormals(THREE: Three) {
+export function rippleNormals(THREE: Three) {
   const N = 256;
   const h = new Float32Array(N * N);
   const rnd = scatter(41);

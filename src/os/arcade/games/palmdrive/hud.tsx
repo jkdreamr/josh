@@ -1,8 +1,29 @@
-// Pictures and sheets for Palm Drive's interface: item and hat icons, the How to Play guide and the Garage.
-import { useEffect, useRef, type ReactNode } from 'react';
+// Pictures and sheets for Palm Drive's interface: item and garage icons, the How to Play guide and the Garage.
+import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { HATS, type Hat, type Item } from './logic';
-import { HAT_NAMES, HAT_PRICES, PAINTS, choosePaint, chooseHat, paintColor, type Garage } from './garage';
+import {
+  FINISH_NAMES,
+  FLAMES,
+  FLAME_COLORS,
+  FLAME_NAMES,
+  FLAME_PRICES,
+  HAT_NAMES,
+  HAT_PRICES,
+  PAINTS,
+  WHEELS,
+  WHEEL_NAMES,
+  WHEEL_PRICES,
+  chooseFlame,
+  chooseHat,
+  choosePaint,
+  chooseWheel,
+  paintOf,
+  type Flame,
+  type Garage,
+  type PaintId,
+  type Wheel,
+} from './garage';
 
 const Svg = ({ children, size = 40 }: { children: ReactNode; size?: number }) => (
   <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
@@ -344,6 +365,228 @@ function HatShape({ hat, paint }: { hat: Hat; paint: string }) {
       );
     case 'claw':
       return <path d="M8.5 13C6 10 6.5 6 8 4.5c0 3 1.5 5 3 6.5zM15.5 13c2.5-3 2-7 .5-8.5 0 3-1.5 5-3 6.5z" fill="#c62828" stroke="#7a1512" strokeWidth="0.6" strokeLinejoin="round" />;
+    case 'grad':
+      return (
+        <>
+          <path d="M7.2 9.5v3a4.8 1.8 0 0 0 9.6 0v-3z" fill="#1b1c22" />
+          <path d="M2.5 9l9.5-3.2 9.5 3.2-9.5 3.2z" fill="#26272e" stroke="#000" strokeWidth="0.5" strokeLinejoin="round" />
+          <circle cx="12" cy="9" r="0.9" fill="#8c1515" />
+          <path d="M12 9l7 1.2v4.3" fill="none" stroke="#f7c948" strokeWidth="0.8" />
+          <rect x="18.2" y="14" width="1.6" height="2.6" rx="0.6" fill="#f7c948" />
+        </>
+      );
+    case 'palm':
+      return (
+        <>
+          <path d="M11.4 13.5c.2-3 .5-5.5 1.6-8.3l1 .3c-1 2.7-1.2 5.2-1.3 8z" fill="#8a5a2e" />
+          <path d="M13.5 5c-2-2.4-5-2.6-7.5-1 2.6 0 4.6.6 7.5 1zM13.5 5c2.2-2.2 5.2-2.2 7.4-.4-2.6-.2-4.6.2-7.4.4zM13.5 5c-2.6-.4-5 .8-6.3 3.6 2-1.6 4-2.4 6.3-3.6zM13.5 5c2.6-.2 4.8 1.2 5.8 4-1.8-1.8-3.8-2.8-5.8-4zM13.5 5c.2-1.6-.6-3-1.8-4 .4 1.4.8 2.6 1.8 4z" fill="#2f8a3c" stroke="#1b5524" strokeWidth="0.5" strokeLinejoin="round" />
+          <circle cx="12.6" cy="6.3" r="0.9" fill="#6b4220" />
+          <circle cx="14.2" cy="6.1" r="0.9" fill="#6b4220" />
+        </>
+      );
+    case 'bike':
+      return (
+        <>
+          <path d="M6 13.4a6.2 6 0 0 1 12.4-.6l1.6 1.2H6z" fill={paint} stroke="rgba(0,0,0,0.35)" strokeLinejoin="round" />
+          <path d="M8.6 9.6l1 3.2M12 8.3v4.5M15.4 9.4l-.8 3.4" stroke="#1b1c22" strokeWidth="1.2" strokeLinecap="round" />
+          <path d="M17.8 12.6l3.2.6-.4 1-3-.4z" fill="#1b1c22" />
+        </>
+      );
+    case 'band':
+      return (
+        <>
+          <path d="M3.5 14l2.5-2.4h12l2.5 2.4z" fill="#f6f6f8" stroke="#9aa" strokeWidth="0.6" strokeLinejoin="round" />
+          <path d="M7 11.8l1-6.2h8l1 6.2z" fill="#f6f6f8" stroke="#9aa" strokeWidth="0.6" strokeLinejoin="round" />
+          <rect x="7.2" y="9.6" width="9.6" height="2" fill="#8c1515" />
+          <circle cx="9.6" cy="7.4" r="1" fill="#f7c948" />
+          <circle cx="13.6" cy="7" r="1" fill="#2f8a3c" />
+          <circle cx="11.8" cy="8.6" r="0.8" fill="#1e88e5" />
+          <circle cx="15.2" cy="8.6" r="0.7" fill="#8c1515" />
+        </>
+      );
+    case 'boater':
+      return (
+        <>
+          <ellipse cx="12" cy="12.6" rx="9.5" ry="1.6" fill="#e8cf86" stroke="#a88a3e" strokeWidth="0.6" />
+          <rect x="7.3" y="6.6" width="9.4" height="6" rx="0.6" fill="#e8cf86" stroke="#a88a3e" strokeWidth="0.6" />
+          <rect x="7.3" y="9.6" width="9.4" height="1.9" fill="#8c1515" />
+        </>
+      );
+    case 'golf':
+      return (
+        <>
+          <path d="M7 12.6a5 1.6 0 0 1 10 0" fill="none" stroke="#2f8a3c" strokeWidth="1.6" />
+          <path d="M14.5 11.8h6.5l-1 1.8h-5.5z" fill="#2f8a3c" stroke="#1b5524" strokeWidth="0.5" strokeLinejoin="round" />
+          <path d="M11.3 8.4h1.4l-.4 3.4h-.6z" fill="#f6f6f8" stroke="#9aa" strokeWidth="0.4" />
+          <circle cx="12" cy="5.6" r="2.8" fill="#fff" stroke="#9aa" strokeWidth="0.6" />
+          <circle cx="11" cy="4.8" r="0.35" fill="#bcc" />
+          <circle cx="12.8" cy="5" r="0.35" fill="#bcc" />
+          <circle cx="12" cy="6.4" r="0.35" fill="#bcc" />
+        </>
+      );
+    case 'prop':
+      return (
+        <>
+          <path d="M6.2 13.2a5.8 5.4 0 0 1 11.6 0z" fill={paint} stroke="rgba(0,0,0,0.3)" />
+          <path d="M10.2 8a5.8 5.4 0 0 1 3.6 0l.6 5.2h-4.8z" fill="#f7c948" />
+          <rect x="11.5" y="4.6" width="1" height="3.4" fill="#1b1c22" />
+          <ellipse cx="8.6" cy="4.4" rx="3.4" ry="1" fill="#c62828" />
+          <ellipse cx="15.4" cy="4.4" rx="3.4" ry="1" fill="#f7c948" />
+        </>
+      );
+    case 'laurel':
+      return (
+        <>
+          {[0, 1, 2, 3, 4].map((i) => {
+            const a = -0.15 + i * 0.32;
+            const x = 12 - Math.cos(a) * 6;
+            const y = 15 - Math.sin(a) * 5;
+            return (
+              <g key={i}>
+                <ellipse cx={x} cy={y} rx="1.9" ry="0.9" transform={`rotate(${-70 + i * 18} ${x} ${y})`} fill="#f7c948" stroke="#b9860f" strokeWidth="0.4" />
+                <ellipse cx={24 - x} cy={y} rx="1.9" ry="0.9" transform={`rotate(${70 - i * 18} ${24 - x} ${y})`} fill="#f7c948" stroke="#b9860f" strokeWidth="0.4" />
+              </g>
+            );
+          })}
+          <circle cx="12" cy="10.2" r="0.9" fill="#8c1515" />
+        </>
+      );
+  }
+}
+
+/** A wheel drawn on its own, centred on (0, 0) with radius r. */
+function WheelShape({ wheel, r }: { wheel: Wheel; r: number }) {
+  switch (wheel) {
+    case 'classic':
+      return (
+        <>
+          <circle r={r} fill="#1b1c22" />
+          <circle r={r * 0.36} fill="#ddd" />
+        </>
+      );
+    case 'gold':
+      return (
+        <>
+          <circle r={r} fill="#1b1c22" />
+          <circle r={r * 0.66} fill="#f7c948" stroke="#b9860f" strokeWidth={r * 0.06} />
+          <rect x={-r * 0.08} y={-r * 0.55} width={r * 0.16} height={r * 1.1} fill="#1b1c22" />
+        </>
+      );
+    case 'whitewall':
+      return (
+        <>
+          <circle r={r} fill="#1b1c22" />
+          <circle r={r * 0.68} fill="none" stroke="#f6f6f8" strokeWidth={r * 0.18} />
+          <circle r={r * 0.42} fill="#c9d1d8" stroke="#8a949c" strokeWidth={r * 0.05} />
+        </>
+      );
+    case 'chunky':
+      return (
+        <>
+          <circle r={r * 1.08} fill="#1b1c22" />
+          <circle r={r * 1.0} fill="none" stroke="#3a3b44" strokeWidth={r * 0.2} strokeDasharray={`${r * 0.36} ${r * 0.28}`} />
+          <circle r={r * 0.5} fill="#e0c49a" stroke="#9c7b58" strokeWidth={r * 0.06} />
+        </>
+      );
+    case 'spoke':
+      return (
+        <>
+          <circle r={r * 0.9} fill="none" stroke="#1b1c22" strokeWidth={r * 0.22} />
+          <circle r={r * 0.72} fill="none" stroke="#c9d1d8" strokeWidth={r * 0.08} />
+          {[0, 30, 60, 90, 120, 150].map((a) => (
+            <line key={a} x1={-r * 0.72} x2={r * 0.72} transform={`rotate(${a})`} stroke="#c9d1d8" strokeWidth={r * 0.05} />
+          ))}
+          <circle r={r * 0.16} fill="#c9d1d8" />
+        </>
+      );
+    case 'cardinal':
+      return (
+        <>
+          <circle r={r} fill="#1b1c22" />
+          <circle r={r * 0.74} fill="#8c1515" stroke="#f6f6f8" strokeWidth={r * 0.06} />
+          <text y={r * 0.36} textAnchor="middle" fontSize={r * 1.05} fontWeight="700" fontFamily="Georgia, serif" fill="#f6f6f8">
+            S
+          </text>
+        </>
+      );
+    case 'neon':
+      return (
+        <>
+          <circle r={r} fill="#1b1c22" />
+          <circle r={r * 0.6} fill="none" stroke="#3cf2ff" strokeWidth={r * 0.22} style={{ filter: 'drop-shadow(0 0 1.5px #3cf2ff)' }} />
+          <rect x={-r * 0.08} y={-r * 0.55} width={r * 0.16} height={r * 1.1} fill="#3cf2ff" />
+        </>
+      );
+  }
+}
+
+export const WheelIcon = ({ wheel, size = 34 }: { wheel: Wheel; size?: number }) => (
+  <Svg size={size}>
+    <g transform="translate(12 12)">
+      <WheelShape wheel={wheel} r={8.6} />
+    </g>
+  </Svg>
+);
+
+/** A boost trail's fill: its colour, a gradient for rainbow, or a gradient between its two colours. */
+function useFlameFill(flame: Flame): [string, ReactNode] {
+  const id = useId().replace(/:/g, '');
+  const [a, b] = FLAME_COLORS[flame];
+  if (flame === 'rainbow') {
+    return [
+      `url(#${id})`,
+      <linearGradient key="g" id={id} x1="0" y1="1" x2="0" y2="0">
+        {['#ff5a5a', '#ffb347', '#ffe14d', '#5ad86f', '#4fb3ff', '#b57bff'].map((c, i) => (
+          <stop key={c} offset={i / 5} stopColor={c} />
+        ))}
+      </linearGradient>,
+    ];
+  }
+  if (!b) return [a, null];
+  return [
+    `url(#${id})`,
+    <linearGradient key="g" id={id} x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0.45" stopColor={a} />
+      <stop offset="0.55" stopColor={b} />
+    </linearGradient>,
+  ];
+}
+
+/** A boost trail: a flame in its colours, with a hot core (and sparks for gold). */
+export function FlameIcon({ flame, size = 34 }: { flame: Flame; size?: number }) {
+  const [fill, def] = useFlameFill(flame);
+  return (
+    <Svg size={size}>
+      {def && <defs>{def}</defs>}
+      <path d="M12 2c.8 3.6 6.5 6 6.5 12.2a6.5 6.5 0 0 1-13 0c0-3 1.7-5.2 3-7 .1 2.2.9 3.6 2.2 3.8C10 7.6 10.6 4.6 12 2z" fill={fill} stroke="rgba(0,0,0,0.3)" strokeWidth="0.6" strokeLinejoin="round" />
+      <path d="M12 11.5c.6 1.8 3 3 3 5.2a3 3 0 0 1-6 0c0-1.7 1.4-2.8 3-5.2z" fill={flame === 'stanford' ? '#fff' : 'rgba(255,255,255,0.65)'} />
+      {flame === 'gold' && (
+        <>
+          <path d="M19.5 4.5l.6 1.4 1.4.6-1.4.6-.6 1.4-.6-1.4-1.4-.6 1.4-.6z" fill="#ffd23f" />
+          <path d="M4.6 6l.4 1 1 .4-1 .4-.4 1-.4-1-1-.4 1-.4z" fill="#ffd23f" />
+        </>
+      )}
+    </Svg>
+  );
+}
+
+/** A paint as a CSS background: its colour, with a sheen for metal and pearl, split for two-tone, striped, or in flames. */
+export function paintFill(id: PaintId) {
+  const p = paintOf(id);
+  const trim = p.trim ?? p.color;
+  switch (p.finish) {
+    case 'metal':
+      return `radial-gradient(circle at 32% 28%, rgba(255,255,255,0.85) 0 8%, rgba(255,255,255,0.25) 22%, transparent 45%), linear-gradient(160deg, ${p.color} 40%, rgba(0,0,0,0.35)), ${p.color}`;
+    case 'pearl':
+      return `radial-gradient(circle at 30% 26%, rgba(255,255,255,0.9) 0 7%, transparent 30%), linear-gradient(135deg, ${p.color} 25%, ${trim} 60%, ${p.color} 95%)`;
+    case 'duo':
+      return `linear-gradient(135deg, ${p.color} 50%, ${trim} 50%)`;
+    case 'stripe':
+      return `linear-gradient(90deg, ${p.color} 26%, ${trim} 26% 42%, ${p.color} 42% 58%, ${trim} 58% 74%, ${p.color} 74%)`;
+    case 'flames':
+      return `radial-gradient(ellipse at 20% 100%, #ffe14d 0 18%, #ff8a1a 34%, #d6201c 48%, transparent 62%), ${p.color}`;
+    default:
+      return p.color;
   }
 }
 
@@ -354,22 +597,48 @@ export const HatIcon = ({ hat, paint = '#e53935', size = 34 }: { hat: Hat; paint
   </Svg>
 );
 
-/** Your kart as the Garage shows it: paint and hat. */
-export function KartPreview({ paint, hat }: { paint: string; hat: Hat }) {
+/** Your kart as the Garage shows it: paint (and its finish), hat, wheels and the boost trail out the back. */
+export function KartPreview({ paint: id, hat, wheel, flame }: { paint: PaintId; hat: Hat; wheel: Wheel; flame: Flame }) {
+  const uid = useId().replace(/:/g, '');
+  const p = paintOf(id);
+  const trim = p.trim ?? p.color;
+  const [fire, fireDef] = useFlameFill(flame);
+  const body = p.finish === 'metal' || p.finish === 'pearl' ? `url(#${uid}b)` : p.color;
   return (
-    <svg viewBox="0 -8 64 48" width="168" height="126" aria-hidden="true">
+    <svg viewBox="-6 -8 70 48" width="184" height="126" aria-hidden="true">
+      <defs>
+        {fireDef}
+        <linearGradient id={`${uid}b`} x1="0" y1="0" x2={p.finish === 'pearl' ? '1' : '0'} y2="1">
+          <stop offset="0" stopColor={p.finish === 'pearl' ? p.color : '#fff'} stopOpacity={p.finish === 'pearl' ? 1 : 0.9} />
+          <stop offset="0.35" stopColor={p.finish === 'pearl' ? trim : p.color} />
+          <stop offset="1" stopColor={p.finish === 'pearl' ? p.color : p.color} />
+        </linearGradient>
+        <clipPath id={`${uid}c`}>
+          <path d="M8 29h48l-3-6H35l-3-5h-9l-3 5H11z" />
+        </clipPath>
+      </defs>
       <ellipse cx="32" cy="36" rx="25" ry="3" fill="rgba(0,0,0,0.25)" />
-      <path d="M8 29h48l-3-6H35l-3-5h-9l-3 5H11z" fill={paint} stroke="rgba(0,0,0,0.35)" strokeLinejoin="round" />
+      {/* the boost trail out of the exhaust */}
+      <path d="M8.5 24.5c-4-1.6-9-1-13.5 1.5 4.5 2.5 9.5 3.1 13.5 1.5z" fill={fire} stroke="rgba(0,0,0,0.2)" strokeWidth="0.5" />
+      <path d="M8.5 25c-2-.6-4.4-.4-6.5.75 2.1 1.15 4.5 1.35 6.5.75z" fill={flame === 'stanford' ? '#fff' : 'rgba(255,255,255,0.7)'} />
+      <path d="M8 29h48l-3-6H35l-3-5h-9l-3 5H11z" fill={body} stroke="rgba(0,0,0,0.35)" strokeLinejoin="round" />
+      <g clipPath={`url(#${uid}c)`}>
+        {p.finish === 'duo' && <path d="M35 18h30v12H38z" fill={trim} />}
+        {p.finish === 'stripe' && <rect x="0" y="22.2" width="64" height="2" fill={trim} />}
+        {p.finish === 'flames' && <path d="M56 29c-6-1-14-1-20-3 5 .2 9-.4 12-1.4-4 .2-7-.2-10-1 4-.4 8-1 11-2.6 2 1.6 4.5 4 7 8z" fill="#ff8a1a" stroke="#ffe14d" strokeWidth="0.6" />}
+      </g>
       <rect x="22" y="15" width="7" height="9" rx="2" fill="#1b1c22" />
       <circle cx="26" cy="12" r="5" fill="#f6f6f8" stroke="rgba(0,0,0,0.25)" />
       {/* the hats are drawn for a head at (12, 17); this one is at (26, 12) */}
       <g transform="translate(14 -5)">
-        <HatShape hat={hat} paint={paint} />
+        <HatShape hat={hat} paint={p.color} />
       </g>
-      <circle cx="16" cy="30" r="5.5" fill="#1b1c22" />
-      <circle cx="16" cy="30" r="2" fill="#ddd" />
-      <circle cx="48" cy="30" r="5.5" fill="#1b1c22" />
-      <circle cx="48" cy="30" r="2" fill="#ddd" />
+      <g transform="translate(16 30)">
+        <WheelShape wheel={wheel} r={5.5} />
+      </g>
+      <g transform="translate(48 30)">
+        <WheelShape wheel={wheel} r={5.5} />
+      </g>
     </svg>
   );
 }
@@ -652,41 +921,95 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
       </section>
       <section>
         <h3>Your garage</h3>
-        <p>Coins you pick up (and steal) go in your bank, plus a bonus for a podium finish. Spend them in the Garage on new paint and hats. Online, everyone sees your kart.</p>
+        <p>Coins you pick up (and steal) go in your bank, plus a bonus for a podium finish. Spend them in the Garage on paint, hats, wheels and boost trails: just for show, they never change how you drive. Online, everyone sees your kart (and on Redwood Slough, your shell).</p>
       </section>
     </Sheet>
   );
 }
 
+/** One shelf of the Garage: a button for each thing on it, worn, owned or with its price. */
+function Shelf<T extends string>(props: {
+  title: string;
+  items: readonly T[];
+  on: T;
+  owned: readonly T[];
+  name: (id: T) => string;
+  price: (id: T) => number;
+  pick: (id: T) => Garage | null;
+  icon: (id: T) => ReactNode;
+  onChange: (g: Garage) => void;
+}) {
+  return (
+    <section>
+      <h3>
+        {props.title}
+        <span className="g-palmdrive-worn">{props.name(props.on)}</span>
+      </h3>
+      <div className="g-palmdrive-hats">
+        {props.items.map((id) => {
+          const owned = props.owned.includes(id);
+          const next = props.pick(id);
+          return (
+            <button
+              key={id}
+              type="button"
+              className={`g-palmdrive-hat${props.on === id ? ' is-on' : ''}`}
+              disabled={!next}
+              aria-pressed={props.on === id}
+              aria-label={owned ? props.name(id) : `Buy ${props.name(id)} for ${props.price(id)} coins`}
+              onClick={() => next && props.onChange(next)}
+            >
+              {props.icon(id)}
+              <span>{props.name(id)}</span>
+              {!owned && (
+                <small>
+                  <CoinIcon size={11} />
+                  {props.price(id)}
+                </small>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export function GarageSheet({ root, garage, onChange, onClose }: { root: HTMLElement | null; garage: Garage; onChange: (g: Garage) => void; onClose: () => void }) {
-  const paint = paintColor(garage.paint);
+  const worn = paintOf(garage.paint);
   return (
     <Sheet root={root} title="Garage" onClose={onClose}>
       <div className="g-palmdrive-garage-top">
-        <KartPreview paint={paint} hat={garage.hat} />
+        <KartPreview paint={garage.paint} hat={garage.hat} wheel={garage.wheel} flame={garage.flame} />
         <div className="g-palmdrive-bank" aria-label={`${garage.bank} coins in your bank`}>
           <CoinIcon size={22} />
           <b>{garage.bank}</b>
           <small>coins to spend</small>
         </div>
       </div>
+      <p className="g-palmdrive-garage-note">Just for show: nothing here changes how a kart drives. On Redwood Slough your shell wears it too.</p>
       <section>
-        <h3>Paint</h3>
+        <h3>
+          Paint
+          <span className="g-palmdrive-worn">{worn.name}</span>
+        </h3>
         <div className="g-palmdrive-swatches">
           {PAINTS.map((p) => {
             const owned = garage.paints.includes(p.id);
             const next = choosePaint(garage, p.id);
+            const label = `${p.name} paint${'finish' in p ? `, ${FINISH_NAMES[p.finish]}` : ''}`;
             return (
               <button
                 key={p.id}
                 type="button"
                 className={`g-palmdrive-swatch${garage.paint === p.id ? ' is-on' : ''}`}
                 disabled={!next}
+                title={p.name}
                 aria-pressed={garage.paint === p.id}
-                aria-label={owned ? `${p.id} paint` : `Buy ${p.id} paint for ${p.price} coins`}
+                aria-label={owned ? label : `Buy ${label} for ${p.price} coins`}
                 onClick={() => next && onChange(next)}
               >
-                <i style={{ background: p.color }} />
+                <i style={{ background: paintFill(p.id) }} />
                 {!owned && (
                   <small>
                     <CoinIcon size={11} />
@@ -698,35 +1021,39 @@ export function GarageSheet({ root, garage, onChange, onClose }: { root: HTMLEle
           })}
         </div>
       </section>
-      <section>
-        <h3>Hats</h3>
-        <div className="g-palmdrive-hats">
-          {HATS.map((h) => {
-            const owned = garage.hats.includes(h);
-            const next = chooseHat(garage, h);
-            return (
-              <button
-                key={h}
-                type="button"
-                className={`g-palmdrive-hat${garage.hat === h ? ' is-on' : ''}`}
-                disabled={!next}
-                aria-pressed={garage.hat === h}
-                aria-label={owned ? HAT_NAMES[h] : `Buy the ${HAT_NAMES[h]} for ${HAT_PRICES[h]} coins`}
-                onClick={() => next && onChange(next)}
-              >
-                <HatIcon hat={h} paint={paint} />
-                <span>{HAT_NAMES[h]}</span>
-                {!owned && (
-                  <small>
-                    <CoinIcon size={11} />
-                    {HAT_PRICES[h]}
-                  </small>
-                )}
-              </button>
-            );
-          })}
-        </div>
-      </section>
+      <Shelf
+        title="Hats"
+        items={HATS}
+        on={garage.hat}
+        owned={garage.hats}
+        name={(h) => HAT_NAMES[h]}
+        price={(h) => HAT_PRICES[h]}
+        pick={(h) => chooseHat(garage, h)}
+        icon={(h) => <HatIcon hat={h} paint={worn.color} />}
+        onChange={onChange}
+      />
+      <Shelf
+        title="Wheels"
+        items={WHEELS}
+        on={garage.wheel}
+        owned={garage.wheels}
+        name={(w) => WHEEL_NAMES[w]}
+        price={(w) => WHEEL_PRICES[w]}
+        pick={(w) => chooseWheel(garage, w)}
+        icon={(w) => <WheelIcon wheel={w} />}
+        onChange={onChange}
+      />
+      <Shelf
+        title="Boost trail"
+        items={FLAMES}
+        on={garage.flame}
+        owned={garage.flames}
+        name={(f) => FLAME_NAMES[f]}
+        price={(f) => FLAME_PRICES[f]}
+        pick={(f) => chooseFlame(garage, f)}
+        icon={(f) => <FlameIcon flame={f} />}
+        onChange={onChange}
+      />
     </Sheet>
   );
 }
