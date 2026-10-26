@@ -120,13 +120,14 @@ type Spot = { x: number; z: number; r: number };
 
 /**
  * Instanced meshes of `geo`, one instance per spot (sized, turned and tinted a little each), in patches 130 m across so
- * those off screen (and out of the sun's shadow box) are not drawn.
+ * those off screen (and out of the sun's shadow box) are not drawn. A patch of only a few trees is pooled with its
+ * neighbours' into one three times as wide: a thinly wooded course would otherwise be dozens of draws of a tree or two.
  */
 function plant(THREE: Three, scene: T.Scene, dummy: T.Object3D, geo: T.BufferGeometry, mat: T.Material, spots: { x: number; y?: number; z: number; s: number; sy?: number }[], seed: number) {
   if (!spots.length) return;
   const r = scatter(seed);
-  const tint = new THREE.Color();
   const PATCH = 130;
+  const SPARSE = 8;
   const cells = new Map<string, typeof spots>();
   for (const p of spots) {
     const key = `${Math.floor(p.x / PATCH)},${Math.floor(p.z / PATCH)}`;
@@ -134,16 +135,27 @@ function plant(THREE: Three, scene: T.Scene, dummy: T.Object3D, geo: T.BufferGeo
     if (!list) cells.set(key, (list = []));
     list.push(p);
   }
-  for (const list of cells.values()) {
-    const mesh = new THREE.InstancedMesh(geo, mat, list.length);
-    list.forEach((p, i) => {
+  // (each tree turned and tinted in the same order as ever, then sorted into its patch)
+  const patches = new Map<string, { m: T.Matrix4; c: T.Color }[]>();
+  for (const [key, list] of cells) {
+    for (const p of list) {
       dummy.position.set(p.x, p.y ?? 0, p.z);
       dummy.rotation.set(0, r() * Math.PI * 2, 0);
       dummy.scale.set(p.s, p.sy ?? p.s, p.s);
       dummy.updateMatrix();
-      mesh.setMatrixAt(i, dummy.matrix);
       const k = 0.85 + r() * 0.3;
-      mesh.setColorAt(i, tint.setRGB(k * (0.94 + r() * 0.12), k, k * (0.9 + r() * 0.15)));
+      const c = new THREE.Color().setRGB(k * (0.94 + r() * 0.12), k, k * (0.9 + r() * 0.15));
+      const at = list.length >= SPARSE ? key : `wide ${Math.floor(p.x / (PATCH * 3))},${Math.floor(p.z / (PATCH * 3))}`;
+      let patch = patches.get(at);
+      if (!patch) patches.set(at, (patch = []));
+      patch.push({ m: dummy.matrix.clone(), c });
+    }
+  }
+  for (const list of patches.values()) {
+    const mesh = new THREE.InstancedMesh(geo, mat, list.length);
+    list.forEach(({ m, c }, i) => {
+      mesh.setMatrixAt(i, m);
+      mesh.setColorAt(i, c);
     });
     mesh.computeBoundingSphere();
     scene.add(mesh);

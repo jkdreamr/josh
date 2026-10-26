@@ -560,3 +560,22 @@ test('riding into a TNT barrel blows the bike up', () => {
   assert.ok(run.fx.some((p) => p.kind === 'fire'));
   assert.ok(run.toasts.some((t) => t.text === 'Boom'));
 });
+
+test('a card button ignores a click whose press began elsewhere, but not keyboard activation', async () => {
+  const { strayCardClick } = await import('../src/os/arcade/games/moto-trials/taps.ts');
+  const inner = {};
+  const gas = {};
+  const leave = { contains: (n: unknown) => n === leave || n === inner };
+  const chromeTap = { detail: 0, pointerType: 'touch' };
+  const safariTap = { detail: 1 };
+  const key = { detail: 0, pointerType: '' };
+  assert.equal(strayCardClick(chromeTap, leave as never, gas), true, 'a finger lifted from Gas must not press Leave');
+  assert.equal(strayCardClick(safariTap, leave as never, gas), true);
+  assert.equal(strayCardClick(chromeTap, leave as never, null), true, 'no press seen');
+  assert.equal(strayCardClick(chromeTap, leave as never, leave), false);
+  assert.equal(strayCardClick(safariTap, leave as never, inner), false, 'a press on the label inside the button counts');
+  assert.equal(strayCardClick({ detail: 1, pointerType: 'mouse' }, leave as never, leave), false);
+  assert.equal(strayCardClick(key, leave as never, gas), false, 'Enter or Space activation');
+  assert.equal(strayCardClick({ detail: 0 }, leave as never, gas), false, 'Enter or Space in a browser without pointerType');
+  assert.equal(strayCardClick(chromeTap, null, gas), false, 'not a card button');
+});

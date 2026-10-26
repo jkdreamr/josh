@@ -2655,11 +2655,15 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     if (h.kind === 'cart') {
       golfKit ??= golferKit(THREE);
       const v = makeCart(THREE, geo, golfKit, rand);
-      bakeInPlace(THREE, v.g, v.wheels);
+      // (all of it one mesh, the wheels too: plain round tyres and hubcaps turning on their axles look the same standing
+      // still, and on a grid of eight karts every draw counts)
+      v.g.updateMatrixWorld(true);
+      for (const w of v.wheels) for (const cap of [...w.children]) v.g.attach(cap);
+      bakeInPlace(THREE, v.g);
       v.g.position.set(h.x, 0, h.z);
       scene.add(v.g);
       const at = pointAt(t, h.along, h.at);
-      carts.push({ ...v, i, h: h.drive ? headingOf(h.tx, h.tz) : headingOf(-at.tz * h.walk, at.tx * h.walk), roll: 0 });
+      carts.push({ ...v, wheels: [], i, h: h.drive ? headingOf(h.tx, h.tz) : headingOf(-at.tz * h.walk, at.tx * h.walk), roll: 0 });
       return;
     }
     if (h.kind === 'ball') {
@@ -2670,17 +2674,19 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       const dist = Math.hypot(land.x - tee.x, land.z - tee.z);
       const ux = (land.x - tee.x) / dist;
       const uz = (land.z - tee.z) / dist;
-      // the tee: a box of mown grass, its markers, the golfer side-on to the shot and the bag stood beside
+      // the tee: a box of mown grass, its markers, the golfer side-on to the shot and the bag stood beside (the box, the
+      // markers and the bag baked into one mesh)
+      const still = new THREE.Group();
       const box = new THREE.Mesh(geo.plane, new THREE.MeshLambertMaterial({ color: 0x7cc255 }));
       box.rotation.set(-Math.PI / 2, 0, -Math.atan2(uz, ux));
       box.scale.set(5, 4, 1);
       box.position.set(tee.x, 0.035, tee.z);
-      scene.add(box);
+      still.add(box);
       for (const side of [-1, 1]) {
         const marker = new THREE.Mesh(geo.ball, kartShared.red);
         marker.scale.setScalar(0.16);
         marker.position.set(tee.x - uz * side * 2 + ux * 1.2, 0.15, tee.z + ux * side * 2 + uz * 1.2);
-        scene.add(marker);
+        still.add(marker);
       }
       const golfer = makeGolfer(THREE, geo, golfKit, rand, 'swing');
       for (const o of golfer.moving) if (o.children.length) bakeInPlace(THREE, o);
@@ -2693,7 +2699,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       const bag = golfBag(THREE, geo, golfKit, golfKit.bags[i % golfKit.bags.length]);
       bag.position.set(tee.x - Math.sin(ry) * 2 - ux * 1.2, 0, tee.z - Math.cos(ry) * 2 - uz * 1.2);
       bag.rotation.z = 0.15;
-      scene.add(bakeInPlace(THREE, bag));
+      still.add(bag);
+      scene.add(bakeInPlace(THREE, still));
       const ball = new THREE.Mesh(ballGeo, ballMat);
       ball.visible = false;
       const streak = new THREE.Mesh(streakGeo, streakMat);

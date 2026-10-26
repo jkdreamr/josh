@@ -62,13 +62,14 @@ test('golf: out of bounds on the outside of the bends, the walls along about hal
     assert.ok(Math.abs(tight) > 1 / 40, `${s0}-${s1} has a real bend in it`);
     // (curv > 0 is a right-hander, whose outside is on the left)
     assert.equal(Math.sign(tight), -side, `${s0}-${s1} is on the outside of its bend`);
-    // its brink half a meter or more past the edge of the road, and white stakes the scene can stand there
+    // its brink half a meter or more past the edge of the road (round the esses' 25 m right-hander a strip of rough
+    // further), and white stakes the scene can stand there, inside the wall line
     for (let s = s0 + 1; s < s1 - 1; s += t.step) {
       const e = edgeAt(t, s, side);
       // (running on into the island green's pond)
       if (e.past === 'water') continue;
       assert.equal(e.past, 'ob');
-      assert.ok(e.lim >= t.half + 0.6 - 1e-6 && e.lim <= t.half + 1, `brink ${e.lim} at s=${s}`);
+      assert.ok(e.lim >= t.half + 0.6 - 1e-6 && e.lim <= (s0 === 330 ? t.edge - 0.5 : t.half + 1), `brink ${e.lim} at s=${s}`);
     }
   }
   // walled on both sides along 45-55% of the lap

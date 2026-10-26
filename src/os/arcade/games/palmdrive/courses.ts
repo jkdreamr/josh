@@ -19,9 +19,9 @@ export type Difficulty = 1 | 2 | 3 | 4 | 5;
  * it, and coins). brink: where the road drops away with no wall, how far past the edge of the road the kart's middle can
  * go before it falls (on Expert about half the kart is over the drop by then). skillLift: how much better the CPUs
  * drive than their own skill, lifting each toward a perfect driver by this share (on Insane the course, not their top
- * speed, is what beats them, so it is their consistency that is raised).
+ * speed, is what beats them, so it is their consistency that is raised); skillLiftCc, the same for a class of its own.
  */
-export type Tier = { pace: number; paceCc?: Partial<Record<'50cc' | '100cc' | '150cc' | '200cc', number>>; band: [number, number, number]; harsh: number; rocket: number; fallT: number; fallCoins: number; brink: number; skillLift?: number };
+export type Tier = { pace: number; paceCc?: Partial<Record<'50cc' | '100cc' | '150cc' | '200cc', number>>; band: [number, number, number]; harsh: number; rocket: number; fallT: number; fallCoins: number; brink: number; skillLift?: number; skillLiftCc?: Partial<Record<'50cc' | '100cc' | '150cc' | '200cc', number>> };
 export const TIER: Record<Difficulty, Tier> = {
   1: { pace: 0.97, band: [0.9, 1.08, 600], harsh: 1, rocket: 0.6, fallT: 1.3, fallCoins: 1, brink: 1 },
   2: { pace: 0.98, band: [0.9, 1.08, 600], harsh: 1, rocket: 0.6, fallT: 1.3, fallCoins: 1, brink: 1 },
@@ -492,6 +492,8 @@ export const COURSES: Record<CourseId, Course> = {
     start: [16 * DISH_K, -196 * DISH_K],
     half: 6.5,
     edge: 10.5,
+    // its drops and boulders (the Hard pass, 2026) came after its first times were set: those are on the old boards
+    board: 'dish2',
     // no wall round the outside of both hairpins and the ridge sweeper: the road falls away down the hillside (drawn as
     // a slope, see Look.edge)
     edges: [
@@ -604,6 +606,8 @@ export const COURSES: Record<CourseId, Course> = {
     start: [-40 * QUAD_K, -100.6 * QUAD_K],
     half: 6.5,
     edge: 10,
+    // its bollards and sprinkler (the Hard pass, 2026) came after its first times were set: those are on the old boards
+    board: 'quad2',
     laps: { 2: 'Bollards on the straights', 3: 'The sprinkler comes on' },
     // (the bollards cost a clean driver more than the field at 150cc and up, as on Hoover Nights: the CPUs a little
     // slower there keeps a good driver winning a third to a half of races; see the PR)
@@ -809,9 +813,10 @@ export const COURSES: Record<CourseId, Course> = {
     half: 6.5,
     edge: 10,
     // out of bounds (white stakes, and past them the barranca) on the outside of the bunker esses and the two dog-legs,
-    // and on into the island green's pond and back out of it: the walls stand along half the lap
+    // and on into the island green's pond and back out of it: the walls stand along half the lap. Round the esses' tight
+    // right-hander (25 m) the stakes stand further out, past a strip of rough, so a kart run wide there has room to gather it
     edges: [
-      [330, 390, -1, 'ob'],
+      [330, 390, -1, 'ob', 9],
       [612, 700, -1, 'ob'],
       [738, 828, 1, 'ob'],
     ],
@@ -868,6 +873,8 @@ export const COURSES: Record<CourseId, Course> = {
           ['sand', 310, -3.6],
           ['sand', 348, 3.6],
           ['sand', 388, -3.6],
+          // and one out wide on the exit of the esses' right-hander, guarding the out of bounds there too
+          ['sand', 356, -4.2],
           ['sand', 662, -4.2],
           ['sand', 752, 4.2],
           ['sand', 858, 0, 3],
@@ -1195,8 +1202,9 @@ export const COURSES: Record<CourseId, Course> = {
     },
     sky: 'linear-gradient(180deg, #1f2c62 0%, #5b5fa3 20%, #d99aa6 36%, #f3c7ad 43%, #ffd29a 46%, #5c6a46 47%, #3f5f5c 52%)',
     laps: { 2: 'Lock, swing span, swell', 3: 'Whirlpools wander, wind', 4: 'The Maelstrom, big swell', 5: 'The tide turns, fog' },
-    // a fall costs more here than anywhere (calibrated against the braking ladder: see the PR)
-    tier: { fallT: 2.6, fallCoins: 4, brink: 0.3, skillLift: 0.45, paceCc: { '150cc': 1.05, '200cc': 1.07 } },
+    // a fall costs more here than anywhere (calibrated against the braking ladder: see the PR); below 200cc the CPUs drive a
+    // little less cleanly, so they too go in about once a race
+    tier: { fallT: 2.6, fallCoins: 4, brink: 0.3, skillLift: 0.35, skillLiftCc: { '200cc': 0.45 }, paceCc: { '150cc': 1.05, '200cc': 1.07 } },
   },
 };
 

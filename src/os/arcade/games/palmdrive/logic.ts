@@ -519,7 +519,7 @@ export function createRace(opts: { cc: Cc; racers: Racer[]; course?: CourseId; s
   const rand = rng32(seed);
   const tier = tierOf(course);
   // (on Insane every CPU drives a good deal more cleanly than its own skill: lifted that share of the way to perfect)
-  const lift = tier.skillLift ?? 0;
+  const lift = tier.skillLiftCc?.[opts.cc] ?? tier.skillLift ?? 0;
   const karts = opts.racers.map((rc, idx): Kart => {
     const g = gridSpot(track, idx);
     const at = locate(track, g.x, g.z);
