@@ -103,3 +103,39 @@
     animation-duration: 0.01s;
   }
 }
+/* Touch: finger-sized shell controls and readable text, grown by --g-airhockey-u (set from the scale of a phone or iPad frame) so they stay that way on screen. */
+@media (pointer: coarse) {
+  .g-airhockey .arcade-ctrl button {
+    width: calc(44px * var(--g-airhockey-u, 1));
+    height: calc(44px * var(--g-airhockey-u, 1));
+  }
+  .g-airhockey .arcade-ctrl svg {
+    width: calc(16px * var(--g-airhockey-u, 1));
+    height: calc(16px * var(--g-airhockey-u, 1));
+  }
+  .g-airhockey .arcade-btn,
+  .g-airhockey .arcade-seg > button {
+    min-height: calc(40px * var(--g-airhockey-u, 1));
+  }
+  /* Shell cards (Start, Paused, Game Over, Online) grow as a whole so their text and buttons read at full size. */
+  .g-airhockey .arcade-ov > .arcade-card {
+    zoom: var(--g-airhockey-u, 1);
+  }
+  .g-airhockey .arcade-ov > .arcade-card .arcade-btn,
+  .g-airhockey .arcade-ov > .arcade-card .arcade-seg > button,
+  .g-airhockey .arcade-ov > .arcade-card .arcade-input {
+    min-height: 42px;
+  }
+  .g-airhockey .arcade-online-status {
+    font-size: calc(12px * var(--g-airhockey-u, 1));
+  }
+  .g-airhockey .g-airhockey-score strong {
+    font-size: calc(18px * var(--g-airhockey-u, 1));
+  }
+  .g-airhockey .g-airhockey-score span {
+    font-size: calc(12px * var(--g-airhockey-u, 1));
+  }
+  .g-airhockey .g-airhockey-hint {
+    font-size: calc(13px * var(--g-airhockey-u, 1));
+  }
+}
