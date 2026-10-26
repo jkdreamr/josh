@@ -1011,6 +1011,9 @@ function girder(THREE: Three) {
   );
 }
 
+/** The most pixels the low quality tier draws a frame at (a phone at twice its size fits; an iPad draws a little under). */
+const LOW_PIXELS = 1.7e6;
+
 export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null {
   const gl = createGL(THREE, host, { alpha: true });
   if (!gl) return null;
@@ -1880,6 +1883,16 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   // reflective, so they still show up at night
   const chevronMat = look.night ? new THREE.MeshBasicMaterial({ map: chevron, side: THREE.DoubleSide }) : new THREE.MeshLambertMaterial({ map: chevron, side: THREE.DoubleSide });
   const boardPosts: { x: number; z: number; h: number }[] = [];
+  /** Every board, drawn in two batches (those whose arrow points left are mirrored): a draw call each, not one a board. */
+  const boards: T.Matrix4[][] = [[], []];
+  const board = (x: number, y: number, z: number, h: number, size: number, mirror: boolean) => {
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(0, h, 0);
+    dummy.scale.set(mirror ? -size : size, size, 1);
+    dummy.updateMatrix();
+    // (a mirrored board goes in a batch mirrored itself, so three.js still knows its front face from its back)
+    boards[mirror ? 1 : 0].push(mirror ? new THREE.Matrix4().makeScale(-1, 1, 1).multiply(dummy.matrix) : dummy.matrix.clone());
+  };
   for (let s = 0; s < t.length; s += 9) {
     const i = Math.floor(s / t.step) % t.n;
     const c = t.curv[i];
@@ -1889,16 +1902,12 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     const open = dropAt(t, i, out);
     if (open && look.edge === 'stakes') continue;
     const p = pointAt(t, s, open ? out * (look.glass ? edgeAt(t, s, out).lim + 0.7 : (out > 0 ? beyond.hi : beyond.lo)[i] + 0.6) : out * (look.glass ? edgeAt(t, s, out).lim - 0.4 : t.edge - 0.4));
-    const sign = new THREE.Mesh(geo.plane, chevronMat);
-    sign.scale.set(1.6, 1.6, 1);
-    sign.position.set(p.x, 1.9, p.z);
     // face the karts coming at it; the arrow points the way the road turns
-    sign.rotation.y = headingOf(p.tx, p.tz) + Math.PI;
+    board(p.x, 1.9, p.z, headingOf(p.tx, p.tz) + Math.PI, 1.6, c < 0);
     // (on the water each board stands on a pair of piles in the marsh)
     if (boat) boardPosts.push({ x: p.x, z: p.z, h: headingOf(p.tx, p.tz) });
-    if (c < 0) sign.scale.x = -1.6;
-    scene.add(sign);
   }
+  dummy.rotation.set(0, 0, 0);
   if (boardPosts.length) {
     const m = new THREE.InstancedMesh(geo.wheel, new THREE.MeshLambertMaterial({ color: 0x4a3a2c }), boardPosts.length * 2);
     boardPosts.forEach((p, k) => {
@@ -1914,14 +1923,19 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   }
   for (const { s, side } of startBoards) {
     const p = pointAt(t, s, side * t.edge);
-    const sign = new THREE.Mesh(geo.plane, chevronMat);
-    sign.scale.set(1.5, 1.5, 1);
-    sign.position.set(p.x, 2.7, p.z);
-    sign.rotation.y = headingOf(p.tx, p.tz) + Math.PI;
     // the arrow points back in, away from the drop
-    if (side > 0) sign.scale.x = -1.5;
-    scene.add(sign);
+    board(p.x, 2.7, p.z, headingOf(p.tx, p.tz) + Math.PI, 1.5, side > 0);
   }
+  boards.forEach((list, mirror) => {
+    if (!list.length) return;
+    const m = new THREE.InstancedMesh(geo.plane, chevronMat, list.length);
+    list.forEach((mat, k) => m.setMatrixAt(k, mat));
+    if (mirror) m.scale.x = -1;
+    m.computeBoundingSphere();
+    scene.add(m);
+  });
+  dummy.rotation.set(0, 0, 0);
+  dummy.scale.setScalar(1);
 
   // the course's own scenery
   const rand = scatter(7);
@@ -3333,11 +3347,16 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     }
   }
   atmos?.shade(scene);
+  let reflTick = 0;
   const view: View = {
     gl,
     camera,
     resize(w, h) {
       if (w <= 0 || h <= 0) return;
+      // (a phone or iPad draws at most LOW_PIXELS: an iPad's retina screen at full resolution is three times a phone's,
+      // for little you can see at speed)
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      gl.renderer.setPixelRatio(quality === 'low' ? Math.max(1, Math.min(dpr, Math.sqrt(LOW_PIXELS / (w * h)))) : dpr);
       gl.renderer.setSize(w, h, false);
       camera.aspect = w / h;
       fovBase = camera.aspect < 0.8 ? 84 : camera.aspect < 1.2 ? 74 : 66;
@@ -4348,8 +4367,9 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     },
     render() {
       if (gl.lost()) return;
-      // (on the water, what it mirrors first)
-      river?.reflect(gl.renderer, scene, camera);
+      // (on the water, what it mirrors first: on a phone every other frame, which the ripples hide, as the mirror holds
+      // a second pass of everything on the banks)
+      if (river && (quality === 'high' || (reflTick++ & 1) === 0)) river.reflect(gl.renderer, scene, camera);
       gl.renderer.render(scene, camera);
     },
     dispose() {

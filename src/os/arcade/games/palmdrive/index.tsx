@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as RPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as RPointerEvent, type RefObject } from 'react';
 import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
@@ -154,7 +154,8 @@ function CoursePicker({ value, onChange }: { value: CourseId | null; onChange?: 
             <span>
               {COURSES[id].name}
               <small className={`is-${DIFFICULTY[COURSES[id].difficulty - 1].toLowerCase()}`}>
-                {DIFFICULTY[COURSES[id].difficulty - 1]} · {(trackOf(id).length / 1000).toFixed(1)} km
+                {/* (two pieces, so on a narrow card the length wraps under the class rather than being cut off) */}
+                <span>{DIFFICULTY[COURSES[id].difficulty - 1]}</span> <span>· {(trackOf(id).length / 1000).toFixed(1)} km</span>
               </small>
             </span>
           </button>
@@ -277,11 +278,85 @@ function OnlineSetup() {
 
 type Mode = 'idle' | 'solo' | 'online';
 
+/**
+ * The part of the phone's safe area (the notch, the home bar, rounded corners) that falls inside the game, as CSS
+ * variables on the shell (--pd-sat, --pd-sar, --pd-sab, --pd-sal): the screen's insets less however far the game
+ * already sits from that edge, so a window that starts under the status bar adds nothing up top, and a phone on its side
+ * keeps the buttons clear of the notch.
+ */
+function useSafeArea(root: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const probe = document.createElement('div');
+    probe.setAttribute('aria-hidden', 'true');
+    probe.style.cssText =
+      'position:fixed;left:0;top:0;width:0;height:0;visibility:hidden;pointer-events:none;padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)';
+    document.body.appendChild(probe);
+    let raf = 0;
+    const apply = () => {
+      raf = 0;
+      const cs = getComputedStyle(probe);
+      const r = el.getBoundingClientRect();
+      const set = (name: string, inset: string, gap: number) => el.style.setProperty(name, `${Math.max(0, Math.round((parseFloat(inset) || 0) - Math.max(0, gap)))}px`);
+      set('--pd-sat', cs.paddingTop, r.top);
+      set('--pd-sar', cs.paddingRight, window.innerWidth - r.right);
+      set('--pd-sab', cs.paddingBottom, window.innerHeight - r.bottom);
+      set('--pd-sal', cs.paddingLeft, r.left);
+    };
+    const later = () => {
+      if (!raf) raf = requestAnimationFrame(apply);
+    };
+    apply();
+    const ro = new ResizeObserver(later);
+    ro.observe(el);
+    window.addEventListener('resize', later);
+    window.addEventListener('orientationchange', later);
+    // (a window that opens with an animation only settles where it is after it)
+    const timers = [450, 1200].map((ms) => window.setTimeout(later, ms));
+    return () => {
+      ro.disconnect();
+      window.removeEventListener('resize', later);
+      window.removeEventListener('orientationchange', later);
+      timers.forEach((t) => window.clearTimeout(t));
+      cancelAnimationFrame(raf);
+      probe.remove();
+    };
+  }, [root]);
+}
+
+/**
+ * On a touch screen while a race is on: no pinch zoom or page drag from a stray thumb, and every lift of a finger
+ * wakes the sound (browsers only count a touch as a gesture that may start audio when it ends).
+ */
+function useTouchGuard(root: RefObject<HTMLElement | null>, playing: boolean) {
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
+  useEffect(() => {
+    const el = root.current;
+    if (!el) return;
+    const stop = (e: Event) => {
+      if (playingRef.current && e.cancelable) e.preventDefault();
+    };
+    const wake = () => sfx.unlock();
+    el.addEventListener('gesturestart', stop);
+    el.addEventListener('touchmove', stop, { passive: false });
+    el.addEventListener('touchend', wake, { passive: true });
+    return () => {
+      el.removeEventListener('gesturestart', stop);
+      el.removeEventListener('touchmove', stop);
+      el.removeEventListener('touchend', wake);
+    };
+  }, [root]);
+}
+
 /** A fresh race for each solo round and each online round, and an idle grid behind the Start card. */
 function Stage() {
   const shell = useShell();
   const online = useOnline();
   const [course] = useSetting(COURSE);
+  useSafeArea(shell.root);
+  useTouchGuard(shell.root, shell.status === 'playing');
   const current = useRef<{ key: string; mode: Mode }>({ key: 'idle', mode: 'idle' });
   // the grid behind the Start card is the course you picked
   if (shell.status === 'ready') current.current = { key: `idle:${course}`, mode: 'idle' };
@@ -489,6 +564,13 @@ function Play({ mode }: { mode: Mode }) {
   const strokeRing = useRef<SVGCircleElement | null>(null);
   const strokeTarget = useRef<SVGCircleElement | null>(null);
   const strokeTicks = useRef<(SVGRectElement | null)[]>([]);
+  /** On a touch screen: the drift button (on the water it glows through the catch window), and the steering pad. */
+  const driftBtn = useRef<HTMLButtonElement | null>(null);
+  const steerPad = useRef<HTMLDivElement | null>(null);
+  const steerHalves = useRef<(HTMLButtonElement | null)[]>([]);
+  /** The fingers on the steering pad and the side each is on (the last one down steers), and the side held now. */
+  const steerFingers = useRef(new Map<number, -1 | 1>());
+  const steerSide = useRef<-1 | 0 | 1>(0);
   const lastBeat = useRef(0);
   /** On the water: when the weir last roared and which eight seconds the foghorn last sounded in. */
   const roarT = useRef(0);
@@ -515,7 +597,11 @@ function Play({ mode }: { mode: Mode }) {
     v.frame(r, Math.max(0, r.me), 0, 0);
     v.render();
     shell.invalidate();
+    // (the drawing follows the screen as soon as it turns, rather than a frame or two later once React catches up)
+    const ro = new ResizeObserver(() => v.resize(host.clientWidth, host.clientHeight));
+    ro.observe(host);
     return () => {
+      ro.disconnect();
       v.dispose();
       view.current = null;
     };
@@ -701,7 +787,8 @@ function Play({ mode }: { mode: Mode }) {
       const me = r.karts[r.me];
       if (me && !me.auto && !n.over) {
         const inp = me.input;
-        inp.steer = (keys.down('right') ? 1 : 0) - (keys.down('left') ? 1 : 0);
+        // (the touch steering pad, else the keys)
+        inp.steer = steerSide.current || (keys.down('right') ? 1 : 0) - (keys.down('left') ? 1 : 0);
         inp.brake = keys.down('down');
         inp.drift = keys.down('Space', 'ShiftLeft', 'ShiftRight');
         if (keys.pressed('Space', 'ShiftLeft', 'ShiftRight')) inp.hop = true;
@@ -1133,7 +1220,8 @@ function Play({ mode }: { mode: Mode }) {
           hints.current!.counted = true;
           countRace();
         }
-        showHint('drift', 'Hold Space while you turn to drift. Let go for a boost!', 'Hold drift while you turn to slide. Let go for a boost!');
+        if (r.boat) showHint('row', 'Tap Space just as the ring closes for a clean catch. Hold it through the bends to carve.', 'Tap row just as the ring closes for a clean catch. Hold it through the bends to carve.');
+        else showHint('drift', 'Hold Space while you turn to drift. Let go for a boost!', 'Hold drift while you turn to slide. Let go for a boost!');
         break;
       case 'rocket':
         if (mine) sfx.tone({ freq: 300, to: 1000, dur: 0.3, type: 'sawtooth', vol: 0.12 });
@@ -1509,6 +1597,7 @@ function Play({ mode }: { mode: Mode }) {
       strokeTarget.current.setAttribute('class', open ? 'is-open' : '');
       strokeTicks.current.forEach((el, n) => el?.setAttribute('class', n < me.streak ? 'is-on' : ''));
       void strokeAt;
+      driftBtn.current?.classList.toggle('is-catch', open && r.time > 0 && me.done === null);
     }
     for (const k of r.karts) {
       const dot = dots.current.get(k.idx);
@@ -1619,6 +1708,13 @@ function Play({ mode }: { mode: Mode }) {
 
   const r = race.current!;
   const playing = shell.status === 'playing';
+  // the steering pad forgets its fingers when it goes away (a pause), so the next touch steers afresh
+  useEffect(() => {
+    if (playing) return;
+    steerFingers.current.clear();
+    steerSide.current = 0;
+    steerHalves.current.forEach((el) => el?.classList.remove('is-on'));
+  }, [playing]);
   const minimap = useMemo(() => mapPath(r.track), [raceKey]);
   const board = hud.results ? standings(r) : [];
   const press = (code: string) => (e: RPointerEvent) => {
@@ -1628,6 +1724,50 @@ function Play({ mode }: { mode: Mode }) {
     if (race.current && race.current.time < 0) tap.current.gas = true;
   };
   const release = (code: string) => () => keys.release(code);
+  /** The steering pad: a thumb down on either half steers that way, and sliding it across switches without lifting it. */
+  const steerTo = (side: -1 | 0 | 1) => {
+    if (side === steerSide.current) return;
+    steerSide.current = side;
+    steerHalves.current.forEach((el, n) => el?.classList.toggle('is-on', side === (n ? 1 : -1)));
+  };
+  const steerSync = () => {
+    const sides = [...steerFingers.current.values()];
+    steerTo(sides.length ? sides[sides.length - 1] : 0);
+  };
+  const steerAt = (e: RPointerEvent) => {
+    const box = steerPad.current?.getBoundingClientRect();
+    return box && e.clientX >= box.left + box.width / 2 ? 1 : -1;
+  };
+  const steerPadProps = {
+    onPointerDown: (e: RPointerEvent) => {
+      e.preventDefault();
+      (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);
+      steerFingers.current.delete(e.pointerId);
+      steerFingers.current.set(e.pointerId, steerAt(e));
+      steerSync();
+      if (race.current && race.current.time < 0) tap.current.gas = true;
+    },
+    onPointerMove: (e: RPointerEvent) => {
+      if (!steerFingers.current.has(e.pointerId)) return;
+      const side = steerAt(e);
+      if (steerFingers.current.get(e.pointerId) === side) return;
+      steerFingers.current.set(e.pointerId, side);
+      steerSync();
+    },
+    onPointerUp: (e: RPointerEvent) => {
+      steerFingers.current.delete(e.pointerId);
+      steerSync();
+    },
+    onPointerCancel: (e: RPointerEvent) => {
+      steerFingers.current.delete(e.pointerId);
+      steerSync();
+    },
+    onLostPointerCapture: (e: RPointerEvent) => {
+      steerFingers.current.delete(e.pointerId);
+      steerSync();
+    },
+    onContextMenu: (e: { preventDefault: () => void }) => e.preventDefault(),
+  };
   const hold = (code: string) => ({ onPointerDown: press(code), onPointerUp: release(code), onPointerCancel: release(code), onLostPointerCapture: release(code), onContextMenu: (e: { preventDefault: () => void }) => e.preventDefault() });
 
   return (
@@ -1657,7 +1797,7 @@ function Play({ mode }: { mode: Mode }) {
             </div>
           ))}
       {shell.status !== 'ready' && !shell.compact && (
-        <div className={`g-palmdrive-hud${shell.touch ? ' is-touch' : ''}`}>
+        <div className={`g-palmdrive-hud${shell.touch ? ' is-touch' : ''}${live ? ' is-online' : ''}`}>
           {hud.boosting && <div className="g-palmdrive-speed" aria-hidden="true" />}
           <div className={`g-palmdrive-item${hud.rolling ? ' is-rolling' : ''}${hud.item && !hud.rolling ? ' is-ready' : ''}${hud.trailing ? ' is-trailing' : ''}${hud.golden ? ' is-golden' : ''}${hud.fire ? ' is-fire' : ''}`} aria-label={hud.item && !hud.rolling ? `Holding ${itemName(hud.item)}${hud.trailing ? ' behind you' : ''}` : 'No item'}>
             {hud.item ? <ItemIcon item={hud.item} /> : null}
@@ -1772,16 +1912,18 @@ function Play({ mode }: { mode: Mode }) {
             </div>
           )}
           {hud.wrong && <div className="g-palmdrive-wrong">wrong way</div>}
-          {hud.gust !== 0 && (
-            <div className={`g-palmdrive-gust${Math.abs(hud.gust) === 2 ? ' is-on' : ''}`} aria-label={`Wind from the ${hud.gust > 0 ? 'left' : 'right'}`}>
-              {hud.gust < 0 ? '\u2190 ' : ''}wind{hud.gust > 0 ? ' \u2192' : ''}
-            </div>
-          )}
-          {hud.swell !== 0 && (
-            <div className={`g-palmdrive-gust is-swell${Math.abs(hud.swell) === 2 ? ' is-on' : ''}`} aria-label={`Swell from the ${hud.swell > 0 ? 'left' : 'right'}`}>
-              {hud.swell < 0 ? '\u2190 ' : ''}swell{hud.swell > 0 ? ' \u2192' : ''}
-            </div>
-          )}
+          <div className="g-palmdrive-badges">
+            {hud.gust !== 0 && (
+              <div className={`g-palmdrive-gust${Math.abs(hud.gust) === 2 ? ' is-on' : ''}`} aria-label={`Wind from the ${hud.gust > 0 ? 'left' : 'right'}`}>
+                {hud.gust < 0 ? '\u2190 ' : ''}wind{hud.gust > 0 ? ' \u2192' : ''}
+              </div>
+            )}
+            {hud.swell !== 0 && (
+              <div className={`g-palmdrive-gust is-swell${Math.abs(hud.swell) === 2 ? ' is-on' : ''}`} aria-label={`Swell from the ${hud.swell > 0 ? 'left' : 'right'}`}>
+                {hud.swell < 0 ? '\u2190 ' : ''}swell{hud.swell > 0 ? ' \u2192' : ''}
+              </div>
+            )}
+          </div>
           {r.boat && hud.lights === 0 && !hud.results && (
             <svg className="g-palmdrive-stroke" viewBox="-50 -50 100 100" aria-hidden="true">
               <circle ref={strokeTarget} r="20" />
@@ -1832,13 +1974,28 @@ function Play({ mode }: { mode: Mode }) {
           ))}
         </div>
       )}
-      {shell.touch && playing && (
+      {/* (gone once the results are up, which they would cover on a phone on its side) */}
+      {shell.touch && playing && !hud.results && (
         <div className="g-palmdrive-touch">
-          <div className="g-palmdrive-steer">
-            <button type="button" tabIndex={-1} aria-label="Steer left" {...hold('ArrowLeft')}>
+          <div className="g-palmdrive-steer" ref={steerPad} {...steerPadProps}>
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-label="Steer left"
+              ref={(el) => {
+                steerHalves.current[0] = el;
+              }}
+            >
               <Chevron d="M15 6l-6 6 6 6" />
             </button>
-            <button type="button" tabIndex={-1} aria-label="Steer right" {...hold('ArrowRight')}>
+            <button
+              type="button"
+              tabIndex={-1}
+              aria-label="Steer right"
+              ref={(el) => {
+                steerHalves.current[1] = el;
+              }}
+            >
               <Chevron d="M9 6l6 6-6 6" />
             </button>
           </div>
@@ -1872,8 +2029,8 @@ function Play({ mode }: { mode: Mode }) {
             <button type="button" tabIndex={-1} className={`g-palmdrive-use${hud.trailing ? ' is-trailing' : ''}`} aria-label="Use item (hold to keep it behind you)" {...hold('KeyX')}>
               {hud.item && !hud.rolling ? <ItemIcon item={hud.item} size={34} /> : 'item'}
             </button>
-            <button type="button" tabIndex={-1} className="g-palmdrive-drift" aria-label="Drift" {...hold('Space')}>
-              drift
+            <button type="button" tabIndex={-1} ref={driftBtn} className={`g-palmdrive-drift${r.boat ? ' is-row' : ''}`} aria-label={r.boat ? 'Row: tap as the ring closes, hold through the bends to carve' : 'Drift'} {...hold('Space')}>
+              {r.boat ? 'row' : 'drift'}
             </button>
           </div>
         </div>
