@@ -19,7 +19,7 @@ export function createGL(THREE: Three, host: HTMLElement, lite: boolean): GL | n
     if (import.meta.env.DEV) console.warn('Tennis WebGL context creation failed', error);
     return null;
   }
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lite ? 1.25 : 1.5));
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, lite ? 1.25 : 2));
   renderer.outputColorSpace = THREE.SRGBColorSpace;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 1.15;

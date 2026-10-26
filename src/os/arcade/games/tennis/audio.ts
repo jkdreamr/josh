@@ -38,7 +38,12 @@ export function createAudio() {
   return {
     hit(speed: number, kind: ShotKind, perfect = false) {
       const pitch = Math.max(0.72, Math.min(1.42, speed / 42));
-      const frequency = kind === 'slice' ? 178 : kind === 'lob' ? 142 : kind === 'smash' ? 270 : kind === 'volley' ? 245 : 235;
+      const frequency = kind === 'slice' ? 178
+        : kind === 'lob' ? 142
+          : kind === 'drop' ? 120
+            : kind === 'flat' ? 305
+              : kind === 'smash' ? 285
+                : kind === 'volley' ? 245 : 235;
       sfx.tone({ freq: frequency, to: perfect ? 58 : 74, dur: (0.08 + pitch * 0.025) * (perfect ? 1.25 : 1), type: perfect ? 'sawtooth' : 'triangle', vol: Math.min(0.3, (perfect ? 0.16 : 0.09) + pitch * 0.09) });
       sfx.noise(perfect ? 0.045 : 0.018, perfect ? 0.095 : 0.055);
       if (perfect) filteredNoise(2200, 420, 0.12, 0.035, 'highpass');

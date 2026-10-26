@@ -10,6 +10,19 @@
   user-select: none;
 }
 
+.g-tennis-stage .arcade-btns {
+  width: 104px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.g-tennis-stage .arcade-tbtn {
+  width: 48px;
+  height: 48px;
+  font-size: 8px;
+}
+
 .g-tennis-stage::after {
   position: absolute;
   z-index: 1;

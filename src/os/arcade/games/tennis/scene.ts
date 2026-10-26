@@ -11,7 +11,7 @@ type Puff = { mesh: T.Mesh; age: number; life: number };
 export type View = {
   canvas: HTMLCanvasElement;
   resize: (width: number, height: number) => void;
-  update: (world: World, dt: number, humanSeats: ReadonlySet<number>, side: number) => void;
+  update: (world: World, dt: number, humanSeats: ReadonlySet<number>, side: number, aimTarget?: { x: number; z: number } | null) => void;
   render: () => void;
   hit: (speed: number, perfect?: boolean) => void;
   replayCamera: (active: boolean) => void;
@@ -732,6 +732,20 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   landingMarker.visible = false;
   landingMarker.renderOrder = 2;
   scene.add(landingMarker);
+  const aimMarkerMaterial = new THREE.MeshBasicMaterial({
+    color: '#48e5ff',
+    transparent: true,
+    opacity: 0.88,
+    depthWrite: false,
+    side: THREE.DoubleSide,
+    toneMapped: false,
+  });
+  const aimMarker = new THREE.Mesh(new THREE.RingGeometry(0.28, 0.34, 4), aimMarkerMaterial);
+  aimMarker.rotation.set(-Math.PI / 2, 0, Math.PI / 4);
+  aimMarker.position.y = 0.086;
+  aimMarker.visible = false;
+  aimMarker.renderOrder = 3;
+  scene.add(aimMarker);
   const playerShadows = players.map(() => {
     const shadow = new THREE.Mesh(
       new THREE.PlaneGeometry(1, 1),
@@ -787,9 +801,27 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   let qualityTier = 0;
   let forceHighQuality = false;
   let overBudgetSince = 0;
+  let underBudgetSince = 0;
   let lastQualityStep = 0;
   const qualityWarmupAt = performance.now();
-  let currentDpr = Math.min(window.devicePixelRatio || 1, lite ? 1.25 : 1.5);
+  let baseDpr = Math.min(window.devicePixelRatio || 1, lite ? 1.25 : 2);
+  let currentDpr = baseDpr;
+  let lastDisplayScaleCheck = 0;
+
+  const dprForTier = (tier: number) => tier < 2 ? baseDpr : tier === 2 ? Math.max(1, baseDpr - 0.25) : 1;
+
+  function refreshDpr() {
+    const canvas = renderer.domElement;
+    const layoutWidth = canvas.offsetWidth || viewWidth;
+    const displayScale = Math.max(1, canvas.getBoundingClientRect().width / layoutWidth);
+    baseDpr = Math.min((window.devicePixelRatio || 1) * displayScale, lite ? 1.25 : 2);
+    const nextDpr = dprForTier(qualityTier);
+    if (Math.abs(nextDpr - currentDpr) > 0.05) {
+      currentDpr = nextDpr;
+      renderer.setPixelRatio(currentDpr);
+    }
+    lastDisplayScaleCheck = performance.now();
+  }
 
   function updateScoreboard(world: World) {
     const ctx = scoreboard;
@@ -817,6 +849,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
     viewHeight = Math.max(1, height);
     camera.aspect = viewWidth / viewHeight;
     camera.updateProjectionMatrix();
+    refreshDpr();
     renderer.setSize(viewWidth, viewHeight, false);
     positionCamera(0);
   }
@@ -884,7 +917,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
     camera.lookAt(cameraTarget);
   }
 
-  function update(world: World, dt: number, humanSeats: ReadonlySet<number>, side: number) {
+  function update(world: World, dt: number, humanSeats: ReadonlySet<number>, side: number, aimTarget?: { x: number; z: number } | null) {
     time += dt;
     currentSide = side;
     if (previousPhase === 'point' && world.phase === 'serve-ready') {
@@ -953,7 +986,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
     } else ballTrailCount = 0;
     const visibleTrailSamples = lite ? 0 : Math.min(trailSamples, ballTrailCount - 1);
     trail.count = visibleTrailSamples;
-    trail.visible = !lite && qualityTier < 3 && visibleTrailSamples > 0 && world.ball.inPlay;
+    trail.visible = !lite && qualityTier < 1 && visibleTrailSamples > 0 && world.ball.inPlay;
     trailMaterial.opacity = 0.78 * Math.min(1.4, 0.72 + speed / 36 + hitPulse * 0.4);
     trailDirection.set(velocity.x, velocity.y, velocity.z).normalize();
     for (let index = 0; index < visibleTrailSamples; index++) {
@@ -981,7 +1014,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
     const humanServeTarget = world.phase === 'serve-flight' && world.ball.inPlay
       && world.ball.bounces === 0 && humanSeats.has(world.serverSeat);
     if (humanIncoming || humanServeTarget) {
-      const landing = predictLanding(world.ball.p, world.ball.v, world.ball.spin);
+      const landing = predictLanding(world.ball.p, world.ball.v, world.ball.spin, 6, world.ball.shotKind);
       if (landing.clearsNet) {
         const progress = clamp(1 - landing.time / 6, 0, 1);
         landingMarker.visible = true;
@@ -990,6 +1023,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
         landingMarkerMaterial.opacity = 0.18 + progress * 0.42;
       } else landingMarker.visible = false;
     } else landingMarker.visible = false;
+    aimMarker.visible = !!aimTarget && world.ball.inPlay && world.ball.canHitTeam === side;
+    if (aimTarget) aimMarker.position.set(aimTarget.x, 0.086, aimTarget.z);
     if (hitPulse > 0) {
       hitPulse = Math.max(0, hitPulse - dt * 6);
       ball.scale.set(1 + hitPulse * 0.35, 1 - hitPulse * 0.24, 1 + hitPulse * 0.35);
@@ -1021,9 +1056,9 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
         puffs.splice(i, 1);
       }
     }
-    if (qualityTier < 3) stadium.crowdJump.value = Math.max(0, stadium.crowdJump.value - dt * 0.65);
+    if (qualityTier < 1) stadium.crowdJump.value = Math.max(0, stadium.crowdJump.value - dt * 0.65);
     crowdRefresh += dt;
-    if (qualityTier < 3 && crowdRefresh >= 0.1) {
+    if (qualityTier < 1 && crowdRefresh >= 0.1) {
       crowdRefresh %= 0.1;
       const dummy = stadium.dummy;
       for (let i = 0; i < stadium.crowd.length; i++) {
@@ -1110,8 +1145,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
         lite = false;
         forceHighQuality = true;
         qualityTier = 0;
-        currentDpr = Math.min(window.devicePixelRatio || 1, 1.5);
-        renderer.setPixelRatio(currentDpr);
+        refreshDpr();
         renderer.shadowMap.enabled = true;
         sun.shadow.mapSize.set(1024, 1024);
         sun.shadow.needsUpdate = true;
@@ -1122,6 +1156,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
         frameEma = 0;
         lastRenderAt = 0;
         overBudgetSince = 0;
+        underBudgetSince = 0;
       },
       debugCrowdExcitement() {
         stadium.crowdJump.value = 1.45;
@@ -1136,37 +1171,58 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
     render() {
       if (!glContext.lost()) {
         const now = performance.now();
+        if (now - lastDisplayScaleCheck >= 1000) refreshDpr();
         if (lastRenderAt > 0) {
           const interval = Math.min(now - lastRenderAt, 100);
           frameEma = frameEma ? frameEma * 0.9 + interval * 0.1 : interval;
-          if ((!import.meta.env.DEV || !forceHighQuality) && now - qualityWarmupAt >= 1500 && frameEma > 26) {
+          if ((!import.meta.env.DEV || !forceHighQuality) && now - qualityWarmupAt >= 1500 && frameEma > 30) {
             if (!overBudgetSince) overBudgetSince = now;
-            if (now - overBudgetSince >= 1000 && now - lastQualityStep >= 1000 && qualityTier < 3) {
+            underBudgetSince = 0;
+            if (now - overBudgetSince >= 2000 && now - lastQualityStep >= 2000 && qualityTier < 3) {
               qualityTier++;
               lastQualityStep = now;
               if (qualityTier === 1) {
-                currentDpr = 1;
-                renderer.setPixelRatio(currentDpr);
-              } else if (qualityTier === 2) {
                 renderer.shadowMap.enabled = false;
+                stadium.crowdJump.value = 0;
                 scene.traverse((object) => {
                   const mesh = object as T.Mesh;
                   if (!mesh.isMesh) return;
                   const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
                   materials.forEach((material) => { material.needsUpdate = true; });
                 });
-              } else {
-                currentDpr = 0.75;
-                renderer.setPixelRatio(currentDpr);
-                stadium.arms.visible = false;
-                stadium.hats.visible = false;
-                trail.visible = false;
                 flare.visible = false;
+              } else if (qualityTier === 2) {
+                currentDpr = dprForTier(qualityTier);
+                renderer.setPixelRatio(currentDpr);
+              } else {
+                currentDpr = dprForTier(qualityTier);
+                renderer.setPixelRatio(currentDpr);
               }
               overBudgetSince = now;
             }
+          } else {
+            overBudgetSince = 0;
+            if (frameEma < 20) {
+              if (!underBudgetSince) underBudgetSince = now;
+              if (now - underBudgetSince >= 4000 && now - lastQualityStep >= 4000 && qualityTier > 0) {
+                qualityTier--;
+                lastQualityStep = now;
+                if (qualityTier === 0) {
+                  renderer.shadowMap.enabled = true;
+                  flare.visible = true;
+                  scene.traverse((object) => {
+                    const mesh = object as T.Mesh;
+                    if (!mesh.isMesh) return;
+                    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+                    materials.forEach((material) => { material.needsUpdate = true; });
+                  });
+                }
+                currentDpr = dprForTier(qualityTier);
+                renderer.setPixelRatio(currentDpr);
+                underBudgetSince = now;
+              }
+            } else underBudgetSince = 0;
           }
-          else overBudgetSince = 0;
         }
         lastRenderAt = now;
         renderer.render(scene, camera);
@@ -1208,7 +1264,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
       stadium.crowdJump.value = Math.max(stadium.crowdJump.value, longRally ? 1.45 : winner === currentSide ? 1 : 0.55);
     },
     crowdOoh(shots: number) {
-      if (qualityTier < 3 && shots >= 8) stadium.crowdJump.value = Math.max(stadium.crowdJump.value, Math.min(0.7, 0.18 + (shots - 8) * 0.035));
+      if (qualityTier < 1 && shots >= 8) stadium.crowdJump.value = Math.max(stadium.crowdJump.value, Math.min(0.7, 0.18 + (shots - 8) * 0.035));
     },
     dispose,
   };

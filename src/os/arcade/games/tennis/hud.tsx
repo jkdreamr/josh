@@ -58,7 +58,7 @@ export function Hud({ world, seat, watching, call, timing, bounceCue, rallyShots
       <div className="g-tennis-controls-hint">
         {touch
           ? null
-          : <span>WASD / arrows move · Space hit · K slice · L lob</span>}
+          : <span>WASD/arrows move · Space/J topspin · K slice · L flat · I lob · U drop</span>}
       </div>
       {watching && <div className="g-tennis-watch-label">watching</div>}
     </div>

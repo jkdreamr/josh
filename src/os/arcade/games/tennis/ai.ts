@@ -21,8 +21,8 @@ function predictedIntercept(world: World, player: Player): CourtTarget {
     },
     random: world.random,
   } as World;
-  const delay = player.ai === 0 ? 0.32 : player.ai === 2 ? 0.08 : 0.15;
-  const speed = player.ai === 0 ? 4.6 : player.ai === 1 ? 5.8 : 6;
+  const delay = player.ai === 0 ? 0.32 : player.ai === 2 ? 0.05 : 0.15;
+  const speed = player.ai === 0 ? 4.6 : player.ai === 1 ? 6.2 : 6.6;
   let target = { x: player.x, z: player.z };
   const events: Event[] = [];
   for (let elapsed = 0; elapsed <= 1.6; elapsed += STEP) {
@@ -72,17 +72,25 @@ export function chooseShot(world: World, player: Player): Swing {
   const timing = level === 0 ? (world.random() - 0.5) * 0.34
     : level === 1 ? (world.random() - 0.5) * 0.38
       : (world.random() - 0.5) * 0.36;
-  let kind: Swing['kind'] = 'drive';
+  let kind: Swing['kind'] = 'topspin';
   let depth: Swing['depth'];
   const humans = world.players.filter((other) => other.team !== player.team && other.ai === null);
   const humanAtNet = humans.some((human) => Math.abs(human.z) < 6);
   if (level === 0 && world.random() < 0.18) kind = 'slice';
   if (level > 0) {
     if (shouldSmash(world.ball.p.y)) kind = 'smash';
-    else if (humanAtNet && world.random() < 0.3) kind = 'lob';
-    else if (world.random() < (level === 1 ? 0.15 : 0.2)) {
-      kind = 'slice';
-      depth = -1;
+    else {
+      const variety = world.random();
+      const lobChance = level === 1 ? 0.28 : 0.4;
+      const selection = humanAtNet && variety >= lobChance ? (variety - lobChance) / (1 - lobChance) : variety;
+      if (humanAtNet && variety < lobChance) kind = 'lob';
+      else if (selection < (level === 1 ? 0.13 : 0.18)) {
+        kind = 'drop';
+        depth = 1;
+      } else if (selection < (level === 1 ? 0.31 : 0.42)) {
+        kind = 'slice';
+        depth = -1;
+      } else if (selection < (level === 1 ? 0.47 : 0.6)) kind = 'flat';
     }
   }
   const aim: Swing['aim'] = level === 0 ? 0 : (() => {
@@ -102,7 +110,7 @@ export function chooseShot(world: World, player: Player): Swing {
     if (Math.abs(left - right) < 0.22) return world.random() < 0.5 ? -1 : 1;
     return left > right ? -1 : 1;
   })();
-  if (level === 2 && world.format === 'doubles' && Math.abs(player.z) < COURT_LENGTH / 2 - 4) kind = 'drive';
+  if (level === 2 && world.format === 'doubles' && Math.abs(player.z) < COURT_LENGTH / 2 - 4) kind = 'topspin';
   return { kind, aim, delta: timing, depth };
 }
 

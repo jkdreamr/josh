@@ -4,7 +4,7 @@ import type { GameProps } from '../../types';
 import { createAudio } from './audio.ts';
 import { Hud } from './hud.tsx';
 import type { HudModel } from './hud.tsx';
-import { createWorld, movePlayer, STEP, stepWorld, teamSeats, timingLabel, type Command, type Format, type Level, type MatchLength, type MoveInput, type Player, type PointCall, type Swing, type World } from './logic.ts';
+import { createWorld, movePlayer, previewTarget, STEP, stepWorld, teamSeats, timingLabel, type Command, type Format, type Level, type MatchLength, type MoveInput, type Player, type PointCall, type ShotKind, type Swing, type World } from './logic.ts';
 import { configOf, commandOf, eventOf, moveOf, parsePacket, serveOf, stateOf, swingOf } from './net.ts';
 import { meta } from './meta.ts';
 import { createScene, type View } from './scene.ts';
@@ -174,6 +174,7 @@ function Play({ mode }: { mode: StageMode }) {
   const world = useRef<World | null>(null);
   world.current ??= settingsWorld(mode, format, length, level, online);
   const lastHit = useRef<{ kind: Swing['kind']; clock: number } | null>(null);
+  const selectedShot = useRef<ShotKind>('topspin');
   const view = useRef<View | null>(null);
   const debugFreezeWorld = useRef(false);
   const [sceneLoadFailed, setSceneLoadFailed] = useState(false);
@@ -398,7 +399,7 @@ function Play({ mode }: { mode: StageMode }) {
           rallyShot: 6,
           netCord: false,
         };
-        lastHit.current = { kind: 'drive', clock: current.clock };
+        lastHit.current = { kind: 'topspin', clock: current.clock };
         rallyShots.current = 6;
         pointShots.current = 6;
         const stagedBall = current.ball;
@@ -477,7 +478,7 @@ function Play({ mode }: { mode: StageMode }) {
     if (!o || o.seat < 0) return;
     if (command.move) o.send(moveOf(o.round || 1, command.move));
     else if (command.toss) o.send(serveOf(o.round || 1, 'toss'));
-    else if (command.serve) o.send(serveOf(o.round || 1, 'serve', command.swing?.aim ?? 0));
+    else if (command.serve) o.send(serveOf(o.round || 1, 'serve', command.swing?.aim ?? 0, command.swing?.kind === 'slice' || command.swing?.kind === 'flat' ? command.swing.kind : 'topspin'));
     else if (command.swing) o.send(swingOf(o.round || 1, current.ball.rallyShot, command.swing));
   };
 
@@ -519,17 +520,16 @@ function Play({ mode }: { mode: StageMode }) {
     const seat = currentSeat();
     const player = current.players.find((entry) => entry.seat === seat);
     if (!player || player.ai !== null || !player.connected) return;
+    selectedShot.current = kind;
     if ((current.phase === 'serve-ready' || current.phase === 'serve-toss') && current.serverSeat === seat) {
       if (current.phase === 'serve-ready') sendCommand({ seat, toss: true });
       else {
-        const aim = player.input.x < 0 ? -1 : player.input.x > 0 ? 1 : 0;
-        sendCommand({ seat, serve: true, swing: { kind: 'drive', aim, delta: 0 } });
+        sendCommand({ seat, serve: true, swing: { kind, aim: player.input.x, delta: 0 } });
       }
       return;
     }
     if ((current.phase !== 'rally' && current.phase !== 'serve-flight') || !current.ball.inPlay || current.ball.canHitTeam !== player.team) return;
-    const aim = player.input.x < 0 ? -1 : player.input.x > 0 ? 1 : 0;
-    sendCommand({ seat, swing: { kind, aim, delta: 0 } });
+    sendCommand({ seat, swing: { kind, aim: player.input.x, delta: 0 } });
   };
 
   keyPress.current = (code, event) => {
@@ -538,9 +538,11 @@ function Play({ mode }: { mode: StageMode }) {
       skipReplayRef.current();
       return;
     }
-    if (code === 'Space' || code === 'Enter' || code === 'KeyJ') shotPress('drive');
+    if (code === 'Space' || code === 'Enter' || code === 'KeyJ') shotPress('topspin');
     else if (code === 'KeyK') shotPress('slice');
-    else if (code === 'KeyL') shotPress('lob');
+    else if (code === 'KeyL') shotPress('flat');
+    else if (code === 'KeyI') shotPress('lob');
+    else if (code === 'KeyU') shotPress('drop');
   };
 
   const finishGame = (team: number) => {
@@ -734,6 +736,12 @@ function Play({ mode }: { mode: StageMode }) {
       setFeedback('');
     }
     const side = myTeam();
+    const aimPlayer = current.players.find((player) => player.seat === currentSeat());
+    const aimTarget = aimPlayer && !o?.watching && current.ball.inPlay
+      && current.ball.canHitTeam === aimPlayer.team
+      && (current.phase === 'rally' || current.phase === 'serve-flight')
+      ? previewTarget(current, aimPlayer, selectedShot.current)
+      : null;
     const activeReplay = replayState.current;
     if (activeReplay) {
       activeReplay.elapsed += dt;
@@ -748,7 +756,7 @@ function Play({ mode }: { mode: StageMode }) {
         view.current?.update(sampleReplay(activeReplay.selection, activeReplay.elapsed), dt, localHumanSeats(), side);
       }
     } else {
-      view.current?.update(current, dt, localHumanSeats(), side);
+      view.current?.update(current, dt, localHumanSeats(), side, aimTarget);
       replayFrames.current = appendReplayFrame(replayFrames.current, current);
     }
     hudClock.current += dt;
@@ -842,7 +850,13 @@ function Play({ mode }: { mode: StageMode }) {
       {!THREE && <div className="g-tennis-error"><strong>Preparing Taube Stadium…</strong></div>}
       {THREE && sceneLoadFailed && shell.status === 'playing' && <div className="g-tennis-error"><strong>3D court could not load. Try restarting.</strong></div>}
       <Hud {...hud} touch={shell.touch} />
-      <TouchControls dpad buttons={[{ key: 'Space', label: 'hit' }, { key: 'KeyK', label: 'slice' }, { key: 'KeyL', label: 'lob' }]} />
+      <TouchControls dpad buttons={[
+        { key: 'Space', label: 'topspin' },
+        { key: 'KeyK', label: 'slice' },
+        { key: 'KeyL', label: 'flat' },
+        { key: 'KeyI', label: 'lob' },
+        { key: 'KeyU', label: 'drop' },
+      ]} />
     </div>
   );
 }

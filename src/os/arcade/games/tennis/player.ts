@@ -638,7 +638,12 @@ export function updatePlayer(
   phase: World['phase'] = 'rally',
   isServer = false,
 ) {
-  model.root.position.set(model.debugPose?.position.x ?? x, 0, model.debugPose?.position.z ?? z);
+  const lunge = player.swingLunge;
+  model.root.position.set(
+    (model.debugPose?.position.x ?? x) + (model.debugPose ? 0 : player.lungeX * 0.38 * lunge),
+    0,
+    (model.debugPose?.position.z ?? z) + (model.debugPose ? 0 : player.lungeZ * 0.38 * lunge),
+  );
   model.root.rotation.y = model.debugPose?.rotation ?? player.facing;
   model.phase += dt * (4.5 + Math.hypot(player.vx, player.vz) * 1.2);
   const speed = Math.hypot(player.vx, player.vz);
@@ -650,6 +655,7 @@ export function updatePlayer(
   const lateral = Math.abs(localVx) > Math.abs(localVz) * 1.25;
   const bob = model.debugPose ? 0 : Math.sin(model.phase * 2) * 0.025 * running;
   model.torso.position.y = bob;
+  model.torso.scale.set(1, 1 + lunge * 0.06, 1);
   model.torso.rotation.z = Math.max(-0.14, Math.min(0.14, player.vx * -0.025));
   model.torso.rotation.y = -Math.min(0.22, Math.abs(player.vx) * 0.035);
   model.legs[0].rotation.x = Math.sin(model.phase) * 0.58 * running;

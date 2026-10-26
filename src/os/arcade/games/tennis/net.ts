@@ -1,9 +1,9 @@
 import { rng32, type Command, type Event, type Format, type Level, type MatchLength, type MoveInput, type Swing, type World } from './logic.ts';
 
 export type ConfigPacket = { t?: 'tennis'; k: 'cfg'; r: number; format: Format; length: MatchLength; level: Level };
-export type SwingPacket = { t?: 'tennis'; k: 'sw'; r: number; shot: number; delta: number; kind: Swing['kind']; aim: -1 | 0 | 1; swipe: number };
+export type SwingPacket = { t?: 'tennis'; k: 'sw'; r: number; shot: number; delta: number; kind: Swing['kind']; aim: number; swipe: number };
 export type MovePacket = { t?: 'tennis'; k: 'mv'; r: number; x: number; z: number };
-export type ServePacket = { t?: 'tennis'; k: 'toss' | 'serve'; r: number; aim: -1 | 0 | 1 };
+export type ServePacket = { t?: 'tennis'; k: 'toss' | 'serve'; r: number; aim: number; kind?: 'topspin' | 'slice' | 'flat' };
 export type StatePacket = { t?: 'tennis'; k: 'S'; r: number; state: World };
 export type EventPacket = { t?: 'tennis'; k: 'ev'; r: number; event: Event };
 export type Packet = ConfigPacket | SwingPacket | MovePacket | ServePacket | StatePacket | EventPacket;
@@ -13,8 +13,8 @@ const roundOk = (value: unknown): value is number => Number.isSafeInteger(value)
 const levelOk = (value: unknown): value is Level => value === 0 || value === 1 || value === 2;
 const formatOk = (value: unknown): value is Format => value === 'singles' || value === 'doubles';
 const lengthOk = (value: unknown): value is MatchLength => value === 'game' || value === 'three' || value === 'set';
-const kindOk = (value: unknown): value is Swing['kind'] => value === 'drive' || value === 'slice' || value === 'lob' || value === 'smash' || value === 'volley';
-const aimOk = (value: unknown): value is -1 | 0 | 1 => value === -1 || value === 0 || value === 1;
+const kindOk = (value: unknown): value is Swing['kind'] => value === 'topspin' || value === 'slice' || value === 'flat' || value === 'lob' || value === 'drop' || value === 'smash' || value === 'volley';
+const aimOk = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 1;
 const pointCalls = ['fault', 'double fault', 'let', 'out', 'net', 'point', 'game', 'set', 'match'];
 const phases = ['serve-ready', 'serve-toss', 'serve-flight', 'rally', 'point', 'done'];
 
@@ -27,7 +27,7 @@ export const swingOf = (round: number, shot: number, swing: Swing): SwingPacket 
 export const moveOf = (round: number, move: MoveInput): MovePacket => ({
   t: 'tennis', k: 'mv', r: round, x: Math.round(move.x * 100) / 100, z: Math.round(move.z * 100) / 100,
 });
-export const serveOf = (round: number, k: 'toss' | 'serve', aim: -1 | 0 | 1 = 0): ServePacket => ({ t: 'tennis', k, r: round, aim });
+export const serveOf = (round: number, k: 'toss' | 'serve', aim = 0, kind: 'topspin' | 'slice' | 'flat' = 'topspin'): ServePacket => ({ t: 'tennis', k, r: round, aim, kind });
 export const stateOf = (round: number, state: World): StatePacket => {
   const { random: _random, ...serializable } = state;
   return {
@@ -54,6 +54,7 @@ function validState(value: unknown): value is World {
     && bounded(player.prevX, 20) && bounded(player.prevZ, 30)
     && player.input && bounded(player.input.x, 1) && bounded(player.input.z, 1)
     && (player.pending === null || (player.pending && kindOk(player.pending.kind) && bounded(player.pending.at, 1e9) && aimOk(player.pending.aim)))
+    && kindOk(player.swingKind) && bounded(player.swingLunge, 1) && bounded(player.lungeX, 1) && bounded(player.lungeZ, 1)
     && bounded(player.facing, Math.PI * 2) && bounded(player.swing, 2) && bounded(player.anim, 1e9)
     && typeof player.name === 'string' && player.name.length <= 32
     && (player.ai === null || levelOk(player.ai)) && typeof player.connected === 'boolean')) return false;
@@ -67,6 +68,7 @@ function validState(value: unknown): value is World {
     || !Number.isInteger(ball.canHitTeam) || ball.canHitTeam < 0 || ball.canHitTeam > 1
     || !Number.isInteger(ball.bounces) || ball.bounces < 0 || ball.bounces > 2
     || !Number.isInteger(ball.targetTeam) || ball.targetTeam < 0 || ball.targetTeam > 1
+    || !kindOk(ball.shotKind)
     || !Number.isSafeInteger(ball.rallyShot) || ball.rallyShot < 0
     || typeof ball.inPlay !== 'boolean' || typeof ball.netCord !== 'boolean') return false;
   const match = state.match;
@@ -136,8 +138,8 @@ export function parsePacket(value: unknown): Packet | null {
     return { k: 'mv', r, x: packet.x as number, z: packet.z as number };
   }
   if (packet.k === 'toss' || packet.k === 'serve') {
-    if (!aimOk(packet.aim)) return null;
-    return { k: packet.k, r, aim: packet.aim };
+    if (!aimOk(packet.aim) || (packet.k === 'serve' && packet.kind !== 'topspin' && packet.kind !== 'slice' && packet.kind !== 'flat')) return null;
+    return { k: packet.k, r, aim: packet.aim, ...(packet.k === 'serve' ? { kind: packet.kind as 'topspin' | 'slice' | 'flat' } : {}) };
   }
   if (packet.k === 'S' && validState(packet.state)) {
     const { random: _random, ...serializable } = packet.state as World;
@@ -155,5 +157,5 @@ export function commandOf(packet: SwingPacket | MovePacket | ServePacket, seat: 
     swing: { kind: packet.kind, aim: packet.aim, delta: packet.delta, swipe: packet.swipe },
   };
   if (packet.k === 'toss') return { seat, toss: true };
-  return { seat, serve: true, swing: { kind: 'drive', aim: packet.aim, delta: 0 } };
+  return { seat, serve: true, swing: { kind: packet.kind ?? 'topspin', aim: packet.aim, delta: 0 } };
 }
