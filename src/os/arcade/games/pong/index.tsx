@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react';
 import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { meta } from './meta';
-import { BALL_R, COURT, PADDLE, SERVE_DELAY, aiStep, createAi, createMatch, mergeGuestSnapshot, movePaddle, other, paddleX, steerPaddle, step, type AiLevel, type PongEvent, type Side } from './pong';
+import { advanceGuest, BALL_R, COURT, PADDLE, SERVE_DELAY, aiStep, createAi, createMatch, mergeGuestSnapshot, movePaddle, other, paddleX, steerPaddle, step, type AiLevel, type PongEvent, type Side } from './pong';
 import './pong.css';
 
 const MODE = defineSetting('pong:mode', PLAY_MODES, 'cpu');
@@ -193,6 +193,7 @@ function Pong() {
           st.snapshotAt %= 0.05;
         }
       } else {
+        advanceGuest(m, dt);
         const target = [...st.pointers.values()].find((p) => p.side === 1) ?? (st.hover?.side === 1 ? st.hover : null);
         if (target && !online!.watching) m.paddles[1].y += (target.y - m.paddles[1].y) * Math.min(1, dt * 12);
       }

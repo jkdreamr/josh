@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { roomApp } from '../src/os/arcade/apps.ts';
-import { advanceOnlineRound, botPlayers, canStartNext, MAX_SEATS, nextOnlineRound, RoundRouter, tagRound, openRoomAction, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, handOffSettled, parseRacePacket, raceSeats, raceStandings, raceVerdict, type OpenRoom, type RaceScores, type SettledRace } from '../src/os/arcade/kit/online-core.ts';
+import { advanceOnlineRound, botPlayers, canStartNext, MAX_SEATS, nextOnlineRound, relayPlan, RoundRouter, tagRound, openRoomAction, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, handOffSettled, parseRacePacket, raceSeats, raceStandings, raceVerdict, type OpenRoom, type RaceScores, type SettledRace } from '../src/os/arcade/kit/online-core.ts';
 import { createRoom, listRooms, quickRoom, RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
-import { agreedWinner, agreedWinners, isPool, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, canWatchRoom, endRound, GATHER_FULL_MS, GATHER_MS, gatherFull, gathering, joinable, LISTING_REFRESH_MS, lowestFreeSeat, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, pickQuick, QUICK_LATE_MS, QUICK_PENDING_MS, roomListing, roundPlayable, roundSeats, seatsFor, sortListings, WATCHERS_MAX, type LobbyRow, type RoomState } from '../worker/src/room-core.ts';
+import { agreedWinner, agreedWinners, isPool, isRelayMessage, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, canWatchRoom, endRound, GATHER_FULL_MS, GATHER_MS, gatherFull, gathering, joinable, LISTING_REFRESH_MS, lowestFreeSeat, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, pickQuick, QUICK_LATE_MS, QUICK_PENDING_MS, roomListing, roundPlayable, roundSeats, seatsFor, sortListings, WATCHERS_MAX, type LobbyRow, type RoomState } from '../worker/src/room-core.ts';
 import { ONLINE_SPECS } from '../worker/src/specs.gen.ts';
 import { handOffScores, handOffSeat } from '../src/os/arcade/kit/online-core.ts';
 
@@ -69,6 +69,13 @@ test('online rounds advance independently from local game rounds', () => {
   assert.equal(advanceOnlineRound(40), 41);
   assert.equal(nextOnlineRound(0, null), 1);
   assert.equal(nextOnlineRound(3, 7), 7, 'the server round wins so late joiners line up');
+});
+
+test('relay plans preserve direct and per-seat relays unless every broadcast recipient is relayed', () => {
+  assert.deepEqual(relayPlan([1, 2], () => false, true), { direct: [], relay: [1, 2], relayAll: true });
+  assert.deepEqual(relayPlan([1, 2], (seat) => seat === 1, true), { direct: [1], relay: [2], relayAll: false });
+  assert.deepEqual(relayPlan([1], () => false, true), { direct: [], relay: [1], relayAll: false });
+  assert.deepEqual(relayPlan([1, 2], () => false, false), { direct: [], relay: [1, 2], relayAll: false });
 });
 
 test('rooms lock after starting unless the game lets players join between rounds', () => {
@@ -213,6 +220,31 @@ test('RoomLink uses host-only relay fallback without WebRTC', async () => {
     assert.equal(link.transport, 'relay');
     link.close();
     assert.equal(socket.closed, true);
+  });
+});
+
+test('RoomLink relays a host broadcast once when every recipient is relayed', async () => {
+  await withFakeRoom(async () => {
+    const link = new RoomLink('ABCD', 'Host', 'https://arcade.test');
+    const socket = FakeWebSocket.last;
+    socket.open();
+    socket.receive({
+      t: 'welcome',
+      seat: 0,
+      code: 'ABCD',
+      game: 'pong',
+      seats: 3,
+      players: [{ seat: 0, name: 'Host' }, { seat: 1, name: 'Guest 1' }, { seat: 2, name: 'Guest 2' }],
+    });
+
+    link.send({ frame: 1 }, { fast: true });
+    link.send({ frame: 2 }, { to: 1 });
+
+    assert.deepEqual(socket.sent.map((message) => JSON.parse(message)), [
+      { t: 'msg', d: { frame: 1 } },
+      { t: 'msg', to: 1, d: { frame: 2 } },
+    ]);
+    link.close();
   });
 });
 
@@ -758,6 +790,15 @@ test('only the host turns watching on or off and shares with spectators, and bot
   assert.equal(parseRoomMessage('{"t":"watchable","on":"no"}', 2), null);
   assert.deepEqual(parseRoomMessage('{"t":"watch","d":{"k":"S"}}', 2), { t: 'watch', d: { k: 'S' } });
   assert.equal(parseRoomMessage('{"t":"watch"}', 2), null);
+});
+
+test('the Worker fast path only handles game relay messages synchronously', () => {
+  assert.equal(isRelayMessage(parseRoomMessage('{"t":"msg","d":{}}', 2)), true);
+  assert.equal(isRelayMessage(parseRoomMessage('{"t":"signal","to":1,"d":{}}', 2)), true);
+  assert.equal(isRelayMessage(parseRoomMessage('{"t":"watch","d":{}}', 2)), true);
+  assert.equal(isRelayMessage(parseRoomMessage('{"t":"start"}', 2)), false);
+  assert.equal(isRelayMessage(parseRoomMessage('{"t":"result","round":1,"winner":0}', 2)), false);
+  assert.equal(isRelayMessage(null), false);
 });
 
 test('RoomLink watches as a spectator: no seat, nothing sent, and the room round it walks into', async () => {
