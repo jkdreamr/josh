@@ -104,6 +104,8 @@ function Cycles() {
   const [levelName] = useSetting(LEVEL);
   const cfg = useRef<{ mode: Mode; level: Level }>({ mode: modeOf(playMode, rivals), level: levelIndex(levelName) });
   const m = useRef<Match | null>(null);
+  const roomRound = useRef(0);
+  roomRound.current = online?.round ?? 0;
   const touches = useRef(new Map<number, { x: number; y: number; sx: number; sy: number; rider: number; swiped: boolean }>());
   const sizeRef = useRef(size);
   sizeRef.current = size;
@@ -373,6 +375,8 @@ function Cycles() {
       // Hosts from before bots sent no seats: riders were seats 0, 1, 2 and so on.
       match.seats = seatList(message.seats) ?? Array.from({ length: message.players as number }, (_, i) => i);
       match.bots = seatList(message.bots) ?? [];
+      // Guests never set the match up again as the room starts: the host's first round packet makes it this round's.
+      match.onlineRound = roomRound.current;
       match.arena = createArena(match.cols, match.rows, message.players as number, message.players as number);
       markBots(match);
       match.wins = Array.isArray(message.wins) ? message.wins as number[] : match.wins;
