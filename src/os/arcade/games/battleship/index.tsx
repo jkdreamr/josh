@@ -316,16 +316,26 @@ function Battleship() {
 
   // A clicked game button often unmounts or disables itself (Start Battle, Ready, Fire), which drops focus to the page; hand it back so keys keep working.
   const refocusRef = useRef(0);
+  const refocusPending = useRef(false);
+  const refocus = () => {
+    const root = shell.root.current;
+    const active = document.activeElement;
+    if (root?.isConnected && (!active || active === document.body || (root.contains(active) && (active as HTMLButtonElement).disabled))) {
+      root.focus({ preventScroll: true });
+    }
+  };
   const keepFocus = () => {
+    refocusPending.current = true;
     window.clearTimeout(refocusRef.current);
     refocusRef.current = window.setTimeout(() => {
-      const root = shell.root.current;
-      const active = document.activeElement;
-      if (root?.isConnected && (!active || active === document.body || (root.contains(active) && (active as HTMLButtonElement).disabled))) {
-        root.focus({ preventScroll: true });
-      }
+      refocusPending.current = false;
+      refocus();
     }, 0);
   };
+  // The click's re-render commits before the next input event, while the timer can run after it; refocus at commit so an immediate key press lands.
+  useLayoutEffect(() => {
+    if (refocusPending.current) refocus();
+  });
 
   useEffect(() => () => {
     window.clearTimeout(refocusRef.current);
@@ -688,6 +698,17 @@ function Battleship() {
     refresh();
   };
 
+  // Dragging a ship to the edge of a pannable placement view scrolls it along.
+  const scrollViewNear = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const view = event.currentTarget.closest<HTMLElement>('.g-battleship-board-view.zoomed');
+    if (!view) return;
+    const rect = view.getBoundingClientRect();
+    const edge = 28 * unit;
+    const dx = event.clientX < rect.left + edge ? -1 : event.clientX > rect.right - edge ? 1 : 0;
+    const dy = event.clientY < rect.top + edge ? -1 : event.clientY > rect.bottom - edge ? 1 : 0;
+    if (dx || dy) view.scrollBy({ left: dx * 12 * unit, top: dy * 12 * unit });
+  };
+
   const onBoardPointerMove = (event: ReactPointerEvent<HTMLDivElement>, target: boolean) => {
     const s = stateRef.current!;
     const cell = pointerCell(event);
@@ -703,6 +724,7 @@ function Battleship() {
       }
       return;
     }
+    if (s.drag) scrollViewNear(event);
     if (!s.drag || !validCell(cell)) return;
     const original = s.fleets[s.placementSeat].find((ship) => ship.id === s.drag!.id);
     if (!original) return;
@@ -973,7 +995,7 @@ function Battleship() {
   const showCover = state.phase === 'cover' && (shell.status === 'playing' || shell.status === 'paused');
   const targetInteractive = state.phase === 'battle' && isHumanTurn(state);
   const showFire = targetInteractive && state.aimed !== null && (geometry.portrait || state.touchAim);
-  const stageClass = `g-battleship-stage${size.h < 220 ? ' compact-height' : ''}${size.h < 300 ? ' short-window' : ''}${geometry.portrait ? ' portrait' : ''}${statusLayout.below ? ' status-below' : ''}`;
+  const stageClass = `g-battleship-stage${size.h < 220 ? ' compact-height' : ''}${size.h < 300 ? ' short-window' : ''}${geometry.portrait ? ' portrait' : ''}${statusLayout.below ? ' status-below' : ''}${shell.touch ? ' touch' : ''}`;
   const targetBoardStyle = boardStyle(geometry.targetCell, geometry.targetX, geometry.targetY);
   const ownBoardStyle = boardStyle(geometry.ownCell, geometry.ownX, geometry.ownY);
   const placementBoardStyle = boardStyle(geometry.placeCell, geometry.placeX, geometry.placeY);
@@ -999,6 +1021,7 @@ function Battleship() {
           <Board
             refBoard={boardRef}
             style={placementBoardStyle}
+            view={geometry.zoomed ? { w: geometry.targetViewW, h: geometry.targetViewH, pad: ZOOM_PAD * unit, padEnd: ZOOM_PAD_END * unit } : undefined}
             caption={state.mode === '2p' ? `player ${state.placementSeat + 1}, your fleet` : 'your fleet'}
             fleet={localFleet}
             intel={newIntel()}
@@ -1140,6 +1163,7 @@ function Board({
   onPointerCancel,
 }: BoardProps) {
   const ships = ghost ? fleet.map((ship) => ship.id === ghost.id ? ghost : ship) : fleet;
+  const shipAt = new Set(placement ? fleet.flatMap(shipCells) : []);
   const boardClass = [
     'g-battleship-board',
     placement ? 'placing' : 'battle-board',
@@ -1194,6 +1218,7 @@ function Board({
               cell === hover ? 'hovered' : '',
               row === 0 ? 'first-row' : '',
               col === 0 ? 'first-col' : '',
+              shipAt.has(cell) ? 'has-ship' : '',
             ].filter(Boolean).join(' ');
             return (
               <button

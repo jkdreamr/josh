@@ -436,6 +436,10 @@
   min-height: calc(40px * var(--g-battleship-u, 1));
 }
 
+.g-battleship-stage.touch .g-battleship-place-tools .arcade-btn {
+  min-height: calc(44px * var(--g-battleship-u, 1));
+}
+
 @media (min-height: 220px) {
   .g-battleship-stage.portrait .g-battleship-place-tools {
     display: flex;
@@ -524,4 +528,8 @@
 .g-battleship-board-view.zoomed .g-battleship-board,
 .g-battleship-board-view.zoomed .g-battleship-board .g-battleship-cell {
   touch-action: pan-x pan-y;
+}
+
+.g-battleship-board-view.zoomed .g-battleship-board.placing .g-battleship-cell.has-ship {
+  touch-action: none;
 }

@@ -296,6 +296,28 @@ test('touch battle boards keep 40px enemy squares and Fire clear of both boards'
   assert.equal(boardGeometry(844, 274, false, 40).targetCell, 21);
 });
 
+test('touch placement keeps 40px squares and the tools clear of the board', () => {
+  const overlaps = (a: number[], b: number[]) => a[0] < b[2] && b[0] < a[2] && a[1] < b[3] && b[1] < a[3];
+  for (const [w, h, top, u] of [[390, 728, 64, 1], [844, 274, 40, 1], [667, 210, 40, 1], [820, 997, 78, 1 / 0.8175]]) {
+    const g = boardGeometry(w, h, true, top, u, Math.ceil(40 * u));
+    assert.ok(g.placeCell / u >= 40, `${w}x${h}: placement squares render at least 40px`);
+    const side = g.placeCell * 10 + 9;
+    const viewW = g.zoomed ? g.targetViewW : side;
+    const viewH = g.zoomed ? g.targetViewH : side;
+    const board = [g.placeX, g.placeY, g.placeX + viewW, g.placeY + viewH];
+    const tools = g.portrait
+      ? [g.toolsX, g.toolsY, g.toolsX + Math.min(330 * u, w - 20 * u), g.toolsY + 50 * u]
+      : [g.toolsX, g.toolsY, g.toolsX + 142 * u, g.toolsY + 144 * u];
+    assert.ok(!overlaps(board, tools), `${w}x${h}: tools stay off the board`);
+    for (const box of [board, tools]) {
+      assert.ok(box[0] >= 0 && box[2] <= w + 1e-9 && box[1] >= top - 1e-9 && box[3] <= h + 1e-9, `${w}x${h}: everything stays on the stage`);
+    }
+    if (g.zoomed) assert.ok(viewH >= g.placeCell * 4, `${w}x${h}: at least four rows show at once`);
+  }
+  assert.equal(boardGeometry(844, 274, true, 40).zoomed, false);
+  assert.equal(boardGeometry(844, 274, true, 40).placeCell, 21);
+});
+
 test('a wrapped status pill leaves room for the column labels above the board', () => {
   for (const u of [1, 1 / 0.8175]) {
     const statusBottom = 170.8;
