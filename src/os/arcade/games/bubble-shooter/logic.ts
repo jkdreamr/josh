@@ -254,7 +254,8 @@ export function createGame(opts?: { seed?: number; level?: number; rng?: () => n
     grid: [],
     parity: 0,
     ceiling: 0,
-    level: opts?.level ?? 1,
+    // endless always starts at speed 1 (the tier follows the rows pushed), so every racer gets the same board
+    level: opts?.mode === 'levels' ? (opts.level ?? 1) : 1,
     def: null,
     colors: 0,
     score: 0,

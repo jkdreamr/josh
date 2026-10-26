@@ -109,6 +109,20 @@
   .g-bubble-shooter .g-bubble-shooter-info {
     font-size: calc(12px * var(--g-bubble-shooter-u, 1));
   }
+  /* shell controls and card buttons: at least 44px on screen (the board keeps clear of them, see fitField) */
+  .g-bubble-shooter .arcade-ctrl button {
+    width: calc(44px * var(--g-bubble-shooter-u, 1));
+    height: calc(44px * var(--g-bubble-shooter-u, 1));
+  }
+  .g-bubble-shooter .arcade-ctrl svg {
+    width: calc(18px * var(--g-bubble-shooter-u, 1));
+    height: calc(18px * var(--g-bubble-shooter-u, 1));
+  }
+  .g-bubble-shooter .arcade-ov .arcade-btn,
+  .g-bubble-shooter .arcade-ov .arcade-seg > button {
+    min-height: calc(44px * var(--g-bubble-shooter-u, 1));
+    font-size: calc(13px * var(--g-bubble-shooter-u, 1));
+  }
 }
 
 /* short cards: drop the extras so Play stays in view */
