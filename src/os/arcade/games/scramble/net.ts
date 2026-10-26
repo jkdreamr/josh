@@ -154,8 +154,10 @@ export function hitCap(w: Cause) {
 const id = (v: unknown): v is number => int(v) && (v as number) >= 0 && (v as number) < 1e9;
 /** A point on the island. */
 const onLand = (x: unknown, z: unknown) => num(x) && num(z) && Math.abs(x) <= HALF && Math.abs(z) <= HALF;
-/** A point on the island or under it (see map.ts DEEP). */
-const onLevel = (x: unknown, z: unknown) => num(x) && num(z) && Math.abs(topX(x)) <= HALF && Math.abs(z) <= HALF;
+/** A point on the island or under it (see map.ts DEEP), or up to `pad` past its shore. */
+const onLevel = (x: unknown, z: unknown, pad = 0): x is number => num(x) && num(z) && Math.abs(topX(x)) <= HALF + pad && Math.abs(z) <= HALF + pad;
+/** How far past the shore a shot, a throw, a hit or a blast may be (an egg a guest sees is let run on a little). */
+const SLACK = 32;
 /** The most a shot's spread can be widened: on the move, with a heavy SMG climbing as far as it goes. */
 export const MAX_KICK = r2(1.6 + Math.max(...Object.values(WEAPONS).map((w) => w.kick?.max ?? 0)));
 /** The highest anything thrown starts or comes down: the top level. */
@@ -432,18 +434,18 @@ function parseEv(v: unknown): NetEv | null {
   switch (e.y) {
     case 's': {
       const h = e.h === undefined ? 0 : e.h;
-      return fid(e.f) && isWeapon(e.w) && int(e.r) && num(e.x) && num(e.z) && num(e.a) && int(e.s) && num(e.k) && e.k >= 1 && e.k <= MAX_KICK && int(h) && h >= 0 && h <= MAX_LEVEL
+      return fid(e.f) && isWeapon(e.w) && int(e.r) && onLevel(e.x, e.z, SLACK) && num(e.z) && num(e.a) && int(e.s) && num(e.k) && e.k >= 1 && e.k <= MAX_KICK && int(h) && h >= 0 && h <= MAX_LEVEL
         ? { y: 's', f: e.f, w: e.w, r: Math.max(0, Math.min(4, e.r)), x: e.x, z: e.z, a: e.a, s: e.s, k: e.k, ...(h ? { h } : {}) }
         : null;
     }
     case 'sw':
       return fid(e.f) ? { y: 'sw', f: e.f } : null;
     case 'th':
-      return fid(e.f) && isThrow(e.k) && num(e.x) && num(e.z) && num(e.lx) && num(e.lz) && num(e.ft) && e.ft > 0 && e.ft <= 3 && Math.hypot(e.lx - e.x, e.lz - e.z) <= 25 && height(e.y0) && height(e.ly)
+      return fid(e.f) && isThrow(e.k) && onLevel(e.x, e.z, SLACK) && num(e.z) && onLevel(e.lx, e.lz, SLACK) && num(e.lz) && num(e.ft) && e.ft > 0 && e.ft <= 3 && Math.hypot(e.lx - e.x, e.lz - e.z) <= 25 && height(e.y0) && height(e.ly)
         ? { y: 'th', f: e.f, k: e.k, x: e.x, z: e.z, lx: e.lx, lz: e.lz, ft: e.ft, ...(tossH(e.y0) ? { y0: tossH(e.y0) } : {}), ...(tossH(e.ly) ? { ly: tossH(e.ly) } : {}) }
         : null;
     case 'd':
-      return fid(e.f) && fid(e.to) && num(e.d) && isCause(e.w) && e.d > 0 && e.d <= hitCap(e.w) && num(e.x) && num(e.z) ? { y: 'd', f: e.f, to: e.to, d: e.d, w: e.w, x: e.x, z: e.z } : null;
+      return fid(e.f) && fid(e.to) && num(e.d) && isCause(e.w) && e.d > 0 && e.d <= hitCap(e.w) && onLevel(e.x, e.z, SLACK) && num(e.z) ? { y: 'd', f: e.f, to: e.to, d: e.d, w: e.w, x: e.x, z: e.z } : null;
     case 'm':
       return fid(e.f) && (e.k === 'wall' || e.k === 'crate' || e.k === 'door') && id(e.id) && num(e.d) && e.d > 0 && e.d <= 1000 ? { y: 'm', f: e.f, k: e.k, id: e.id, d: e.d } : null;
     case 'gl':
@@ -453,7 +455,7 @@ function parseEv(v: unknown): NetEv | null {
     case 'ds':
       return int(e.f) && e.f >= -1 && e.f < MAX_FIGHTERS && int(e.i) && e.i >= 0 && e.i < MAX_DOORS && DOOR_STATES.includes(e.s as (typeof DOOR_STATES)[number]) ? { y: 'ds', f: e.f, i: e.i, s: e.s as number } : null;
     case 'b':
-      if (!fid(e.f) || !num(e.x) || !num(e.z) || !height(e.h)) return null;
+      if (!fid(e.f) || !onLevel(e.x, e.z, SLACK) || !num(e.z) || !height(e.h)) return null;
       if (e.r !== undefined && !(num(e.r) && e.r > 0 && e.r <= 8)) return null;
       return { y: 'b', f: e.f, x: e.x, z: e.z, ...(tossH(e.h) ? { h: tossH(e.h) } : {}), ...(e.r === undefined ? {} : { r: e.r as number }) };
     case 'o':

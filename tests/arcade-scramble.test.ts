@@ -6695,6 +6695,18 @@ test('an egg underground travels in its state like anywhere else, what it drops 
   assert.ok(ok({ y: 'dr', id: DROP_BASE + 5, x: foot.x, z: foot.z, by: 1, it: { kind: 'scope', lv: 2 } }));
   assert.ok(!ok({ y: 'dr', id: DROP_BASE + 5, x: 700, z: 0, by: 1, it: { kind: 'scope', lv: 2 } }));
   assert.ok(ok({ y: 'lv', id: 77, x: foot.x, z: foot.z }));
+  // shots, throws, hits and blasts come from one level or the other too, never from out between them
+  const shot = { y: 's', f: 1, w: 'rifle', r: 1, x: foot.x, z: foot.z, a: 0.5, s: 3, k: 1 };
+  assert.ok(ok(shot));
+  assert.ok(!ok({ ...shot, x: 650 }));
+  assert.ok(!ok({ ...shot, x: 1e7 }));
+  const toss = { y: 'th', f: 1, k: 'grenade', x: foot.x, z: foot.z, lx: foot.x + 5, lz: foot.z, ft: 0.8 };
+  assert.ok(ok(toss));
+  assert.ok(!ok({ ...toss, x: 640, lx: 645 }));
+  assert.ok(ok({ y: 'd', f: 1, to: 0, d: 10, w: 'rifle', x: foot.x, z: foot.z }));
+  assert.ok(!ok({ y: 'd', f: 1, to: 0, d: 10, w: 'rifle', x: 600, z: foot.z }));
+  assert.ok(ok({ y: 'b', f: 1, x: foot.x, z: foot.z }));
+  assert.ok(!ok({ y: 'b', f: 1, x: 0, z: 5000 }));
   // a crack below spills below
   a.guns[0] = { w: 'rifle', r: 1, mag: 10 };
   a.hp = 1;
@@ -6762,4 +6774,87 @@ test('a computer egg goes down to loot a basement nearby and comes back up, and 
     if (!isDeep(b.x)) out = t;
   }
   assert.ok(out >= 0 && b.phase === 'ground', `up the stairs before the storm (${out.toFixed(1)} s)`);
+});
+
+test('a computer egg walks round a stairway it is not making for, rather than down it and straight back up', () => {
+  const { seed, i } = stairsFrom('hatch');
+  const m = quiet(seed);
+  const a = alone(m);
+  const s = m.map.stairs[i];
+  // nothing to go down for, and the storm closing on a spot past the foot of the stairs, so the way there crosses them
+  m.loot.clear();
+  m.opened = m.opened.map(() => true);
+  a.ai!.below = m.map.stairs.map((st) => st.u);
+  const run0 = s.dx ? s.hw : s.hd;
+  const to = { x: s.x + s.dx * (run0 + 14), z: s.z + s.dz * (run0 + 14) };
+  m.map.storm.circles = m.map.storm.circles.map(() => ({ x: to.x, z: to.z, r: 5 }));
+  const top = stairOut(s, false);
+  land(a, top.x - s.dx * 0.5, top.z - s.dz * 0.5);
+  let flips = 0;
+  let past = false;
+  for (let t = 0; t < 20 && !past; t += 1 / 30) {
+    step(m, 1 / 30);
+    for (const e of m.events.splice(0)) if (e.t === 'stairs' && e.f === a.id) flips++;
+    past = (a.x - s.x) * s.dx + (a.z - s.z) * s.dz > run0 + 3;
+  }
+  assert.equal(flips, 0, 'never down the stairs');
+  assert.ok(past, 'round them and on');
+});
+
+test('a computer egg goes down the stairs to revive a teammate knocked in the basement', () => {
+  const { seed, i } = stairsFrom('hatch');
+  const entrants: Entrant[] = [0, 0, 1].map((team, k) => ({ name: `p${k}`, color: '#fff', kind: k === 1 ? 'bot' : 'player', seat: k === 1 ? -1 : k, team }));
+  const m = createMatch({ seed, role: 'solo', level: 'normal', entrants, me: 0, countdown: 0, mode: 'duos' });
+  m.time = 5;
+  const [me, bot, far] = m.fighters;
+  const s = m.map.stairs[i];
+  const u = m.map.buildings[s.u];
+  m.loot.clear();
+  m.opened = m.opened.map(() => true);
+  far.phase = 'drop';
+  far.y = 1e9;
+  const room = u.rooms[u.rooms.length - 1];
+  land(me, room.x, room.z);
+  me.down = true;
+  me.hp = DOWN_HP;
+  const top = stairOut(s, false);
+  const at = startNear(m, top.x, top.z, 12) ?? startNear(m, top.x, top.z, 18);
+  assert.ok(at);
+  land(bot, at.x, at.z);
+  bot.ai!.goal = 'roam';
+  let down = false;
+  let revived = false;
+  for (let t = 0; t < 40 && !revived; t += 1 / 30) {
+    step(m, 1 / 30);
+    for (const e of m.events.splice(0)) {
+      if (e.t === 'stairs' && e.f === bot.id && e.down) down = true;
+      if (e.t === 'revived' && e.f === me.id && e.by === bot.id) revived = true;
+    }
+  }
+  assert.ok(down, 'down the stairs');
+  assert.ok(revived && !me.down, 'and back on its feet');
+});
+
+test('loot that ends up down a stairway lands off the end you walk onto it from, on its level', () => {
+  const { seed, i } = stairsFrom('hatch');
+  const m = quiet(seed);
+  const a = m.fighters[0];
+  const s = m.map.stairs[i];
+  const run0 = s.dx ? s.hw : s.hd;
+  const along = (l: { x: number; z: number }, ox = 0) => (l.x - ox - s.x) * s.dx + (l.z - s.z) * s.dz;
+  // put down at the top of the stairs, facing down them
+  land(a, s.x - s.dx * (run0 - 0.3), s.z - s.dz * (run0 - 0.3));
+  a.aim = Math.atan2(s.dx, s.dz);
+  a.input.aim = a.aim;
+  a.items.bandage = 2;
+  assert.ok(dropOut(m, a, 'bandage'));
+  const l = [...m.loot.values()].find((l) => l.by === a.id)!;
+  assert.ok(along(l) < -run0, 'off the top end');
+  assert.equal(stairAt(m.map, l.x, l.z), -1);
+  // shoved into the well up top, or below
+  moveLoot(m, l.id, s.x + s.dx * run0 * 0.8, s.z + s.dz * run0 * 0.8, true);
+  assert.ok(!isDeep(l.x) && along(l) < -run0, 'up top: off its top end');
+  moveLoot(m, l.id, s.x + DEEP, s.z, true);
+  assert.ok(isDeep(l.x) && along(l, DEEP) > run0, 'below: off its foot');
+  assert.equal(basementAt(m.map, l.x, l.z), s.u);
 });

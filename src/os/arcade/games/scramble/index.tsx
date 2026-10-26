@@ -2034,8 +2034,9 @@ function Play({ mode }: { mode: StageMode }) {
             </span>
             {hud.scopes > 0 && (
               // every scope carried, the one looked through lit: a click or a tap looks through another (holding it or
-              // a right click on the one in use puts it down for a teammate)
-              <span className="g-scramble-pill is-gear is-scopes" role="group" aria-label={`Scopes: looking through ${SCOPES[hud.scope]}`}>
+              // a right click on the one in use puts it down for a teammate). Underground, those past 2x are dimmed:
+              // they see no farther than it down there
+              <span className="g-scramble-pill is-gear is-scopes" role="group" aria-label={`Scopes: looking through ${SCOPES[hud.scope]}${hud.deep >= 0 && hud.scope > 1 ? ', which sees no farther than 2x underground' : ''}`}>
                 <ScopeIcon size={15} />
                 {scopesOf(hud).map((lv) =>
                   hud.mine ? (
@@ -2043,7 +2044,7 @@ function Play({ mode }: { mode: StageMode }) {
                       key={lv}
                       type="button"
                       tabIndex={-1}
-                      className={hud.scope === lv ? 'is-on' : undefined}
+                      className={[hud.scope === lv ? 'is-on' : '', hud.deep >= 0 && lv > 1 ? 'is-dim' : ''].join(' ').trim() || undefined}
                       aria-label={`Look through the ${SCOPES[lv]} scope`}
                       aria-pressed={hud.scope === lv}
                       {...(lv > 0 && lv === hud.scope ? tapOrDrop('scope', () => {}) : tap((t) => (t.scope = 10 + lv)))}
@@ -2051,7 +2052,7 @@ function Play({ mode }: { mode: StageMode }) {
                       {SCOPES[lv]}
                     </button>
                   ) : (
-                    <b key={lv} className={hud.scope === lv ? 'is-on' : undefined}>
+                    <b key={lv} className={[hud.scope === lv ? 'is-on' : '', hud.deep >= 0 && lv > 1 ? 'is-dim' : ''].join(' ').trim() || undefined}>
                       {SCOPES[lv]}
                     </b>
                   ),

@@ -2659,6 +2659,24 @@ export function stairOut(s: Stair, down: boolean) {
   return down ? { x: s.x + DEEP + s.dx * run, z: s.z + s.dz * run } : { x: s.x - s.dx * run, z: s.z - s.dz * run };
 }
 
+/**
+ * A point in a stairway (on its level) moved off the end an egg walks onto it from (up top its top, below its foot),
+ * where an egg can get at what lies there without being taken down or up; anywhere else, the point as it is.
+ */
+export function offStairs(map: GameMap, x: number, z: number) {
+  const deep = isDeep(x);
+  const tx = topX(x);
+  for (const s of map.stairs) {
+    if (Math.abs(tx - s.x) >= s.hw || Math.abs(z - s.z) >= s.hd) continue;
+    const run = (s.dx ? s.hw : s.hd) + 0.5;
+    const half = (s.dx ? s.hd : s.hw) - 0.5;
+    const across = Math.max(-half, Math.min(half, s.dx ? z - s.z : tx - s.x));
+    const along = deep ? run : -run;
+    return { x: s.x + s.dx * along + (s.dx ? 0 : across) + (deep ? DEEP : 0), z: s.z + s.dz * along + (s.dx ? across : 0) };
+  }
+  return { x, z };
+}
+
 /** The basement (a building) a point underground is in, or -1. */
 export function basementAt(map: GameMap, x: number, z: number) {
   if (!isDeep(x)) return -1;

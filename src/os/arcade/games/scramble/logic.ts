@@ -88,6 +88,7 @@ import {
   grassAt,
   isDeep,
   low,
+  offStairs,
   opens,
   padAt,
   placeDrop,
@@ -409,6 +410,8 @@ export type Ai = {
   shareCool: number;
   /** The basements we've been down to (or given up on), not to go back down. */
   below: number[];
+  /** The stairway we're making for this step (see head), or -1: we keep off any other (see steer). */
+  steps: number;
 };
 
 export type Fighter = {
@@ -1170,6 +1173,7 @@ function newAi(m: Match, f: Fighter): Ai {
     pingCool: 0,
     shareCool: 8 + (f.id % 5) * 2,
     below: [],
+    steps: -1,
   };
 }
 
@@ -2193,15 +2197,18 @@ function standUp(m: Match, f: Fighter) {
   for (const o of m.fighters) if (o.reviving === f.id) o.reviving = -1;
 }
 
-/** The nearest knocked teammate on the ground within reach of an egg (to revive), or null. */
-export function downMate(m: Match, f: Fighter, reach = REVIVE_R): Fighter | null {
+/**
+ * The nearest knocked teammate on the ground within reach of an egg (to revive), or null: on its level, or (`over`)
+ * going by the ground over anyone underground.
+ */
+export function downMate(m: Match, f: Fighter, reach = REVIVE_R, over = false): Fighter | null {
   if (m.mode === 'solo') return null;
   let best: Fighter | null = null;
   let bestD = reach;
   for (const id of m.teams[f.team] ?? []) {
     const o = m.fighters[id];
     if (o === f || !o.down || !fighting(o) || Math.abs(o.y - f.y) > 1.2) continue;
-    const d = Math.hypot(o.x - f.x, o.z - f.z);
+    const d = over ? Math.hypot(topX(o.x) - topX(f.x), o.z - f.z) : Math.hypot(o.x - f.x, o.z - f.z);
     if (d <= bestD) {
       best = o;
       bestD = d;
@@ -3126,8 +3133,9 @@ export function moveLoot(m: Match, id: number, x: number, z: number, announce: b
   const l = m.loot.get(id);
   if (!l) return;
   takeLoot(m, id);
-  l.x = r1(x);
-  l.z = r1(z);
+  const p = m.map.stairs.length ? offStairs(m.map, x, z) : { x, z };
+  l.x = r1(p.x);
+  l.z = r1(p.z);
   putLoot(m, l);
   emit(m, announce ? { t: 'moved', id, x: l.x, z: l.z } : { t: 'moved', id, x: l.x, z: l.z, net: true });
 }
@@ -3778,7 +3786,9 @@ function give(m: Match, f: Fighter, def: LootDef, key: boolean) {
 
 /** Puts something an egg owned here dropped on the ground, numbered from that egg's own range. */
 function dropItem(m: Match, f: Fighter, def: LootDef, x: number, z: number) {
-  const item: LootItem = { id: dropId(f.id, f.dropSeq++), def, x: r1(x), z: r1(z), by: f.id, at: m.time };
+  // never down a stairway, where stepping in to pick it up would take us to the other level
+  const p = m.map.stairs.length ? offStairs(m.map, x, z) : { x, z };
+  const item: LootItem = { id: dropId(f.id, f.dropSeq++), def, x: r1(p.x), z: r1(p.z), by: f.id, at: m.time };
   putLoot(m, item);
   emit(m, { t: 'drop', item });
 }
@@ -4097,6 +4107,7 @@ function think(m: Match, f: Fighter, dt: number) {
   ai.harvestCool -= dt;
   ai.pingCool -= dt;
   ai.shareCool -= dt;
+  ai.steps = -1;
   // knocked down: crawl to the team, never shoot
   if (f.down) return crawlTo(m, f, ai, dt);
   // who has been hitting us: two eggs at once is a crossfire
@@ -4383,8 +4394,7 @@ function think(m: Match, f: Fighter, dt: number) {
       // taking too long (it's somewhere we can't get at): leave it be
       ai.tried = c.id;
       ai.think = 0;
-    }
-    else if (Math.hypot(c.x - f.x, c.z - f.z) < CHEST_R - 0.3 && inReach(m, f, c)) {
+    } else if (Math.hypot(c.x - f.x, c.z - f.z) < CHEST_R - 0.3 && inReach(m, f, c)) {
       // straight for it (the key might take a door that happens to be nearer)
       requestOpen(m, f, c.id);
       ai.think = 0;
@@ -4583,8 +4593,9 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   const armed = f.guns.some((x) => fightGun(f, x));
   // unarmed eggs only fight what is right in front of them (not through a window)
   if (best && !armed && (Math.hypot(best.x - f.x, best.z - f.z) > 6 || inWindow(m, f.x, f.z, best.x, best.z))) best = null;
-  // a knocked teammate close by matters more than an egg far off
-  const downed = m.mode === 'solo' ? null : downMate(m, f, 45);
+  // a knocked teammate close by matters more than an egg far off (one in the basement under us, or over us, we go
+  // down, or up, the stairs to)
+  const downed = m.mode === 'solo' ? null : downMate(m, f, 45, true);
   if (best && downed && Math.hypot(downed.x - f.x, downed.z - f.z) < 12 && Math.hypot(best.x - f.x, best.z - f.z) > 25 && best.id !== f.lastBy) best = null;
   if ((best?.id ?? -1) !== ai.target) {
     ai.react = best ? L.react * (0.7 + m.rng() * 0.6) : 0;
@@ -5067,6 +5078,7 @@ function head(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, 
       tx = p.x;
       tz = p.z;
       stop = 0;
+      ai.steps = st.i;
     }
   }
   const b = f.inside >= 0 ? m.map.buildings[f.inside] : undefined;
@@ -5411,13 +5423,16 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
   const ahead = castRay(m, f.x, f.z, dx / d, dz / d, Math.min(d, 2), f.id, false, true, levelOf(f.y));
   if (ahead?.what === 'door' && m.doors[ahead.ref] === DOOR_SHUT) requestDoor(m, f, ahead.ref);
   let a = Math.atan2(dx, dz);
+  // nor down (or up) a stairway we aren't making for: it would take us to the other level
+  const look = Math.min(2.4, d);
+  const offStairs = (b: number) => !m.map.stairs.length || !ontoStairs(m, f, Math.sin(b), Math.cos(b), look, ai.steps);
+  if (ai.detourT > 0 && !offStairs(ai.detourA)) ai.detourT = 0;
   if (ai.detourT > 0) {
     ai.detourT -= dt;
     a = ai.detourA;
   } else {
     // try straight on, then ever wider either side, and never into a building (doorways too) or a fenced yard the
     // point isn't in, nor over a bounce pad we aren't making for
-    const look = Math.min(2.4, d);
     const into = roomAt(m.map, tx, tz);
     const intoYard = yardAt(m.map, tx, tz);
     const fromYard = yardAt(m.map, f.x, f.z);
@@ -5430,6 +5445,7 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
       const room = roomAt(m.map, f.x + ex * look, f.z + ez * look);
       const yard = yardAt(m.map, f.x + ex * look, f.z + ez * look);
       const blocked =
+        !offStairs(b) ||
         (room >= 0 && room !== f.inside && room !== into) ||
         (yard >= 0 && yard !== fromYard && yard !== intoYard) ||
         m.map.pads.some((p, i) => i !== onPad && rayCircle(f.x, f.z, ex, ez, look, p.x, p.z, PAD.r + FIGHTER_R * 0.5) < Infinity) ||
@@ -5442,8 +5458,10 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
       }
     }
   }
-  inp.mx = Math.sin(a);
-  inp.mz = Math.cos(a);
+  // no way but onto the stairs: wait for one to open up
+  const wait = !offStairs(a);
+  inp.mx = wait ? 0 : Math.sin(a);
+  inp.mz = wait ? 0 : Math.cos(a);
   // stuck on something: wander off a different way for a moment
   ai.stuckT += dt;
   if (ai.stuckT > 0.8) {
@@ -5457,7 +5475,7 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
       const ahead = Math.atan2(dx, dz);
       const lv = levelOf(f.y);
       const breaks = (h: ReturnType<typeof castRay>) => !!h && (h.what === 'built' || h.what === 'crate');
-      const hit = castRay(m, f.x, f.z, inp.mx, inp.mz, 1.8, f.id, false, true, lv);
+      const hit = castRay(m, f.x, f.z, Math.sin(a), Math.cos(a), 1.8, f.id, false, true, lv);
       const front = breaks(hit) ? null : castRay(m, f.x, f.z, Math.sin(ahead), Math.cos(ahead), Math.min(1.8, d), f.id, false, true, lv);
       const wall = breaks(hit) ? hit : breaks(front) ? front : null;
       const ours = wall?.what === 'built' ? m.walls.get(wall.ref) : undefined;
@@ -5474,6 +5492,23 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
       }
     }
   }
+}
+
+/**
+ * Whether the way `len` along (ex, ez) from an egg takes it onto a stairway on its level (other than `but`): into its
+ * box from outside it, or on in from the end it was stepped onto (up top its top, below its foot).
+ */
+function ontoStairs(m: Match, f: Fighter, ex: number, ez: number, len: number, but: number) {
+  const deep = isDeep(f.x);
+  const ox = deep ? DEEP : 0;
+  for (const s of m.map.stairs) {
+    const sx = s.x + ox;
+    if (s.i === but || Math.abs(f.x - sx) > s.hw + len + 1 || Math.abs(f.z - s.z) > s.hd + len + 1) continue;
+    const t = rayBox(f.x, f.z, ex, ez, len, sx, s.z, s.hw - 0.1, s.hd - 0.1);
+    if (t === Infinity) continue;
+    if (t > 0 || (ex * s.dx + ez * s.dz) * (deep ? -1 : 1) > 0) return true;
+  }
+  return false;
 }
 
 /** The way to the nearest built wall within a swing round an egg, on its level, or -1. */

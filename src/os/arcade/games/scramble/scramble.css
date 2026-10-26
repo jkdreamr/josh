@@ -1747,6 +1747,9 @@
   background: #ffd75e;
   box-shadow: 0 0 10px rgba(255, 215, 94, 0.45);
 }
+.g-scramble .g-scramble-pill.is-scopes .is-dim {
+  opacity: 0.45;
+}
 .g-scramble .g-scramble-pill.is-scopes kbd {
   margin-left: 3px;
 }
