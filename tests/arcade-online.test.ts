@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { roomApp } from '../src/os/arcade/apps.ts';
-import { advanceOnlineRound, botPlayers, canStartNext, MAX_SEATS, nextOnlineRound, RoundRouter, tagRound, openRoomAction, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, parseRacePacket, raceStandings, type OpenRoom } from '../src/os/arcade/kit/online-core.ts';
+import { advanceOnlineRound, botPlayers, canStartNext, MAX_SEATS, nextOnlineRound, RoundRouter, tagRound, openRoomAction, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, parseRacePacket, raceSeats, raceStandings, type OpenRoom } from '../src/os/arcade/kit/online-core.ts';
 import { createRoom, listRooms, quickRoom, RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
 import { agreedWinner, agreedWinners, isPool, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, canWatchRoom, endRound, GATHER_FULL_MS, GATHER_MS, gatherFull, gathering, joinable, LISTING_REFRESH_MS, lowestFreeSeat, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, pickQuick, QUICK_LATE_MS, QUICK_PENDING_MS, roomListing, roundPlayable, roundSeats, seatsFor, sortListings, WATCHERS_MAX, type LobbyRow, type RoomState } from '../worker/src/room-core.ts';
 import { ONLINE_SPECS } from '../worker/src/specs.gen.ts';
@@ -285,6 +285,17 @@ test('score races rank the best score and wait for every seat', () => {
   assert.equal(raceStandings({ 0: 9000, 1: 7000 }, [0, 1], true).winner, 1, 'times: lower wins');
   assert.equal(raceStandings({ 0: 10, 1: 5 }, [0]).done, false, 'a race needs two players');
   assert.equal(raceStandings({ 0: 10, 1: 5, 2: 1 }, [0, 1]).winner, 0, 'players who left do not count');
+});
+
+test('a settled race keeps its result after someone leaves', () => {
+  const settled = { round: 3, seats: [0, 1], names: { 0: 'Ann', 1: 'Ben' } };
+  assert.deepEqual(raceSeats([0], settled, 3), [0, 1], 'the finished lineup stays');
+  assert.deepEqual(raceSeats([0], settled, 4), [0], 'a new round goes back to who is here');
+  assert.deepEqual(raceSeats([0, 1], null, 3), [0, 1]);
+  const after = raceStandings({ 0: 6, 1: 6 }, raceSeats([0], settled, 3));
+  assert.equal(after.done, true);
+  assert.equal(after.winner, null, 'still a tie');
+  assert.deepEqual(after.standings.map((s) => [s.seat, s.score]), [[0, 6], [1, 6]]);
 });
 
 test('the host starts the next round only once it is over for everyone', () => {

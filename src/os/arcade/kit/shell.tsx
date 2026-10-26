@@ -11,7 +11,7 @@ import { sfx, useMusicOn, useMuted } from './sfx';
 import { useBackgroundMusic } from './music';
 import { defineSetting, getSetting, isGameSetting, onSettingChange, setSetting, trackSettingChange, useSetting } from './settings';
 import { BotStepper, OnlinePanel, OnlineProvider, QuickPanel, ROOM_VISIBILITY, ROOM_WATCHERS, RoomCode, RoomRoster, VisibilityPicker, WatchPicker } from './online';
-import { MAX_SEATS, botPlayers, canStartNext, nextOnlineRound, parseRacePacket, raceStandings, RoundRouter, type RaceScores } from './online-core';
+import { MAX_SEATS, botPlayers, canStartNext, nextOnlineRound, parseRacePacket, raceSeats, raceStandings, RoundRouter, type RaceScores, type SettledRace } from './online-core';
 import { createRoom, quickRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import { countPlay } from '../../stats';
 import { useBadge } from '../../badges';
@@ -190,6 +190,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   /** The Start card's Play is quick play, and Play with Bots plays alone. */
   const quickOn = !compact && !!meta.online?.quick && !!ARCADE_API;
   const [raceScores, setRaceScores] = useState<RaceScores>({});
+  const [raceSettled, setRaceSettled] = useState<SettledRace | null>(null);
   const raceRef = useRef<{ link: RoomLink | null; seat: number | null; round: number; scores: RaceScores }>({ link: null, seat: null, round: 0, scores: {} });
   const raceReported = useRef(-1);
   const active = onlineMode || (host.active && docVisible && seen);
@@ -516,6 +517,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       onlineModeRef.current = false;
       raceRef.current = { link: null, seat: null, round: 0, scores: {} };
       setRaceScores({});
+      setRaceSettled(null);
       link.close();
       setOnlineLink(null);
       setOnlineSeat(null);
@@ -816,8 +818,11 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const hostListed = gameOnline && onlineSeat === 0 && onlineListed !== null ? <VisibilityPicker value={onlineListed ? 'public' : 'private'} onChange={(v) => setListed(v === 'public')} /> : null;
   const hostWatch = gameOnline && onlineSeat === 0 && watchable !== null && !quick ? <WatchPicker value={watchable} onChange={setRoomWatchable} /> : null;
   // The race is between the people who started it and are still here; anyone who joined since waits for the next.
-  const racers = onlinePlayers.filter((p) => !roundSeats.length || roundSeats.includes(p.seat)).map((p) => p.seat);
+  // Once everyone has finished the result is settled, and someone leaving the card no longer changes it.
+  const presentRacers = onlinePlayers.filter((p) => !roundSeats.length || roundSeats.includes(p.seat)).map((p) => p.seat);
+  const racers = raceSeats(presentRacers, raceSettled, onlineRound);
   const raceNow = race && gameOnline ? raceStandings(raceScores, racers, lowerIsBetter) : null;
+  const racerName = (seat: number) => (raceSettled?.round === onlineRound ? raceSettled.names[seat] : undefined) ?? onlinePlayers.find((p) => p.seat === seat)?.name;
   const raceDone = !!raceNow?.done;
   const raceWinner = raceNow?.winner ?? null;
   const roomReady = onlinePlayers.length + (lobbyBots?.length ?? 0) >= 2;
@@ -842,6 +847,13 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     onlineLink.endRound(onlineRound);
   }, [gameOnline, onlineSeat, status, stillRacing, waiting, onlineLink, onlineRound]);
   const boardFmt = result?.rank !== undefined && roundBoard ? (n: number) => formatBoardScore(n, roundBoard.spec) : fmt;
+
+  const racersKey = racers.join(',');
+  useEffect(() => {
+    if (!raceNow?.done || raceSettled?.round === onlineRound) return;
+    const seats = racersKey.split(',').map(Number);
+    setRaceSettled({ round: onlineRound, seats, names: Object.fromEntries(onlinePlayers.filter((p) => seats.includes(p.seat)).map((p) => [p.seat, p.name])) });
+  }, [raceNow?.done, raceSettled, onlineRound, racersKey, onlinePlayers]);
 
   // Every player reports the race winner once all scores are in; the Worker records it when they agree.
   useEffect(() => {
@@ -1139,7 +1151,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                     {raceNow.standings.map((entry) => (
                       <li key={entry.seat} className={entry.seat === onlineSeat ? 'is-mine' : undefined}>
                         <span className="arcade-race-place">{entry.place ?? '-'}</span>
-                        <span className="arcade-race-name">{onlinePlayers.find((p) => p.seat === entry.seat)?.name ?? `Player ${entry.seat + 1}`}</span>
+                        <span className="arcade-race-name">{racerName(entry.seat) ?? `Player ${entry.seat + 1}`}</span>
                         <span className="arcade-race-score">
                           {Object.hasOwn(raceScores, entry.seat) ? (entry.score === null ? 'No Score' : fmt(entry.score)) : 'Playing'}
                         </span>
@@ -1149,7 +1161,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                 )}
                 {raceNow && (
                   <small>
-                    {!raceDone ? 'Waiting For Everyone to Finish' : raceWinner === null ? 'A Tie' : raceWinner === onlineSeat ? 'You Win the Race' : `${onlinePlayers.find((p) => p.seat === raceWinner)?.name ?? 'Someone'} Wins the Race`}
+                    {!raceDone ? 'Waiting For Everyone to Finish' : raceWinner === null ? 'A Tie' : raceWinner === onlineSeat ? 'You Win the Race' : `${racerName(raceWinner) ?? 'Someone'} Wins the Race`}
                   </small>
                 )}
                 {board.canSubmit && (

@@ -101,6 +101,14 @@ export function raceStandings(scores: RaceScores, seats: number[], lowerIsBetter
   return { done, winner: done && leaders.length === 1 ? leaders[0].seat : null, standings };
 }
 
+/** A race once everyone in it has finished: its seats and their names, so leaving afterwards keeps the result. */
+export type SettledRace = { round: number; seats: number[]; names: Record<number, string> };
+
+/** The seats this round's race is between: the settled lineup once it is decided, else the people still here. */
+export function raceSeats(present: number[], settled: SettledRace | null, round: number) {
+  return settled && settled.round === round ? settled.seats : present;
+}
+
 /** Parses a race packet from the room. Guests send their own score; the host sends everyone's. */
 export function parseRacePacket(value: unknown): { t: 'race'; round: number; score: number | null } | { t: 'race-all'; round: number; scores: RaceScores } | null {
   if (!value || typeof value !== 'object') return null;
