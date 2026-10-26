@@ -142,16 +142,18 @@ const FAN_MAX = 0.42;
 const SHORT_HUD = 92;
 const stackH = (fan: number) => 1.4 * (1 + fan * (FIVE_CARDS - 2));
 
-function layout(w: number, h: number) {
+const TOUCH_TOP = 60;
+
+function layout(w: number, h: number, top = 44) {
   const wide = w >= h * 1.12;
   // Short windows (the framed laptop) put the HUD in its own column beside the deck, clear of the shell's top bar.
   const short = wide && h < 330;
   let cw: number;
   let room: number;
   if (short) {
-    room = h - 44 - 6 - 30;
+    room = h - top - 6 - 30;
     const byW = (w - 24 - SHORT_HUD - 2 * 14 - 3 * 8) / (LANES * 1.16 + 1.75);
-    const byDealer = (h - 50 - 20) / 1.54;
+    const byDealer = (h - top - 6 - 20) / 1.54;
     cw = Math.min(byW, room / stackH(FAN_MIN), byDealer);
   } else if (wide) {
     room = h - 56 - 46 - 14;
@@ -399,7 +401,8 @@ function Play({ onSummary }: { onSummary: (s: Summary | null) => void }) {
   });
 
   const s = st.current;
-  const L = layout(size.w, size.h);
+  // The touch toolbar is taller, so short windows start the columns below it.
+  const L = layout(size.w, size.h, shell.touch ? TOUCH_TOP : 44);
   const { wide, short, cw } = L;
   const vars = {
     '--cw0': `${cw}px`,
@@ -408,6 +411,7 @@ function Play({ onSummary }: { onSummary: (s: Summary | null) => void }) {
     '--fan': L.fan,
     '--slot-h': `${L.slotH}px`,
     '--lane-h': `${L.laneH}px`,
+    ...(short && shell.touch ? { paddingTop: TOUCH_TOP } : {}),
   } as CSSProperties;
   const stageClass = `g-blitz-21-stage ${wide ? 'is-wide' : 'is-tall'}${short ? ' is-short' : ''}`;
 
