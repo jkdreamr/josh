@@ -597,7 +597,11 @@ function Play({ mode }: { mode: Mode }) {
     v.frame(r, Math.max(0, r.me), 0, 0);
     v.render();
     shell.invalidate();
+    // (the drawing follows the screen as soon as it turns, rather than a frame or two later once React catches up)
+    const ro = new ResizeObserver(() => v.resize(host.clientWidth, host.clientHeight));
+    ro.observe(host);
     return () => {
+      ro.disconnect();
       v.dispose();
       view.current = null;
     };
@@ -1908,16 +1912,18 @@ function Play({ mode }: { mode: Mode }) {
             </div>
           )}
           {hud.wrong && <div className="g-palmdrive-wrong">wrong way</div>}
-          {hud.gust !== 0 && (
-            <div className={`g-palmdrive-gust${Math.abs(hud.gust) === 2 ? ' is-on' : ''}`} aria-label={`Wind from the ${hud.gust > 0 ? 'left' : 'right'}`}>
-              {hud.gust < 0 ? '\u2190 ' : ''}wind{hud.gust > 0 ? ' \u2192' : ''}
-            </div>
-          )}
-          {hud.swell !== 0 && (
-            <div className={`g-palmdrive-gust is-swell${Math.abs(hud.swell) === 2 ? ' is-on' : ''}`} aria-label={`Swell from the ${hud.swell > 0 ? 'left' : 'right'}`}>
-              {hud.swell < 0 ? '\u2190 ' : ''}swell{hud.swell > 0 ? ' \u2192' : ''}
-            </div>
-          )}
+          <div className="g-palmdrive-badges">
+            {hud.gust !== 0 && (
+              <div className={`g-palmdrive-gust${Math.abs(hud.gust) === 2 ? ' is-on' : ''}`} aria-label={`Wind from the ${hud.gust > 0 ? 'left' : 'right'}`}>
+                {hud.gust < 0 ? '\u2190 ' : ''}wind{hud.gust > 0 ? ' \u2192' : ''}
+              </div>
+            )}
+            {hud.swell !== 0 && (
+              <div className={`g-palmdrive-gust is-swell${Math.abs(hud.swell) === 2 ? ' is-on' : ''}`} aria-label={`Swell from the ${hud.swell > 0 ? 'left' : 'right'}`}>
+                {hud.swell < 0 ? '\u2190 ' : ''}swell{hud.swell > 0 ? ' \u2192' : ''}
+              </div>
+            )}
+          </div>
           {r.boat && hud.lights === 0 && !hud.results && (
             <svg className="g-palmdrive-stroke" viewBox="-50 -50 100 100" aria-hidden="true">
               <circle ref={strokeTarget} r="20" />

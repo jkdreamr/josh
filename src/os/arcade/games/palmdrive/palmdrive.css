@@ -369,6 +369,15 @@
 .g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-lights {
   top: calc(132px + var(--pd-sat));
 }
+/* (a phone on its side: up under the clock, clear of the countdown) */
+@container pdstage (max-height: 500px) {
+  .g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-lights {
+    top: calc(46px + var(--pd-sat));
+  }
+  .g-palmdrive .g-palmdrive-hud.is-touch.is-online .g-palmdrive-lights {
+    top: calc(76px + var(--pd-sat));
+  }
+}
 .g-palmdrive .g-palmdrive-lights i {
   width: 22px;
   height: 22px;
@@ -485,15 +494,31 @@
   background: #f4f6ff;
   animation: none;
 }
-/* on a touch screen the lap row and the coins sit up top: the wind (or the swell) hangs just under the clock, clear of
+/* on a touch screen the lap row and the coins sit up top: the wind (and the swell) hang just under the clock, clear of
    the road ahead and of the lights before the start */
 .g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-gust {
-  top: calc(48px + var(--pd-sat));
   padding: 3px 12px;
   font-size: 14px;
 }
-.g-palmdrive .g-palmdrive-hud.is-touch.is-online .g-palmdrive-gust {
+/* (the two side by side there when both are up, on the slough) */
+.g-palmdrive .g-palmdrive-badges {
+  display: contents;
+}
+.g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-badges {
+  position: absolute;
+  top: calc(48px + var(--pd-sat));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+}
+.g-palmdrive .g-palmdrive-hud.is-touch.is-online .g-palmdrive-badges {
   top: calc(78px + var(--pd-sat));
+}
+.g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-badges .g-palmdrive-gust {
+  position: static;
+  transform: none;
+  white-space: nowrap;
 }
 .g-palmdrive .g-palmdrive-wrong {
   position: absolute;

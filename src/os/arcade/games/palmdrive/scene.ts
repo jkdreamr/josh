@@ -1883,6 +1883,16 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   // reflective, so they still show up at night
   const chevronMat = look.night ? new THREE.MeshBasicMaterial({ map: chevron, side: THREE.DoubleSide }) : new THREE.MeshLambertMaterial({ map: chevron, side: THREE.DoubleSide });
   const boardPosts: { x: number; z: number; h: number }[] = [];
+  /** Every board, drawn in two batches (those whose arrow points left are mirrored): a draw call each, not one a board. */
+  const boards: T.Matrix4[][] = [[], []];
+  const board = (x: number, y: number, z: number, h: number, size: number, mirror: boolean) => {
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(0, h, 0);
+    dummy.scale.set(mirror ? -size : size, size, 1);
+    dummy.updateMatrix();
+    // (a mirrored board goes in a batch mirrored itself, so three.js still knows its front face from its back)
+    boards[mirror ? 1 : 0].push(mirror ? new THREE.Matrix4().makeScale(-1, 1, 1).multiply(dummy.matrix) : dummy.matrix.clone());
+  };
   for (let s = 0; s < t.length; s += 9) {
     const i = Math.floor(s / t.step) % t.n;
     const c = t.curv[i];
@@ -1892,16 +1902,12 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     const open = dropAt(t, i, out);
     if (open && look.edge === 'stakes') continue;
     const p = pointAt(t, s, open ? out * (look.glass ? edgeAt(t, s, out).lim + 0.7 : (out > 0 ? beyond.hi : beyond.lo)[i] + 0.6) : out * (look.glass ? edgeAt(t, s, out).lim - 0.4 : t.edge - 0.4));
-    const sign = new THREE.Mesh(geo.plane, chevronMat);
-    sign.scale.set(1.6, 1.6, 1);
-    sign.position.set(p.x, 1.9, p.z);
     // face the karts coming at it; the arrow points the way the road turns
-    sign.rotation.y = headingOf(p.tx, p.tz) + Math.PI;
+    board(p.x, 1.9, p.z, headingOf(p.tx, p.tz) + Math.PI, 1.6, c < 0);
     // (on the water each board stands on a pair of piles in the marsh)
     if (boat) boardPosts.push({ x: p.x, z: p.z, h: headingOf(p.tx, p.tz) });
-    if (c < 0) sign.scale.x = -1.6;
-    scene.add(sign);
   }
+  dummy.rotation.set(0, 0, 0);
   if (boardPosts.length) {
     const m = new THREE.InstancedMesh(geo.wheel, new THREE.MeshLambertMaterial({ color: 0x4a3a2c }), boardPosts.length * 2);
     boardPosts.forEach((p, k) => {
@@ -1917,14 +1923,19 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   }
   for (const { s, side } of startBoards) {
     const p = pointAt(t, s, side * t.edge);
-    const sign = new THREE.Mesh(geo.plane, chevronMat);
-    sign.scale.set(1.5, 1.5, 1);
-    sign.position.set(p.x, 2.7, p.z);
-    sign.rotation.y = headingOf(p.tx, p.tz) + Math.PI;
     // the arrow points back in, away from the drop
-    if (side > 0) sign.scale.x = -1.5;
-    scene.add(sign);
+    board(p.x, 2.7, p.z, headingOf(p.tx, p.tz) + Math.PI, 1.5, side > 0);
   }
+  boards.forEach((list, mirror) => {
+    if (!list.length) return;
+    const m = new THREE.InstancedMesh(geo.plane, chevronMat, list.length);
+    list.forEach((mat, k) => m.setMatrixAt(k, mat));
+    if (mirror) m.scale.x = -1;
+    m.computeBoundingSphere();
+    scene.add(m);
+  });
+  dummy.rotation.set(0, 0, 0);
+  dummy.scale.setScalar(1);
 
   // the course's own scenery
   const rand = scatter(7);
