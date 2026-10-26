@@ -6835,6 +6835,34 @@ test('a computer egg goes down the stairs to revive a teammate knocked in the ba
   assert.ok(revived && !me.down, 'and back on its feet');
 });
 
+test('a computer egg on a person\'s team keeps out of the basements while they stay up top, and follows them down', () => {
+  const { seed, i } = stairsFrom('hatch');
+  const entrants: Entrant[] = [0, 0, 1].map((team, k) => ({ name: `p${k}`, color: '#fff', kind: k === 1 ? 'bot' : 'player', seat: k === 1 ? -1 : k, team }));
+  const m = createMatch({ seed, role: 'solo', level: 'normal', entrants, me: 0, countdown: 0, mode: 'duos' });
+  m.time = 5;
+  const [me, bot, far] = m.fighters;
+  const s = m.map.stairs[i];
+  far.phase = 'drop';
+  far.y = 1e9;
+  // nothing up top worth the walk, plenty down there
+  m.loot.clear();
+  const u = m.map.buildings[s.u];
+  const below = (x: number, z: number) => Math.abs(x - u.x) < u.w / 2 && Math.abs(z - u.z) < u.d / 2;
+  m.opened = m.opened.map((_, c) => !below(m.map.containers[c].x, m.map.containers[c].z));
+  const top = stairOut(s, false);
+  const at = startNear(m, top.x, top.z, 8) ?? startNear(m, top.x, top.z, 12);
+  assert.ok(at);
+  land(me, top.x - s.dx * 1.5, top.z - s.dz * 1.5);
+  land(bot, at.x, at.z);
+  bot.ai!.goal = 'roam';
+  let evs = run(m, 12);
+  assert.ok(!evs.some((e) => e.t === 'stairs' && e.f === bot.id), 'stays up top with us');
+  // we go down: it comes after us
+  land(me, s.x + DEEP + s.dx * (s.dx ? s.hw : s.hd) + s.dx * 3, s.z + s.dz * ((s.dx ? s.hw : s.hd) + 3));
+  evs = run(m, 20);
+  assert.ok(evs.some((e) => e.t === 'stairs' && e.f === bot.id && e.down), 'down after us');
+});
+
 test('loot that ends up down a stairway lands off the end you walk onto it from, on its level', () => {
   const { seed, i } = stairsFrom('hatch');
   const m = quiet(seed);

@@ -4753,10 +4753,12 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
       chest = -1;
     }
   }
-  // a stairway down to a basement nobody has emptied yet (and we haven't been down), with the storm a good way off
+  // a stairway down to a basement nobody has emptied yet (and we haven't been down), with the storm a good way off (not
+  // while a person we follow stays up top: they'd only call us straight back up)
   let down = -1;
   let downD = Infinity;
-  if (!deep && m.map.stairs.length) {
+  const led = m.mode === 'solo' ? null : leadOf(m, f);
+  if (!deep && m.map.stairs.length && !(led && upright(led) && led.phase === 'ground' && !isDeep(led.x))) {
     if (ai.goal === 'stairs' && m.time > ai.until && m.map.stairs[ai.chest]) ai.below.push(m.map.stairs[ai.chest].u);
     const quiet = !s.shrinking && s.timer > 25;
     for (const st of m.map.stairs) {
