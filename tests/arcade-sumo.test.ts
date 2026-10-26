@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { think } from '../src/os/arcade/games/sumo/ai.ts';
 import { CAR_RADIUS, STEP, TARGET, createWorld, matchWinner, roundBanner, step, takeoverDeparted, type Car, type Input, type Level, type World } from '../src/os/arcade/games/sumo/logic.ts';
-import { configOf, endOf, hostState, inputOf, parsePacket } from '../src/os/arcade/games/sumo/net.ts';
+import { CAR_BOT, CAR_IN, CAR_LEFT, configOf, drivesIn, endOf, hostState, inputOf, parsePacket, rosterFromState, type StatePacket } from '../src/os/arcade/games/sumo/net.ts';
 
 const entries = (count: number, level: Level | null = null) =>
   Array.from({ length: count }, (_, seat) => ({ seat, color: seat, ai: level, name: `Car ${seat}` }));
@@ -313,20 +313,50 @@ test('sumo packets round-trip and reject malformed numbers, types, seats, and ov
   const state = hostState(2, 'fight', 5, 10, 1, [0, 1], [0, 3], 1, [
     { x: 1, z: 2, y: 0, vx: 3, vz: 4, yaw: 0.4, charge: 0.5, flags: 1 },
     { x: -1, z: 0, y: 0, vx: 0, vz: 1, yaw: -0.5, charge: 0, flags: 4 },
-  ]);
+  ], ['Host', 'Nudge']);
   const parsedState = parsePacket(state);
   assert.equal(parsedState?.k, 'S');
   if (parsedState?.k === 'S') {
     assert.equal(Boolean(parsedState.cars[1].flags & 4), true);
     assert.equal(Boolean(parsedState.cars[1].flags & 2), false);
   }
-  assert.deepEqual(parsePacket(endOf(2, 3, [1, 2]))?.k, 'end');
+  assert.deepEqual(parsePacket(endOf(2, 3, [1, 2], ['Host', 'Nudge']))?.k, 'end');
   assert.deepEqual(parsePacket(configOf(2, 2)), { k: 'cfg', r: 2, lv: 2 });
   assert.equal(parsePacket({ t: 'sumo', r: 1, k: 'i', x: NaN, y: 0, d: false }), null);
   assert.equal(parsePacket({ t: 'sumo', r: 1, k: 'i', x: '0', y: 0, d: false }), null);
   assert.equal(parsePacket({ t: 'sumo', r: 1, k: 'end', w: 16, wins: [] }), null);
   assert.equal(parsePacket({ ...state, roster: [0, 16] }), null);
   assert.equal(parsePacket({ ...state, cars: Array.from({ length: 9 }, () => [0, 0, 0, 0, 0, 0, 0, 0]) }), null);
+});
+
+test('guests and late spectators name every car from the host roster, not the room as it is now', () => {
+  const car = (flags: number) => ({ x: 0, z: 0, y: 0, vx: 0, vz: 0, yaw: 0, charge: 0, flags });
+  // host seat 0, a guest "Newbie" in seat 1 who left mid-match (a bot drives the car now), then bots Nudge and Pebble
+  const sent = hostState(3, 'fight', 4, 10, 2, [1, 0, 1, 0], [0, 1, 2, 3], 1,
+    [car(CAR_IN), car(CAR_IN | CAR_BOT | CAR_LEFT), car(CAR_IN | CAR_BOT), car(CAR_IN | CAR_BOT)],
+    ['Host', 'Newbie', 'Nudge', 'Pebble']);
+  const packet = parsePacket(JSON.parse(JSON.stringify(sent))) as StatePacket;
+  assert.equal(packet.k, 'S');
+  // what the room shows a fresh spectator now: Newbie is gone and the bots have shifted down a seat
+  const room = new Map([[0, 'Host'], [1, 'Nudge'], [2, 'Pebble'], [3, 'Biscuit']]);
+  const roster = rosterFromState(packet, (seat) => room.get(seat) ?? `Player ${seat + 1}`);
+  assert.deepEqual(roster.map((entry) => entry.name), ['Host', 'Newbie', 'Nudge', 'Pebble']);
+  assert.deepEqual(roster.map((entry) => entry.ai), [null, 1, 1, 1]);
+  assert.deepEqual(roster.map((entry) => entry.left), [false, true, false, false]);
+  // someone new sitting in the departed seat doesn't drive that car, the host still does its own
+  assert.equal(drivesIn(packet, 1), false);
+  assert.equal(drivesIn(packet, 0), true);
+  // an older host without names falls back to the room
+  const { names: _names, ...legacy } = packet;
+  assert.deepEqual(rosterFromState(legacy, (seat) => room.get(seat) ?? '').map((entry) => entry.name), ['Host', 'Nudge', 'Pebble', 'Biscuit']);
+  // the end packet carries the final tally and names, so a guest's HUD and winner match the host
+  const end = parsePacket(endOf(3, 1, [1, 3, 1, 0], ['Host', 'Newbie', 'Nudge', 'Pebble']));
+  assert.deepEqual(end, { k: 'end', r: 3, w: 1, wins: [1, 3, 1, 0], names: ['Host', 'Newbie', 'Nudge', 'Pebble'] });
+  assert.equal(parsePacket({ ...sent, names: ['Host', 'Newbie'] }), null);
+  assert.equal(parsePacket({ ...sent, names: ['Host', '', 'Nudge', 'Pebble'] }), null);
+  assert.equal(parsePacket({ ...sent, names: ['Host', 7, 'Nudge', 'Pebble'] }), null);
+  assert.equal(parsePacket({ ...sent, names: ['Host', 'x'.repeat(25), 'Nudge', 'Pebble'] }), null);
+  assert.equal(parsePacket({ t: 'sumo', r: 3, k: 'end', w: 1, wins: [1, 3], names: ['Host'] }), null);
 });
 
 test('a departed car idles mid-round and a bot takes its seat between rounds', () => {

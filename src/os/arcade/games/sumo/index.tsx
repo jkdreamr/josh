@@ -3,7 +3,7 @@ import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, levelOpti
 import type { GameProps } from '../../types';
 import { think } from './ai';
 import { CAR_COLORS, createScene, type View } from './scene';
-import { configOf, endOf, hostState, inputOf, parsePacket, type PackedCar } from './net';
+import { CAR_BOT, CAR_DASH, CAR_FALLING, CAR_IN, CAR_LEFT, CAR_OUT, configOf, drivesIn, endOf, hostState, inputOf, parsePacket, rosterFromState, type PackedCar } from './net';
 import { createWorld, matchWinner, roundBanner, step, takeoverDeparted, type CarConfig, type Input, type Level, type World } from './logic';
 import { meta } from './meta';
 import './sumo.css';
@@ -201,12 +201,12 @@ function Play({ mode }: { mode: StageMode }) {
   const tagRefCallbacks = useRef(new Map<number, (node: HTMLDivElement | null) => void>());
 
   const isOnline = mode === 'online' && !!online;
-  const mine = () => (isOnline ? world.current?.cars.find((car) => car.seat === onlineRef.current?.seat)?.id ?? -1 : 0);
+  const mine = () => (isOnline ? world.current?.cars.find((car) => car.seat === onlineRef.current?.seat && !car.left)?.id ?? -1 : 0);
   const carName = (carId: number) => {
     const car = world.current?.cars[carId];
     if (!car) return '';
     if (mode === 'solo' && playMode === '2p') return `P${carId + 1}`;
-    if (mode === 'online') return onlineRef.current?.seat === car.seat ? 'You' : car.name;
+    if (mode === 'online') return onlineRef.current?.seat === car.seat && !car.left ? 'You' : car.name;
     return carId === 0 ? 'You' : car.name;
   };
 
@@ -338,13 +338,15 @@ function Play({ mode }: { mode: StageMode }) {
     if (mode === 'online' && o) {
       reported.current = true;
       o.reportResult(o.round, winnerSeat);
-      endPacket.current = endOf(o.round, winnerSeat, [...current.wins]);
+      endPacket.current = endOf(o.round, winnerSeat, [...current.wins], current.cars.map((car) => car.name));
       if (sendEnd) endSends.current = 0;
+      setHud(initialHud(current));
       const title = winnerSeat === o.seat ? 'You Win' : `${winner.name} Wins`;
       shellRef.current.gameOver(undefined, { title, detail: `${current.wins.join(' To ')} In ${current.round} Rounds` });
       return;
     }
     reported.current = true;
+    setHud(initialHud(current));
     const twoPlayer = mode === 'solo' && playMode === '2p';
     const title = twoPlayer ? `P${winnerId + 1} Wins` : winnerId === 0 ? 'You Win' : 'Splashed Out';
     shellRef.current.gameOver(undefined, { title, detail: `${current.wins.join(' To ')} In ${current.round} Rounds` });
@@ -523,12 +525,10 @@ function Play({ mode }: { mode: StageMode }) {
       if (packet.k === 'S' && !o.isHost && from === 0) {
         if (!synced.current) {
           // left out of the host's round (in just as it began) waits for the next; a spectator watches every car
-          if (!packet.roster.includes(o.seat) && !o.watching) return;
-          current.cars = packet.roster.map((seat, index) => {
-            const player = o.players.find((candidate) => candidate.seat === seat);
-            const bot = o.bots.find((candidate) => candidate.seat === seat);
-            return { seat, color: index, ai: bot ? packet.lv : null, name: player?.name ?? bot?.name ?? `Player ${seat + 1}` };
-          }).map((entry, id) => ({ ...createWorld([entry]).cars[0], id }));
+          if (!drivesIn(packet, o.seat) && !o.watching) return;
+          // the host's roster names every car, so a late spectator shows the same names (and winner) as the host
+          const fallback = (seat: number) => o.players.find((candidate) => candidate.seat === seat)?.name ?? o.bots.find((candidate) => candidate.seat === seat)?.name ?? `Player ${seat + 1}`;
+          current.cars = rosterFromState(packet, fallback).map(({ left, ...entry }, id) => ({ ...createWorld([entry]).cars[0], id, left }));
           synced.current = true;
         }
         const previousPhase = current.phase;
@@ -549,7 +549,14 @@ function Play({ mode }: { mode: StageMode }) {
           const packed = packet.cars[i];
           const car = current.cars[i];
           if (!car) continue;
-          const mineNow = car.seat === o.seat;
+          const name = packet.names?.[i];
+          if (name) car.name = name;
+          const justLeft = !!(packed.flags & CAR_LEFT) && !car.left;
+          if (justLeft) {
+            car.left = true;
+            if (!(packed.flags & CAR_BOT)) notice(`${car.name} Left`);
+          }
+          const mineNow = car.seat === o.seat && !car.left;
           if (mineNow) {
             const error = Math.hypot(car.x - packed.x, car.z - packed.z);
             if (error > 1.5) {
@@ -572,13 +579,13 @@ function Play({ mode }: { mode: StageMode }) {
           car.y = packed.y;
           car.yaw = packed.yaw;
           car.charge = packed.charge;
-          car.falling = !!(packed.flags & 2);
+          car.falling = !!(packed.flags & CAR_FALLING);
           const wasOut = car.out;
-          car.out = !!(packed.flags & 4);
+          car.out = !!(packed.flags & CAR_OUT);
           if (!wasOut && car.out) view.current?.splash(packed.x, packed.z);
-          car.dashT = packed.flags & 8 ? 0.2 : 0;
-          if (packed.flags & 16) {
-            if (car.ai === null && car.left) notice(`A Bot Took ${car.name}'s Seat`);
+          car.dashT = packed.flags & CAR_DASH ? 0.2 : 0;
+          if (packed.flags & CAR_BOT) {
+            if (car.ai === null && car.left) notice(justLeft ? `${car.name} Left, a Bot Took Over` : `A Bot Took ${car.name}'s Seat`);
             car.ai = packet.lv;
           }
         }
@@ -586,6 +593,10 @@ function Play({ mode }: { mode: StageMode }) {
       }
       if (packet.k === 'end' && !o.isHost && from === 0 && !reported.current) {
         current.wins = [...packet.wins];
+        packet.names?.forEach((name, i) => {
+          if (current.cars[i]) current.cars[i].name = name;
+        });
+        setHud(initialHud(current));
         if (packet.w === null) return;
         const winnerId = current.cars.findIndex((car) => car.seat === packet.w);
         if (winnerId < 0) return;
@@ -631,10 +642,10 @@ function Play({ mode }: { mode: StageMode }) {
             vz: car.vz,
             yaw: car.yaw,
             charge: car.charge,
-            flags: (car.out ? 4 : 1) | (car.falling ? 2 : 0) | (car.dashT > 0 ? 8 : 0) | (car.ai !== null ? 16 : 0),
+            flags: (car.out ? CAR_OUT : CAR_IN) | (car.falling ? CAR_FALLING : 0) | (car.dashT > 0 ? CAR_DASH : 0) | (car.ai !== null ? CAR_BOT : 0) | (car.left ? CAR_LEFT : 0),
           }));
           const tm = current.phase === 'count' || current.phase === 'over' ? current.timer : current.fightTime;
-          o.send(hostState(o.round, current.phase, tm, current.radius, current.round, current.wins, current.cars.map((car) => car.seat), level, cars), { fast: tickCount.current % 5 !== 0 });
+          o.send(hostState(o.round, current.phase, tm, current.radius, current.round, current.wins, current.cars.map((car) => car.seat), level, cars, current.cars.map((car) => car.name)), { fast: tickCount.current % 5 !== 0 });
         }
       }
       if (o.isHost && endPacket.current && endSends.current < 4) {
