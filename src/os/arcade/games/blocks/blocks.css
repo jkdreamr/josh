@@ -55,11 +55,26 @@
   .g-blocks .arcade-ov > .arcade-card {
     zoom: var(--g-blocks-u, 1);
   }
+  /* The online badge goes top-left, clear of the grown toolbar, and reads at full size in the iPad frame. */
+  .g-blocks .arcade-online-status {
+    left: 10px;
+    transform: none;
+    padding: calc(5px * var(--g-blocks-u, 1)) calc(10px * var(--g-blocks-u, 1));
+    font-size: calc(12px * var(--g-blocks-u, 1));
+  }
   .g-blocks .arcade-ov > .arcade-card .arcade-btn,
   .g-blocks .arcade-ov > .arcade-card .arcade-seg > button,
   .g-blocks .arcade-ov > .arcade-card .arcade-input {
     min-height: 42px;
   }
+}
+/* Why a room turned you away: short cards hide their paragraphs, so keep this one, right under the title. */
+.g-blocks .arcade-ov .arcade-online-card > p.arcade-online-error {
+  display: block;
+  order: -1;
+}
+.g-blocks .arcade-ov .arcade-online-card > h2 {
+  order: -2;
 }
 @media (prefers-reduced-motion: reduce) {
   .g-blocks .g-blocks-touch:active { transform: none; }
