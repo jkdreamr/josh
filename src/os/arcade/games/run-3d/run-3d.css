@@ -293,3 +293,26 @@
   font-size: 12px;
   color: rgba(255, 255, 255, 0.66);
 }
+
+/* touch: shell controls, setup buttons and level picks stay at least 44px on screen, grown by --g-run-3d-u inside a scaled frame */
+@media (pointer: coarse) {
+  .g-run-3d .arcade-ctrl button {
+    width: calc(44px * var(--g-run-3d-u, 1));
+    height: calc(44px * var(--g-run-3d-u, 1));
+  }
+  .g-run-3d .arcade-ctrl svg {
+    width: calc(18px * var(--g-run-3d-u, 1));
+    height: calc(18px * var(--g-run-3d-u, 1));
+  }
+  .g-run-3d .arcade-ov .arcade-btn,
+  .g-run-3d .arcade-ov .arcade-seg > button {
+    height: auto;
+    min-height: calc(44px * var(--g-run-3d-u, 1));
+    font-size: calc(13px * var(--g-run-3d-u, 1));
+  }
+  .g-run-3d .g-run-3d-pick {
+    width: calc(44px * var(--g-run-3d-u, 1));
+    height: calc(44px * var(--g-run-3d-u, 1));
+    font-size: calc(14px * var(--g-run-3d-u, 1));
+  }
+}
