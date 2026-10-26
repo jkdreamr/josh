@@ -26,6 +26,8 @@ export type Match = {
   /** Which side the next serve travels toward. */
   serveTo: Side;
   rally: number;
+  /** Most hits in one rally this match, counted by the host so every screen shows the same number. */
+  longest: number;
   winner: Side | null;
   time: number;
 };
@@ -49,6 +51,7 @@ export function createMatch(serveTo: Side = 1): Match {
     serveIn: SERVE_DELAY,
     serveTo,
     rally: 0,
+    longest: 0,
     winner: null,
     time: 0,
   };
@@ -142,6 +145,7 @@ export function step(m: Match, dt: number, events: PongEvent[] = [], rng: Rng = 
     b.spin = clamp(p.vy / PADDLE_SPEED, -1, 1) * SPIN_FROM_PADDLE * (speed / BASE_SPEED);
     b.x = face + dir * (BALL_R + 0.01);
     m.rally++;
+    m.longest = Math.max(m.longest, m.rally);
     events.push({ kind: 'paddle', side, x: b.x, y: b.y, speed });
   }
 

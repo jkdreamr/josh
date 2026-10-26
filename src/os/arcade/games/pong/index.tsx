@@ -82,7 +82,6 @@ function Pong() {
     flash: 0,
     flashColor: '#fff',
     shake: 0,
-    longest: 0,
     ending: -1,
     pointers: new Map<number, { side: Side; y: number }>(),
     hover: null as { side: Side; y: number } | null,
@@ -136,6 +135,33 @@ function Pong() {
     }, 600);
     return () => window.clearTimeout(t);
   }, [size.w, size.h, shell.status, online?.transport]);
+
+  // A phone or iPad frame is scaled down to fit; touch styles grow shell controls and cards by the same factor so they stay finger sized.
+  useEffect(() => {
+    const el = shell.root.current;
+    if (!el) return;
+    let raf = 0;
+    const scale = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => {
+        const k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
+        const u = shell.touch && k > 0.2 && k < 0.99 ? Math.min(2, Math.ceil(100 / k) / 100) : 1;
+        el.style.setProperty('--g-pong-u', String(u));
+      });
+    };
+    scale();
+    const late = window.setTimeout(scale, 700);
+    const ro = new ResizeObserver(scale);
+    ro.observe(el);
+    window.addEventListener('resize', scale);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.clearTimeout(late);
+      ro.disconnect();
+      window.removeEventListener('resize', scale);
+      el.style.removeProperty('--g-pong-u');
+    };
+  }, [shell.touch, shell.status, shell.root]);
 
   useEffect(() => online?.onMessage((from, data) => {
     if (!online || !data || typeof data !== 'object') return;
@@ -215,7 +241,6 @@ function Pong() {
         sfx.play('blip', 0.9 + Math.min(0.6, e.speed / 250));
         burst(e.x, e.y, P_COLORS[e.side], 10, 26);
         st.hit[e.side] = 1;
-        st.longest = Math.max(st.longest, st.match.rally);
       } else if (e.kind === 'score') {
         sfx.play('hit', 0.9);
         st.flash = 0.4;
@@ -330,7 +355,8 @@ function Pong() {
           const title = online ? (online.seat === w ? 'You Win' : `${nameFor(w)} Wins`) : st.mode === 'cpu' ? (w === 0 ? 'You Win' : 'Computer Wins') : `Player ${w + 1} Wins`;
           const loser = other(w);
           if (online) online.reportResult(online.round, w);
-          shell.gameOver(online ? undefined : st.longest, { title, detail: `${m.score[w]} to ${m.score[loser]}. Longest rally: ${st.longest} ${st.longest === 1 ? 'hit' : 'hits'}.` });
+          const longest = m.longest ?? 0;
+          shell.gameOver(online ? undefined : longest, { title, detail: `${m.score[w]} to ${m.score[loser]}. Longest rally: ${longest} ${longest === 1 ? 'hit' : 'hits'}.` });
         }
       }
     },

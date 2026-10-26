@@ -5,3 +5,23 @@
 .g-pong .g-pong-canvas.is-playing {
   cursor: none;
 }
+
+/* Touch: --g-pong-u is the inverse of a phone or iPad frame's scale, so shell controls and cards stay finger sized on screen. */
+@media (pointer: coarse) {
+  .g-pong .arcade-ctrl button {
+    width: calc(40px * var(--g-pong-u, 1));
+    height: calc(40px * var(--g-pong-u, 1));
+  }
+  .g-pong .arcade-ctrl svg {
+    width: calc(16px * var(--g-pong-u, 1));
+    height: calc(16px * var(--g-pong-u, 1));
+  }
+  .g-pong .arcade-ov > .arcade-card {
+    zoom: var(--g-pong-u, 1);
+  }
+  .g-pong .arcade-ov > .arcade-card .arcade-btn,
+  .g-pong .arcade-ov > .arcade-card .arcade-seg > button,
+  .g-pong .arcade-ov > .arcade-card .arcade-input {
+    min-height: 42px;
+  }
+}

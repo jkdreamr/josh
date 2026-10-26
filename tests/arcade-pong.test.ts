@@ -164,3 +164,24 @@ test('harder computer levels track a fast ball more closely', () => {
   };
   assert.ok(miss(2) < miss(0));
 });
+
+test('the longest rally lives in the match, so guests and spectators show the host count', () => {
+  const host = createMatch();
+  host.serveIn = 0;
+  host.paddles[0].y = 50;
+  for (let i = 0; i < 3; i++) {
+    Object.assign(host.ball, { x: paddleX(0) + PADDLE.w / 2 + BALL_R + 1, y: 50, vx: -60, vy: 0 });
+    step(host, 1 / 30);
+  }
+  assert.equal(host.rally, 3);
+  assert.equal(host.longest, 3);
+
+  serve(host, fixed(0.5));
+  assert.equal(host.rally, 0);
+  assert.equal(host.longest, 3, 'a new serve keeps the longest rally');
+
+  const guest = createMatch();
+  guest.longest = 2;
+  assert.equal(mergeGuestSnapshot(guest, host).longest, 3, 'the guest takes the host count');
+  assert.equal(createMatch().longest, 0);
+});
