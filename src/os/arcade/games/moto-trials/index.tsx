@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import { GameShell, TouchControls, defineSetting, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
+import { GameShell, Segmented, TouchControls, defineSetting, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { meta } from './meta';
-import { LEVELS, LEVEL_IDS, getLevel } from './levels.ts';
+import { LEVEL_IDS, WORLDS, getLevel, worldIndexOf } from './levels.ts';
 import { currentMs, newRun, nextStarMs, starsFor, startRun, stepRun, type Run } from './logic.ts';
 import { newCam, render, type Cam, type Ghost } from './draw.ts';
 import { loadProgress, saveProgress, tourLeft, tourTotal, unlocked } from './progress.ts';
@@ -82,14 +82,25 @@ function LevelPicker({ value, onChange, all }: { value: string; onChange?: (id: 
   useEffect(() => {
     rowRef.current?.querySelector('.is-on')?.scrollIntoView({ block: 'nearest', inline: 'center' });
   }, []);
+  const [world, setWorld] = useState(() => worldIndexOf(value));
+  useEffect(() => setWorld(worldIndexOf(value)), [value]);
   const picked = getLevel(value);
   const stars = prog.stars[value] ?? 0;
   const best = prog.best[value];
   return (
     <div className="arcade-field">
+      <Segmented
+        label={WORLDS[world].name}
+        className="g-moto-trials-worlds"
+        value={String(world)}
+        options={WORLDS.map((w, i) => [String(i), String(i + 1)] as [string, string])}
+        onChange={(v) => setWorld(Number(v))}
+      />
       <span>{onChange ? 'Level' : 'Level, picked by the host'}</span>
       <div className="g-moto-trials-strip" role="group" aria-label="Level" ref={rowRef}>
-        {LEVELS.map((l, i) => {
+        {WORLDS[world].levels.map((id) => {
+          const l = getLevel(id);
+          const i = LEVEL_IDS.indexOf(id);
           const locked = !all && !unlocked(prog, l.id);
           const n = prog.stars[l.id] ?? 0;
           return (
@@ -254,8 +265,12 @@ function Play({ online }: { online: OnlineApi | null }) {
     const next = nsm !== null ? ` next star at ${fmtMs(nsm)}.` : '';
     let detail = `${fmtMs(ms)}${flipText}. ${starText}.${next}`;
     let rank: number | undefined;
+    // An online race ranks this one run, so it names a board the game does not have: the shell then
+    // keeps it off the Full Tour board while the race standings still compare the times.
+    let board: string | undefined;
     if (live) {
-      rank = ms; // race standings compare this run's time, not the tour board
+      rank = ms;
+      board = 'race';
     } else {
       const total = tourTotal(p);
       if (total !== null) {
@@ -270,6 +285,7 @@ function Play({ online }: { online: OnlineApi | null }) {
       title: isBest ? 'New Best' : `${r.level.name} Cleared`,
       detail,
       rank,
+      board,
     });
   };
 

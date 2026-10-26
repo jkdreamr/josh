@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { LEVELS, LEVEL_IDS, getLevel, propsFor, worldOf } from '../src/os/arcade/games/moto-trials/levels.ts';
+import { LEVELS, LEVEL_IDS, WORLDS, getLevel, propsFor, worldOf } from '../src/os/arcade/games/moto-trials/levels.ts';
 import { BRUSH, FLIP_MIN, SETTLE_BOTH, autoInput, currentMs, flipsIn, newRun, nextStarMs, startRun, stepRun, trackAir } from '../src/os/arcade/games/moto-trials/logic.ts';
-import { buildWorld, newBike, segActive, step, type Seg } from '../src/os/arcade/games/moto-trials/physics.ts';
+import { buildWorld, newBike, sawAt, segActive, step, type Seg } from '../src/os/arcade/games/moto-trials/physics.ts';
 import { parseProgress, tourLeft, tourTotal, unlocked } from '../src/os/arcade/games/moto-trials/progress.ts';
 import { meta } from '../src/os/arcade/games/moto-trials/meta.ts';
 
@@ -34,7 +34,7 @@ function autopilotRun(levelId: string, maxSecs = 140) {
 }
 
 test('level data is sane and matches the meta variants', () => {
-  assert.ok(LEVELS.length >= 8);
+  assert.ok(LEVELS.length >= 25);
   const ids = new Set(LEVEL_IDS);
   for (const lv of LEVELS) {
     assert.ok(ids.has(lv.id));
@@ -274,11 +274,11 @@ test('progress parses safely and unlocks in order', () => {
 
   // tour total needs every level
   assert.equal(tourTotal(one), null);
-  assert.equal(tourLeft(one), 9);
+  assert.equal(tourLeft(one), LEVEL_IDS.length - 1);
   const full = parseProgress(JSON.stringify({ best: Object.fromEntries(LEVEL_IDS.map((id) => [id, 20000])), stars: {} }));
-  assert.equal(tourTotal(full), 200000);
+  assert.equal(tourTotal(full), 20000 * LEVEL_IDS.length);
   assert.equal(tourLeft(full), 0);
-  assert.ok(unlocked(full, 'level-10'));
+  assert.ok(unlocked(full, LEVEL_IDS[LEVEL_IDS.length - 1]));
 });
 
 test('nextStarMs chases silver then gold then nothing', () => {
@@ -431,7 +431,7 @@ test('gold needs flips: a clean no-flip ride misses it, a stunt rider mostly mak
     if (run.phase === 'done' && run.finalMs <= lv.stars[0]) golds++;
   }
   // the clean no-flip side is asserted in 'the autopilot finishes every level' (gold <= its time)
-  assert.ok(golds >= 7, `stunt autopilot made gold on only ${golds} levels`);
+  assert.ok(golds >= Math.ceil(LEVELS.length * 0.7), `stunt autopilot made gold on only ${golds} levels`);
 });
 
 test('props sit at fixed level positions on plain ground', () => {
@@ -462,4 +462,31 @@ test('a held lean-back on the first level-1 kicker lands and earns a backflip', 
     assert.ok(run.flips >= 1, `hold ${hold}: no flip credited (${run.toasts.map((t) => t.text).join()})`);
     assert.ok(run.toasts.some((t) => t.text.includes('Backflip')), `hold ${hold}: ${run.toasts.map((t) => t.text).join()}`);
   }
+});
+
+test('an online race result stays off the Full Tour board', async () => {
+  const { boardFor } = await import('../src/os/arcade/kit/leaderboard-core.ts');
+  const { readFileSync } = await import('node:fs');
+  assert.ok(boardFor(meta), 'solo tour results use the default board');
+  assert.equal(boardFor(meta, 'race'), null, 'the race board name must not resolve to a board');
+  const src = readFileSync(new URL('../src/os/arcade/games/moto-trials/index.tsx', import.meta.url), 'utf8');
+  assert.match(src, /if \(live\) \{\s*rank = ms;\s*board = 'race';/);
+});
+
+test('worlds hold six levels each, in order, and the curve climbs', () => {
+  assert.equal(WORLDS.length, 5);
+  assert.deepEqual(WORLDS.flatMap((w) => w.levels), LEVEL_IDS);
+  for (const w of WORLDS) assert.equal(w.levels.length, 6);
+  const avgGold = (w: (typeof WORLDS)[number]) => w.levels.reduce((a, id) => a + getLevel(id).stars[0], 0) / w.levels.length;
+  for (let i = 1; i < WORLDS.length; i++) assert.ok(avgGold(WORLDS[i]) > avgGold(WORLDS[i - 1]), `${WORLDS[i].name} is not longer than ${WORLDS[i - 1].name}`);
+});
+
+test('mines and swinging saws crash the bike, and swinging saws move', () => {
+  const w = buildWorld(flat, [{ x: 6, y: 0.32, r: 0.32, kind: 'mine' }], [], -14);
+  const b = newBike(0, 1.4);
+  assert.ok(ride(w, b, { gas: 1, brake: 0, lean: 0 }, 2).saw, 'rode through a mine');
+  const swing = { x: 0, y: 2, r: 0.8, mx: 0, my: 1.5, period: 2 };
+  assert.notDeepEqual(sawAt(swing, 0.5), sawAt(swing, 1.5));
+  assert.equal(sawAt(swing, 0).y, 2);
+  assert.equal(sawAt({ x: 1, y: 2, r: 1 }, 7).y, 2);
 });
