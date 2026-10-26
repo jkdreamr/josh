@@ -1325,3 +1325,36 @@ test('a partner follows you up the route, hauls when you hang, and never leads',
     assert.ok(reached, `the partner never reached route step ${k} (${pl.kind} #${pl.id} at ${pl.y.toFixed(1)} m); it is at ${me.y.toFixed(1)} m, grounded ${me.grounded}, ground ${me.ground}`);
   }
 });
+
+test('a tap jump that comes down just under a rim catches it in a step and keeps its run', () => {
+  const lv = buildLevel();
+  const g = game(2, 'normal', lv);
+  const s = g.souls[0];
+  const o = g.souls[1];
+  const p = lv.platforms[1];
+  const q = pose(p, g.time);
+  // start 3.2 m outside the first ledge's outer rim, run in and tap jump so the arc tops out under the rim
+  const r0 = p.r1 + 3.2;
+  s.x = Math.cos(q.a) * r0;
+  s.z = Math.sin(q.a) * r0;
+  o.x = s.x + Math.cos(q.a) * 0.8;
+  o.z = s.z + Math.sin(q.a) * 0.8;
+  let caught = -1;
+  let landed = -1;
+  let stalled = 0;
+  for (let t = 0; t < 1.6 && landed < 0; t += DT) {
+    s.input = { side: 0, fwd: 1, jump: t > 0.55 && t < 0.55 + DT * 1.5, hold: t < 0.57 };
+    o.input = idle;
+    step(g, DT);
+    for (const e of g.events.splice(0)) if (e.t === 'mantle' && e.i === 0) caught = t;
+    if (caught >= 0 && landed < 0) {
+      if (s.grounded) landed = t;
+      else if (Math.hypot(s.vx, s.vz) < 1) stalled++;
+    }
+  }
+  assert.ok(caught >= 0, 'the jump never caught the rim');
+  assert.equal(s.ground, p.id, 'the soul is not standing on the ledge');
+  assert.ok(landed - caught < 0.12, `the catch took ${(landed - caught).toFixed(2)} s`);
+  assert.equal(stalled, 0, `the soul stalled at the rim for ${stalled} frames`);
+  assert.ok(Math.hypot(s.vx, s.vz) > 4, `the run was lost at the rim: speed ${Math.hypot(s.vx, s.vz).toFixed(1)}`);
+});
