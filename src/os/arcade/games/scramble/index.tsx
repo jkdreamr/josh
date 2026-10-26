@@ -471,7 +471,8 @@ function Play({ mode }: { mode: StageMode }) {
   const view = useRef<View | null>(null);
   const match = useRef<Match | null>(null);
   const net = useRef<Session>(null as unknown as Session);
-  net.current ??= newSession(!live || online!.isHost);  if (!match.current) {
+  net.current ??= newSession(!live || online!.isHost);
+  if (!match.current) {
     if (mode === 'idle') match.current = soloMatch(randomSeed(), level);
     else if (!live) match.current = soloMatch(randomSeed(), level, 'you', FIGHTER_COLORS[0], teamMode);
     else if (online!.isHost) {
@@ -2483,8 +2484,10 @@ function Play({ mode }: { mode: StageMode }) {
 function nearStairs(m: Match, f: Fighter) {
   const deep = isDeep(f.x);
   const x = topX(f.x);
+  // (below, only the basement's own: another's may lie under the ground nearby)
+  const u = deep ? basementAt(m.map, f.x, f.z) : -1;
   for (const st of m.map.stairs) {
-    if (Math.hypot(st.x - x, st.z - f.z) > 6) continue;
+    if (Math.hypot(st.x - x, st.z - f.z) > 6 || (deep && st.u !== u)) continue;
     const kind = m.map.buildings[st.u]?.kind;
     return { x: st.x + (deep ? DEEP : 0), z: st.z, text: deep ? 'stairs up' : kind === 'cellar' ? 'stairs down to a cellar' : 'stairs down to a bunker' };
   }
