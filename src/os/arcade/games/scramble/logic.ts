@@ -242,8 +242,11 @@ export type Kind = 'player' | 'bot' | 'remote';
  */
 export type Cause = WeaponId | MeleeId | 'grenade' | 'mirv' | 'impulse' | 'sauce' | 'barrel' | 'storm' | 'left' | 'bleed';
 export const CAUSES: readonly Cause[] = [...WEAPON_IDS, ...MELEE_IDS, 'grenade', 'mirv', 'impulse', 'sauce', 'barrel', 'storm', 'left', 'bleed'];
-/** What the drop key puts down: a slot's gun, melee weapon or one throwable, a consumable, a box of ammo or material. */
-export type Drop = number | UseId | Ammo | Mat;
+/**
+ * What the drop key puts down: a slot's gun, melee weapon or one throwable, a consumable, a box of ammo or material, or
+ * the scope in use.
+ */
+export type Drop = number | UseId | Ammo | Mat | 'scope';
 /** How much of a material one drop puts down. */
 export const MAT_DROP = 30;
 /** What an egg can have in hand. */
@@ -289,8 +292,10 @@ export type Input = {
   ping: { x: number; z: number } | null;
   /** Put this down at our feet, for a teammate (see Drop). */
   drop: Drop | null;
+  /** 1 for the next scope we carry, -1 for the one before, or a level plus 10 to look through that one. */
+  scope: number;
 };
-export const noInput = (): Input => ({ mx: 0, mz: 0, aim: 0, fire: false, reload: false, slot: -1, cycle: 0, interact: false, build: false, piece: null, mat: 0, edit: false, use: null, jump: false, reach: 0, pick: null, hold: false, ping: null, drop: null });
+export const noInput = (): Input => ({ mx: 0, mz: 0, aim: 0, fire: false, reload: false, slot: -1, cycle: 0, interact: false, build: false, piece: null, mat: 0, edit: false, use: null, jump: false, reach: 0, pick: null, hold: false, ping: null, drop: null, scope: 0 });
 
 /** One position report for an egg another client owns. `at` is our clock when it arrived. */
 export type Snap = { at: number; x: number; z: number; y: number; aim: number; vx: number; vz: number };
@@ -418,8 +423,9 @@ export type Fighter = {
   items: Record<UseId, number>;
   /** 0..100: health over time and a quicker step while it lasts. */
   boost: number;
-  /** Scope level 0..3 (1x, 2x, 4x, 8x). */
+  /** The scope in use, level 0..3 (1x, 2x, 4x, 8x), and the ones it carries: a bit each for 2x, 4x and 8x (see hasScope). */
   scope: number;
+  scopes: number;
   /** Backpack level 0..3. */
   pack: number;
   /** Helmet and vest levels 0..3: each takes a cut of bullets, swings and blasts. */
@@ -991,6 +997,7 @@ function newFighter(id: number, e: Entrant, x: number, z: number, team: number):
     items: none(USE_IDS),
     boost: 0,
     scope: 0,
+    scopes: 0,
     pack: 0,
     helmet: 0,
     vest: 0,
@@ -1271,6 +1278,23 @@ export function viewOf(f: Fighter) {
   return Math.max(SCOPE_VIEW[clamp(f.scope, 0, 3)] ?? 0, g ? WEAPONS[g].zoom : 0) + (f.phase === 'ground' ? levelOf(f.y) * HIGH_VIEW : 0);
 }
 
+/** Does an egg carry the scope of this level? 1x (level 0) it always has. */
+export const hasScope = (f: { scopes: number }, lv: number) => lv === 0 || (lv > 0 && lv <= 3 && (f.scopes & (1 << (lv - 1))) !== 0);
+
+/** The best scope an egg carries (0 for none). */
+export const bestScope = (f: { scopes: number }) => (hasScope(f, 3) ? 3 : hasScope(f, 2) ? 2 : hasScope(f, 1) ? 1 : 0);
+
+/** The scopes an egg carries, from 1x up. */
+export const scopesOf = (f: { scopes: number }) => [0, 1, 2, 3].filter((lv) => hasScope(f, lv));
+
+/** Looks through another scope we carry: the next (1) or the one before (-1) round and round, or a level plus 10. */
+function switchScope(f: Fighter, want: number) {
+  const have = scopesOf(f);
+  const at = Math.max(0, have.indexOf(f.scope));
+  const lv = want >= 10 ? want - 10 : have[(at + (want > 0 ? 1 : -1) + have.length) % have.length];
+  if (hasScope(f, lv)) f.scope = lv;
+}
+
 /** Is a crate, barrel, chest, supply drop or shut door there to bump into right now? */
 export function standing(m: Match, s: Solid) {
   if (s.what === 'crate' || s.what === 'barrel') return !m.opened[s.ref];
@@ -1365,6 +1389,7 @@ function clearOneShots(inp: Input) {
   inp.pick = null;
   inp.ping = null;
   inp.drop = null;
+  inp.scope = 0;
 }
 
 /**
@@ -1473,6 +1498,7 @@ function act(m: Match, f: Fighter, dt: number) {
   f.aim = inp.aim;
   if (!usable(f, f.slot)) f.slot = SLOT_MELEE;
   if (inp.ping) ping(m, f, inp.ping.x, inp.ping.z);
+  if (inp.scope) switchScope(f, inp.scope);
   if (m.mode !== 'solo') reviveStep(m, f);
   // knocked down (it crawls) or reviving a teammate (it stands still), it does nothing else
   if (f.down || f.reviving >= 0) {
@@ -2244,8 +2270,8 @@ export const pingOf = (m: Match, f: Fighter) => (m.clock - f.pingAt < PING_T ? {
 
 /**
  * Puts something down at an egg's feet for a teammate to pick up (it never goes straight back up itself): a gun or the
- * melee weapon from its slot (not the spatula), one of the throwable in hand, one consumable, a box of ammo or MAT_DROP
- * of a material. False when there was nothing to put down.
+ * melee weapon from its slot (not the spatula), one of the throwable in hand, one consumable, a box of ammo, MAT_DROP
+ * of a material, or the scope in use (not 1x). False when there was nothing to put down.
  */
 export function dropOut(m: Match, f: Fighter, what: Drop) {
   if (f.phase !== 'ground' || f.down || f.y > 1) return false;
@@ -2268,7 +2294,14 @@ export function dropOut(m: Match, f: Fighter, what: Drop) {
       f.throws[f.pick]--;
     }
   } else if (typeof what === 'number') return false;
-  else if (isUse(what)) {
+  else if (what === 'scope') {
+    // the scope in use, and the next best we carry goes up to the eye
+    if (f.scope > 0) {
+      def = { kind: 'scope', lv: f.scope };
+      f.scopes &= ~(1 << (f.scope - 1));
+      f.scope = bestScope(f);
+    }
+  } else if (isUse(what)) {
     if (f.items[what] > 0) {
       def = { kind: 'use', w: what, n: 1 };
       f.items[what]--;
@@ -2334,7 +2367,7 @@ function crack(m: Match, f: Fighter, by: number, w: Cause) {
   for (const a of Object.keys(f.ammo) as Ammo[]) if (f.ammo[a] > 0) spill.push({ kind: 'ammo', a, n: f.ammo[a] });
   for (const u of Object.keys(f.items) as UseId[]) if (f.items[u] > 0) spill.push({ kind: 'use', w: u, n: f.items[u] });
   for (const k of THROW_IDS) if (f.throws[k] > 0) spill.push({ kind: 'throw', w: k, n: f.throws[k] });
-  if (f.scope > 0) spill.push({ kind: 'scope', lv: f.scope });
+  for (let lv = 1; lv <= 3; lv++) if (hasScope(f, lv) || f.scope === lv) spill.push({ kind: 'scope', lv });
   if (f.pack > 0) spill.push({ kind: 'pack', lv: f.pack });
   if (f.helmet > 0) spill.push({ kind: 'helmet', lv: f.helmet });
   if (f.vest > 0) spill.push({ kind: 'vest', lv: f.vest });
@@ -2346,6 +2379,7 @@ function crack(m: Match, f: Fighter, by: number, w: Cause) {
   f.items = none(USE_IDS);
   f.throws = none(THROW_IDS);
   f.scope = 0;
+  f.scopes = 0;
   f.pack = 0;
   f.helmet = 0;
   f.vest = 0;
@@ -3363,8 +3397,8 @@ function adrift(m: Match, w: Wall): Wall[] | null {
 
 /**
  * Would an egg take this? Guns need an empty slot, and a melee weapon in place of anything but the spatula, unless
- * it's a swap the player asked for. A scope or backpack only if it's better than the one we have; a helmet or vest
- * too, unless the player asks for a worse one.
+ * it's a swap the player asked for. A scope we don't carry yet (we keep every one); a backpack only if it's better
+ * than the one we have, and a helmet or vest too, unless the player asks for a worse one.
  */
 export function wants(f: Fighter, def: LootDef, manual: boolean) {
   switch (def.kind) {
@@ -3383,7 +3417,7 @@ export function wants(f: Fighter, def: LootDef, manual: boolean) {
     case 'use':
       return f.items[def.w] < useCap(def.w, f.pack);
     case 'scope':
-      return def.lv > f.scope;
+      return !hasScope(f, def.lv);
     case 'pack':
       return def.lv > f.pack;
     case 'ghillie':
@@ -3645,12 +3679,17 @@ function give(m: Match, f: Fighter, def: LootDef, key: boolean) {
     case 'use':
       f.items[def.w] = fill(f.items[def.w], useCap(def.w, f.pack), def.n, (n) => ({ kind: 'use', w: def.w, n }));
       break;
-    case 'scope':
-      if (def.lv > f.scope) {
-        if (f.scope > 0) dropItem(m, f, { kind: 'scope', lv: f.scope }, f.x, f.z);
-        f.scope = def.lv;
-      } else dropItem(m, f, def, f.x, f.z);
+    case 'scope': {
+      // kept with the rest, and looked through at once when it's the best yet
+      if (hasScope(f, def.lv)) {
+        dropItem(m, f, def, f.x, f.z);
+        break;
+      }
+      const best = bestScope(f);
+      f.scopes |= 1 << (def.lv - 1);
+      if (def.lv > best) f.scope = def.lv;
       break;
+    }
     case 'pack':
       if (def.lv > f.pack) {
         if (f.pack > 0) dropItem(m, f, { kind: 'pack', lv: f.pack }, f.x, f.z);
@@ -3722,7 +3761,7 @@ export function flagsOf(f: Fighter) {
 }
 
 /** A position report for an egg another client owns. */
-export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: Held | null; r: number; flags: number; helmet: number; vest: number }) {
+export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: Held | null; r: number; flags: number; helmet: number; vest: number; scope?: number; scopes?: number }) {
   if (f.kind !== 'remote') return;
   if (f.phase === 'out') return;
   if (s.phase === 'out') {
@@ -3746,6 +3785,9 @@ export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: n
   f.shield = s.shield;
   f.helmet = s.helmet;
   f.vest = s.vest;
+  // the scopes it carries and the one it looks through, so whoever watches it sees what it sees
+  f.scopes = s.scopes ?? 0;
+  f.scope = hasScope(f, s.scope ?? 0) ? (s.scope ?? 0) : 0;
   f.ghillie = (s.flags & F_GHILLIE) !== 0;
   // knocked down, or back up (the news of how may still be on its way, or have just come ahead of this report), and
   // reviving or done (a report from before the news it started may still come in; one with no news of it, for someone
@@ -4386,6 +4428,8 @@ const MELEE_VALUE: Record<MeleeId, number> = { spatula: 0, whisk: 2, knife: 4, c
 /** Picks what to do, then whether a bounce pad on the way would get us somewhere far quicker. */
 function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   pickGoal(m, f, ai, L);
+  const lv = scopeFor(m, f, ai);
+  if (lv !== f.scope) f.input.scope = 10 + lv;
   ai.pad = -1;
   if (ai.target >= 0 || ai.goal === 'fire' || ai.goal === 'smash' || ai.goal === 'chase') return;
   const far = Math.hypot(ai.gx - f.x, ai.gz - f.z);
@@ -4404,6 +4448,25 @@ function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     ai.pad = i;
     best = walk;
   });
+}
+
+/** About how far a scope lets an egg see (the view's half height), by level. */
+const SCOPE_SEES = SCOPE_VIEW.map((v) => 14 + v);
+
+/**
+ * The scope a computer egg looks through: in a fight the least that still takes in the target with room to spare (a
+ * close fight wants the wide view of none), indoors no more than 2x, out in the open the best it carries.
+ */
+function scopeFor(m: Match, f: Fighter, ai: Ai) {
+  const best = bestScope(f);
+  const t = ai.target >= 0 ? m.fighters[ai.target] : undefined;
+  if (t) {
+    const d = Math.hypot(t.x - f.x, t.z - f.z);
+    for (let lv = 0; lv < best; lv++) if (hasScope(f, lv) && SCOPE_SEES[lv] >= d + 5) return lv;
+    return best;
+  }
+  for (let lv = f.inside >= 0 ? Math.min(best, 1) : best; lv > 0; lv--) if (hasScope(f, lv)) return lv;
+  return 0;
 }
 
 /** The widest a computer egg's aim strays (radians), however far off and quick the target. */

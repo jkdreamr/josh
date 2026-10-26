@@ -14,7 +14,7 @@
 // (its state says it too, for anyone who missed the news), a reviver says when it starts and stops, a guest asks the
 // host to stand the teammate up once it's done, and the host says when it stands. Pings go to everyone (only the team
 // shows them).
-import { MATS, MAT_SPECS, MAX_ARMOR, MAX_RARITY, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
+import { MATS, MAT_SPECS, MAX_ARMOR, MAX_RARITY, MAX_SCOPE, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
 import { HALF, opens } from './map.ts';
 import { meta } from './meta.ts';
 import {
@@ -49,6 +49,7 @@ import {
   fire,
   flagsOf,
   grantTake,
+  hasScope,
   held,
   hurt,
   isLevel,
@@ -79,8 +80,11 @@ import {
 export type Bots = 'fill' | 'none';
 export const isBots = (v: unknown): v is Bots => v === 'fill' || v === 'none';
 
-/** An egg as its owner reports it, down to the helmet and vest it wears. */
-export type State = { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: Held | null; r: number; flags: number; helmet: number; vest: number };
+/**
+ * An egg as its owner reports it, down to the helmet and vest it wears and its scopes: the one it looks through
+ * (`scope`) and the ones it carries (`scopes`, a bit each for 2x, 4x and 8x).
+ */
+export type State = { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: Held | null; r: number; flags: number; helmet: number; vest: number; scope: number; scopes: number };
 
 /**
  * `h` is the level a shot was fired from, `y0` and `ly` how high a throw starts and comes down (left out when 0). A
@@ -154,6 +158,8 @@ export const MAX_KICK = r2(1.6 + Math.max(...Object.values(WEAPONS).map((w) => w
 const MAX_Y = MAX_LEVEL * LEVEL_H + 1;
 const height = (v: unknown) => v === undefined || (num(v) && v >= 0 && v <= MAX_Y);
 const tossH = (v: unknown) => (num(v) ? v : 0);
+/** Every scope bit set: 2x, 4x and 8x. */
+const SCOPE_BITS = (1 << MAX_SCOPE) - 1;
 
 // -------------------------------------------------------------------------------------------------------------------
 // Built pieces.
@@ -204,7 +210,7 @@ const r20 = (n: number) => Math.round(n * 20) / 20;
 
 export function stateOf(f: Fighter): State {
   const h = held(f);
-  return { x: r20(f.x), z: r20(f.z), y: r1(f.y), aim: r2(f.aim), vx: r1(f.vx + f.kx), vz: r1(f.vz + f.kz), phase: f.phase, hp: r1(f.hp), shield: r1(f.shield), w: h.w, r: h.r, flags: flagsOf(f), helmet: f.helmet, vest: f.vest };
+  return { x: r20(f.x), z: r20(f.z), y: r1(f.y), aim: r2(f.aim), vx: r1(f.vx + f.kx), vz: r1(f.vz + f.kz), phase: f.phase, hp: r1(f.hp), shield: r1(f.shield), w: h.w, r: h.r, flags: flagsOf(f), helmet: f.helmet, vest: f.vest, scope: f.scope, scopes: f.scopes };
 }
 
 /** What an egg holds, as a number: 0 for nothing reported yet, then guns, melee weapons and throwables. */
@@ -212,8 +218,8 @@ const HELD_CODES: (Held | null)[] = [null, ...HELD];
 /**
  * An egg's state as ten whole numbers, the fewest bytes for fifty eggs at a time: where it is (in twentieths of a
  * meter), how high and how fast (tenths), its aim (hundredths of a radian), what it is up to in one number (its
- * phase, what it holds and how rare, its helmet and vest, each in bits of its own), health and shield (tenths) and its
- * flags.
+ * phase, what it holds and how rare, its helmet and vest, its scopes, each in bits of its own), health and shield
+ * (tenths) and its flags.
  */
 const packState = (s: State) => [
   Math.round(s.x * 20),
@@ -228,26 +234,31 @@ const packState = (s: State) => [
   s.flags,
 ];
 
-/** Phase, what's in hand and how rare, helmet and vest in one number; -1 (which no report gets past) for nonsense. */
+/**
+ * Phase, what's in hand and how rare, helmet and vest, and the scopes in one number; -1 (which no report gets past)
+ * for nonsense, a scope it doesn't carry among it.
+ */
 function codeOf(s: State) {
-  const fields = [s.r, s.helmet, s.vest];
-  if (!fields.every((v) => Number.isInteger(v) && v >= 0) || s.r > MAX_RARITY || s.helmet > MAX_ARMOR || s.vest > MAX_ARMOR) return -1;
-  return PHASES.indexOf(s.phase) + 4 * HELD_CODES.indexOf(s.w) + 256 * s.r + 2048 * s.helmet + 16384 * s.vest;
+  const fields = [s.r, s.helmet, s.vest, s.scope, s.scopes];
+  if (!fields.every((v) => Number.isInteger(v) && v >= 0) || s.r > MAX_RARITY || s.helmet > MAX_ARMOR || s.vest > MAX_ARMOR || s.scope > MAX_SCOPE || s.scopes > SCOPE_BITS || !hasScope(s, s.scope)) return -1;
+  return PHASES.indexOf(s.phase) + 4 * HELD_CODES.indexOf(s.w) + 256 * s.r + 2048 * s.helmet + 16384 * s.vest + 65536 * (s.scope + 4 * s.scopes);
 }
 
 function unpackState(a: unknown): State | null {
   if (!Array.isArray(a) || a.length < 10 || !a.slice(0, 10).every(int)) return null;
   const [x, z, y, aim, vx, vz, code, hp, shield, flags] = a as number[];
-  if (code < 0 || code >= 16384 * (MAX_ARMOR + 1) || flags < 0 || flags > F_ALL) return null;
+  if (code < 0 || code >= 65536 * 4 * (SCOPE_BITS + 1) || flags < 0 || flags > F_ALL) return null;
   const phase = PHASES[code % 4];
   const w = Math.floor(code / 4) % 64;
   const r = Math.floor(code / 256) % 8;
   const helmet = Math.floor(code / 2048) % 8;
-  const vest = Math.floor(code / 16384);
-  if (w >= HELD_CODES.length || r > MAX_RARITY || helmet > MAX_ARMOR) return null;
+  const vest = Math.floor(code / 16384) % 4;
+  const scope = Math.floor(code / 65536) % 4;
+  const scopes = Math.floor(code / 262144);
+  if (w >= HELD_CODES.length || r > MAX_RARITY || helmet > MAX_ARMOR || vest > MAX_ARMOR || !hasScope({ scopes }, scope)) return null;
   if (Math.abs(x) > 8000 || Math.abs(z) > 8000 || y < -10 || y > 1000 || Math.abs(aim) > 10_000 || hp < 0 || hp > 1000 || shield < 0 || shield > 1000) return null;
   const clampV = (v: number) => Math.max(-40, Math.min(40, v / 10));
-  return { x: x / 20, z: z / 20, y: y / 10, aim: aim / 100, vx: clampV(vx), vz: clampV(vz), phase, hp: hp / 10, shield: shield / 10, w: HELD_CODES[w], r, flags, helmet, vest };
+  return { x: x / 20, z: z / 20, y: y / 10, aim: aim / 100, vx: clampV(vx), vz: clampV(vz), phase, hp: hp / 10, shield: shield / 10, w: HELD_CODES[w], r, flags, helmet, vest, scope, scopes };
 }
 
 /** A guest's report of its egg, and the egg it watches once its own is out (so the host knows what it needs to see). */

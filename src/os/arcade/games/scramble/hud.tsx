@@ -861,6 +861,8 @@ export const EDIT_KEY = 'F';
  */
 export const PING_KEY = 'Y';
 export const DROP_KEY = 'U';
+/** The key that looks through the next scope carried (so does the wheel with Shift held). */
+export const SCOPE_KEY = 'O';
 export const PIECE_NAMES: Record<Plan, string> = { wall: 'wall', ramp: 'ramp', floor: 'floor', roof: 'roof', box: 'box up' };
 const [WOOD_SPEC, STONE_SPEC, METAL_SPEC] = [MAT_SPECS.wood, MAT_SPECS.stone, MAT_SPECS.metal];
 
@@ -891,8 +893,10 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dd>Shows up when you stand on something or next to a chest, a fridge, a locker or a door: tap it to pick up, open, or open and shut the door. By a knocked teammate it says revive: hold it down</dd>
               <dt>ping</dt>
               <dd>In duos and squads, the pin by the little map marks where you aim for your team, and so does a tap on the big map</dd>
+              <dt>scopes</dt>
+              <dd>Every scope you pick up stays with you: tap one in the scope badge at the top to look through it</dd>
               <dt>hold a slot</dt>
-              <dd>Hold a weapon, an item or a material in the build menu a moment to put one down for a teammate</dd>
+              <dd>Hold a weapon, an item, the scope you look through or a material in the build menu a moment to put one down for a teammate</dd>
             </>
           ) : (
             <>
@@ -913,7 +917,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dt>{PING_KEY}, middle click</dt>
               <dd>In duos and squads, ping where the mouse points for your team (a click on the big map pings there too)</dd>
               <dt>{DROP_KEY}, right click</dt>
-              <dd>Put down what's in your hand for a teammate, or right click a weapon, an item, the ammo or a material to put one down</dd>
+              <dd>Put down what's in your hand for a teammate, or right click a weapon, an item, the ammo, the scope you look through or a material to put one down</dd>
               <dt>R</dt>
               <dd>Reload</dd>
               <dt>1 2 3 4</dt>
@@ -922,6 +926,8 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dd>Bandage, medkit, mini shield, shield potion, coffee, smoothie, and T for a golden egg tart</dd>
               <dt>H, G</dt>
               <dd>Heal or top up your shield, picking the right item for you</dd>
+              <dt>{SCOPE_KEY}, Shift + wheel</dt>
+              <dd>Look through the next scope you carry (every one you pick up stays with you). A click on one in the scope badge at the top picks it</dd>
               <dt>M</dt>
               <dd>The island map</dd>
               <dt>← → and Enter</dt>
@@ -1135,7 +1141,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           <li>
             <ScopeIcon size={30} />
             <span>
-              <b>Scopes.</b> {SCOPES.slice(1).join(', ')}: each lets you see farther around you.
+              <b>Scopes.</b> {SCOPES.slice(1).join(', ')}: each lets you see farther around you. You keep every one you find and look through whichever you like (the best one yet goes up to your eye as you pick it up), since a big one makes everything small up close.
             </span>
           </li>
           <li>

@@ -33,6 +33,7 @@ import {
   owned,
   prompt,
   pingOf,
+  scopesOf,
   reviveShare,
   revivedBy,
   scoreOf,
@@ -57,7 +58,7 @@ import { configOf, parsePacket, teamAsk, type Bots } from './net';
 import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, namesOf, newSession, nextTeam, offscreen, pinTeam, receive, resultCard, share, teamsFor, tick, winnersOf, type Session } from './session';
 import { ARMOR_NAMES, MATS, MAT_MAX, MELEE, PIECE_COST, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, ammoCap, isMelee, isThrow, isWeapon, legendary, lootName, reloadOf, type Ammo, type LootDef, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { HALF, SUPPLY_FALL, placeAt, type ContainerKind } from './map';
-import { AMMO_FILL, AmmoIcon, ArmorIcon, CrownIcon, DROP_KEY, EDIT_KEY, EditIcon, EggIcon, GhillieIcon, HowToPlay, IslandArt, MAT_KEY, MatIcon, PIECE_KEYS, PIECE_NAMES, PING_KEY, PackIcon, PieceIcon, PingIcon, PlaceNames, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, keyCode } from './hud';
+import { AMMO_FILL, AmmoIcon, ArmorIcon, CrownIcon, DROP_KEY, EDIT_KEY, EditIcon, EggIcon, GhillieIcon, HowToPlay, IslandArt, MAT_KEY, MatIcon, PIECE_KEYS, PIECE_NAMES, PING_KEY, PackIcon, PieceIcon, PingIcon, PlaceNames, SCOPE_KEY, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, keyCode } from './hud';
 import { meta } from './meta';
 import './scramble.css';
 
@@ -371,7 +372,9 @@ type Hud = {
   high: number;
   /** Consumables by kind, or null when it's someone else's egg. */
   items: Record<UseId, number> | null;
+  /** The scope looked through, and the ones carried (a bit each for 2x, 4x and 8x), someone else's egg's too. */
   scope: number;
+  scopes: number;
   pack: number;
   /** Helmet and vest levels (shown for someone else's egg too, as its owner reports them). */
   helmet: number;
@@ -415,7 +418,7 @@ type Hud = {
 type Mate = { id: number; name: string; color: string; hp: number; shield: number; down: boolean; out: boolean; revive: number };
 const deep = new Set<keyof Hud>(['slots', 'toss', 'items', 'mats', 'leader', 'mates', 'down']);
 const sameHud = (a: Hud, b: Hud) => (Object.keys(a) as (keyof Hud)[]).every((k) => (deep.has(k) ? JSON.stringify(a[k]) === JSON.stringify(b[k]) : a[k] === b[k]));
-const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, mats: null, mat: 0, piece: 'wall', edit: false, high: 0, items: null, scope: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, hidden: false, ghillie: false, leader: null, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false, teams: 0, mates: null, down: null, marks: '', reviving: false });
+const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, mats: null, mat: 0, piece: 'wall', edit: false, high: 0, items: null, scope: 0, scopes: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, hidden: false, ghillie: false, leader: null, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false, teams: 0, mates: null, down: null, marks: '', reviving: false });
 
 type Stick = { id: number; ox: number; oy: number; x: number; y: number };
 /** A kill feed line; it fades out at `until` on the game clock (so a paused game keeps it up). */
@@ -425,8 +428,8 @@ type Pop = { el: HTMLDivElement | null; x: number; y: number; z: number; age: nu
  * `toss` is how far a touch throw goes, `tossAim` which way, and `tossBy` the match clock it gives up at if it can't go
  * yet. `piece`, `mat` and `edit` are the build menu's (as Input has them).
  */
-type Taps = { build: boolean; piece: Plan | null; mat: number; edit: boolean; reload: boolean; use: Input['use']; interact: boolean; jump: boolean; cycle: number; slot: number; watch: number; toss: number; tossAim: number; tossBy: number; ping: boolean; pingAt: { x: number; z: number } | null; drop: Input['drop'] };
-const noTaps = (): Taps => ({ build: false, piece: null, mat: 0, edit: false, reload: false, use: null, interact: false, jump: false, cycle: 0, slot: -1, watch: 0, toss: 0, tossAim: 0, tossBy: 0, ping: false, pingAt: null, drop: null });
+type Taps = { build: boolean; piece: Plan | null; mat: number; edit: boolean; reload: boolean; use: Input['use']; interact: boolean; jump: boolean; cycle: number; slot: number; watch: number; toss: number; tossAim: number; tossBy: number; ping: boolean; pingAt: { x: number; z: number } | null; drop: Input['drop']; scope: number };
+const noTaps = (): Taps => ({ build: false, piece: null, mat: 0, edit: false, reload: false, use: null, interact: false, jump: false, cycle: 0, slot: -1, watch: 0, toss: 0, tossAim: 0, tossBy: 0, ping: false, pingAt: null, drop: null, scope: 0 });
 /** How long the build key's blueprint stays up after a build key, and the edit key's mark after an edit. */
 const PREVIEW = 2.5;
 const EDIT_PREVIEW = 1.5;
@@ -564,16 +567,18 @@ function Play({ mode }: { mode: StageMode }) {
     view.current?.resize(size.w, size.h);
   }, [size.w, size.h, THREE, viewKey]);
 
-  // the mouse wheel cycles weapons (a native listener, so it can keep the page from scrolling)
+  // the mouse wheel cycles weapons, and with Shift held the scopes (a native listener, so it can keep the page from
+  // scrolling; with Shift some browsers scroll sideways instead)
   useEffect(() => {
     const host = ref.current;
     if (!host) return;
     let acc = 0;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      acc += e.deltaY;
+      acc += e.deltaY || e.deltaX;
       if (Math.abs(acc) >= 40) {
-        taps.current.cycle = acc > 0 ? 1 : -1;
+        if (e.shiftKey) taps.current.scope = acc > 0 ? -1 : 1;
+        else taps.current.cycle = acc > 0 ? 1 : -1;
         acc = 0;
       }
     };
@@ -775,6 +780,8 @@ function Play({ mode }: { mode: StageMode }) {
     if (t.slot >= 0) inp.slot = t.slot;
     if (keys.pressed('KeyQ')) inp.cycle = 1;
     if (t.cycle) inp.cycle = t.cycle;
+    if (keys.pressed(keyCode(SCOPE_KEY))) inp.scope = 1;
+    if (t.scope) inp.scope = t.scope;
     if (keys.pressed('KeyR') || t.reload) inp.reload = true;
     if (keys.pressed('KeyE') || t.interact) inp.interact = true;
     // held down by a knocked teammate, it revives them (a button let go of once the prompt has moved on lets go too)
@@ -1638,7 +1645,8 @@ function Play({ mode }: { mode: StageMode }) {
       edit: own && focus.phase === 'ground' && !!editable(m, focus),
       high: focus.phase === 'ground' ? levelOf(focus.y) : 0,
       items: own ? { ...focus.items } : null,
-      scope: own ? focus.scope : 0,
+      scope: focus.scope,
+      scopes: focus.scopes,
       pack: own ? focus.pack : 0,
       helmet: focus.helmet,
       vest: focus.vest,
@@ -1980,10 +1988,31 @@ function Play({ mode }: { mode: StageMode }) {
               </svg>
               <b>{hud.kills}</b>
             </span>
-            {hud.scope > 0 && (
-              <span className="g-scramble-pill is-gear" aria-label={`${SCOPES[hud.scope]} scope`}>
+            {hud.scopes > 0 && (
+              // every scope carried, the one looked through lit: a click or a tap looks through another (holding it or
+              // a right click on the one in use puts it down for a teammate)
+              <span className="g-scramble-pill is-gear is-scopes" role="group" aria-label={`Scopes: looking through ${SCOPES[hud.scope]}`}>
                 <ScopeIcon size={15} />
-                <b>{SCOPES[hud.scope]}</b>
+                {scopesOf(hud).map((lv) =>
+                  hud.mine ? (
+                    <button
+                      key={lv}
+                      type="button"
+                      tabIndex={-1}
+                      className={hud.scope === lv ? 'is-on' : undefined}
+                      aria-label={`Look through the ${SCOPES[lv]} scope`}
+                      aria-pressed={hud.scope === lv}
+                      {...(lv > 0 && lv === hud.scope ? tapOrDrop('scope', () => {}) : tap((t) => (t.scope = 10 + lv)))}
+                    >
+                      {SCOPES[lv]}
+                    </button>
+                  ) : (
+                    <b key={lv} className={hud.scope === lv ? 'is-on' : undefined}>
+                      {SCOPES[lv]}
+                    </b>
+                  ),
+                )}
+                {!touchMode && hud.mine && <kbd>{SCOPE_KEY}</kbd>}
               </span>
             )}
             {hud.pack > 0 && (
