@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { alive, createArena, lookahead, reachable, riderSeats, roundOver, steer, step, swipeDir, think, type Dir } from '../src/os/arcade/games/lightcycles/cycles.ts';
+import { alive, createArena, lookahead, reachable, riderSeats, roundOver, roundTally, steer, step, swipeDir, think, type Dir } from '../src/os/arcade/games/lightcycles/cycles.ts';
 
 test('riders start apart, facing the centre, with their start cells claimed', () => {
   const a = createArena(40, 30, 2, 1);
@@ -117,4 +117,10 @@ test('online riders follow the seats in the room, people and bots alike', () => 
   assert.deepEqual(riderSeats([0, 3], [1]), [0, 1, 3], 'a seat someone left stays empty');
   assert.deepEqual(riderSeats([0, 1], [1, 2]), [0, 1, 2], 'each seat rides once');
   assert.deepEqual(riderSeats([0, 1, 2, 3, 4], []), [0, 1, 2, 3], 'four riders at most');
+});
+
+test('round tally formats two and four riders and hides the line at the target', () => {
+  assert.equal(roundTally([1, 2], ['Cyan', 'Orange'], 1, 3), '2 to 1');
+  assert.equal(roundTally([0, 1, 0, 0], ['Cyan', 'Orange', 'Purple', 'Green'], 1, 3), 'Cyan 0 · Orange 1 · Purple 0 · Green 0');
+  assert.equal(roundTally([0, 0, 3, 0], ['Cyan', 'Orange', 'Purple', 'Green'], 2, 3), '');
 });

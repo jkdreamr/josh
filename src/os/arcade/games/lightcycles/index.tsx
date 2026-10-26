@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, levelIndex, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
+import { formatTally } from '../../kit/tally.ts';
 import type { GameProps } from '../../types';
-import { alive, cell, createArena, riderSeats, roundOver, steer, step, swipeDir, think, DX, DY, type Arena, type Dir, type Level } from './cycles.ts';
+import { alive, cell, createArena, riderSeats, roundOver, roundTally, steer, step, swipeDir, think, DX, DY, type Arena, type Dir, type Level } from './cycles.ts';
 import { meta } from './meta';
 import './lightcycles.css';
 
@@ -104,6 +105,9 @@ function Cycles() {
     const seat = match.seats[id];
     return online.players.find((p) => p.seat === seat)?.name ?? online.bots.find((b) => b.seat === seat)?.name ?? NAMES[id];
   };
+  const tallyNames = (match: Match) => match.arena.riders.map((_, i) =>
+    online ? nameOf(match, i) : cfg.current.mode === '2p' ? NAMES[i] : ['You', 'Orange', 'Purple', 'Green'][i],
+  );
   /** Bots ride as computer riders on the host, which runs the arena for everyone. */
   const markBots = (match: Match) => {
     for (const r of match.arena.riders) r.cpu = match.bots.includes(match.seats[r.id]);
@@ -340,7 +344,7 @@ function Cycles() {
           const cpuMode = cfg.current.mode !== '2p';
           const winnerSeat = match.seats[winner] ?? null;
           const title = online ? (winnerSeat === online.seat ? 'You Win' : `${nameOf(match, winner)} Wins`) : cpuMode ? (winner === 0 ? 'You Win' : 'Crashed Out') : `${NAMES[winner]} Wins`;
-          const detail = `${match.wins.join(' to ')} in ${match.round} rounds. Longest ride: ${match.longest} cells.`;
+          const detail = `${formatTally(match.wins, { names: tallyNames(match), lead: winner })} in ${match.round} rounds. Longest ride: ${match.longest} cells.`;
           if (online) online.reportResult(online.round, winnerSeat);
           shell.gameOver(online ? undefined : cpuMode ? match.longest : undefined, { title, detail });
           return;
@@ -400,7 +404,7 @@ function Cycles() {
         match.timer = 1.5;
         const twoP = cfg.current.mode === '2p';
         match.banner = winner === null ? 'Draw' : online ? `${nameOf(match, winner)} takes the round` : twoP || winner > 0 ? `${NAMES[winner]} takes the round` : 'You take the round';
-        match.sub = match.wins.some((w) => w >= TARGET) ? '' : `${match.wins.join(' to ')}`;
+        match.sub = roundTally(match.wins, tallyNames(match), winner ?? mine(), TARGET);
         setBanner({ text: match.banner, sub: match.sub });
         if (winner === 0 || (twoP && winner !== null)) sfx.play('coin');
       }

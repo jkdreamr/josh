@@ -1,5 +1,7 @@
 // Light cycle duel rules and computer riders. Pure module, no DOM.
 
+import { formatTally } from '../../kit/tally.ts';
+
 export type Dir = 0 | 1 | 2 | 3; // up, right, down, left
 export const DX = [0, 1, 0, -1];
 export const DY = [-1, 0, 1, 0];
@@ -27,6 +29,10 @@ export type Arena = {
 
 export type Crash = { id: number; x: number; y: number };
 export type Rng = () => number;
+
+export function roundTally(wins: readonly number[], names: readonly string[], lead: number | null, target: number): string {
+  return wins.some((wins) => wins >= target) ? '' : formatTally(wins, { names, lead: lead ?? undefined });
+}
 
 export const cell = (a: Arena, x: number, y: number) => y * a.w + x;
 export const free = (a: Arena, x: number, y: number) => x >= 0 && y >= 0 && x < a.w && y < a.h && a.cells[y * a.w + x] === 0;

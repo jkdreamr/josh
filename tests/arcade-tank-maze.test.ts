@@ -25,6 +25,7 @@ import {
   noInput,
   pickSpawns,
   spawnRound,
+  standings,
   step,
   stickInput,
   toCanvas,
@@ -34,6 +35,7 @@ import {
 } from '../src/os/arcade/games/tank-maze/logic.ts';
 import { makeMemory, STANDOFF, think } from '../src/os/arcade/games/tank-maze/bots.ts';
 import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacket } from '../src/os/arcade/games/tank-maze/net.ts';
+import { formatTally } from '../src/os/arcade/kit/tally.ts';
 
 const fire: TankInput = { turn: 0, move: 0, fire: true };
 const idle: TankInput = { turn: 0, move: 0, fire: false };
@@ -359,6 +361,42 @@ test('settle: last survivor scores, double KO is a draw, target ends the match',
   assert.equal(w2.scores[0] + w2.scores[1], 0, 'double KO: nobody scores');
   assert.equal(w2.round, 2, 'a new round starts');
   assert.equal(w2.phase, 'ready');
+});
+
+test('standings include a pending multiplayer point through the settle phase', () => {
+  const w = createWorld({ cols: 6, rows: 6, seed: 23, count: 4, target: 5 });
+  intoPlay(w);
+  w.tanks[0].alive = false;
+  w.tanks[2].alive = false;
+  w.tanks[3].alive = false;
+  step(w, w.tanks.map(() => idle));
+  assert.equal(w.phase, 'settle');
+  assert.deepEqual(w.scores, [0, 0, 0, 0]);
+  assert.deepEqual(standings(w), [0, 1, 0, 0]);
+  assert.equal(formatTally(standings(w), { names: ['Red', 'Green', 'Blue', 'Gold'], lead: 1 }), 'Red 0 · Green 1 · Blue 0 · Gold 0');
+  runUntil(w, () => w.phase !== 'settle', 200);
+  assert.deepEqual(w.scores, [0, 1, 0, 0]);
+});
+
+test('two-tank standings lead with the surviving tank during settle', () => {
+  const w = createWorld({ cols: 6, rows: 6, seed: 24, count: 2, target: 5 });
+  intoPlay(w);
+  w.tanks[1].alive = false;
+  step(w, w.tanks.map(() => idle));
+  assert.equal(formatTally(standings(w), { lead: w.winner }), '1 to 0');
+});
+
+test('a survivor killed during settle loses the pending point', () => {
+  const w = createWorld({ cols: 6, rows: 6, seed: 25, count: 2, target: 5 });
+  intoPlay(w);
+  w.tanks[1].alive = false;
+  step(w, w.tanks.map(() => idle));
+  assert.deepEqual(standings(w), [1, 0]);
+  w.tanks[0].alive = false;
+  step(w, w.tanks.map(() => idle));
+  assert.equal(w.phase, 'settle');
+  assert.equal(w.winner, -1);
+  assert.deepEqual(standings(w), [0, 0]);
 });
 
 test('a fresh maze each round', () => {
