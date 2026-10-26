@@ -861,8 +861,22 @@
   white-space: nowrap;
 }
 
+/* Online, a seat someone left keeps saying so, on its own line under the name and count */
+.g-crazy-eights .is-short .g-crazy-eights-seat .g-crazy-eights-name:has(em) {
+  display: grid;
+  grid-template-columns: minmax(0, max-content) auto;
+  justify-content: center;
+  column-gap: 4px;
+  max-width: 100%;
+}
+
 .g-crazy-eights .is-short .g-crazy-eights-name em {
-  display: none;
+  grid-column: 1 / -1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: center;
 }
 
 .g-crazy-eights .is-short .g-crazy-eights-middle {
@@ -1075,4 +1089,100 @@
   white-space: normal;
   text-wrap: balance;
   line-height: 1.2;
+}
+
+/* Touch: the shell toolbar and the Start, Pause and Game Over cards stay finger-sized and readable, even inside the scaled phone and iPad frames */
+@media (pointer: coarse) {
+  .g-crazy-eights .arcade-ctrl button {
+    width: calc(44px * var(--g-crazy-eights-u, 1));
+    height: calc(44px * var(--g-crazy-eights-u, 1));
+  }
+  .g-crazy-eights .arcade-ctrl svg {
+    width: calc(18px * var(--g-crazy-eights-u, 1));
+    height: calc(18px * var(--g-crazy-eights-u, 1));
+  }
+  .g-crazy-eights .arcade-ctrl button.is-armed {
+    font-size: calc(12px * var(--g-crazy-eights-u, 1));
+  }
+  .g-crazy-eights .arcade-score {
+    font-size: calc(13px * var(--g-crazy-eights-u, 1));
+  }
+  .g-crazy-eights .arcade-online-status {
+    font-size: calc(12px * var(--g-crazy-eights-u, 1));
+  }
+  .g-crazy-eights .arcade-ov .arcade-btn,
+  .g-crazy-eights .arcade-ov .arcade-seg > button {
+    height: auto;
+    min-height: calc(44px * var(--g-crazy-eights-u, 1));
+    font-size: calc(13px * var(--g-crazy-eights-u, 1));
+  }
+  .g-crazy-eights .arcade-ov .arcade-btn-lg {
+    font-size: calc(14px * var(--g-crazy-eights-u, 1));
+  }
+  .g-crazy-eights .arcade-ov .arcade-card p {
+    font-size: calc(13px * var(--g-crazy-eights-u, 1));
+  }
+  .g-crazy-eights .arcade-ov .arcade-card small,
+  .g-crazy-eights .arcade-ov .arcade-field > span {
+    font-size: calc(12px * var(--g-crazy-eights-u, 1));
+  }
+  .g-crazy-eights .arcade-howto ol {
+    font-size: calc(13.5px * var(--g-crazy-eights-u, 1));
+  }
+  .g-crazy-eights .arcade-card .arcade-howto-controls {
+    font-size: calc(12.5px * var(--g-crazy-eights-u, 1));
+  }
+  .g-crazy-eights .arcade-howto-controls b {
+    font-size: calc(11px * var(--g-crazy-eights-u, 1));
+  }
+  /* Short screens: the rivals row clears the bigger toolbar on the right */
+  .g-crazy-eights .is-short .g-crazy-eights-rivals {
+    min-height: calc(20px + 50px * var(--g-crazy-eights-u, 1));
+    padding-right: calc(34px + 230px * var(--g-crazy-eights-u, 1));
+  }
+  .g-crazy-eights .is-short.is-online .g-crazy-eights-rivals {
+    padding-right: calc(34px + 138px * var(--g-crazy-eights-u, 1));
+  }
+}
+
+/* Short windows: the Start, Pause and Game Over cards set their settings side by side and their buttons in rows, so every action fits without scrolling */
+@container arcade-ov (max-height: 320px) and (min-width: 400px) {
+  .g-crazy-eights .arcade-card:not(.arcade-howto, .arcade-lb-card, .arcade-online-card) {
+    flex-flow: row wrap;
+    justify-content: center;
+    align-content: center;
+    gap: 4px 8px;
+    width: min(520px, 100%);
+    padding: 12px 14px;
+  }
+  .g-crazy-eights .arcade-card:not(.arcade-howto, .arcade-lb-card, .arcade-online-card) > :not(.arcade-btn, .arcade-row, h2, .arcade-final) {
+    flex: 0 0 100%;
+  }
+  .g-crazy-eights .arcade-card:not(.arcade-howto, .arcade-lb-card, .arcade-online-card) .arcade-btn-lg {
+    min-width: 0;
+  }
+  .g-crazy-eights .arcade-card:not(.arcade-howto, .arcade-lb-card, .arcade-online-card) > .arcade-final {
+    flex-direction: row;
+    align-items: baseline;
+    gap: 8px;
+    margin: 0;
+  }
+  .g-crazy-eights .arcade-card:not(.arcade-howto, .arcade-lb-card, .arcade-online-card) > .arcade-final b {
+    font-size: 24px;
+  }
+  .g-crazy-eights .arcade-card:not(.arcade-howto, .arcade-lb-card, .arcade-online-card) > .arcade-row {
+    margin: 0;
+  }
+  .g-crazy-eights .arcade-card:not(.arcade-howto, .arcade-lb-card, .arcade-online-card) > .arcade-setup {
+    flex-direction: row;
+    gap: 10px;
+    margin: 0;
+  }
+  .g-crazy-eights .arcade-card:not(.arcade-howto, .arcade-lb-card, .arcade-online-card) > .arcade-setup > * {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .g-crazy-eights .arcade-card:not(.arcade-howto, .arcade-lb-card, .arcade-online-card) .arcade-seg > button {
+    padding: 0 6px;
+  }
 }

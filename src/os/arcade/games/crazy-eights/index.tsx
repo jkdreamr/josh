@@ -99,7 +99,7 @@ function Table() {
   const [size, setSize] = useState({ w: 640, h: 420 });
   // In the phone and iPad frames the whole screen is scaled down; u grows text and controls back to their real size.
   const [u, setU] = useState(1);
-  const [chrome, setChrome] = useState({ nameH: 42, barH: 44, rowH: 0 });
+  const [chrome, setChrome] = useState({ nameH: 42, barH: 44, rowH: 0, ctrlB: 0 });
   const tableRef = useRef<HTMLDivElement>(null);
   const lastRect = useRef<DOMRect | null>(null);
   const prevHand = useRef<Set<Card>>(new Set());
@@ -145,6 +145,14 @@ function Table() {
     };
   }, [shell.touch]);
 
+  // The shell's toolbar and cards sit outside the table, so they read the frame scale from the shell root.
+  useEffect(() => {
+    const el = shell.root.current;
+    if (!el) return;
+    el.style.setProperty('--g-crazy-eights-u', String(u));
+    return () => el.style.removeProperty('--g-crazy-eights-u');
+  }, [shell.root, u]);
+
   // The top rival's label and your bar set how much height is left for the cards.
   useLayoutEffect(() => {
     const el = tableRef.current;
@@ -155,7 +163,9 @@ function Table() {
     const nameH = name ? name.offsetHeight : chrome.nameH;
     const barH = bar ? bar.offsetHeight : chrome.barH;
     const rowH = row ? row.offsetHeight : 0;
-    if (Math.abs(nameH - chrome.nameH) > 0.5 || Math.abs(barH - chrome.barH) > 0.5 || Math.abs(rowH - chrome.rowH) > 0.5) setChrome({ nameH, barH, rowH });
+    const ctrl = shell.root.current?.querySelector<HTMLElement>('.arcade-ctrl');
+    const ctrlB = ctrl ? ctrl.offsetTop + ctrl.offsetHeight : 0;
+    if (Math.abs(nameH - chrome.nameH) > 0.5 || Math.abs(barH - chrome.barH) > 0.5 || Math.abs(rowH - chrome.rowH) > 0.5 || Math.abs(ctrlB - chrome.ctrlB) > 0.5) setChrome({ nameH, barH, rowH, ctrlB });
     // The frame can still be animating in when the table first measures, and that never resizes the table, so check again on every render.
     const next = frameU(el, shell.touch);
     if (Math.abs(next - u) > 0.01) setU(next);
@@ -504,7 +514,8 @@ function Table() {
   const dealt = tbl.ev.some((e) => e.k === 'deal');
   const played = tbl.ev.find((e): e is Extract<Ev, { k: 'play' }> => e.k === 'play');
   const seq = tbl.seq;
-  const layout = tableLayout({ w: size.w, h: size.h, n, online: !!online, nameH: chrome.nameH, barH: chrome.barH, rowH: chrome.rowH });
+  // On a phone the finger-sized toolbar spans the top, so the top rival starts below it.
+  const layout = tableLayout({ w: size.w, h: size.h, n, online: !!online, nameH: chrome.nameH, barH: chrome.barH, rowH: chrome.rowH, topClear: shell.touch && size.w < 560 ? chrome.ctrlB + 6 : 0 });
   const { short, cw, ch } = layout;
   const rel = (i: number) => (i - v.me + n) % n;
   const posOf = (i: number) => {

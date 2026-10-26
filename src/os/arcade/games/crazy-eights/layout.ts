@@ -1,5 +1,6 @@
 /** Table geometry for the roomy layout: how big the cards are and where the piles sit so the top rival never covers them. */
-export type LayoutIn = { w: number; h: number; n: number; online: boolean; nameH: number; barH: number; rowH?: number };
+/** topClear: how far down the top rival must start to clear the shell toolbar (it spans the top of a phone). */
+export type LayoutIn = { w: number; h: number; n: number; online: boolean; nameH: number; barH: number; rowH?: number; topClear?: number };
 export type Layout = { short: boolean; cw: number; ch: number; seatTop: number; pad: number; handH: number };
 
 const SEAT_GAP = 6;
@@ -20,7 +21,7 @@ export const pileTop = (l: Layout, h: number, barH: number) => {
   return l.pad + (middle - l.pad - l.ch) / 2;
 };
 
-export function tableLayout({ w, h, n, online, nameH, barH, rowH = 0 }: LayoutIn): Layout {
+export function tableLayout({ w, h, n, online, nameH, barH, rowH = 0, topClear = 0 }: LayoutIn): Layout {
   // Short laptop windows put the pile on the left and the rivals in a row above your hand.
   const short = h < 340 && w > h * 1.4;
   if (short) {
@@ -33,7 +34,7 @@ export function tableLayout({ w, h, n, online, nameH, barH, rowH = 0 }: LayoutIn
   }
   const hasTop = n === 2 || n === 4;
   // Online, the room badge sits top center, so a rival up there drops below it.
-  const seatTop = online ? ONLINE_TOP : h < 420 ? 4 : 10;
+  const seatTop = Math.max(online ? ONLINE_TOP : h < 420 ? 4 : 10, Math.ceil(topClear));
   let cw = Math.max(46, Math.min(w < 560 ? w * 0.15 : w * 0.11, h * (h < 460 ? 0.24 : 0.2), 104));
   if (hasTop) {
     // Rival, gap, pile, its labels, your bar and your hand all stack up the height of the table.
