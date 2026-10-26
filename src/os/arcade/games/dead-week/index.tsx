@@ -6,12 +6,13 @@ import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useKe
 import type { GameProps } from '../../types';
 import { meta } from './meta';
 import { BOT_NAMES, botPasses, botRevealAt, skillOf } from './bots';
+import { addSample, offsetOf, type ClockSample } from './clock';
 import { createDirector, report, standings, tick, vote, voteCounts, type Director, type GamePacket, type Out, type ResultPacket, type Standing } from './director';
 import { CARDINAL, DISPLAY, GREEN, INK, PAPER, PINK, YELLOW, BROWN, WHITE, fuse, highlight, paper, rect, text } from './draw';
 import { active, advanceLocal, elapsed, mirrorHeld, mirrorKey, partAt, shown, startLocal, stepLocal, type Local } from './frame';
 import type { Held, Key } from './micro/types';
 import { Beat, type BeatVoice } from './music';
-import { gameOf, parsePacket, reportOf, resultOf, tallyOf, voteOf } from './net';
+import { clockProbeOf, clockReplyOf, gameOf, parsePacket, reportOf, resultOf, tallyOf, voteOf } from './net';
 import { resultsTime } from './plan';
 import { mix } from './rng';
 import { CURSES, CURSE_NAMES, CURSE_NOTES, LIVES, type Curse, type Entry } from './rules';
@@ -80,6 +81,7 @@ function Stage() {
 type Sim = {
   t0: number;
   clk: number;
+  localAt: number;
   dir: Director | null;
   endless: boolean;
   me: number;
@@ -123,6 +125,7 @@ function Play({ mode }: { mode: StageMode }) {
   const isOnline = mode === 'online' && !!online;
 
   const sim = useRef<Sim | null>(null);
+  const clockSamples = useRef<ClockSample[]>([]);
   const layoutScale = useRef({ w: -1, h: -1, u: 1 });
   if (!sim.current) {
     const t0 = performance.now() / 1000;
@@ -147,7 +150,7 @@ function Play({ mode }: { mode: StageMode }) {
     }
     if (dir) st = standings(dir.royale);
     sim.current = {
-      t0, clk: 0, dir, endless, me, st, gp: null, L: null, res: null, resAt: -9, done: new Map(), votes: [0, 0, 0], myVote: null,
+      t0, clk: 0, localAt: 0, dir, endless, me, st, gp: null, L: null, res: null, resAt: -9, done: new Map(), votes: [0, 0, 0], myVote: null,
       spillAt: -9, overAt: -1, finished: false, introUntil: 2.2, cursor: { x: 50, y: 60, at: -9 }, held: noKeys(), pointer: null, part: -1,
       arena: { x: 0, y: 0, s: 1 }, beat: new Beat(),
     };
@@ -175,6 +178,8 @@ function Play({ mode }: { mode: StageMode }) {
 
   const applyGame = (g: GamePacket) => {
     if (isOnline) s.clk = wallClk();
+    const offset = offsetOf(clockSamples.current);
+    const start = isOnline && !onlineRef.current?.isHost ? (offset === null ? wallClk() : g.at - offset) : s.clk;
     s.gp = g;
     s.st = g.st;
     s.res = null;
@@ -182,7 +187,8 @@ function Play({ mode }: { mode: StageMode }) {
     s.votes = [0, 0, 0];
     s.myVote = null;
     s.part = -1;
-    s.L = startLocal(g.seed, g.n, s.clk, g.curse, g.cursed.includes(s.me), amAlive() && !onlineRef.current?.watching);
+    s.L = startLocal(g.seed, g.n, start, g.curse, g.cursed.includes(s.me), amAlive() && !onlineRef.current?.watching);
+    s.localAt = start;
     s.introUntil = 0;
     const id = s.L.plan.ids[0];
     const pitch = 0.8 + (mix(id.length, id.charCodeAt(0)) % 7) * 0.08;
@@ -213,12 +219,13 @@ function Play({ mode }: { mode: StageMode }) {
   };
 
   const applyResult = (r: ResultPacket) => {
-    const prev = s.clk;
+    const prev = s.L ? s.localAt : s.clk;
     if (isOnline) {
       s.clk = wallClk();
       if (s.L) {
         const flip = s.L.cursedMe && s.L.curse === 'flip';
         advanceLocal(s.L, prev, s.clk, mirrorHeld(s.held, flip));
+        s.localAt = Math.max(s.localAt, s.clk);
       }
     }
     s.res = r;
@@ -291,7 +298,9 @@ function Play({ mode }: { mode: StageMode }) {
       const p = parsePacket(data);
       if (!p) return;
       if (o.isHost && s.dir) {
-        if (p.k === 'P' && report(s.dir, from, p.n, p.pass)) {
+        if (p.k === 'C' && p.h === undefined) {
+          o.send(clockReplyOf(p.c, wallClk()), { to: from });
+        } else if (p.k === 'P' && report(s.dir, from, p.n, p.pass)) {
           s.done.set(from, p.pass);
           sendTally();
           bump();
@@ -303,7 +312,9 @@ function Play({ mode }: { mode: StageMode }) {
         return;
       }
       if (from !== 0) return;
-      if (p.k === 'G') applyGame(p);
+      if (p.k === 'C') {
+        if (p.h !== undefined) clockSamples.current = addSample(clockSamples.current, p.c, p.h, wallClk());
+      } else if (p.k === 'G') applyGame(p);
       else if (p.k === 'R') applyResult(p);
       else if (p.k === 'T') {
         for (const [seat, v] of p.done) s.done.set(seat, v === 1);
@@ -312,6 +323,23 @@ function Play({ mode }: { mode: StageMode }) {
       }
     });
   }, [isOnline, online]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!isOnline || !online || online.isHost) return;
+    const probe = () => onlineRef.current?.send(clockProbeOf(wallClk()), { to: 0 });
+    let slowId: number | null = null;
+    const fastId = window.setInterval(() => {
+      probe();
+      if (wallClk() >= 5) {
+        window.clearInterval(fastId);
+        slowId = window.setInterval(probe, 3000);
+      }
+    }, 1000);
+    return () => {
+      window.clearInterval(fastId);
+      if (slowId !== null) window.clearInterval(slowId);
+    };
+  }, [isOnline, online?.isHost]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // the host keeps the schedule on wall time, so a backgrounded host tab still runs the room
   useEffect(() => {
@@ -362,7 +390,7 @@ function Play({ mode }: { mode: StageMode }) {
 
   const update = (dt: number) => {
     if (!live || s.finished) return;
-    const prev = s.clk;
+    const prev = s.L ? s.localAt : s.clk;
     if (isOnline) s.clk = wallClk();
     else s.clk += dt;
     if (!isOnline) hostTick();
@@ -413,6 +441,7 @@ function Play({ mode }: { mode: StageMode }) {
     const decided = isOnline
       ? advanceLocal(L, prev, s.clk, mirrorHeld(now, flip))
       : stepLocal(L, s.clk, dt, mirrorHeld(now, flip));
+    if (isOnline) s.localAt = Math.max(s.localAt, s.clk);
     if (decided) sendReport(decided === 'pass');
     if (s.endless) shellRef.current.setScore(passedOf(s) + (L.outcome === 'pass' && !s.res ? 1 : 0));
   };

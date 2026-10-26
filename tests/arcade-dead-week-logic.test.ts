@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { BOT_NAMES, botPasses, passChance, skillOf } from '../src/os/arcade/games/dead-week/bots.ts';
+import { addSample, offsetOf } from '../src/os/arcade/games/dead-week/clock.ts';
 import { GRACE, INTRO, createDirector, playEnd, report, tick, vote } from '../src/os/arcade/games/dead-week/director.ts';
 import { advanceLocal, partAt, shown, startLocal, stepLocal } from '../src/os/arcade/games/dead-week/frame.ts';
 import { Beat, bpmOf, stepVoices } from '../src/os/arcade/games/dead-week/music.ts';
 import { MICRO } from '../src/os/arcade/games/dead-week/micro/index.ts';
 import type { MicroInstance } from '../src/os/arcade/games/dead-week/micro/types.ts';
-import { gameOf, parsePacket, reportOf, resultOf, tallyOf, voteOf } from '../src/os/arcade/games/dead-week/net.ts';
+import { clockProbeOf, clockReplyOf, gameOf, parsePacket, reportOf, resultOf, tallyOf, voteOf } from '../src/os/arcade/games/dead-week/net.ts';
 import { BOSS_EVERY, MAX_TIER, TIERS_EVERY, commandTime, difficultyOf, isBoss, paceOf, planGame, resultsTime, tierOf } from '../src/os/arcade/games/dead-week/plan.ts';
 import { LIVES, botVote, createRoyale, leaders, leave, resolveGame, tallyCurse } from '../src/os/arcade/games/dead-week/rules.ts';
 import type { Curse, Entry } from '../src/os/arcade/games/dead-week/rules.ts';
@@ -225,6 +226,7 @@ test('director advances through game and results packets as humans report', () =
   const present = new Set([0, 1]);
   const intro = tick(d, INTRO, present);
   assert.equal(intro[0]?.k, 'G');
+  if (intro[0]?.k === 'G') assert.equal(intro[0].g.at, d.at);
   assert.equal(d.phase, 'game');
   assert.equal(report(d, 0, d.royale.n, true), true);
   assert.equal(report(d, 1, d.royale.n, false), true);
@@ -292,12 +294,14 @@ test('network packets round-trip each packet kind', () => {
     { s: 0, l: 4, p: -1, b: 0 as const, nm: 'student 0', x: 0 as const },
     { s: 1, l: 3, p: 4, b: 1 as const, nm: 'bot 1', x: 0 as const },
   ];
-  const game = { n: 3, seed: 12345, curse: 'quiz' as const, cursed: [0], sudden: false, st };
+  const game = { n: 3, seed: 12345, at: 12.5, curse: 'quiz' as const, cursed: [0], sudden: false, st };
   const result = { n: 3, res: [[0, 1], [1, 0]] as [number, 0 | 1][], shared: false, lost: [1], elim: [], st, sudden: false, over: false, winner: null };
   assert.deepEqual(parsePacket(gameOf(game)), { k: 'G', ...game });
   assert.deepEqual(parsePacket(resultOf(result)), { k: 'R', ...result });
   assert.deepEqual(parsePacket(reportOf(3, true)), { k: 'P', n: 3, pass: true });
   assert.deepEqual(parsePacket(voteOf(3, 'decoy')), { k: 'V', n: 3, c: 'decoy' });
+  assert.deepEqual(parsePacket(clockProbeOf(12)), { k: 'C', c: 12 });
+  assert.deepEqual(parsePacket(clockReplyOf(12, 15)), { k: 'C', c: 12, h: 15 });
   const tally = { n: 3, done: [[0, 1], [1, 0]] as [number, 0 | 1][], votes: [1, 2, 0] as [number, number, number] };
   assert.deepEqual(parsePacket(tallyOf(tally.n, tally.done, tally.votes)), { k: 'T', ...tally });
 });
@@ -306,9 +310,25 @@ test('network parser rejects bad seats, wrong packet tags, non-finite numbers, a
   assert.equal(parsePacket({ ...tallyOf(1, [[40, 1]], [0, 0, 0]) }), null);
   assert.equal(parsePacket({ ...reportOf(1, true), t: 'wrong' }), null);
   assert.equal(parsePacket(reportOf(Number.NaN, true)), null);
+  assert.equal(parsePacket(clockProbeOf(Number.NaN)), null);
+  assert.equal(parsePacket(clockReplyOf(1, Number.POSITIVE_INFINITY)), null);
+  assert.equal(parsePacket({ ...gameOf({ n: 1, seed: 2, at: Number.NaN, curse: null, cursed: [], sudden: false, st: [{ s: 0, l: 4, p: -1, b: 0, nm: 'student', x: 0 }] }) }), null);
   const hugeDone = Array.from({ length: 33 }, (_, seat) => [seat % 32, 1] as [number, 0 | 1]);
   assert.equal(parsePacket(tallyOf(1, hugeDone, [0, 0, 0])), null);
   assert.equal(parsePacket({ ...reportOf(100_001, true) }), null);
+});
+
+test('clock offset selects the sample with the minimum RTT', () => {
+  let samples = addSample([], 10, 111, 12);
+  samples = addSample(samples, 0, 20, 4);
+  assert.equal(offsetOf(samples), 100);
+});
+
+test('symmetric clock delay yields the exact offset and samples cap at eight', () => {
+  let samples = addSample([], 10, 111, 12);
+  assert.equal(offsetOf(samples), 100);
+  for (let i = 0; i < 10; i++) samples = addSample(samples, i, i + 2, i + 1);
+  assert.equal(samples.length, 8);
 });
 
 test('music voice steps are deterministic and tempo rises with tier', () => {
