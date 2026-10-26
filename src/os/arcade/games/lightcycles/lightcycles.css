@@ -131,11 +131,6 @@
     font-size: calc(13px * var(--g-lightcycles-u, 1));
     padding: calc(6px * var(--g-lightcycles-u, 1)) calc(12px * var(--g-lightcycles-u, 1));
   }
-  /* Keep tall cards (the online Game Over) below the enlarged control pill: 10px offset + 42px button + 6px pill padding. */
-  .g-lightcycles .arcade-ov:not(.arcade-ov-compact) {
-    padding-top: calc(24px + 42px * var(--g-lightcycles-u, 1));
-    padding-bottom: 12px;
-  }
   .g-lightcycles .arcade-ov > .arcade-card {
     zoom: var(--g-lightcycles-u, 1);
   }
@@ -143,5 +138,11 @@
   .g-lightcycles .arcade-ov > .arcade-card .arcade-seg > button,
   .g-lightcycles .arcade-ov > .arcade-card .arcade-input {
     min-height: 42px;
+  }
+  /* Portrait: a tall card (the online Game Over) spans the width, so start it below the enlarged control pill. */
+  @container arcade-ov (orientation: portrait) {
+    .g-lightcycles .arcade-ov > .arcade-card {
+      margin-top: calc(8px / var(--g-lightcycles-u, 1) + 42px);
+    }
   }
 }
