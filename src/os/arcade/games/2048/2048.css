@@ -146,3 +146,11 @@
 @media (prefers-reduced-motion: reduce) {
   .g-2048 .g-2048-gain, .g-2048 .g-2048-toast { animation-duration: 0.01s; }
 }
+
+/* The kit drops card text on short overlays while the name field is up; keep the Best tile line. */
+@container arcade-ov (220px < height <= 380px) {
+  .g-2048 .arcade-card:has(.arcade-lb-form) > .arcade-detail {
+    display: block;
+    margin: 0;
+  }
+}
