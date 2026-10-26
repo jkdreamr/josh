@@ -556,8 +556,8 @@ function moveSoul(g: Game, s: Soul, dt: number, t0: number, t1: number) {
     const inK = Math.max(0, (k - 0.4) / 0.6);
     s.y = lerp(gl.y0, gl.y1, up * up * (3 - 2 * up));
     // a toe catch keeps the run going through the catch, so the soul never stalls at the rim
-    s.x = lerp(gl.x0, gl.x1, inK * inK * (3 - 2 * inK)) + gl.kx * gl.t;
-    s.z = lerp(gl.z0, gl.z1, inK * inK * (3 - 2 * inK)) + gl.kz * gl.t;
+    s.x = lerp(gl.x0, gl.x1 - gl.kx * gl.dur, inK * inK * (3 - 2 * inK)) + gl.kx * gl.t;
+    s.z = lerp(gl.z0, gl.z1 - gl.kz * gl.dur, inK * inK * (3 - 2 * inK)) + gl.kz * gl.t;
     s.vx = gl.kx;
     s.vz = gl.kz;
     s.vy = 0;
@@ -823,7 +823,24 @@ function landOn(g: Game, s: Soul, p: Platform, t1: number, _moving: boolean, was
  * speed; a toe catch (keep) gives the run back on landing, so a jump that just reaches a rim keeps going.
  */
 function startGlide(g: Game, s: Soul, p: Platform, x1: number, y1: number, z1: number, dur: number, grab: boolean, keep = false) {
-  s.glide = { x0: s.x, y0: s.y, z0: s.z, x1, y1, z1, t: 0, dur, p: p.id, grab, kx: keep ? s.vx : 0, kz: keep ? s.vz : 0 };
+  let kx = 0;
+  let kz = 0;
+  if (keep) {
+    // the run itself carries the soul to its spot when it is headed there, so the catch never adds a shove; only a
+    // run that misses the spot is steered to it, no faster than the run
+    const nx = x1 - s.x;
+    const nz = z1 - s.z;
+    const need = Math.hypot(nx, nz);
+    const speed = Math.hypot(s.vx, s.vz);
+    dur = Math.max(dur, need / Math.max(speed, 1));
+    kx = s.vx;
+    kz = s.vz;
+    if (need < 1e-3 || (kx * nx + kz * nz) / need >= need / dur - 1e-6) {
+      x1 = s.x + kx * dur;
+      z1 = s.z + kz * dur;
+    }
+  }
+  s.glide = { x0: s.x, y0: s.y, z0: s.z, x1, y1, z1, t: 0, dur, p: p.id, grab, kx, kz };
   s.vx = s.vz = s.vy = 0;
   s.grounded = false;
   s.ground = -1;
@@ -878,7 +895,7 @@ function mantle(g: Game, s: Soul, dx: number, dz: number): boolean {
     const iz = Math.sin(q.a) * mid - ez;
     const il = Math.hypot(ix, iz) || 1;
     const stepIn = lerp(0.15, 0.45, k);
-    const dur = Math.max(lerp(0.04, MANTLE_T, k), (dist + stepIn) / 9);
+    const dur = k < 1 ? lerp(0.04, MANTLE_T, k) : Math.max(MANTLE_T, (dist + stepIn) / 9);
     startGlide(g, s, p, ex + (ix / il) * stepIn, q.y + 0.01, ez + (iz / il) * stepIn, dur, k < 0.5, k < 1);
     return true;
   }
