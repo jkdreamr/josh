@@ -139,3 +139,11 @@
     font-size: calc(13px * var(--g-airhockey-u, 1));
   }
 }
+/* Set by the game when the control row would cover the online badge (narrow touch screens). */
+.g-airhockey[data-g-airhockey-badge] > .arcade-online-status {
+  top: var(--g-airhockey-badge-top, 10px);
+}
+.g-airhockey[data-g-airhockey-badge='left'] > .arcade-online-status {
+  left: 10px;
+  transform: none;
+}

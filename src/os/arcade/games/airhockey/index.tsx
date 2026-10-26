@@ -545,7 +545,7 @@ function Play() {
       raf = requestAnimationFrame(() => {
         const k = el.offsetWidth ? el.getBoundingClientRect().width / el.offsetWidth : 1;
         const u = k > 0.2 && k < 0.99 ? Math.min(2, 1 / k) : 1;
-        el.style.setProperty('--g-airhockey-u', u.toFixed(3));
+        el.style.setProperty('--g-airhockey-u', String(Math.ceil(u * 100) / 100));
       });
     };
     measure();
@@ -592,10 +592,24 @@ function Play() {
     const ctrlW = ctrl ? ctrl.offsetWidth : 0;
     const ctrlBottom = ctrl ? ctrl.offsetTop + ctrl.offsetHeight : 0;
     const badgeEl = root.querySelector<HTMLElement>(':scope > .arcade-online-status');
+    root.removeAttribute('data-g-airhockey-badge');
     const box = root.getBoundingClientRect();
     const k = root.offsetWidth ? box.width / root.offsetWidth : 1;
     const b = badgeEl?.getBoundingClientRect();
-    const badge = b && b.width > 0 ? { left: (b.left - box.left) / k, right: (b.right - box.left) / k, bottom: (b.bottom - box.top) / k } : null;
+    let badge = b && b.width > 0 ? { left: (b.left - box.left) / k, right: (b.right - box.left) / k, top: (b.top - box.top) / k, bottom: (b.bottom - box.top) / k } : null;
+    // On a narrow touch screen the finger-sized control row reaches the centered online badge: seat the badge left of it, or under it.
+    if (badge && ctrl) {
+      const ctrlLeft = ctrl.offsetLeft;
+      if (badge.right > ctrlLeft - 8 && badge.left < ctrlLeft + ctrlW + 8 && badge.top < ctrlBottom + 6) {
+        const bw = badge.right - badge.left;
+        const bh = badge.bottom - badge.top;
+        const beside = !root.querySelector(':scope > .arcade-score') && 10 + bw <= ctrlLeft - 8;
+        const top = beside ? ctrl.offsetTop + (ctrl.offsetHeight - bh) / 2 : ctrlBottom + 6;
+        root.setAttribute('data-g-airhockey-badge', beside ? 'left' : 'below');
+        root.style.setProperty('--g-airhockey-badge-top', `${Math.round(top)}px`);
+        badge = beside ? { left: 10, right: 10 + bw, top, bottom: top + bh } : { left: (size.w - bw) / 2, right: (size.w + bw) / 2, top, bottom: top + bh };
+      }
+    }
     const pillW = pill.offsetWidth;
     const pillH = pill.offsetHeight;
     const free = size.w - ctrlW - 20;
@@ -605,6 +619,14 @@ function Play() {
     const below = Math.max(next.top + pillH, ctrlBottom, badge?.bottom ?? 0) + 6;
     setHud((old) => (old.left === next.left && old.top === next.top && old.below === below ? old : { ...next, below }));
   }, [size.w, size.h, shell.status, shell.root, hudTick]);
+
+  useEffect(() => {
+    const root = shell.root.current;
+    return () => {
+      root?.removeAttribute('data-g-airhockey-badge');
+      root?.style.removeProperty('--g-airhockey-badge-top');
+    };
+  }, [shell.root]);
 
   useEffect(() => {
     const w = world.current;
