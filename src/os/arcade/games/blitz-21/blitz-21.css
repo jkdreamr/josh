@@ -688,6 +688,12 @@
     padding: 0 18px;
   }
 }
+@container arcade-ov (max-height: 320px) {
+  /* How to Play scrolls inside its card; keep its lines and Got It at full height */
+  .g-blitz-21 .arcade-howto > * {
+    flex-shrink: 0;
+  }
+}
 /* The Game Over breakdown sits beside the score, with the actions in one row under both */
 @container arcade-ov (max-height: 380px) and (min-width: 400px) {
   .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) {
@@ -780,6 +786,11 @@
   }
   .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) .arcade-btn {
     height: 28px;
+  }
+  /* Clear of the shell toolbar, which stays above the card */
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) > .arcade-setup {
+    align-self: stretch;
+    padding-top: 34px;
   }
   .g-blitz-21 .g-blitz-21-results > div {
     padding: 1px 2px;
