@@ -20,8 +20,10 @@ const finite = (v: unknown, abs: number) => typeof v === 'number' && Number.isFi
 const quantized = (v: unknown) => finite(v, 1) && Math.abs((v as number) * 100 - Math.round((v as number) * 100)) < 1e-6;
 const inRange = (v: unknown, min: number, max: number) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
 const validClubId = (value: unknown): value is string => typeof value === 'string' && CLUB_IDS.includes(value);
-const validMode = (competition: unknown, mode: unknown) => COMPETITIONS.some((definition) =>
-  (competition === undefined || definition.id === competition) && definition.arrangements.some((arrangement) => arrangement === mode));
+const validMode = (competition: unknown, mode: unknown) => mode === 'practice'
+  ? competition === undefined || COMPETITION_IDS.includes(competition as CompetitionId)
+  : COMPETITIONS.some((definition) =>
+    (competition === undefined || definition.id === competition) && definition.arrangements.some((arrangement) => arrangement === mode));
 
 function validCupSummary(value: unknown): value is CupSummary {
   if (!value || typeof value !== 'object') return false;

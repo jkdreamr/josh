@@ -8,6 +8,11 @@ export type CompetitionDef<Id extends string = string> = {
   online?: boolean;
 };
 
+export const competitionFromOption = <Id extends string>(
+  option: readonly [Id, string],
+  def: Omit<CompetitionDef<Id>, 'id' | 'label'>,
+): CompetitionDef<Id> => ({ id: option[0], label: option[1].toLowerCase(), ...def });
+
 export const COMPETITIONS = [
   { id: 'quick', label: 'quick match', hint: 'play a short match', arrangements: ['cpu', 'versus', 'coop'], opponentPick: true },
   { id: 'cup', label: 'cup', hint: 'play through a bracket', arrangements: ['cpu', 'coop'], opponentPick: false },
