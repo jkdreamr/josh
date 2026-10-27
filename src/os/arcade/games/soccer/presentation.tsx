@@ -23,9 +23,9 @@ export const Scoreboard = memo(function Scoreboard({ score0, score1, clock, adde
   return (
     <div className="g-soccer-scoreboard">
       <div className="g-soccer-club g-soccer-home">{home && <Crest club={home} size={17} />}<i style={kits ? { backgroundColor: kits.home.shirt } : undefined} /><b>{home?.short ?? CLUBS[0].abbr}</b></div>
-      <strong key={score0} className="g-soccer-score-home">{score0}</strong>
+      <strong key="home-score" className="g-soccer-score-home">{score0}</strong>
       <span className="g-soccer-score-separator">:</span>
-      <strong key={score1} className="g-soccer-score-away">{score1}</strong>
+      <strong key="away-score" className="g-soccer-score-away">{score1}</strong>
       <div className="g-soccer-club g-soccer-away"><b>{away?.short ?? CLUBS[1].abbr}</b><i style={kits ? { backgroundColor: kits.away.shirt } : undefined} />{away && <Crest club={away} size={17} />}</div>
       <div className="g-soccer-clock"><b>{clock}</b>{added !== null && <em>+{added}</em>}</div>
       <small className="g-soccer-half">{half === 1 ? '1st half' : '2nd half'}</small>
