@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type MouseEvent as RMouseEvent, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
@@ -43,8 +43,20 @@ import {
   teamOf,
   teamsLeft,
   mateColor,
+  mateInNeed,
+  mateMarks,
+  mateNumber,
+  edgeOf,
   DOWN_HP,
+  EMOTE_T,
+  FACE_EMOTES,
+  ammoAsk,
+  TEAM_EMOTES,
+  emoteOf,
+  emoteReady,
+  isTeamEmote,
   type Cause,
+  type EmoteId,
   type Ev,
   type Fighter,
   type Input,
@@ -58,7 +70,7 @@ import { configOf, parsePacket, teamAsk, type Bots } from './net';
 import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, namesOf, newSession, nextTeam, offscreen, pinTeam, receive, resultCard, share, teamsFor, tick, winnersOf, type Session } from './session';
 import { ARMOR_NAMES, MATS, MAT_MAX, MELEE, PIECE_COST, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, ammoCap, isMelee, isThrow, isWeapon, legendary, lootName, reloadOf, type Ammo, type LootDef, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { DEEP, HALF, SUPPLY_FALL, basementAt, isDeep, placeAt, topX, type ContainerKind } from './map';
-import { AMMO_FILL, AmmoIcon, ArmorIcon, BasementArt, CrownIcon, DROP_KEY, EDIT_KEY, EditIcon, EggIcon, GhillieIcon, HowToPlay, IslandArt, MAT_KEY, MatIcon, PIECE_KEYS, PIECE_NAMES, PING_KEY, PackIcon, PieceIcon, PingIcon, PlaceNames, SCOPE_KEY, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, keyCode } from './hud';
+import { AMMO_FILL, AmmoIcon, ArmorIcon, BasementArt, CrownIcon, DROP_KEY, EDIT_KEY, EMOTE_KEY, EditIcon, EggIcon, EmoteIcon, emoteText, GhillieIcon, HowToPlay, IslandArt, MAT_KEY, MatIcon, PIECE_KEYS, PIECE_NAMES, PING_KEY, PackIcon, PieceIcon, PingIcon, PlaceNames, SCOPE_KEY, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, keyCode } from './hud';
 import { meta } from './meta';
 import './scramble.css';
 
@@ -91,6 +103,10 @@ const quickNote = (mode: Mode) => (mode === 'solo' ? `Computer eggs fill the isl
 const TAGS = 12;
 /** How tall a name tag is on screen: one that would sit on a nearer one's waits till they part. */
 const TAG_H = 16;
+/** Markers pointing the way to teammates off the screen (or up or down a stairway): the rest of a squad. */
+const MATE_MARKS = 3;
+/** How far in from the side of the screen a teammate is for its name tag to show rather than its marker. */
+const EDGE_IN = 30;
 /** The host gives everyone a moment to get its first packet before the countdown. */
 const HOST_LEAD = 1.2;
 const STICK_R = 52;
@@ -102,6 +118,8 @@ const calmMotion = () => (calmed ??= typeof matchMedia === 'function' && matchMe
 const tossReach = (len: number) => THROW.min + Math.max(0, Math.min(1, (len - 12) / (STICK_R - 12))) * (THROW.max - THROW.min);
 /** Seconds a touch throw let go of too soon after the last one waits to go. */
 const TOSS_WAIT = 0.8;
+/** Milliseconds without a wheel event that end a turn of it (a trackpad's glide keeps them coming quicker). */
+const WHEEL_GAP = 140;
 /** Loot named on screen at once: the nearest few by your feet, and the one the mouse is over. */
 const LABELS = 5;
 /** How tall a loot name is on screen, with a little gap. */
@@ -372,7 +390,7 @@ type Hud = {
   high: number;
   /** Consumables by kind, or null when it's someone else's egg. */
   items: Record<UseId, number> | null;
-  /** The scope looked through, and the ones carried (a bit each for 2x, 4x and 8x), someone else's egg's too. */
+  /** The scope looked through, and the ones carried (a bit each from 2x up), someone else's egg's too. */
   scope: number;
   scopes: number;
   pack: number;
@@ -400,6 +418,8 @@ type Hud = {
   prompt: string | null;
   jump: boolean;
   watching: string | null;
+  /** The egg watched is on our team. */
+  watchMate: boolean;
   out: string | null;
   mine: boolean;
   /**
@@ -408,19 +428,26 @@ type Hud = {
    */
   teams: number;
   mates: Mate[] | null;
+  /** In duos and squads: the number and color of the egg we see on its team, and the nearest teammate down that nobody is reviving. */
+  me: { n: number; color: string } | null;
+  help: { name: string; n: number; color: string; far: number } | null;
   /** The egg we see knocked down: what it has left before it bleeds out (0..1), how far along a revive is, and whose. */
   down: { left: number; revive: number; by: string | null } | null;
   /** Where the team's eggs and pings are, roughly, so the maps are drawn again as they move. */
   marks: string;
-  /** The prompt is to revive a teammate (the button is held down for it). */
+  /** The prompt is to revive a teammate (the button is held down for it), in that teammate's color. */
   reviving: boolean;
+  reviveColor: string | null;
   /** The basement the egg we see is down in (its building), or -1. */
   deep: number;
+  /** The emotes up that the egg we see sees: who, what, the ammo asked for and when, `;` apart. */
+  emotes: string;
 };
-type Mate = { id: number; name: string; color: string; hp: number; shield: number; down: boolean; out: boolean; revive: number };
-const deep = new Set<keyof Hud>(['slots', 'toss', 'items', 'mats', 'leader', 'mates', 'down']);
+/** A teammate on the team panel, with its number and how far off it is (to 5 m). */
+type Mate = { id: number; name: string; color: string; n: number; far: number; hp: number; shield: number; down: boolean; out: boolean; revive: number };
+const deep = new Set<keyof Hud>(['slots', 'toss', 'items', 'mats', 'leader', 'mates', 'down', 'me', 'help']);
 const sameHud = (a: Hud, b: Hud) => (Object.keys(a) as (keyof Hud)[]).every((k) => (deep.has(k) ? JSON.stringify(a[k]) === JSON.stringify(b[k]) : a[k] === b[k]));
-const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, mats: null, mat: 0, piece: 'wall', edit: false, high: 0, items: null, scope: 0, scopes: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, hidden: false, ghillie: false, leader: null, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false, teams: 0, mates: null, down: null, marks: '', reviving: false, deep: -1 });
+const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, mats: null, mat: 0, piece: 'wall', edit: false, high: 0, items: null, scope: 0, scopes: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, hidden: false, ghillie: false, leader: null, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, watchMate: false, out: null, mine: false, teams: 0, mates: null, me: null, help: null, down: null, marks: '', reviving: false, reviveColor: null, deep: -1, emotes: '' });
 
 type Stick = { id: number; ox: number; oy: number; x: number; y: number };
 /** A kill feed line; it fades out at `until` on the game clock (so a paused game keeps it up). */
@@ -430,8 +457,38 @@ type Pop = { el: HTMLDivElement | null; x: number; y: number; z: number; age: nu
  * `toss` is how far a touch throw goes, `tossAim` which way, and `tossBy` the match clock it gives up at if it can't go
  * yet. `piece`, `mat` and `edit` are the build menu's (as Input has them).
  */
-type Taps = { build: boolean; piece: Plan | null; mat: number; edit: boolean; reload: boolean; use: Input['use']; interact: boolean; jump: boolean; cycle: number; slot: number; watch: number; toss: number; tossAim: number; tossBy: number; ping: boolean; pingAt: { x: number; z: number } | null; drop: Input['drop']; scope: number };
-const noTaps = (): Taps => ({ build: false, piece: null, mat: 0, edit: false, reload: false, use: null, interact: false, jump: false, cycle: 0, slot: -1, watch: 0, toss: 0, tossAim: 0, tossBy: 0, ping: false, pingAt: null, drop: null, scope: 0 });
+type Taps = { build: boolean; piece: Plan | null; mat: number; edit: boolean; reload: boolean; use: Input['use']; interact: boolean; jump: boolean; cycle: number; slot: number; watch: number; toss: number; tossAim: number; tossBy: number; ping: boolean; pingAt: { x: number; z: number } | null; drop: Input['drop']; scope: number; emote: Input['emote'] };
+const noTaps = (): Taps => ({ build: false, piece: null, mat: 0, edit: false, reload: false, use: null, interact: false, jump: false, cycle: 0, slot: -1, watch: 0, toss: 0, tossAim: 0, tossBy: 0, ping: false, pingAt: null, drop: null, scope: 0, emote: null });
+/**
+ * The emote wheel while it's up: its middle on the game, what opened it (the right mouse button, the emote key, or the
+ * touch button), and the spot an enemy call points at (under the mouse, or ahead, as it opened).
+ */
+type Wheel = { x: number; y: number; by: 'mouse' | 'key' | 'touch'; at: { x: number; z: number } };
+/** The wheel's rings, sized to fit: faces round the middle, and round them the team's calls (in duos and squads). */
+function wheelSize(w: number, h: number, teams: boolean) {
+  const out = Math.max(60, Math.min(teams ? 150 : 100, Math.min(w, h) * 0.44));
+  return { out, mid: teams ? out * 0.54 : out, in: out * (teams ? 0.2 : 0.3) };
+}
+/** The slice of the wheel a point so far from its middle is on (past the edge too), or null in the middle. */
+function wheelAt(dx: number, dy: number, teams: boolean, size: ReturnType<typeof wheelSize>): EmoteId | null {
+  const r = Math.hypot(dx, dy);
+  if (r < size.in) return null;
+  const ring = teams && r > size.mid ? TEAM_EMOTES : FACE_EMOTES;
+  // clockwise from the top, a slice centered on each step round
+  const a = (Math.atan2(dx, -dy) + 2 * Math.PI) % (2 * Math.PI);
+  return ring[Math.floor((a / (2 * Math.PI)) * ring.length + 0.5) % ring.length];
+}
+/** The short name on a slice of the wheel. */
+const SLICE_TEXT: Partial<Record<EmoteId, string>> = { meds: 'meds', shield: 'shield', gun: 'gun', help: 'help!', follow: 'follow me', enemy: 'enemy', omw: 'on my way' };
+/**
+ * Whether the egg we see sees another's emote: a call only on its team, a face over anyone in plain sight close by
+ * (and its own, and its team's, always).
+ */
+function seesEmote(m: Match, f: Fighter, eye: Fighter | undefined, k: EmoteId) {
+  if (!eye || (f.phase !== 'ground' && f.phase !== 'drop')) return false;
+  if (f === eye || (m.mode !== 'solo' && f.team === eye.team)) return true;
+  return !isTeamEmote(k) && Math.hypot(f.x - eye.x, f.z - eye.z) < 40 && (f.inside < 0 || f.inside === eye.inside) && !concealed(m, f, eye);
+}
 /** How long the build key's blueprint stays up after a build key, and the edit key's mark after an edit. */
 const PREVIEW = 2.5;
 const EDIT_PREVIEW = 1.5;
@@ -509,6 +566,36 @@ function Play({ mode }: { mode: StageMode }) {
   const holding = useRef(false);
   const press = useRef<number | null>(null);
   const taps = useRef<Taps>(noTaps());
+  /** The emote wheel while it's up, and the slice picked on it. */
+  const [wheel, setWheel] = useState<Wheel | null>(null);
+  const wheelRef = useRef<Wheel | null>(null);
+  const [wheelPick, setWheelPick] = useState<EmoteId | null>(null);
+  const wheelPickRef = useRef<EmoteId | null>(null);
+  // up from the right mouse button or the emote key, the mouse picks a slice wherever it goes, and letting go of the
+  // button says it (no menu comes up for it meanwhile)
+  useEffect(() => {
+    if (!wheel || wheel.by === 'touch') return;
+    const move = (e: MouseEvent) => {
+      pickSlice(sliceUnder(e.clientX, e.clientY));
+      if (wheelRef.current?.by === 'mouse' && e.buttons === 0) closeWheel(true);
+    };
+    const up = (e: MouseEvent) => {
+      if (e.button === 2 && wheelRef.current?.by === 'mouse') closeWheel(true);
+    };
+    const menu = (e: Event) => e.preventDefault();
+    const blur = () => closeWheel(false);
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up);
+    window.addEventListener('contextmenu', menu, true);
+    window.addEventListener('blur', blur);
+    return () => {
+      window.removeEventListener('mousemove', move);
+      window.removeEventListener('mouseup', up);
+      window.removeEventListener('blur', blur);
+      // (a menu some systems bring up as the button comes up is still kept away)
+      window.setTimeout(() => window.removeEventListener('contextmenu', menu, true), 300);
+    };
+  }, [wheel]);
   const moveStick = useRef<Stick | null>(null);
   const aimStick = useRef<Stick | null>(null);
   /** Which thumbsticks are down; their knobs move on the DOM as the thumb does. */
@@ -531,6 +618,9 @@ function Play({ mode }: { mode: StageMode }) {
   const pops = useRef<Pop[]>(Array.from({ length: 24 }, () => ({ el: null, x: 0, y: 0, z: 0, age: 9, live: false })));
   const popAt = useRef(0);
   const tags = useRef(new Map<number, HTMLDivElement>());
+  const mateEls = useRef<(HTMLDivElement | null)[]>([]);
+  /** The emote bubbles over eggs, by egg. */
+  const bubbles = useRef(new Map<number, HTMLDivElement>());
   // hit marks where our shots land, the names of loot near us, and the wash of a stun grenade's flash
   const marks = useRef<Pop[]>(Array.from({ length: 6 }, () => ({ el: null, x: 0, y: 0, z: 0, age: 9, live: false })));
   const markAt = useRef(0);
@@ -575,18 +665,32 @@ function Play({ mode }: { mode: StageMode }) {
   }, [size.w, size.h, THREE, viewKey]);
 
   // the mouse wheel cycles weapons, and with Shift held the scopes (a native listener, so it can keep the page from
-  // scrolling; with Shift some browsers scroll sideways instead)
+  // scrolling; with Shift some browsers scroll sideways instead). One step a turn of the wheel, never by accident: a
+  // trackpad's glide, a pinch (Ctrl), a sideways swipe without Shift or letting go of Shift partway through a turn is
+  // still the same turn, and a turn ends after a moment's pause
   useEffect(() => {
     const host = ref.current;
     if (!host) return;
     let acc = 0;
+    let last = -Infinity;
+    let stepped = false;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      acc += e.deltaY || e.deltaX;
+      const now = performance.now();
+      if (now - last > WHEEL_GAP) {
+        acc = 0;
+        stepped = false;
+      }
+      last = now;
+      // (and nothing while the emote wheel is up)
+      if (stepped || wheelRef.current || e.ctrlKey || e.metaKey || (!e.shiftKey && Math.abs(e.deltaX) > Math.abs(e.deltaY))) return;
+      // Firefox counts in lines (or pages), the rest in pixels
+      const unit = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1;
+      acc += (e.shiftKey ? e.deltaY || e.deltaX : e.deltaY) * unit;
       if (Math.abs(acc) >= 40) {
         if (e.shiftKey) taps.current.scope = acc > 0 ? -1 : 1;
         else taps.current.cycle = acc > 0 ? 1 : -1;
-        acc = 0;
+        stepped = true;
       }
     };
     host.addEventListener('wheel', onWheel, { passive: false });
@@ -760,6 +864,8 @@ function Play({ mode }: { mode: StageMode }) {
       lastAim.current = assist(m, me, Math.atan2(dx, dy));
       if (tossing) inp.reach = tossReach(len);
       else fire = len > STICK_R * 0.5;
+    } else if (wheelRef.current && wheelRef.current.by !== 'touch') {
+      // the aim holds while the emote wheel is up (the mouse is picking on it)
     } else if (mouse.current.inside && v && !touchRef.current) {
       const g = v.ground(mouse.current.x, mouse.current.y, me.y + 1);
       if (g && Math.hypot(g.x - me.x, g.z - me.z) > 0.3) lastAim.current = Math.atan2(g.x - me.x, g.z - me.z);
@@ -802,6 +908,13 @@ function Play({ mode }: { mode: StageMode }) {
     mouse.current.ping = false;
     if (keys.pressed(keyCode(DROP_KEY))) inp.drop = me.slot;
     if (t.drop !== null) inp.drop = t.drop;
+    // the emote key held down opens the wheel where the mouse is (or in the middle), and letting go says what it's on
+    const emoteKey = keys.down(keyCode(EMOTE_KEY));
+    if (emoteKey && !wheelRef.current) {
+      const { w, h } = sizeRef.current;
+      openWheel(mouse.current.inside && !touchRef.current ? mouse.current.x : w / 2, mouse.current.inside && !touchRef.current ? mouse.current.y : h / 2, 'key');
+    } else if (!emoteKey && wheelRef.current?.by === 'key') closeWheel(true);
+    if (t.emote) inp.emote = t.emote;
     USE_IDS.forEach((w) => {
       if (keys.pressed(keyCode(USE_KEYS[w]))) inp.use = w;
     });
@@ -868,6 +981,7 @@ function Play({ mode }: { mode: StageMode }) {
         return;
       }
       const me = m.fighters[m.me];
+      if (wheelRef.current && !(emotable(me) && !n.over)) closeWheel(false);
       if (me && me.phase !== 'out' && !n.over) readInput(m, me, v, dt);
       else watchInput(m);
       if (keys.pressed('KeyM')) setBigMap((b) => !b);
@@ -1397,6 +1511,17 @@ function Play({ mode }: { mode: StageMode }) {
         // a teammate marks a spot: a blip (the map and the island show where)
         if (f && mateOf(m, f)) sfx.tone({ freq: 1180, to: 1560, dur: 0.12, type: 'sine', vol: 0.09 });
         break;
+      case 'emote': {
+        // a bubble over the egg (see placeOverlays), and a team's call in the feed with a chirp
+        if (!f || !seesEmote(m, f, eye, e.k)) break;
+        if (isTeamEmote(e.k)) {
+          addFeed(`${mine ? 'you' : f.name}: ${emoteText(e.k, e.a)}`, true);
+          sfx.tone({ freq: 760, to: 980, dur: 0.09, type: 'triangle', vol: 0.09 });
+          sfx.tone({ freq: 980, to: 1240, dur: 0.1, type: 'triangle', vol: 0.08, delay: 0.1 });
+          if (!mine && (e.k === 'help' || e.k === 'meds' || e.k === 'shield' || e.k === 'ammo' || e.k === 'gun')) buzz(15);
+        } else sfx.tone({ freq: 520, to: 780, dur: 0.12, type: 'sine', vol: 0.08 * Math.max(0.3, mine ? 1 : near(f.x, f.z)) });
+        break;
+      }
       case 'end': {
         const winners = winnersOf(m);
         const me = m.fighters[m.me];
@@ -1408,6 +1533,75 @@ function Play({ mode }: { mode: StageMode }) {
       }
     }
   }
+
+  /** Whether our egg can emote: off the bus and still in (knocked down too). */
+  const emotable = (f: Fighter | undefined) => !!f && (f.phase === 'ground' || f.phase === 'drop') && shellRef.current.status === 'playing';
+
+  /** Opens the emote wheel at (x, y) on the game, kept on screen. */
+  function openWheel(x: number, y: number, by: Wheel['by']) {
+    const m = match.current;
+    const me = m?.fighters[m.me];
+    const v = view.current;
+    if (!m || !me || !emotable(me) || wheelRef.current || net.current.over) return;
+    const { w, h } = sizeRef.current;
+    const sz = wheelSize(w, h, m.mode !== 'solo');
+    const g = by !== 'touch' && mouse.current.inside && v ? v.ground(mouse.current.x, mouse.current.y, me.y + 1) : null;
+    const at = g ?? { x: me.x + Math.sin(lastAim.current) * 15, z: me.z + Math.cos(lastAim.current) * 15 };
+    const wh: Wheel = { x: Math.max(sz.out + 4, Math.min(w - sz.out - 4, x)), y: Math.max(sz.out + 4, Math.min(h - sz.out - 40, y)), by, at };
+    wheelRef.current = wh;
+    setWheel(wh);
+    pickSlice(null);
+  }
+  /** Puts the wheel away, saying what it was on when `send`. */
+  function closeWheel(send: boolean) {
+    const wh = wheelRef.current;
+    const k = wheelPickRef.current;
+    wheelRef.current = null;
+    setWheel(null);
+    pickSlice(null);
+    if (!send || !wh || !k) return;
+    const m = match.current;
+    const me = m?.fighters[m.me];
+    if (!m || !me) return;
+    if (!emoteReady(me, m.clock)) return say('one at a time: wait a moment', 1.4);
+    taps.current.emote = { k, x: wh.at.x, z: wh.at.z };
+  }
+  function pickSlice(k: EmoteId | null) {
+    if (wheelPickRef.current === k) return;
+    wheelPickRef.current = k;
+    setWheelPick(k);
+  }
+  /** The slice a point on the game (client pixels) is on, with the wheel up: past its edge too, but for a touch. */
+  function sliceUnder(cx: number, cy: number, touch = false) {
+    const wh = wheelRef.current;
+    const r = ref.current?.getBoundingClientRect();
+    const m = match.current;
+    if (!wh || !r || !m) return null;
+    const sz = wheelSize(sizeRef.current.w, sizeRef.current.h, m.mode !== 'solo');
+    const dx = cx - r.left - wh.x;
+    const dy = cy - r.top - wh.y;
+    return touch && Math.hypot(dx, dy) > sz.out * 1.08 ? null : wheelAt(dx, dy, m.mode !== 'solo', sz);
+  }
+  /**
+   * The touch button for the wheel: down opens it in the middle (again puts it away), and a thumb that slides onto a
+   * slice and lifts says it; lifted anywhere else, the wheel stays up for a tap on a slice (see the wheel's backdrop).
+   */
+  const emoteButton = {
+    onPointerDown: (e: RPointerEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (wheelRef.current) return closeWheel(false);
+      capture(e);
+      openWheel(sizeRef.current.w / 2, sizeRef.current.h / 2, 'touch');
+    },
+    onPointerMove: (e: RPointerEvent<HTMLButtonElement>) => {
+      if (wheelRef.current?.by === 'touch') pickSlice(sliceUnder(e.clientX, e.clientY, true));
+    },
+    onPointerUp: () => {
+      if (wheelRef.current && wheelPickRef.current) closeWheel(true);
+    },
+    onContextMenu: (e: { preventDefault: () => void }) => e.preventDefault(),
+  };
 
   /** Whether an egg of ours can ping for its team: in duos and squads, off the bus and still in. */
   const pingable = (f: Fighter | undefined) => !!f && match.current?.mode !== 'solo' && (f.phase === 'ground' || f.phase === 'drop');
@@ -1438,7 +1632,8 @@ function Play({ mode }: { mode: StageMode }) {
       if (shown.size >= TAGS) break;
       const at = v.project(f.x, f.y + 2.3, f.z);
       if (!at) continue;
-      const w = Math.min(120, f.name.length * 6.4 + 16);
+      // (a teammate's has its number in front)
+      const w = Math.min(120, f.name.length * 6.4 + 16) + (m.mode !== 'solo' && f.team === eye.team ? 20 : 0);
       if (put.some((p) => Math.abs(at.x - p.x) < (w + p.w) / 2 && Math.abs(at.y - p.y) < TAG_H)) continue;
       put.push({ x: at.x, y: at.y, w });
       shown.set(f.id, at);
@@ -1452,9 +1647,81 @@ function Play({ mode }: { mode: StageMode }) {
       } else {
         tag.style.opacity = '1';
         tag.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -100%)`;
-        tag.classList.toggle('is-mate', m.mode !== 'solo' && !!eye && f.team === eye.team);
+        // in duos and squads: a teammate's in its color with its number, everyone else's dark with a red edge
+        const teams = m.mode !== 'solo' && !!eye;
+        const mate = teams && f.team === eye.team;
+        tag.classList.toggle('is-mate', mate);
+        tag.classList.toggle('is-foe', teams && !mate);
         tag.classList.toggle('is-down', f.down);
+        const n = mate ? String(mateNumber(m, f)) : '';
+        if (tag.dataset.n !== n) {
+          tag.dataset.n = n;
+          tag.style.setProperty('--mate', mate ? mateColor(m, f) : '');
+        }
       }
+    }
+    // teammates off the screen: an arrow at the edge their way with their number and how far; one up or down a
+    // stairway from us shows over (or under) where it is on our level. Red and pulsing while one is down
+    const ks = mateMarks(m, eye);
+    const marked = new Map<number, { x: number; y: number }>();
+    const { w, h } = sizeRef.current;
+    const from = eye ? v.project(eye.x, eye.y + 1, eye.z) : null;
+    for (let i = 0; i < MATE_MARKS; i++) {
+      const el = mateEls.current[i];
+      if (!el) continue;
+      const k = ks[i];
+      const o = k ? m.fighters[k.id] : undefined;
+      const at = o && eye ? v.project(topX(o.x) + (isDeep(eye.x) ? DEEP : 0), (k.level ? eye.y : o.y) + 1.2, o.z) : null;
+      // (one whose tag is on the screen needs none)
+      const seen = !!at && k.level === 0 && at.x > EDGE_IN && at.x < w - EDGE_IN && at.y > EDGE_IN && at.y < h - 8;
+      // (kept in far enough for the distance under it)
+      const pad = 30;
+      const e = at && !seen ? edgeOf(at.x, at.y, from?.x ?? w / 2, from?.y ?? h / 2, pad, Math.max(pad + 14, h * 0.15), w - pad, h - Math.max(pad + 24, h * 0.22)) : null;
+      if (!k || !e) {
+        if (el.style.opacity !== '0') el.style.opacity = '0';
+        continue;
+      }
+      el.style.opacity = '1';
+      el.style.transform = `translate(${e.x.toFixed(1)}px, ${e.y.toFixed(1)}px) translate(-50%, -50%)`;
+      // (its marker, not half a name tag at the edge, and what it says goes up by the marker)
+      marked.set(k.id, e);
+      const tag = tags.current.get(k.id);
+      if (tag && tag.style.opacity !== '0') tag.style.opacity = '0';
+      el.style.setProperty('--a', `${(e.off ? e.a : k.level > 0 ? -Math.PI / 2 : Math.PI / 2).toFixed(3)}rad`);
+      const far = `${Math.round(k.dist)}m`;
+      const text = `${k.n}|${k.level === 0 ? far : e.off ? `${far} ${k.level > 0 ? 'up' : 'down'}` : k.level > 0 ? 'above' : 'below'}|${k.color}`;
+      if (el.dataset.k !== text) {
+        el.dataset.k = text;
+        const [num, said] = text.split('|');
+        el.style.setProperty('--mate', k.color);
+        el.children[1].textContent = num;
+        el.children[2].textContent = said;
+      }
+      el.classList.toggle('is-down', k.down);
+      el.classList.toggle('is-help', k.help);
+    }
+    // emote bubbles over the eggs saying them (see Hud emotes)
+    for (const [id, el] of bubbles.current) {
+      if (!el.isConnected) {
+        bubbles.current.delete(id);
+        continue;
+      }
+      const f = m.fighters[id];
+      const mark = marked.get(id);
+      const at = mark ? { x: mark.x, y: mark.y - 12 } : f && (f.phase === 'ground' || f.phase === 'drop') ? v.project(f.x, f.y + 2.3, f.z) : null;
+      if (!at) {
+        if (el.style.visibility !== 'hidden') el.style.visibility = 'hidden';
+        continue;
+      }
+      // over its name tag, when that's up (clear of a teammate's ring round it), fading in and out on the game clock
+      // (a paused game keeps it up)
+      el.style.visibility = '';
+      const age = m.clock - f.emoteAt;
+      el.style.opacity = calm ? '1' : Math.max(0, Math.min(1, age / 0.18, (EMOTE_T - age) / 0.5)).toFixed(2);
+      // (kept on the screen, sideways)
+      const half = el.offsetWidth / 2 + 4;
+      const x = Math.max(half, Math.min(w - half, at.x));
+      el.style.transform = `translate(${x.toFixed(1)}px, ${(at.y - (shown.has(id) && !mark ? TAG_H + 12 : 4)).toFixed(1)}px) translate(-50%, -100%)`;
     }
     // hit marks: a quick X that grows a little and fades
     for (const p of marks.current) {
@@ -1627,9 +1894,11 @@ function Play({ mode }: { mode: StageMode }) {
     }
     let promptText: string | null = null;
     let reviving = false;
+    let reviveColor: string | null = null;
     if (me && me === focus && me.phase === 'ground') {
       const p = prompt(m, me);
       reviving = !!p && 'revive' in p;
+      if (p && 'revive' in p) reviveColor = mateColor(m, m.fighters[p.revive]);
       if (p && 'chest' in p) {
         const c = m.map.containers[p.chest];
         promptText = OPEN_TEXT[c.kind] ?? (c.gold ? 'open the golden chest' : 'open chest');
@@ -1647,17 +1916,33 @@ function Play({ mode }: { mode: StageMode }) {
     const total = teamsOn ? teamCount(m) : m.fighters.length;
     const out = me && me.phase === 'out' ? (me.outCause === 'bleed' ? 'bled out' : me.by >= 0 && me.by !== me.id && m.fighters[me.by] ? `cracked by ${m.fighters[me.by].name}` : me.outCause === 'storm' ? 'lost to the storm' : 'out') + (me.place ? ` · ${ordinal(me.place)} of ${total}` : ' · your team is still in') : null;
     // the rest of the team, and what's on the maps for it
+    const near = mateMarks(m, focus);
+    const farOf = (id: number) => {
+      const k = near.find((x) => x.id === id);
+      return k ? Math.round(k.dist / 5) * 5 : -1;
+    };
     const mates: Mate[] | null = teamsOn
       ? teamOf(m, focus.team)
           .filter((o) => o !== focus)
           .map((o) => {
             const r = revivedBy(m, o);
-            return { id: o.id, name: o.id === m.me ? 'you' : o.name, color: mateColor(m, o), hp: Math.max(0, Math.ceil(o.hp)), shield: o.down ? 0 : Math.ceil(o.shield), down: o.down && o.phase !== 'out', out: o.phase === 'out', revive: r ? Math.round(reviveShare(m, r) * 20) / 20 : -1 };
+            return { id: o.id, name: o.id === m.me ? 'you' : o.name, color: mateColor(m, o), n: mateNumber(m, o), far: farOf(o.id), hp: Math.max(0, Math.ceil(o.hp)), shield: o.down ? 0 : Math.ceil(o.shield), down: o.down && o.phase !== 'out', out: o.phase === 'out', revive: r ? Math.round(reviveShare(m, r) * 20) / 20 : -1 };
           })
       : null;
+    // a teammate down with nobody reviving it, while the egg we see could go
+    const needy = focus.phase === 'ground' && !focus.down ? mateInNeed(near) : null;
+    const help = needy ? { name: needy.id === m.me ? 'you' : m.fighters[needy.id].name, n: needy.n, color: needy.color, far: Math.round(needy.dist / 5) * 5 } : null;
     const reviver = focus.down ? revivedBy(m, focus) : undefined;
     const marks = teamsOn ? teamOf(m, focus.team).map((o) => `${Math.round(o.x / 2)},${Math.round(o.z / 2)},${o.down ? 1 : 0},${pingOf(m, o) ? `${o.pingX},${o.pingZ}` : ''}`).join(';') : '';
     const gw = g ? WEAPONS[g.w] : null;
+    // the emotes the egg we see sees over eggs
+    const emotes = m.fighters
+      .filter((o) => {
+        const em = emoteOf(m, o);
+        return !!em && seesEmote(m, o, focus, em.k);
+      })
+      .map((o) => `${o.id},${o.emote},${o.emoteA ?? ''},${o.emoteAt.toFixed(2)}`)
+      .join(';');
     const next: Hud = {
       phase: focus.phase,
       alive: aliveCount(m),
@@ -1701,14 +1986,19 @@ function Play({ mode }: { mode: StageMode }) {
       prompt: promptText,
       jump: !!me && me === focus && me.phase === 'bus' && m.time >= m.map.bus.on,
       watching: watching ? watching.name : null,
+      watchMate: !!watching && teamsOn && !!me && watching.team === me.team,
       out,
       mine: focus === me,
       teams: teamsOn ? teamsLeft(m) : 0,
       mates,
+      me: teamsOn ? { n: mateNumber(m, focus), color: mateColor(m, focus) } : null,
+      help,
       down: focus.down && focus.phase === 'ground' ? { left: Math.round(Math.max(0, focus.hp / DOWN_HP) * 50) / 50, revive: reviver ? Math.round(reviveShare(m, reviver) * 30) / 30 : -1, by: reviver ? (reviver.id === m.me ? 'you' : reviver.name) : null } : null,
       marks,
       reviving,
+      reviveColor,
       deep: focus.phase === 'ground' ? basementAt(m.map, focus.x, focus.z) : -1,
+      emotes,
     };
     setHud((prev) => (sameHud(prev, next) ? prev : next));
   }
@@ -1749,7 +2039,7 @@ function Play({ mode }: { mode: StageMode }) {
       mouse.current.down = true;
       mouse.current.clicked = true;
       capture(e);
-    } else if (e.button === 2) taps.current.build = true;
+    } else if (e.button === 2) openWheel(e.nativeEvent.offsetX, e.nativeEvent.offsetY, 'mouse');
     else if (e.button === 1) {
       // the middle button pings where it points
       e.preventDefault();
@@ -1759,6 +2049,14 @@ function Play({ mode }: { mode: StageMode }) {
   const onMouseUp = (e: RPointerEvent<HTMLDivElement>) => {
     if (e.pointerType !== 'mouse') return;
     if (e.button === 0) mouse.current.down = false;
+  };
+  /**
+   * The right mouse button held down brings up the emote wheel, even with the left already down (when no new pointer
+   * goes down for it).
+   */
+  const onRightDown = (e: RMouseEvent<HTMLDivElement>) => {
+    if (e.button !== 2 || touchRef.current || shell.status !== 'playing') return;
+    openWheel(e.nativeEvent.offsetX, e.nativeEvent.offsetY, 'mouse');
   };
 
   const stick = (which: 'move' | 'aim') => {
@@ -1936,17 +2234,37 @@ function Play({ mode }: { mode: StageMode }) {
       })}
       {team.map((o) =>
         o === focusFighter || o.phase === 'out' || o.phase === 'bus' ? null : (
-          <circle key={`m${o.id}`} cx={topX(o.x).toFixed(1)} cy={o.z.toFixed(1)} r={(big ? 4 : 7) * k} fill={o.down ? '#ff4d4d' : mateColor(m, o)} stroke="#fff" strokeWidth={(big ? 1.4 : 2.4) * k} className={o.down ? 'is-down' : undefined} />
+          // each teammate in its color (with its number on the big map, drawn bigger on a small touch screen), a red
+          // ring blinking round it while it's down
+          <g key={`m${o.id}`} transform={`translate(${topX(o.x).toFixed(1)} ${o.z.toFixed(1)}) scale(${big && touchMode ? 1.6 : k})`}>
+            {o.down && <circle r={big ? 8.5 : 12} fill="none" stroke="#ff4d4d" strokeWidth={big ? 2 : 3.4} className="is-down" />}
+            <circle r={big ? 6 : 8} fill={mateColor(m, o)} stroke="#fff" strokeWidth={big ? 1.4 : 2.4} />
+            {big && (
+              <text y="2.9" textAnchor="middle" fontSize="8" fontWeight="800" fill="#10141c">
+                {mateNumber(m, o)}
+              </text>
+            )}
+          </g>
         ),
       )}
       {focusFighter && focusFighter.phase !== 'out' && (
         <g transform={`translate(${topX(focusFighter.x).toFixed(2)} ${focusFighter.z.toFixed(2)}) rotate(${((-focusFighter.aim * 180) / Math.PI + 180).toFixed(0)}) scale(${k})`}>
-          <path d={big ? 'M0 -7L5 5L0 2.5L-5 5Z' : 'M0 -13L9.5 9.5L0 4.6L-9.5 9.5Z'} fill={focusFighter.color} stroke="#fff" strokeWidth={big ? 1.2 : 2.2} strokeLinejoin="round" />
+          <path d={big ? 'M0 -7L5 5L0 2.5L-5 5Z' : 'M0 -13L9.5 9.5L0 4.6L-9.5 9.5Z'} fill={team.length ? mateColor(m, focusFighter) : focusFighter.color} stroke="#fff" strokeWidth={big ? 1.2 : 2.2} strokeLinejoin="round" />
         </g>
       )}
     </>
   );
   const box = `${-HALF - 8} ${-HALF - 8} ${2 * HALF + 16} ${2 * HALF + 16}`;
+  // a teammate knocked down with nobody reviving it: who, and how far (its marker points the way). Up top in the
+  // middle, or on a touch screen under the team panel, clear of the buttons
+  const helpCall = hud.help && (
+    <div className="g-scramble-help" role="status" style={{ ['--mate' as string]: hud.help.color }}>
+      <em className="g-scramble-num">{hud.help.n}</em>
+      <span>
+        <b>{hud.help.name}</b> {hud.help.name === 'you' ? 'need' : 'needs'} help · {hud.help.far}m
+      </span>
+    </div>
+  );
   const slotLabel = (i: number) => (touchMode ? '' : String(i + 1));
   const heals = hud.items ? hud.items.bandage + hud.items.medkit + hud.items.tart : 0;
   const shields = hud.items ? hud.items.mini + hud.items.shield + hud.items.smoothie : 0;
@@ -1959,6 +2277,7 @@ function Play({ mode }: { mode: StageMode }) {
         onPointerMove={onMouseMove}
         onPointerDown={onMouseDown}
         onPointerUp={onMouseUp}
+        onMouseDown={onRightDown}
         onLostPointerCapture={() => (mouse.current.down = false)}
         onContextMenu={(e) => e.preventDefault()}
       />
@@ -1973,10 +2292,52 @@ function Play({ mode }: { mode: StageMode }) {
             className="g-scramble-tag"
             style={{ ['--tag' as string]: f.color, opacity: 0 }}
           >
-            {f.name}
+            <span>{f.name}</span>
           </div>
         ),
       )}
+      <div className="g-scramble-mates" aria-hidden="true">
+        {Array.from({ length: MATE_MARKS }, (_, i) => (
+          <div
+            key={i}
+            ref={(el) => {
+              mateEls.current[i] = el;
+            }}
+            className="g-scramble-matemark"
+            style={{ opacity: 0 }}
+          >
+            <i />
+            <b />
+            <small />
+          </div>
+        ))}
+      </div>
+      {hud.emotes &&
+        hud.emotes.split(';').map((row) => {
+          const [id, k, a, at] = row.split(',');
+          const fid = Number(id);
+          const em = k as EmoteId;
+          const call = isTeamEmote(em);
+          // in duos and squads, ringed as its name tag is: in a teammate's color, red for anyone else's
+          const o = m.fighters[fid];
+          const side = !o || !focusFighter || m.mode === 'solo' ? '' : o.team === focusFighter.team ? ' is-mate' : ' is-foe';
+          return (
+            <div
+              key={`${id}@${at}`}
+              ref={(el) => {
+                // (one gone from the page is let go of as the bubbles move, see placeOverlays)
+                if (el) bubbles.current.set(fid, el);
+              }}
+              className={`g-scramble-bubble${call ? ' is-call' : ''}${side}`}
+              style={{ visibility: 'hidden', ['--mate' as string]: side === ' is-mate' ? mateColor(m, o) : undefined }}
+              role="status"
+              aria-label={`${fid === m.me ? 'you' : (m.fighters[fid]?.name ?? '')}: ${emoteText(em, (a || null) as Ammo | null)}`}
+            >
+              <EmoteIcon k={em} a={(a || null) as Ammo | null} size={call ? 22 : 30} />
+              {call && <span>{emoteText(em, (a || null) as Ammo | null)}</span>}
+            </div>
+          );
+        })}
       <div ref={fadeEl} className="g-scramble-fade" aria-hidden="true" />
       <div className="g-scramble-pops" aria-hidden="true">
         <div ref={dazeEl} className="g-scramble-daze" style={{ opacity: 0 }} />
@@ -2023,7 +2384,13 @@ function Play({ mode }: { mode: StageMode }) {
               <b>{hud.alive}</b> left
             </span>
             {hud.teams > 0 && (
-              <span className="g-scramble-pill is-teams" aria-label={`${hud.teams} teams left`}>
+              <span className="g-scramble-pill is-teams" aria-label={`${hud.teams} teams left${hud.me ? `, ${hud.mine ? 'you are' : 'watching'} number ${hud.me.n} on the team` : ''}`}>
+                {hud.me && (
+                  // the number and color of the egg we see, as its teammates see them on their markers
+                  <em className="g-scramble-num" style={{ ['--mate' as string]: hud.me.color }}>
+                    {hud.me.n}
+                  </em>
+                )}
                 <b>{hud.teams}</b> {hud.teams === 1 ? 'team' : 'teams'}
               </span>
             )}
@@ -2123,8 +2490,10 @@ function Play({ mode }: { mode: StageMode }) {
             {hud.mates && hud.mates.length > 0 && hud.phase !== 'none' && (
               <ul className="g-scramble-team" aria-label="Your team">
                 {hud.mates.map((t) => (
-                  <li key={t.id} className={t.out ? 'is-out' : t.down ? 'is-down' : undefined} style={{ ['--mate' as string]: t.color }} aria-label={`${t.name}: ${t.out ? 'out' : t.down ? `knocked down${t.revive >= 0 ? ', being revived' : ''}` : `${t.hp} health, ${t.shield} shield`}`}>
+                  <li key={t.id} className={t.out ? 'is-out' : t.down ? 'is-down' : undefined} style={{ ['--mate' as string]: t.color }} aria-label={`${t.n}, ${t.name}: ${t.out ? 'out' : t.down ? `knocked down${t.revive >= 0 ? ', being revived' : ''}` : `${t.hp} health, ${t.shield} shield`}${t.far >= 0 ? `, ${t.far} meters off` : ''}`}>
+                    <em className="g-scramble-num">{t.n}</em>
                     <span>{t.name}</span>
+                    {t.far >= 0 && <small className="g-scramble-far">{t.far}m</small>}
                     {t.out ? (
                       <small>out</small>
                     ) : (
@@ -2138,8 +2507,10 @@ function Play({ mode }: { mode: StageMode }) {
                 ))}
               </ul>
             )}
+            {touchMode && helpCall}
           </div>
           {hud.storm && <div className={`g-scramble-storm${hud.shrinking ? ' is-moving' : ''}`}>{hud.storm}</div>}
+          {!touchMode && helpCall}
           {hud.arrive && (
             <div key={hud.arrive} className="g-scramble-arrive" role="status">
               <small>entering</small>
@@ -2195,7 +2566,14 @@ function Play({ mode }: { mode: StageMode }) {
                   ) : (
                     <kbd>←</kbd>
                   )}
-                  watching {hud.watching}
+                  watching
+                  {hud.watchMate && hud.me && (
+                    <em className="g-scramble-num" style={{ ['--mate' as string]: hud.me.color }}>
+                      {hud.me.n}
+                    </em>
+                  )}
+                  {hud.watching}
+                  {hud.teams > 0 && <small>{hud.watchMate ? 'your team' : 'other team'}</small>}
                   {touchMode ? (
                     <button type="button" className="g-scramble-watch" aria-label="Watch the next egg" onPointerDown={(e) => { e.preventDefault(); taps.current.watch = 1; }}>
                       ›
@@ -2245,7 +2623,7 @@ function Play({ mode }: { mode: StageMode }) {
             </div>
           )}
           {hud.prompt && hud.phase === 'ground' && (
-            <button type="button" className={`g-scramble-prompt${hud.reviving ? ' is-revive' : ''}`} {...(hud.reviving ? holdDown : tap((t) => (t.interact = true)))}>
+            <button type="button" className={`g-scramble-prompt${hud.reviving ? ' is-revive' : ''}`} style={hud.reviveColor ? { ['--mate' as string]: hud.reviveColor } : undefined} {...(hud.reviving ? holdDown : tap((t) => (t.interact = true)))}>
               {!touchMode && <kbd>E</kbd>}
               {hud.prompt}
             </button>
@@ -2414,6 +2792,28 @@ function Play({ mode }: { mode: StageMode }) {
           <small>{pingable(m.fighters[m.me]) ? (touchMode ? 'tap the island to ping it for your team, or here to close' : 'click the island to ping it for your team, M or here to close') : touchMode ? 'tap to close' : 'M or click to close'}</small>
         </div>
       )}
+      {wheel && (
+        <div
+          className={`g-scramble-wheelbg${wheel.by === 'touch' ? ' is-touch' : ''}`}
+          onPointerDown={(e) => {
+            // a tap on a slice says it, anywhere else puts the wheel away
+            if (wheel.by !== 'touch') return;
+            e.preventDefault();
+            e.stopPropagation();
+            const k = sliceUnder(e.clientX, e.clientY, true);
+            pickSlice(k);
+            closeWheel(!!k);
+          }}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <EmoteWheel wheel={wheel} size={wheelSize(size.w, size.h, m.mode !== 'solo')} teams={m.mode !== 'solo'} pick={wheelPick} ammo={m.fighters[m.me] ? ammoAsk(m.fighters[m.me]) : null} wait={!!m.fighters[m.me] && !emoteReady(m.fighters[m.me], m.clock)} touch={wheel.by === 'touch'} />
+        </div>
+      )}
+      {touchMode && playing && !net.current.over && hud.mine && (hud.phase === 'ground' || hud.phase === 'drop') && (
+        <button type="button" className={`g-scramble-emotebtn${hud.mates ? ' is-low' : ''}${wheel ? ' is-on' : ''}`} aria-label={hud.mates ? 'Emotes and calls for your team' : 'Emotes'} aria-pressed={!!wheel} {...emoteButton}>
+          <EmoteIcon k="happy" size={24} />
+        </button>
+      )}
       {touchMode && playing && !net.current.over && hud.mine && hud.mates && (hud.phase === 'ground' || hud.phase === 'drop') && (
         <button type="button" className="g-scramble-pingbtn" aria-label="Ping where you aim for your team" {...tap((t) => (t.ping = true))}>
           <PingIcon size={22} />
@@ -2492,6 +2892,54 @@ function nearStairs(m: Match, f: Fighter) {
     return { x: st.x + (deep ? DEEP : 0), z: st.z, text: deep ? 'stairs up' : kind === 'cellar' ? 'stairs down to a cellar' : 'stairs down to a bunker' };
   }
   return null;
+}
+
+/**
+ * The emote wheel: a ring of faces round the middle and (in duos and squads) one of the team's calls round it, the slice
+ * picked lit, and what it says (or to wait, after a few too quickly) under it.
+ */
+function EmoteWheel({ wheel, size, teams, pick, ammo, wait, touch }: { wheel: Wheel; size: ReturnType<typeof wheelSize>; teams: boolean; pick: EmoteId | null; ammo: Ammo | null; wait: boolean; touch: boolean }) {
+  const o = size.out;
+  const rings: [readonly EmoteId[], number, number][] = teams
+    ? [
+        [FACE_EMOTES, size.in, size.mid],
+        [TEAM_EMOTES, size.mid, o],
+      ]
+    : [[FACE_EMOTES, size.in, o]];
+  const pt = (r: number, a: number) => `${(Math.sin(a) * r).toFixed(1)} ${(-Math.cos(a) * r).toFixed(1)}`;
+  const ammoText = ammo === 'rockets' ? 'eggs' : ammo === 'shells' ? 'shells' : ammo ? `${ammo} ammo` : 'ammo';
+  return (
+    <div className="g-scramble-wheel" style={{ left: wheel.x - o, top: wheel.y - o, width: 2 * o, height: 2 * o }} aria-hidden="true">
+      <svg viewBox={`${-o} ${-o} ${2 * o} ${2 * o}`} width={2 * o} height={2 * o}>
+        {rings.map(([ring, r0, r1]) =>
+          ring.map((k, i) => {
+            const step = (2 * Math.PI) / ring.length;
+            const [a0, a1, am] = [(i - 0.5) * step, (i + 0.5) * step, i * step];
+            const label = ring === TEAM_EMOTES ? (k === 'ammo' ? ammoText : (SLICE_TEXT[k] ?? '')) : '';
+            const ic = label ? 22 : Math.min(30, (r1 - r0) * 0.6);
+            const mid = (r0 + r1) / 2;
+            const [cx, cy] = [Math.sin(am) * mid, -Math.cos(am) * mid];
+            return (
+              <g key={k} className={pick === k ? 'is-on' : undefined}>
+                <path className="is-slice" d={`M${pt(r0, a0)}L${pt(r1, a0)}A${r1} ${r1} 0 0 1 ${pt(r1, a1)}L${pt(r0, a1)}A${r0} ${r0} 0 0 0 ${pt(r0, a0)}Z`} />
+                <g transform={`translate(${(cx - ic / 2).toFixed(1)} ${(cy - ic / 2 - (label ? 6 : 0)).toFixed(1)})`}>
+                  <EmoteIcon k={k} a={ammo} size={ic} />
+                </g>
+                {label && (
+                  <text x={cx.toFixed(1)} y={(cy + ic / 2 + 4).toFixed(1)}>
+                    {label}
+                  </text>
+                )}
+              </g>
+            );
+          }),
+        )}
+        <circle r={size.in - 3} className="is-middle" />
+        <path d="M-5 -5L5 5M5 -5L-5 5" className="is-cancel" />
+      </svg>
+      <b className={wait ? 'is-wait' : undefined}>{pick ? emoteText(pick, ammo) : wait ? 'wait a moment' : touch ? 'tap one, or anywhere else to close' : 'let go on one to say it'}</b>
+    </div>
+  );
 }
 
 /** A thumbstick: the base where the thumb came down, the knob moved on the DOM (see drawStick). */

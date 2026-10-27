@@ -15,8 +15,9 @@
 // In duos and squads, the host's reliable reports carry the mode and everyone's team. A knocked egg's owner says so
 // (its state says it too, for anyone who missed the news), a reviver says when it starts and stops, a guest asks the
 // host to stand the teammate up once it's done, and the host says when it stands. Pings go to everyone (only the team
-// shows them).
-import { MATS, MAT_SPECS, MAX_ARMOR, MAX_RARITY, MAX_SCOPE, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
+// shows them), and so do emotes and the team's calls (only the team shows a call): the host turns away an egg's that
+// come too quickly (see emoteReady) and passes on no more of them.
+import { AMMO_TYPES, MATS, MAT_SPECS, MAX_ARMOR, MAX_RARITY, MAX_SCOPE, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
 import { HALF, opens, topX } from './map.ts';
 import { meta } from './meta.ts';
 import {
@@ -24,6 +25,7 @@ import {
   CELL_B,
   DOOR_R,
   DOOR_STATES,
+  EMOTE_IDS,
   F_ALL,
   HELD,
   LEVEL_H,
@@ -37,6 +39,7 @@ import {
   addWall,
   applyCalled,
   applyEdit,
+  applyEmote,
   applyKnock,
   applyOut,
   applyPing,
@@ -84,14 +87,15 @@ export const isBots = (v: unknown): v is Bots => v === 'fill' || v === 'none';
 
 /**
  * An egg as its owner reports it, down to the helmet and vest it wears and its scopes: the one it looks through
- * (`scope`) and the ones it carries (`scopes`, a bit each for 2x, 4x and 8x).
+ * (`scope`) and the ones it carries (`scopes`, a bit each for 2x, 4x, 8x and 15x).
  */
 export type State = { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: Held | null; r: number; flags: number; helmet: number; vest: number; scope: number; scopes: number };
 
 /**
  * `h` is the level a shot was fired from, `y0` and `ly` how high a throw starts and comes down (left out when 0). A
  * built piece goes as its id, its builder, where and what it is in one number (`p`, see packPiece), its health and the
- * tenths of a second it has still to build up (`t`); an edit as the wall and its edit.
+ * tenths of a second it has still to build up (`t`); an edit as the wall and its edit. An emote goes as its place in
+ * EMOTE_IDS (`k`), the ammo asked for as its place in AMMO_TYPES (`a`), and the spot an enemy was seen.
  */
 export type NetEv =
   | { y: 's'; f: number; w: WeaponId; r: number; x: number; z: number; a: number; s: number; k: number; h?: number }
@@ -118,7 +122,8 @@ export type NetEv =
   | { y: 'rv'; f: number; to: number }
   | { y: 'rq'; f: number; to: number }
   | { y: 'rvd'; f: number; by: number }
-  | { y: 'pg'; f: number; x: number; z: number };
+  | { y: 'pg'; f: number; x: number; z: number }
+  | { y: 'em'; f: number; k: number; a?: number; x?: number; z?: number };
 
 /** Events grouped by the seat they came from, in the order the host applied them. */
 export type Group = [origin: number, events: NetEv[]];
@@ -164,7 +169,7 @@ export const MAX_KICK = r2(1.6 + Math.max(...Object.values(WEAPONS).map((w) => w
 const MAX_Y = MAX_LEVEL * LEVEL_H + 1;
 const height = (v: unknown) => v === undefined || (num(v) && v >= 0 && v <= MAX_Y);
 const tossH = (v: unknown) => (num(v) ? v : 0);
-/** Every scope bit set: 2x, 4x and 8x. */
+/** Every scope bit set: 2x, 4x, 8x and 15x. */
 const SCOPE_BITS = (1 << MAX_SCOPE) - 1;
 
 // -------------------------------------------------------------------------------------------------------------------
@@ -247,20 +252,20 @@ const packState = (s: State) => [
 function codeOf(s: State) {
   const fields = [s.r, s.helmet, s.vest, s.scope, s.scopes];
   if (!fields.every((v) => Number.isInteger(v) && v >= 0) || s.r > MAX_RARITY || s.helmet > MAX_ARMOR || s.vest > MAX_ARMOR || s.scope > MAX_SCOPE || s.scopes > SCOPE_BITS || !hasScope(s, s.scope)) return -1;
-  return PHASES.indexOf(s.phase) + 4 * HELD_CODES.indexOf(s.w) + 256 * s.r + 2048 * s.helmet + 16384 * s.vest + 65536 * (s.scope + 4 * s.scopes);
+  return PHASES.indexOf(s.phase) + 4 * HELD_CODES.indexOf(s.w) + 256 * s.r + 2048 * s.helmet + 16384 * s.vest + 65536 * (s.scope + 8 * s.scopes);
 }
 
 function unpackState(a: unknown): State | null {
   if (!Array.isArray(a) || a.length < 10 || !a.slice(0, 10).every(int)) return null;
   const [x, z, y, aim, vx, vz, code, hp, shield, flags] = a as number[];
-  if (code < 0 || code >= 65536 * 4 * (SCOPE_BITS + 1) || flags < 0 || flags > F_ALL) return null;
+  if (code < 0 || code >= 65536 * 8 * (SCOPE_BITS + 1) || flags < 0 || flags > F_ALL) return null;
   const phase = PHASES[code % 4];
   const w = Math.floor(code / 4) % 64;
   const r = Math.floor(code / 256) % 8;
   const helmet = Math.floor(code / 2048) % 8;
   const vest = Math.floor(code / 16384) % 4;
-  const scope = Math.floor(code / 65536) % 4;
-  const scopes = Math.floor(code / 262144);
+  const scope = Math.floor(code / 65536) % 8;
+  const scopes = Math.floor(code / 524288);
   if (w >= HELD_CODES.length || r > MAX_RARITY || helmet > MAX_ARMOR || vest > MAX_ARMOR || !hasScope({ scopes }, scope)) return null;
   if (Math.abs(topX(x / 20)) > 400 || Math.abs(z) > 8000 || y < -10 || y > 1000 || Math.abs(aim) > 10_000 || hp < 0 || hp > 1000 || shield < 0 || shield > 1000) return null;
   const clampV = (v: number) => Math.max(-40, Math.min(40, v / 10));
@@ -406,6 +411,8 @@ export function toNet(e: Ev): NetEv | null {
       return { y: 'rvd', f: e.f, by: e.by };
     case 'ping':
       return { y: 'pg', f: e.f, x: e.x, z: e.z };
+    case 'emote':
+      return { y: 'em', f: e.f, k: EMOTE_IDS.indexOf(e.k), ...(e.a ? { a: AMMO_TYPES.indexOf(e.a) } : {}), ...(e.k === 'enemy' ? { x: e.x, z: e.z } : {}) };
     default:
       return null;
   }
@@ -497,6 +504,14 @@ function parseEv(v: unknown): NetEv | null {
       return fid(e.f) && fid(e.by) && e.by !== e.f ? { y: 'rvd', f: e.f, by: e.by } : null;
     case 'pg':
       return fid(e.f) && onLand(e.x, e.z) ? { y: 'pg', f: e.f, x: e.x as number, z: e.z as number } : null;
+    case 'em': {
+      // ammo only with an ask for it, and a spot only with an enemy (and always then)
+      if (!fid(e.f) || !int(e.k) || e.k < 0 || e.k >= EMOTE_IDS.length) return null;
+      const k = EMOTE_IDS[e.k];
+      if (e.a !== undefined && !(k === 'ammo' && int(e.a) && e.a >= 0 && e.a < AMMO_TYPES.length)) return null;
+      if (k === 'enemy' ? !onLand(e.x, e.z) : e.x !== undefined || e.z !== undefined) return null;
+      return { y: 'em', f: e.f, k: e.k, ...(e.a !== undefined ? { a: e.a as number } : {}), ...(k === 'enemy' ? { x: e.x as number, z: e.z as number } : {}) };
+    }
     default:
       return null;
   }
@@ -607,6 +622,8 @@ export function applyNet(m: Match, e: NetEv): boolean {
       return true;
     case 'pg':
       return applyPing(m, e.f, e.x, e.z);
+    case 'em':
+      return applyEmote(m, e.f, EMOTE_IDS[e.k], e.a === undefined ? null : AMMO_TYPES[e.a], e.x ?? 0, e.z ?? 0);
   }
 }
 

@@ -3,7 +3,7 @@
 import type { T } from './gl';
 import { createGL, damp, disposeTree, type GL } from './gl';
 import { BARREL_R, BEACH, BRIDGE_HALF, BUSH_R, BUS_Y, CAMP, CHEST_HD, CHEST_HW, CRATE_HALF, DEEP, DEEP_H, FENCE_T, FRIDGE_HD, FRIDGE_HW, HALF, HAY_HD, HAY_HW, LAMP_R, LOG_R, PAD, RIVER_HALF, ROAD_HALF, STASH, SUPPLY_FALL, SUPPLY_HALF, TABLE_HD, TABLE_HW, TOILET_R, WALL_T, bridgeAt, busAt, fieldAt, isDeep, isStash, padAt, peekAt, riverDist2, roadAt, type Building, type BuildingKind, type Container } from './map';
-import { BARREL, BUILD_START, CELL_B, CRATE_HP, DIR_X, DIR_Z, DOOR_GONE, DOOR_IN, DOOR_OPENING, DOOR_OUT, F_DRINKING, F_GHILLIE, F_HEALING, F_PAN, F_RELOAD, F_REVIVE, F_SHIELDING, F_SMOOTHIE, F_SPIN, F_STUN, F_TART, GAP, HAY_HP, LEVEL_H, MATE_COLORS, PING_T, TEAM_COLOR, TOILET_HP, clearLine, concealed, editable, gridOf, held, levelOf, makePiece, mateIndex, owned, pieceIn, pingOf, planPiece, reviveShare, revivedBy, roofOver, shut, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Plan, type Toss, type Wall, type Zone } from './logic';
+import { BARREL, BUILD_START, CELL_B, CRATE_HP, DIR_X, DIR_Z, DOOR_GONE, DOOR_IN, DOOR_OPENING, DOOR_OUT, F_DRINKING, F_GHILLIE, F_HEALING, F_PAN, F_RELOAD, F_REVIVE, F_SHIELDING, F_SMOOTHIE, F_SPIN, F_STUN, F_TART, GAP, HAY_HP, LEVEL_H, MATE_COLORS, PING_T, TOILET_HP, clearLine, concealed, editable, gridOf, held, levelOf, makePiece, mateIndex, owned, pieceIn, pingOf, planPiece, reviveShare, revivedBy, roofOver, shut, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Plan, type Toss, type Wall, type Zone } from './logic';
 import { MATS, MAT_SPECS, MELEE, RARITY_COLORS, THROWS, WEAPONS, isMelee, isThrow, isWeapon, legendary, type LootDef, type Mat, type UseId } from './items';
 
 type Three = typeof import('three');
@@ -3834,19 +3834,20 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   }
   let kingOn = -1;
 
-  // duos and squads: a ring on the ground under each egg on the team you see, a red one pulsing under any knocked egg
-  // (and a white one growing while a teammate revives it), the team's outlines through whatever stands in front of
-  // them, and the team's pings: a pin over the spot with a beam of light, in the pinger's color
-  const groundRings = many(G.ring, basic(0xffffff, { transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide }), N * 2);
+  // duos and squads: a ring on the ground under each egg on the team you see in its own color (a thinner one under
+  // yours), a red one pulsing under any knocked egg (and a white one growing while a teammate revives it), the team's
+  // outlines in their colors through whatever stands in front of them, and the team's pings: a pin over the spot with
+  // a beam of light, in the pinger's color
+  const groundRings = many(G.ring, basic(0xffffff, { transparent: true, opacity: 0.9, depthWrite: false, side: THREE.DoubleSide }), N * 2);
   groundRings.frustumCulled = false;
   groundRings.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-  const RING_MATE = new THREE.Color(TEAM_COLOR);
+  const RING_MATE = MATE_COLORS.map((c) => new THREE.Color(c));
   const RING_DOWN = new THREE.Color(0xff3b3b);
   const RING_UP = new THREE.Color(0xeafff2);
-  for (let i = 0; i < N * 2; i++) groundRings.setColorAt(i, RING_MATE);
+  for (let i = 0; i < N * 2; i++) groundRings.setColorAt(i, RING_MATE[0]);
   groundRings.count = 0;
   scene.add(groundRings);
-  const mateGhost = basic(parseInt(TEAM_COLOR.slice(1), 16), { transparent: true, opacity: 0.55, depthWrite: false, depthFunc: GREATER_DEPTH });
+  const mateGhosts = MATE_COLORS.map((c) => basic(parseInt(c.slice(1), 16), { transparent: true, opacity: 0.6, depthWrite: false, depthFunc: GREATER_DEPTH }));
   const pingViews = MATE_COLORS.map((c) => {
     const col = parseInt(c.slice(1), 16);
     const g = new THREE.Group();
@@ -3939,11 +3940,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
             break;
         }
         break;
-      case 'scope':
-        barrel(g, M.dark, 0, 0, 0, 0.12, 0.5);
-        barrel(g, rarity[Math.min(4, def.lv + 1)], 0, 0, 0.26, 0.14, 0.04);
-        barrel(g, rarity[Math.min(4, def.lv + 1)], 0, 0, -0.26, 0.14, 0.04);
+      case 'scope': {
+        // the 15x a longer tube, its glass ends wider
+        const k = def.lv > 3 ? 1.4 : 1;
+        barrel(g, M.dark, 0, 0, 0, 0.12, 0.5 * k);
+        barrel(g, rarity[Math.min(4, def.lv + 1)], 0, 0, 0.26 * k, 0.14 * k, 0.04);
+        barrel(g, rarity[Math.min(4, def.lv + 1)], 0, 0, -0.26 * k, 0.14 * k, 0.04);
         break;
+      }
       case 'pack':
         add(g, G.box, rarity[Math.min(4, def.lv + 1)], 0, 0, 0, 0.5, 0.5, 0.3);
         add(g, G.cap, rarity[Math.min(4, def.lv + 1)], 0, 0.25, 0, 0.25, 0.14, 0.15);
@@ -4379,7 +4383,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const vec = new THREE.Vector3();
   const vec2 = new THREE.Vector3();
 
-  function syncEgg(v: EggView, f: Fighter, dt: number, clock: number, focus: boolean, hidden: boolean, mate = false) {
+  /** `mate`: its place on the team we see (-1 for none), for its outline's color. */
+  function syncEgg(v: EggView, f: Fighter, dt: number, clock: number, focus: boolean, hidden: boolean, mate = -1) {
     const shown = f.phase !== 'out' && f.phase !== 'bus' && !hidden;
     v.root.visible = shown;
     if (!shown) return false;
@@ -4529,8 +4534,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       v.ring.position.y = 0.4 + ((clock * 1.4) % 1) * 1.3;
       v.ring.scale.setScalar(0.85 - ((clock * 1.4) % 1) * 0.25);
     }
-    v.ghost.visible = (focus || mate) && f.phase === 'ground';
-    v.ghost.material = focus ? M.ghost : mateGhost;
+    v.ghost.visible = (focus || mate >= 0) && f.phase === 'ground';
+    v.ghost.material = focus || mate < 0 ? M.ghost : mateGhosts[mate % mateGhosts.length];
     return true;
   }
 
@@ -4866,14 +4871,15 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         if (!v) return;
         const isFocus = i === focusId;
         const mate = team >= 0 && f.team === team && !isFocus;
+        const k = team >= 0 && f.team === team ? mateIndex(m, f) % RING_MATE.length : -1;
         const inView = Math.abs(f.x - cam.x) < eggW && f.z - cam.z > -eggN - f.y && f.z - cam.z < eggS;
         const walled = inView && peek >= 0 && !!focus && f.inside === peek && !clearLine(m, focus.x, focus.z, f.x, f.z);
         // flash red when hit
         const dazed = f.kind === 'remote' ? (f.show.flags & F_STUN) !== 0 : f.stunT > 0;
-        if (!syncEgg(v, f, dt, clock, isFocus, !isFocus && (!inView || (!mate && (concealed(m, f, focus) || walled))), mate)) return;
+        if (!syncEgg(v, f, dt, clock, isFocus, !isFocus && (!inView || (!mate && (concealed(m, f, focus) || walled))), mate ? k : -1)) return;
         placeEgg(v, f.hitT > 0, hatColors[i], f.ghillie || (f.kind === 'remote' && (f.show.flags & F_GHILLIE) !== 0), dazed && f.phase === 'ground', clock);
         if (f.phase !== 'ground' || rings > N * 2 - 2) return;
-        if (mate && !f.down) ring(f, RING_MATE, 0.95);
+        if (k >= 0 && !f.down) ring(f, RING_MATE[k], isFocus ? 0.8 : 1.2);
         if (f.down) {
           ring(f, RING_DOWN, 1.05 + Math.sin(clock * 6) * 0.12);
           const r = revivedBy(m, f);
