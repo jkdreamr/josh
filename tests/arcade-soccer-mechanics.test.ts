@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createWorld, distance, FIELD, TEAM_SIZE, movePlayer, nearestCarrier, STEP, stepWorld, type Command } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, distance, FIELD, KICK_BUFFER, TEAM_SIZE, movePlayer, nearestCarrier, STEP, stepWorld, type Command } from '../src/os/arcade/games/soccer/logic.ts';
 import { cloneSnapshot, parsePacket } from '../src/os/arcade/games/soccer/net.ts';
 
 function fixture(seed = 71423) {
@@ -144,6 +144,10 @@ test('snapshots accept new state and reject invalid touch cooldowns', () => {
   const world = createWorld();
   const packet = () => ({ t: 'soccer', k: 's', r: 1, seq: 1, state: cloneSnapshot(world) });
   assert.ok(parsePacket(packet()));
+  world.stealProtect = 0.4;
+  assert.ok(parsePacket(packet()));
+  world.stealProtect = -0.1;
+  assert.equal(parsePacket(packet()), null);
   world.players[1]!.touchCd = -1;
   assert.equal(parsePacket(packet()), null);
 });
@@ -162,4 +166,98 @@ test('own knock-on recollections and trivial pressured pickups never roll a heav
       assert.equal(world.lastToucherId, player.id);
     }
   }
+});
+
+test('a clean new carrier is protected briefly and its protection decays each step', () => {
+  const { world, player, tick } = fixture();
+  tick({ move: { x: 0, z: 0 } });
+  assert.equal(world.carrierId, player.id);
+  assert.equal(world.stealProtect, 0.35);
+  tick({ move: { x: 0, z: 0 } });
+  assert.ok(world.stealProtect! < 0.35);
+});
+
+test('recollecting your own knock-on does not renew steal protection', () => {
+  const { world, player, tick } = fixture();
+  world.lastToucherId = player.id;
+  world.stealProtect = 0.1;
+  tick({ move: { x: 0, z: 0 } });
+  assert.equal(world.carrierId, player.id);
+  assert.ok(world.stealProtect! < 0.1);
+});
+
+test('a protected carrier cannot be tackled or won by a slide', () => {
+  const { world, player, tick } = fixture();
+  const opponent = world.players.find((p) => p.team !== player.team)!;
+  opponent.x = 1; opponent.z = 0;
+  world.carrierId = opponent.id;
+  world.stealProtect = 0.1;
+  const seed = world.seed;
+  tick({ move: { x: 0, z: 0 }, action: 'tackle', pressed: true });
+  assert.equal(world.seed, seed, 'protected tackle does not roll a foul or win chance');
+  assert.equal(world.carrierId, opponent.id);
+  assert.equal(opponent.touchCd, 0);
+  assert.equal(world.phase, 'live');
+
+  player.cooldown = 0;
+  player.touchCd = 0;
+  tick({ move: { x: 0, z: 0 }, action: 'slide', pressed: true });
+  tick({ move: { x: 0, z: 0 } });
+  assert.equal(player.slide?.won, false);
+  assert.equal(opponent.touchCd, 0);
+});
+
+test('a tackle win locks out the dispossessed player and protects the new carrier', () => {
+  const { world, player, tick } = fixture();
+  const opponent = world.players.find((p) => p.team !== player.team)!;
+  opponent.x = 1; opponent.z = 0;
+  world.carrierId = opponent.id;
+  world.lastToucherId = opponent.id;
+  world.seed = 1;
+  tick({ move: { x: 0, z: 0 }, action: 'tackle', pressed: true });
+  assert.equal(world.carrierId, player.id);
+  assert.equal(world.stealProtect, 0.9);
+  assert.equal(opponent.touchCd, 1.2);
+});
+
+test('a slide win protects its receiver and applies the dispossessed lockout', () => {
+  const { world, player, tick } = fixture();
+  const opponent = world.players.find((p) => p.team !== player.team)!;
+  opponent.x = 1; opponent.z = 0;
+  world.carrierId = opponent.id;
+  world.lastToucherId = opponent.id;
+  const teammate = world.players.find((p) => p.team === player.team && p.id !== player.id)!;
+  teammate.x = 0.7; teammate.z = 0;
+  player.slide = { x: 1, z: 0, t: 0, won: false };
+  player.cooldown = 0.95;
+  player.action = 'slide';
+  tick({ move: { x: 0, z: 0 } });
+  assert.equal(player.slide?.won, true);
+  assert.equal(world.carrierId, teammate.id);
+  assert.equal(world.stealProtect, 0.9);
+  assert.equal(opponent.touchCd, 1.2);
+});
+
+test('a receiver can buffer a first-time kick during an in-flight pass at any distance', () => {
+  const { world, player, tick } = fixture();
+  world.ball.x = 20;
+  world.passTarget = player.id;
+  tick({ move: { x: 0, z: 0 }, action: 'shoot', pressed: true, power: 0.8 });
+  assert.equal(player.buffer?.t, KICK_BUFFER);
+
+  world.ball.x = player.x + 0.4;
+  world.ball.z = player.z;
+  world.ball.vx = world.ball.vz = 0;
+  tick({ move: { x: 0, z: 0 } });
+  assert.equal(world.kickEvent?.playerId, player.id);
+  assert.equal(world.kickEvent?.action, 'shoot');
+  assert.equal(nearestCarrier(world), undefined);
+});
+
+test('the kicker is not replaced by another carrier in the kick release step', () => {
+  const { world, player, tick } = fixture();
+  world.carrierId = player.id;
+  tick({ move: { x: 1, z: 0 }, action: 'shoot', pressed: true, power: 0.8 });
+  assert.equal(world.kickEvent?.playerId, player.id);
+  assert.equal(nearestCarrier(world), undefined);
 });
