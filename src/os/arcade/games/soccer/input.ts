@@ -1,6 +1,18 @@
 import type { KeyState } from '../../kit/keys.ts';
 import type { Command, Point } from './logic.ts';
 
+export type ViewBasis = { right: Point; forward: Point };
+export const IDENTITY_BASIS: ViewBasis = { right: { x: 1, z: 0 }, forward: { x: 0, z: -1 } };
+
+export function screenToWorld(move: Point, basis: ViewBasis): Point {
+  const x = basis.right.x * move.x - basis.forward.x * move.z;
+  const z = basis.right.z * move.x - basis.forward.z * move.z;
+  return {
+    x: x === 0 ? 0 : x,
+    z: z === 0 ? 0 : z,
+  };
+}
+
 export type InputState = {
   move: Point;
   sprint: boolean;

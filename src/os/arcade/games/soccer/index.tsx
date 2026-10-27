@@ -3,9 +3,9 @@ import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useThree, useOnli
 import type { LevelName } from '../../kit/controls';
 import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
-import { chargePower, keyboardInput } from './input.ts';
+import { chargePower, IDENTITY_BASIS, keyboardInput, screenToWorld } from './input.ts';
 import { cloneSnapshot, commandFromPacket, movePacket, parsePacket } from './net.ts';
-import { createWorld, distance, findReceiver, matchClock, stepWorld, STEP, switchPlayer, teamDir, type Command, type Team, type World } from './logic.ts';
+import { createWorld, distance, FIELD, findReceiver, matchClock, stepWorld, STEP, switchPlayer, teamDir, teamOf, type Command, type Team, type World } from './logic.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { goalRoar, kickThump, netSwish, startCrowd, whistle } from './audio.ts';
 import { createScene, type CameraMode, type SoccerView, type TimeMode } from './scene.ts';
@@ -92,10 +92,6 @@ function Stick({ movement }: { movement: { current: { x: number; z: number } } }
   );
 }
 
-function teamForPlayer(id: number): Team {
-  return id < 5 ? 0 : 1;
-}
-
 function setupHumans(world: World, mode: Mode, online: ReturnType<typeof useOnline>) {
   const displayOnly = !!online;
   for (const player of world.players) {
@@ -113,13 +109,13 @@ function setupHumans(world: World, mode: Mode, online: ReturnType<typeof useOnli
     }
     return;
   }
-  const ids = mode === 'versus' ? [1, 6] : mode === 'coop' ? [1, 2] : [1];
+  const ids = mode === 'versus' ? [6, 17] : mode === 'coop' ? [6, 9] : [6];
   ids.forEach((id) => {
     world.players[id]!.human = true;
     world.players[id]!.controlled = true;
   });
-  world.controlled[0] = 1;
-  world.controlled[1] = mode === 'versus' ? 6 : 6;
+  world.controlled[0] = 6;
+  world.controlled[1] = 17;
 }
 
 function PhoneLobby() {
@@ -183,7 +179,7 @@ function PhoneLobby() {
       <div className="g-soccer-phone-connections">
         {phones.map((player) => {
           const playerId = playerForSeat(player.seat, true, mode);
-          const teamName = teamForPlayer(playerId) === 0 ? 'Bay City' : 'Northshore';
+          const teamName = teamOf(playerId) === 0 ? 'Bay City' : 'Northshore';
           return <span key={player.seat}>Phone {player.seat} connected ✓ ({teamName})</span>;
         })}
       </div>
@@ -304,8 +300,8 @@ function Play() {
   }
   if (!replayWorld.current) replayWorld.current = createReplayWorld(worldRef.current);
   const world = worldRef.current!;
-  const localPlayerIds = online ? online.seat < 0 || (online.isHost && displayOnlyRoom.current) ? [] : [playerForSeat(online.seat, displayOnlyRoom.current, currentMode)] : currentMode === 'versus' ? [1, 6] : currentMode === 'coop' ? [1, 2] : [world.controlled[0]];
-  const localTeam = localPlayerIds.length ? teamForPlayer(localPlayerIds[0]!) : 0;
+  const localPlayerIds = online ? online.seat < 0 || (online.isHost && displayOnlyRoom.current) ? [] : [playerForSeat(online.seat, displayOnlyRoom.current, currentMode)] : currentMode === 'versus' ? [6, 17] : currentMode === 'coop' ? [6, 9] : [world.controlled[0]];
+  const localTeam = localPlayerIds.length ? teamOf(localPlayerIds[0]!) : 0;
 
   useEffect(() => {
     if (shell.status !== 'ready') return;
@@ -361,9 +357,18 @@ function Play() {
         if (packet.seat !== from || packet.seat < 0 || packet.seat > 3) return;
         if (packet.seq <= (lastRemoteSeq.current.get(from) ?? -1)) return;
         lastRemoteSeq.current.set(from, packet.seq);
+        const current = worldRef.current;
+        const player = current?.players[playerForSeat(from, displayOnlyRoom.current, currentMode)];
+        if (!current || !player || !player.human) return;
         const command = commandFromPacket(packet);
-        const player = worldRef.current?.players[playerForSeat(from, displayOnlyRoom.current, currentMode)];
-        if (!player || !player.human) return;
+        if (displayOnlyRoom.current) {
+          const basis = viewRef.current?.viewBasis() ?? IDENTITY_BASIS;
+          command.move = screenToWorld(command.move, basis);
+          const aim = screenToWorld(command.aim ?? { x: 0, z: 0 }, basis);
+          command.aim = Math.hypot(aim.x, aim.z) > 0.05
+            ? aim
+            : { x: teamDir(player.team, current.endsSwapped), z: 0 };
+        }
         remoteCommands.current.set(player.id, command);
         return;
       }
@@ -456,6 +461,7 @@ function Play() {
     }
     const current = worldRef.current!;
     const player = current.players[id]!;
+    state.move = screenToWorld(state.move, viewRef.current?.viewBasis() ?? IDENTITY_BASIS);
     const aim = Math.hypot(state.move.x, state.move.z) > 0.05
       ? { ...state.move }
       : { x: teamDir(player.team, current.endsSwapped), z: 0 };
@@ -520,7 +526,7 @@ function Play() {
       room.reportResult(room.round, seats?.[0] ?? null, seats);
     }
     const title = winner === null ? 'full time · draw' : online
-      ? (teamForPlayer(room?.seat === undefined ? 0 : playerForSeat(room.seat, displayOnlyRoom.current, currentMode)) === winner ? 'you win' : 'match over')
+      ? (teamOf(room?.seat === undefined ? 0 : playerForSeat(room.seat, displayOnlyRoom.current, currentMode)) === winner ? 'you win' : 'match over')
       : winner === localTeam ? 'you win' : 'match lost';
     const detail = `bay city ${current.score[0]} - ${current.score[1]} northshore · ${matchClock(current)}'`;
     shellRef.current.gameOver(undefined, { title, detail });
@@ -536,7 +542,7 @@ function Play() {
     if (!current || shellRef.current.status !== 'playing') return;
     crowdIntensity.current = current.phase === 'goal'
       ? 1
-      : 0.08 + Math.min(0.82, Math.max(0, (Math.abs(current.ball.x) - 7) / 13) * 0.75);
+      : 0.08 + Math.min(0.82, Math.max(0, (Math.abs(current.ball.x) - FIELD.penaltyDepth * 0.42) / (FIELD.length / 2 - FIELD.penaltyDepth * 0.42)) * 0.75);
     const isOnlineGuest = !!room && !room.isHost;
     if (room) {
       for (const player of current.players) {
@@ -871,7 +877,7 @@ function PhoneController() {
   return (
     <div className="g-soccer-phone-controller">
       <header>
-        <b>{teamForPlayer(phonePlayer) === 1 ? 'NORTHSHORE' : 'BAY CITY'}</b>
+        <b>{teamOf(phonePlayer) === 1 ? 'NORTHSHORE' : 'BAY CITY'}</b>
         <strong>{score[0]} · {score[1]}</strong>
         <button type="button" onClick={() => setShowGame(true)}>Show game</button>
       </header>

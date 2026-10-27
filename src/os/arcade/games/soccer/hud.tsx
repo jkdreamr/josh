@@ -1,4 +1,4 @@
-import { matchClock, type World } from './logic.ts';
+import { FIELD, jerseyNumber, matchClock, type World } from './logic.ts';
 
 export function Hud({ world, targetId, selectedId, watching, replaying }: { world: World; targetId: number | null; selectedId?: number; watching: boolean; replaying: boolean }) {
   const clock = matchClock(world);
@@ -21,8 +21,8 @@ export function Hud({ world, targetId, selectedId, watching, replaying }: { worl
         </div>
       )}
       <div className="g-soccer-player-tag">
-        <b>{selected?.slot === 'GK' ? 'NO. 1' : `NO. ${selected ? selected.id % 4 + 2 : 8}`}</b>
-        <span>{selected?.slot === 'FWD' ? 'M. RIVERA' : selected?.slot === 'GK' ? 'A. MORGAN' : 'J. KIM'}</span>
+        <b>NO. {selected ? jerseyNumber(selected.id) : 8}</b>
+        <span>{selected?.slot === 'ST' ? 'M. RIVERA' : selected?.slot === 'GK' ? 'A. MORGAN' : selected?.slot === 'CM' ? 'J. KIM' : 'D. PARK'}</span>
         <small>stamina</small><i><em style={{ width: `${(selected?.stamina ?? 1) * 100}%` }} /></i>
       </div>
       <Radar world={world} targetId={targetId} />
@@ -33,8 +33,8 @@ export function Hud({ world, targetId, selectedId, watching, replaying }: { worl
 }
 
 function Radar({ world, targetId }: { world: World; targetId: number | null }) {
-  const x = (value: number) => `${((value + 21) / 42) * 100}%`;
-  const z = (value: number) => `${((value + 13) / 26) * 100}%`;
+  const x = (value: number) => `${((value + FIELD.length / 2) / FIELD.length) * 100}%`;
+  const z = (value: number) => `${((value + FIELD.width / 2) / FIELD.width) * 100}%`;
   return (
     <div className="g-soccer-radar" aria-label="Match radar">
       <div className="g-soccer-radar-half" />
