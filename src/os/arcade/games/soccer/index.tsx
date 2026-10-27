@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
+import { useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useOnline, useSetting, getSetting, Segmented, defineSetting, levelOptions, levelIndex, TouchControls, sfx } from '../../kit';
 import type { LevelName } from '../../kit/controls';
 import { meta } from './meta.ts';
@@ -11,7 +11,9 @@ import { goalRoar, kickThump, netSwish, startCrowd, whistle } from './audio.ts';
 import type { CameraMode, SoccerView, TimeMode } from './scene.ts';
 import { markShadersReady, parkSoccerView, preloadSoccer, takeSoccerView, useSoccerStadium } from './load.ts';
 import { LoadProgress } from './loading.tsx';
-import { createHudModel, Hud, type HudModel } from './hud.tsx';
+import { Hud, type HudState, type RadarHandle } from './hud.tsx';
+import { CLUBS, broadcastClock, createStatsObserver, possessionShare } from './broadcast.ts';
+import { IntroCard, MatchContext, PausePanel, StatsScreen, type MatchData, type Presentation } from './presentation.tsx';
 import { captureSnapshot, createSnapshot, interpolateInto, type Snapshot } from './render-lerp.ts';
 import { publishSoccerPerf, recordSoccerPerf, recordSoccerRendererStats, soccerPerfEnabled } from './perf.ts';
 import { clampOrigin, followOrigin, haptic, hitButton, STICK, stickVector, type PadPoint } from './pad.ts';
@@ -38,8 +40,15 @@ const timeOptions = [['night', 'Night'], ['golden', 'Golden hour'], ['overcast',
 const pitchOptions = [['stripes', 'Stripes'], ['checker', 'Checkerboard']] as const;
 const commandKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyJ', 'KeyK', 'KeyL', 'KeyI', 'KeyU', 'KeyQ', 'KeyE', 'Space', 'Period', 'Slash', 'Semicolon', 'Quote', 'Comma', 'ShiftLeft', 'ShiftRight'];
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+const shallowHudEqual = (left: HudState, right: HudState) =>
+  (Object.keys(left) as (keyof HudState)[]).every((key) => left[key] === right[key]);
+const cue = (name: 'kickoff') => {
+  if (name === 'kickoff') whistle();
+};
 
 function Settings({ online = false }: { online?: boolean }) {
+  const shell = useShell();
+  const match = useContext(MatchContext);
   const [mode, setMode] = useSetting(MODE);
   const [half, setHalf] = useSetting(HALF);
   const [level, setLevel] = useSetting(LEVEL);
@@ -54,6 +63,7 @@ function Settings({ online = false }: { online?: boolean }) {
       <Segmented label="Camera" value={camera} options={cameraOptions} onChange={setCamera} />
       <Segmented label="Time of day" value={time} options={timeOptions} onChange={setTime} />
       <Segmented label="Pitch" value={pitch} options={pitchOptions} onChange={setPitch} />
+      {shell.status === 'paused' && match?.current && <PausePanel match={match.current} />}
     </div>
   );
 }
@@ -251,6 +261,7 @@ function Play() {
   const keys = useKeys();
   const stadium = useSoccerStadium();
   const online = useOnline();
+  const matchContext = useContext(MatchContext);
   const { ref, size } = useCanvas<HTMLDivElement>();
   const [modeChoice, setModeChoice] = useSetting(MODE);
   const [halfChoice, setHalfChoice] = useSetting(HALF);
@@ -258,10 +269,27 @@ function Play() {
   const [cameraChoice] = useSetting(CAMERA);
   const [timeChoice] = useSetting(TIME);
   const [pitchChoice] = useSetting(PITCH);
-  const hudPublish = useRef<(model: HudModel) => void>(() => {});
   const [phoneGone, setPhoneGone] = useState(false);
+  const [hud, setHud] = useState<HudState>({
+    score0: 0, score1: 0, clock: '00:00', added: null, half: 1,
+    phase: 'restart', event: 'kick off', eventTime: 1.35, eventKey: 0,
+    selectedId: 6, stamina: 1, state: null, targetId: null, power: null,
+    replaying: false, statsVersion: 0, presentation: 'live',
+  });
+  const radarRef = useRef<RadarHandle | null>(null);
   const movement = useRef({ x: 0, z: 0 });
   const worldRef = useRef<World | null>(null);
+  const statsObserver = useRef(createStatsObserver());
+  const presentation = useRef<Presentation>('live');
+  const presentationAt = useRef(0);
+  const introPending = useRef(true);
+  const guestSnapshotAt = useRef<number | null>(null);
+  const fullTimeResult = useRef<{ title: string; detail: string } | null>(null);
+  const fullTimeShown = useRef(false);
+  const previousHudEvent = useRef('');
+  const previousHudEventTime = useRef(0);
+  const hudEventKey = useRef(0);
+  const power = useRef<number | null>(null);
   const viewRef = useRef<SoccerView | null>(null);
   const shellRef = useRef(shell);
   const onlineRef = useRef(online);
@@ -335,6 +363,12 @@ function Play() {
   }
   const localPlayerIds = online ? online.seat < 0 || (online.isHost && displayOnlyRoom.current) ? [] : [controllerPlayers.current.get(online.seat) ?? playerForSeat(online.seat, displayOnlyRoom.current, currentMode)] : currentMode === 'versus' ? [world.controlled[0], world.controlled[1]] : currentMode === 'coop' ? [controllerPlayers.current.get(0) ?? 6, controllerPlayers.current.get(1) ?? 9] : [world.controlled[0]];
   const localTeam = localPlayerIds.length ? teamOf(localPlayerIds[0]!) : 0;
+  const showPresentation = (next: Presentation) => {
+    if (presentation.current === next) return false;
+    presentation.current = next;
+    presentationAt.current = performance.now();
+    return true;
+  };
 
   useEffect(() => {
     if (shell.status !== 'ready') return;
@@ -346,6 +380,28 @@ function Play() {
     worldRef.current = fresh;
     previousRenderSnapshot.current = captureSnapshot(fresh, createSnapshot(fresh));
     interpolatedWorld.current = structuredClone(fresh);
+    statsObserver.current.reset();
+    presentation.current = 'live';
+    presentationAt.current = 0;
+    introPending.current = true;
+    guestSnapshotAt.current = null;
+    fullTimeResult.current = null;
+    fullTimeShown.current = false;
+    reported.current = false;
+    simulationTime.current = 0;
+    accumulator.current = 0;
+    lastEvent.current = fresh.event;
+    lastScore.current = [...fresh.score];
+    previousHudEvent.current = fresh.event;
+    previousHudEventTime.current = fresh.eventTime;
+    hudEventKey.current = 0;
+    matchContext && (matchContext.current = { world: fresh, stats: statsObserver.current.stats });
+    setHud({
+      score0: 0, score1: 0, clock: '00:00', added: null, half: 1,
+      phase: 'restart', event: fresh.event, eventTime: fresh.eventTime, eventKey: 0,
+      selectedId: 6, stamina: 1, state: null, targetId: null, power: null,
+      replaying: false, statsVersion: 0, presentation: 'live',
+    });
   }, [shell.status, modeChoice, halfMinutes, online?.round, online?.seat, online?.players]);
 
   useEffect(() => {
@@ -439,15 +495,22 @@ function Play() {
       if (!room.isHost && from === 0 && packet.k === 's') {
         if (packet.seq <= snapshotSequence.current) return;
         snapshotSequence.current = packet.seq;
+        const previousPhase = worldRef.current?.phase;
         const now = performance.now() / 1000;
+        const snapshotDt = guestSnapshotAt.current === null ? 0 : Math.max(0, now - guestSnapshotAt.current);
+        guestSnapshotAt.current = now;
+        statsObserver.current.observe(packet.state, snapshotDt);
         if (packet.state.phase === 'goal' && worldRef.current?.phase !== 'goal') {
           replayStartedAt.current = now;
           replaySkipped.current = false;
         }
+        if (packet.state.phase === 'half-time' && previousPhase !== 'half-time') showPresentation('half-time');
+        if (packet.state.phase === 'full-time' && previousPhase !== 'full-time') showPresentation('full-time');
         appendReplayFrame(replayFrames.current, packet.state, now);
         guestSnapshots.current.push({ time: now, world: packet.state });
         guestSnapshots.current = guestSnapshots.current.slice(-12);
         worldRef.current = packet.state;
+        matchContext && (matchContext.current = { world: packet.state, stats: statsObserver.current.stats });
         renderDirty.current = true;
         return;
       }
@@ -536,6 +599,7 @@ function Play() {
       action = null;
       pressed = false;
       shotPower = chargePower(charge.seconds);
+      power.current = chargePower(charge.seconds);
     } else if (charge.holding) {
       action = charge.action === 'shoot' && state.finesseHeld ? 'finesse' : charge.action;
       pressed = true;
@@ -543,6 +607,7 @@ function Play() {
       charge.holding = false;
       charge.action = null;
       charge.seconds = 0;
+      power.current = null;
     } else if (action) {
       shotPower = 0.1;
     }
@@ -560,11 +625,14 @@ function Play() {
       const seats = winner === null ? undefined : winner === 0 ? [0, 2] : [1, 3];
       room.reportResult(room.round, seats?.[0] ?? null, seats);
     }
-    const title = winner === null ? 'full time · draw' : online
+    const title = winner === null ? 'full time · draw' : room
       ? (teamOf(room?.seat === undefined ? 0 : playerForSeat(room.seat, displayOnlyRoom.current, currentMode)) === winner ? 'you win' : 'match over')
       : winner === localTeam ? 'you win' : 'match lost';
-    const detail = `bay city ${current.score[0]} - ${current.score[1]} northshore · ${matchClock(current)}'`;
-    shellRef.current.gameOver(undefined, { title, detail });
+    const stats = statsObserver.current.stats;
+    const [homePossession, awayPossession] = possessionShare(stats);
+    const detail = `${CLUBS[0].name.toLowerCase()} ${current.score[0]} - ${current.score[1]} ${CLUBS[1].name.toLowerCase()} · shots ${stats.teams[0].shots}-${stats.teams[1].shots} · possession ${homePossession}%-${awayPossession}%`;
+    fullTimeResult.current = { title, detail };
+    showPresentation('full-time');
   };
 
   const update = (loopDt: number) => {
@@ -589,6 +657,48 @@ function Play() {
     }
     setPhoneGone(phoneDisconnected);
     if (phoneDisconnected) accumulator.current = 0;
+    if (introPending.current) {
+      if (current.phase === 'restart' && current.restart === 'kickoff' && current.half === 1 && current.clock === current.halfLength) {
+        introPending.current = false;
+        showPresentation('intro');
+      } else if (guestSnapshotAt.current !== null || current.phase !== 'restart' || current.clock < current.halfLength) {
+        introPending.current = false;
+      }
+    }
+    matchContext && (matchContext.current = { world: current, stats: statsObserver.current.stats });
+    if (current.phase === 'full-time') finishMatch(current);
+    const presentationKind = presentation.current;
+    if (presentationKind === 'intro' || presentationKind === 'half-time' || presentationKind === 'full-time') {
+      const elapsed = (now - presentationAt.current) / 1000;
+      const minimum = presentationKind === 'intro' ? 0.6 : presentationKind === 'half-time' ? 1.5 : 2;
+      const duration = presentationKind === 'intro' ? 5.5 : presentationKind === 'half-time' ? 10 : 12;
+      let gamepadPressed = false;
+      if (typeof navigator !== 'undefined' && navigator.getGamepads) {
+        Array.from(navigator.getGamepads()).forEach((pad, index) => {
+          if (!pad) return;
+          const buttons = Array.from(pad.buttons, (button) => button.pressed || button.value > 0.3);
+          if (buttons.some((down, button) => down && !gamepadPrevious.current[index]?.buttons?.[button])) gamepadPressed = true;
+          gamepadPrevious.current[index] = { ...gamepadPrevious.current[index], buttons };
+        });
+      }
+      const keyPressed = elapsed >= minimum && keys.pressed(...commandKeys);
+      const remotePressed = room?.isHost && [...remoteCommands.current.values()].some((command) => command.pressed);
+      const skipped = elapsed >= minimum && (keyPressed || gamepadPressed || remotePressed);
+      if (elapsed >= duration || skipped) {
+        if (presentationKind === 'full-time') {
+          if (!fullTimeShown.current && fullTimeResult.current) {
+            fullTimeShown.current = true;
+            shellRef.current.gameOver(undefined, fullTimeResult.current);
+          }
+        } else {
+          showPresentation('live');
+          cue('kickoff');
+        }
+      }
+      if (room?.isHost) {
+        for (const command of remoteCommands.current.values()) Object.assign(command, consumeCommand(command));
+      }
+    }
     crowdIntensity.current = current.phase === 'goal'
       ? 1
       : 0.08 + Math.min(0.82, Math.max(0, (Math.abs(current.ball.x) - FIELD.penaltyDepth * 0.42) / (FIELD.length / 2 - FIELD.penaltyDepth * 0.42)) * 0.75);
@@ -616,14 +726,15 @@ function Play() {
       controllerPlayers.current.set(0, 6); controllerPlayers.current.set(1, 9);
     }
 
-    if (current.phase === 'goal' && !replaySkipped.current && keys.pressed(...commandKeys)) replaySkipped.current = true;
+    if (presentation.current === 'live' && current.phase === 'goal' && !replaySkipped.current && keys.pressed(...commandKeys)) replaySkipped.current = true;
     if (current.phase === 'goal' && Math.hypot(movement.current.x, movement.current.z) > 0.2) replaySkipped.current = true;
     const commandsForUsers = userCommands.current;
     commandsForUsers.clear();
-    if (current.phase !== 'goal' && room && !room.watching) {
+    const presentationGated = !isOnlineGuest && (presentation.current === 'intro' || presentation.current === 'half-time' || presentation.current === 'full-time');
+    if (!presentationGated && current.phase !== 'goal' && room && !room.watching) {
       const id = controllerPlayers.current.get(room.seat) ?? localPlayerIds[0];
       if (id !== undefined) commandsForUsers.set(id, makeCommand(id, false, dt));
-    } else if (current.phase !== 'goal' && !room) {
+    } else if (!presentationGated && current.phase !== 'goal' && !room) {
       for (let i = 0; i < localPlayerIds.length; i++) {
         const id = controllerPlayers.current.get(i) ?? localPlayerIds[i]!;
         commandsForUsers.set(id, makeCommand(id, i === 1, dt));
@@ -645,11 +756,11 @@ function Play() {
 
     if (!isOnlineGuest && !phoneDisconnected) {
       const simulationStart = soccerPerfEnabled ? performance.now() : 0;
-      accumulator.current = Math.min(STEP * 6, accumulator.current + dt);
+      accumulator.current = presentationGated ? 0 : Math.min(STEP * 6, accumulator.current + dt);
       const steps = Math.min(6, Math.floor(accumulator.current / STEP));
       let stepped = false;
       let stepIndex = 0;
-      while (stepIndex < steps) {
+      while (stepIndex < steps && presentation.current === 'live') {
         stepped = true;
         simulationTime.current += STEP;
         const commands = simulationCommands.current;
@@ -671,6 +782,8 @@ function Play() {
         const previousEvent = current.event;
         if (stepIndex === steps - 1 && previousRenderSnapshot.current) captureSnapshot(current, previousRenderSnapshot.current);
         stepWorld(current, STEP, commands, debugConfig.clockScale);
+        statsObserver.current.observe(current, STEP);
+        matchContext && (matchContext.current = { world: current, stats: statsObserver.current.stats });
         const assignments = reconcileControllers(current, controllerPlayers.current);
         for (const [seat, id] of assignments) {
           const old = controllerPlayers.current.get(seat);
@@ -691,6 +804,16 @@ function Play() {
           Object.assign(command, consumeCommand(command));
         }
         stepIndex++;
+        if (current.phase === 'half-time' && previousPhase !== 'half-time') {
+          showPresentation('half-time');
+          accumulator.current = 0;
+          break;
+        }
+        if (current.phase === 'full-time' && previousPhase !== 'full-time') {
+          showPresentation('full-time');
+          accumulator.current = 0;
+          break;
+        }
       }
       if (stepped) renderDirty.current = true;
       if (soccerPerfEnabled) recordSoccerPerf('simulationMs', performance.now() - simulationStart);
@@ -737,7 +860,7 @@ function Play() {
       renderWorld = interpolateInto(interpolatedWorld.current, previousRenderSnapshot.current, current, accumulator.current / STEP);
       if (soccerPerfEnabled) recordSoccerPerf('interpolationMs', performance.now() - interpolationStart);
     } else renderWorld = current;
-    let camera: CameraMode = cameraRef.current;
+    let camera: CameraMode = presentation.current === 'intro' ? 'intro' : cameraRef.current;
     const replayClock = isOnlineGuest ? performance.now() / 1000 : simulationTime.current;
     if (!replaySkipped.current && replayStartedAt.current !== null && current.phase === 'goal') {
       if (!replaySkipped.current) {
@@ -768,16 +891,31 @@ function Play() {
       target = nearest?.id ?? null;
     }
     const remote = remoteCommands.current.get(selectedPlayerId);
-    const indicatorPower = aiming?.holding ? chargePower(aiming.seconds) : remote?.heldAction ? remote.power ?? null : null;
+    const indicatorPower = aiming?.holding ? chargePower(aiming.seconds) : power.current ?? (remote?.heldAction ? remote.power ?? null : null);
     const sceneStart = soccerPerfEnabled ? performance.now() : 0;
     viewRef.current?.update(renderWorld, dt, performance.now() / 1000, localTeam, camera, target, indicatorPower);
     if (soccerPerfEnabled) recordSoccerPerf('sceneUpdateMs', performance.now() - sceneStart);
     hudTimer.current += dt;
     if (hudTimer.current > 0.09) {
       hudTimer.current = 0;
-      hudPublish.current(createHudModel(current, target, selectedPlayerId, indicatorPower,
-        !!(selectedCommand?.contain || remote?.contain), !!room?.watching,
-        current.phase === 'goal' && !replaySkipped.current));
+      if (current.event !== previousHudEvent.current || current.eventTime > previousHudEventTime.current + 0.02) {
+        hudEventKey.current++;
+      }
+      previousHudEvent.current = current.event;
+      previousHudEventTime.current = current.eventTime;
+      const selectedState = selected.action === 'jockey' ? selectedCommand?.contain || remote?.contain ? 'CONTAIN' : 'JOCKEY'
+        : selected.action === 'shield' ? 'SHIELD'
+          : selected.slide ? 'SLIDE' : Math.hypot(selected.vx, selected.vz) > 7.1 ? 'SPRINT' : null;
+      const clock = broadcastClock(current, statsObserver.current.stats);
+      const nextHud: HudState = {
+        score0: current.score[0], score1: current.score[1], clock: clock.label, added: clock.added,
+        half: current.half, phase: current.phase, event: current.event, eventTime: current.eventTime, eventKey: hudEventKey.current,
+        selectedId: selectedPlayerId, stamina: Math.round(selected.stamina * 50) / 50, state: selectedState, targetId: target,
+        power: indicatorPower, replaying: current.phase === 'goal' && !replaySkipped.current,
+        statsVersion: statsObserver.current.stats.version, presentation: presentation.current,
+      };
+      setHud((previous) => shallowHudEqual(previous, nextHud) ? previous : nextHud);
+      radarRef.current?.draw(renderWorld, target);
     }
     if (!isOnlineGuest) renderDirty.current = true;
     if (current.phase === 'full-time') finishMatch(current);
@@ -800,7 +938,9 @@ function Play() {
     <div className="g-soccer-stage">
       <div className="g-soccer-canvas" ref={ref} />
       <LoadProgress className="is-stage" />
-      <Hud source={hudPublish} />
+      <Hud state={hud} watching={!!online?.watching} radarRef={radarRef} world={world} />
+      {hud.presentation === 'intro' && <IntroCard />}
+      {(hud.presentation === 'half-time' || hud.presentation === 'full-time') && <StatsScreen presentation={hud.presentation} statsVersion={hud.statsVersion} />}
       {phoneGone && <div className="g-soccer-phone-gone" role="status">Phone disconnected — reopen the link</div>}
       {shell.touch && shell.status === 'playing' && !online?.watching && <Stick movement={movement} />}
       {shell.touch && shell.status === 'playing' && !online?.watching && <TouchControls buttons={[
@@ -1257,23 +1397,26 @@ function Stage({ joining }: { joining: boolean }) {
 
 export default function Soccer({ onExit, roomCode }: { onExit?: () => void; roomCode?: string }) {
   const [, setDisplayOnly] = useSetting(DISPLAY_ONLY);
+  const match = useRef<MatchData | null>(null);
   useEffect(() => setDisplayOnly('on'), [setDisplayOnly]);
   return (
-    <GameShell
-      meta={meta}
-      className="g-soccer"
-      onExit={onExit}
-      roomCode={roomCode}
-      phoneFirst
-      setup={<Settings />}
-      hostSetup={<PhoneLobby />}
-      defaultBots={0}
-      botNames={['bay city bot', 'northshore bot', 'wing bot', 'keeper bot']}
-      quickNote="2v2, normal bots, and three-minute halves."
-      quickPool="2v2"
-      soloLabel="Play with keyboard"
-    >
-      <Stage joining={!!roomCode} />
-    </GameShell>
+    <MatchContext.Provider value={match}>
+      <GameShell
+        meta={meta}
+        className="g-soccer"
+        onExit={onExit}
+        roomCode={roomCode}
+        phoneFirst
+        setup={<Settings />}
+        hostSetup={<PhoneLobby />}
+        defaultBots={0}
+        botNames={['bay city bot', 'northshore bot', 'wing bot', 'keeper bot']}
+        quickNote="2v2, normal bots, and three-minute halves."
+        quickPool="2v2"
+        soloLabel="Play with keyboard"
+      >
+        <Stage joining={!!roomCode} />
+      </GameShell>
+    </MatchContext.Provider>
   );
 }
