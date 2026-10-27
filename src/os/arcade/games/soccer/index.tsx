@@ -834,7 +834,7 @@ function Play() {
   return (
     <div className="g-soccer-stage">
       <div className="g-soccer-canvas" ref={ref} />
-      <Hud state={hud} watching={!!online?.watching} radarRef={radarRef} />
+      <Hud state={hud} watching={!!online?.watching} radarRef={radarRef} world={world} />
       {hud.presentation === 'intro' && <IntroCard />}
       {(hud.presentation === 'half-time' || hud.presentation === 'full-time') && <StatsScreen presentation={hud.presentation} statsVersion={hud.statsVersion} />}
       {shell.touch && shell.status === 'playing' && !online?.watching && <Stick movement={movement} />}

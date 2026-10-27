@@ -170,7 +170,7 @@
 .g-soccer-radar::before { content: ""; position: absolute; inset: 4px; border: 1px solid #ffffff59; }
 .g-soccer-radar-half { position: absolute; top: 0; bottom: 0; left: 50%; border-left: 1px solid #ffffff4a; }
 .g-soccer-radar-circle { position: absolute; width: 25%; aspect-ratio: 1; top: 50%; left: 50%; transform: translate(-50%, -50%); border: 1px solid #ffffff4a; border-radius: 50%; }
-.g-soccer-radar-dot, .g-soccer-radar-ball { position: absolute; top: 0; left: 0; width: .32em; height: .32em; border-radius: 50%; background: #e7464b; box-shadow: 0 0 .3em #e7464b; }
+.g-soccer-radar-dot, .g-soccer-radar-ball { position: absolute; top: 0; left: 0; width: .32em; height: .32em; border-radius: 50%; background: #e7464b; box-shadow: 0 0 .3em #e7464b; transform: translate(-50%, -50%); }
 .g-soccer-radar-dot.is-away { background: #73d2fb; box-shadow: 0 0 5px #73d2fb; }
 .g-soccer-radar-dot.is-controlled { outline: 1px solid #fff; outline-offset: 1px; }
 .g-soccer-radar-dot.is-target { scale: 1.5; background: #ffe67d; }
@@ -200,6 +200,7 @@
 .g-soccer-intro-card > small { color: #d7ff70; font-size: .68em; font-weight: 900; letter-spacing: .2em; text-transform: uppercase; }
 .g-soccer-intro-clubs { display: flex; justify-content: center; align-items: center; gap: 1.3em; margin: .55em 0 .4em; }
 .g-soccer-intro-crest { display: grid; place-items: center; width: 3em; height: 3.5em; clip-path: polygon(0 0, 100% 0, 90% 72%, 50% 100%, 10% 72%); color: var(--g-soccer-crest-ink); background: linear-gradient(90deg, var(--g-soccer-crest) 0 46%, var(--g-soccer-crest-ink) 46% 55%, var(--g-soccer-crest) 55%); font-size: 1.1em; font-weight: 1000; filter: drop-shadow(0 .4em .4em #0008); }
+.g-soccer-intro-crest > b { display: block; padding: .05em .15em; border-radius: .12em; background: var(--g-soccer-crest); box-shadow: 0 .08em .18em #0008; line-height: 1; }
 .g-soccer-intro-card h1 { display: flex; justify-content: center; align-items: baseline; gap: .55em; margin: .25em 0; font-size: clamp(1.2em, 3.2vw, 2em); letter-spacing: .01em; text-transform: uppercase; }
 .g-soccer-intro-card h1 > span { color: #b0c0c1; font-size: .55em; font-weight: 700; }
 .g-soccer-intro-card > p { margin: .5em 0 1em; color: #b6c6c7; font-size: .64em; font-weight: 800; letter-spacing: .14em; text-transform: uppercase; }

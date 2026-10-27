@@ -136,7 +136,7 @@ export function IntroCard() {
         <small>matchday · harbor park</small>
         <div className="g-soccer-intro-clubs">
           {CLUBS.map((club) => (
-            <span key={club.abbr} className="g-soccer-intro-crest" style={{ '--g-soccer-crest': club.primary, '--g-soccer-crest-ink': club.secondary } as CSSProperties}>{club.abbr}</span>
+            <span key={club.abbr} className="g-soccer-intro-crest" style={{ '--g-soccer-crest': club.primary, '--g-soccer-crest-ink': club.secondary } as CSSProperties}><b>{club.abbr}</b></span>
           ))}
         </div>
         <h1><b>{CLUBS[0].name}</b><span>vs</span><b>{CLUBS[1].name}</b></h1>

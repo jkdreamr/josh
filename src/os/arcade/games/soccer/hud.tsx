@@ -1,4 +1,4 @@
-import { forwardRef, memo, useImperativeHandle, useRef, type Ref } from 'react';
+import { forwardRef, memo, useCallback, useImperativeHandle, useLayoutEffect, useRef, type Ref } from 'react';
 import { FIELD, type World } from './logic.ts';
 import { EventBanner, GoalBanner, PlayerTag, Scoreboard, Ticker } from './presentation.tsx';
 
@@ -24,10 +24,11 @@ export type HudState = {
 
 export type RadarHandle = { draw(world: World, targetId?: number | null): void };
 
-export const Hud = memo(function Hud({ state, watching, radarRef }: {
+export const Hud = memo(function Hud({ state, watching, radarRef, world }: {
   state: HudState;
   watching: boolean;
   radarRef: Ref<RadarHandle>;
+  world: World;
 }) {
   const live = state.presentation === 'live';
   return (
@@ -39,34 +40,38 @@ export const Hud = memo(function Hud({ state, watching, radarRef }: {
         <Ticker statsVersion={state.statsVersion} />
         <PlayerTag selectedId={state.selectedId} stamina={state.stamina} state={state.state} power={state.power} />
       </>}
-      <Radar ref={radarRef} />
+      <Radar ref={radarRef} world={world} />
       {state.replaying && <div className="g-soccer-replay">replay</div>}
       {watching && <div className="g-soccer-watching">watching</div>}
     </div>
   );
 });
 
-const Radar = memo(forwardRef<RadarHandle>(function Radar(_props, ref) {
+const Radar = memo(forwardRef<RadarHandle, { world: World }>(function Radar({ world }, ref) {
   const dots = useRef<(HTMLElement | null)[]>([]);
   const ball = useRef<HTMLElement | null>(null);
-  useImperativeHandle(ref, () => ({
-    draw(world, targetId = world.passTarget) {
-      for (const player of world.players) {
-        const dot = dots.current[player.id];
-        if (!dot) continue;
-        const x = (player.x + FIELD.length / 2) / FIELD.length * 100;
-        const z = (player.z + FIELD.width / 2) / FIELD.width * 100;
-        dot.style.transform = `translate(${x}%, ${z}%) translate(-50%, -50%)`;
-        dot.classList.toggle('is-controlled', player.controlled);
-        dot.classList.toggle('is-target', player.id === targetId);
-      }
-      if (ball.current) {
-        const x = (world.ball.x + FIELD.length / 2) / FIELD.length * 100;
-        const z = (world.ball.z + FIELD.width / 2) / FIELD.width * 100;
-        ball.current.style.transform = `translate(${x}%, ${z}%) translate(-50%, -50%)`;
-      }
-    },
-  }), []);
+  const draw = useCallback((world: World, targetId: number | null = world.passTarget) => {
+    for (const player of world.players) {
+      const dot = dots.current[player.id];
+      if (!dot) continue;
+      const x = (player.x + FIELD.length / 2) / FIELD.length * 100;
+      const z = (player.z + FIELD.width / 2) / FIELD.width * 100;
+      dot.style.left = `${x}%`;
+      dot.style.top = `${z}%`;
+      dot.classList.toggle('is-controlled', player.controlled);
+      dot.classList.toggle('is-target', player.id === targetId);
+    }
+    if (ball.current) {
+      const x = (world.ball.x + FIELD.length / 2) / FIELD.length * 100;
+      const z = (world.ball.z + FIELD.width / 2) / FIELD.width * 100;
+      ball.current.style.left = `${x}%`;
+      ball.current.style.top = `${z}%`;
+    }
+  }, []);
+  useImperativeHandle(ref, () => ({ draw }), [draw]);
+  useLayoutEffect(() => {
+    draw(world);
+  }, [draw, world]);
   return (
     <div className="g-soccer-radar" aria-label="match radar">
       <div className="g-soccer-radar-half" />
