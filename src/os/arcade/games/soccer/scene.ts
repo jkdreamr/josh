@@ -7,6 +7,8 @@ import { loadSoccerModel, MODEL_URLS } from './load.ts';
 import { ballNumberTexture, ballTexture } from './textures.ts';
 import { buildStadium, type PitchPattern } from './stadium.ts';
 import { IDENTITY_BASIS, type ViewBasis } from './input.ts';
+import { createPracticeMarkers } from './practice-markers.ts';
+import type { PracticeMarker } from './practice.ts';
 import { approachAngle, bindSoccerRig, bodyFrameVelocity, createSoccerAnimationInput, createSoccerAnimator, kickingFoot, playSoccerClip, preferredFoot, soccerClipActive, soccerDribbleOffset, updateSoccerAnimator, type SoccerAnimator, type SoccerClip } from './player.ts';
 import type { SoccerRenderStats } from './perf.ts';
 
@@ -36,6 +38,7 @@ export type SoccerView = {
   setTime(mode: TimeMode): void;
   setPattern(pattern: PitchPattern): void;
   goal(): void;
+  setMarkers(markers: readonly PracticeMarker[]): void;
   dispose(): void;
 };
 
@@ -194,6 +197,36 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const projected = new THREE.Vector3();
 
   const scene = new THREE.Scene();
+  const practiceMarkers = createPracticeMarkers(THREE, scene);
+  const night = timeMode === 'night';
+  const skyCanvas = document.createElement('canvas');
+  skyCanvas.width = 16; skyCanvas.height = 256;
+  const skyContext = skyCanvas.getContext('2d')!;
+  const skyTexture = new THREE.CanvasTexture(skyCanvas);
+  skyTexture.colorSpace = THREE.SRGBColorSpace;
+  const skyMaterial = new THREE.MeshBasicMaterial({ map: skyTexture, side: THREE.BackSide, depthWrite: false, fog: false });
+  const sky = new THREE.Mesh(new THREE.SphereGeometry(180, 32, 18), skyMaterial);
+  sky.frustumCulled = false;
+  scene.add(sky);
+  const drawSky = (isNight: boolean) => {
+    const gradient = skyContext.createLinearGradient(0, 0, 0, skyCanvas.height);
+    if (isNight) {
+      gradient.addColorStop(0, '#06101f');
+      gradient.addColorStop(0.62, '#172b46');
+      gradient.addColorStop(1, '#53647a');
+    } else {
+      gradient.addColorStop(0, '#7195b3');
+      gradient.addColorStop(0.48, '#f1bd91');
+      gradient.addColorStop(0.82, '#f6a66f');
+      gradient.addColorStop(1, '#dc8058');
+    }
+    skyContext.fillStyle = gradient;
+    skyContext.fillRect(0, 0, skyCanvas.width, skyCanvas.height);
+    skyTexture.needsUpdate = true;
+  };
+  drawSky(night);
+  scene.background = null;
+  scene.fog = new THREE.Fog(night ? '#142438' : '#d99a71', 150, 270);
   const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 180);
   const cameraDirection = new THREE.Vector3();
   let lastViewBasis: ViewBasis = IDENTITY_BASIS;
@@ -820,8 +853,10 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
         roar[1] = Math.max(roar[1], 0.8);
       }
     },
+    setMarkers(markers) { practiceMarkers.set(markers, performance.now() / 1000); },
     dispose() {
       disposed = true;
+      practiceMarkers.dispose();
       canvas.removeEventListener('webglcontextlost', onLost);
       stadium.dispose();
       disposeTree(scene);

@@ -919,3 +919,67 @@
     pointer-events: none;
   }
 }
+
+.g-soccer-stage.is-practice .g-soccer-scoreboard { display: none; }
+.g-soccer-practice {
+  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 4;
+  display: grid; gap: 6px; justify-items: center; width: min(560px, calc(100% - 20px)); pointer-events: none;
+  font-family: inherit; color: #fff;
+}
+.g-soccer-drills { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; pointer-events: auto; }
+.g-soccer-drills button {
+  display: inline-flex; align-items: center; gap: 5px; padding: 4px 9px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(255, 255, 255, .22); background: rgba(9, 18, 32, .72); color: rgba(255, 255, 255, .82);
+  font: 600 11px/1.2 inherit; letter-spacing: .02em; backdrop-filter: blur(6px);
+}
+.g-soccer-drills button span { opacity: .55; font-size: 10px; }
+.g-soccer-drills button.is-on { background: #ffd23f; border-color: #ffd23f; color: #1a1406; }
+.g-soccer-practice-card {
+  width: 100%; box-sizing: border-box; padding: 9px 14px 10px; border-radius: 12px;
+  background: linear-gradient(180deg, rgba(10, 22, 40, .9), rgba(10, 22, 40, .78)); border: 1px solid rgba(255, 255, 255, .14);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, .35); text-align: center;
+}
+.g-soccer-practice-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 11px; text-transform: uppercase; letter-spacing: .1em; opacity: .8; }
+.g-soccer-practice-head span { font-variant-numeric: tabular-nums; font-weight: 700; }
+.g-soccer-practice-prompt { margin: 4px 0 2px; font-size: 17px; font-weight: 700; line-height: 1.25; }
+.g-soccer-practice-hint { margin: 0; font-size: 12px; opacity: .72; }
+.g-soccer-practice kbd, .g-soccer-tutorial kbd, .g-soccer-phone-practice kbd {
+  display: inline-block; min-width: 1.4em; padding: 0 .4em; margin: 0 .1em; border-radius: 6px;
+  background: #ffd23f; color: #1a1406; font: 800 .92em/1.45 inherit; text-align: center;
+}
+.g-soccer-practice-score { display: flex; justify-content: center; gap: 18px; margin-top: 6px; font-size: 12px; opacity: .9; }
+.g-soccer-practice-score b { font-size: 16px; font-variant-numeric: tabular-nums; margin-left: 3px; }
+.g-soccer-practice.is-compact { top: 6px; }
+.g-soccer-practice.is-compact .g-soccer-practice-prompt { font-size: 14px; }
+.g-soccer-practice.is-compact .g-soccer-practice-hint { display: none; }
+.g-soccer-tutorial {
+  position: absolute; left: 50%; bottom: 18%; transform: translateX(-50%); z-index: 6; width: min(420px, calc(100% - 24px));
+  box-sizing: border-box; padding: 14px 16px 12px; border-radius: 14px; text-align: center; color: #fff;
+  background: rgba(8, 16, 30, .9); border: 1px solid rgba(255, 210, 63, .5); box-shadow: 0 14px 36px rgba(0, 0, 0, .45);
+  animation: g-soccer-tutorial-in .35s ease-out;
+}
+.g-soccer-tutorial p { margin: 8px 0 10px; font-size: 18px; font-weight: 700; }
+.g-soccer-tutorial-steps { display: flex; justify-content: center; gap: 6px; }
+.g-soccer-tutorial-steps i { font: 600 11px/1 inherit; font-style: normal; padding: 4px 8px; border-radius: 999px; background: rgba(255, 255, 255, .1); opacity: .6; text-transform: uppercase; letter-spacing: .06em; }
+.g-soccer-tutorial-steps i.is-on { background: #ffd23f; color: #1a1406; opacity: 1; }
+.g-soccer-tutorial-steps i.is-done { background: #58d68d; color: #06210f; opacity: 1; }
+.g-soccer-tutorial-bar { height: 3px; border-radius: 3px; background: rgba(255, 255, 255, .14); overflow: hidden; }
+.g-soccer-tutorial-bar span { display: block; height: 100%; background: #ffd23f; transition: width .1s linear; }
+.g-soccer-tutorial button { margin-top: 10px; padding: 5px 14px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, .3); background: transparent; color: #fff; font: 600 12px/1.2 inherit; cursor: pointer; }
+@keyframes g-soccer-tutorial-in { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+.g-soccer-phone-practice {
+  position: absolute; z-index: 2;
+  top: calc(max(12px, env(safe-area-inset-top, 0px)) + 76px);
+  left: max(12px, env(safe-area-inset-left, 0px)); right: max(12px, env(safe-area-inset-right, 0px));
+  display: grid; gap: 6px; padding: 6px 10px; border-radius: 12px; background: rgba(10, 22, 40, .85); color: #fff;
+}
+@media (orientation: landscape) {
+  .g-soccer-phone-practice { top: calc(max(10px, env(safe-area-inset-top, 0px)) + 68px); left: max(24px, env(safe-area-inset-left, 0px)); right: calc(max(24px, env(safe-area-inset-right, 0px)) + 208px); max-width: 520px; }
+}
+.g-soccer-phone-practice-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.g-soccer-phone-practice-row p { margin: 0; font-size: 14px; font-weight: 700; line-height: 1.25; }
+.g-soccer-phone-practice-row strong { font-size: 18px; white-space: nowrap; }
+.g-soccer-phone-practice-row small { font-size: 11px; opacity: .7; }
+.g-soccer-phone-practice-row button { padding: 6px 12px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, .3); background: transparent; color: #fff; font: 600 12px/1 inherit; }
+.g-soccer-phone-practice .g-soccer-drills { flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start; }
+.g-soccer-phone-practice .g-soccer-drills button { flex: none; padding: 6px 10px; font-size: 12px; }

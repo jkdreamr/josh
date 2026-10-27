@@ -20,6 +20,8 @@ import { publishSoccerPerf, recordSoccerPerf, recordSoccerRendererStats, soccerP
 import { clampOrigin, followOrigin, haptic, hitButton, STICK, stickVector, type PadPoint } from './pad.ts';
 import { missingPhoneSeats, playerForSeat, type Mode } from './seats.ts';
 import type { PitchPattern } from './stadium.ts';
+import { createPracticeState, createTutorial, markTutorialSeen, selectDrill, setupDrill, stepPractice, stepTutorial, tutorialSeen, TUTORIAL_SECONDS, DRILLS, type DrillId, type PracticeState, type TutorialState } from './practice.ts';
+import { DRILL, PRACTICE_MODE_OPTION, PhonePracticeStrip, PracticePanel, practiceView, TutorialOverlay, tutorialText, type ControlScheme, type PhonePracticeStatus, type PracticeView } from './practice-mode.tsx';
 import './soccer.css';
 import QRCode from 'qrcode';
 
@@ -27,7 +29,7 @@ type Minutes = '2' | '4' | '6';
 type Camera = 'broadcast' | 'end';
 type Volume = 'off' | 'low' | 'mid' | 'full';
 
-const MODE = defineSetting<Mode>('soccer:mode', ['cpu', 'versus', 'coop'], 'cpu');
+const MODE = defineSetting<Mode>('soccer:mode', ['cpu', 'versus', 'coop', 'practice'], 'cpu');
 const HALF = defineSetting<Minutes>('soccer:half', ['2', '4', '6'], '4');
 const LEVEL = defineSetting<LevelName>('soccer:level', ['easy', 'normal', 'hard'], 'normal');
 const CAMERA = defineSetting<Camera>('soccer:camera', ['broadcast', 'end'], 'broadcast', { live: true });
@@ -37,7 +39,7 @@ const DISPLAY_ONLY = defineSetting<'on' | 'off'>('soccer:display-only', ['on', '
 const VOLUME = defineSetting<Volume>('soccer:volume', ['off', 'low', 'mid', 'full'], 'mid', { live: true });
 const COMMENTARY = defineSetting<CommentaryMode>('soccer:commentary', ['voice', 'captions', 'off'], 'voice', { live: true });
 
-const modeOptions = [['cpu', 'vs CPU'], ['versus', '2P versus'], ['coop', '2P co-op']] as const;
+const modeOptions = [['cpu', 'vs CPU'], ['versus', '2P versus'], ['coop', '2P co-op'], PRACTICE_MODE_OPTION] as const;
 const halfOptions = [['2', '2 min'], ['4', '4 min'], ['6', '6 min']] as const;
 const cameraOptions = [['broadcast', 'Broadcast'], ['end', 'End to end']] as const;
 const timeOptions = [['night', 'Night'], ['golden', 'Golden hour'], ['overcast', 'Overcast'], ['rain', 'Rain']] as const;
@@ -63,7 +65,7 @@ function Settings({ online = false }: { online?: boolean }) {
   return (
     <div className="g-soccer-settings">
       {!online && <Segmented label="Match" value={mode} options={modeOptions} onChange={setMode} />}
-      <Segmented label="Half length" value={half} options={halfOptions} onChange={setHalf} />
+      {mode !== 'practice' && <Segmented label="Half length" value={half} options={halfOptions} onChange={setHalf} />}
       <Segmented label="Difficulty" value={level} options={levelOptions} onChange={setLevel} />
       <Segmented label="Camera" value={camera} options={cameraOptions} onChange={setCamera} />
       <Segmented label="Time of day" value={time} options={timeOptions} onChange={setTime} />
@@ -153,7 +155,7 @@ function PhoneLobby() {
   const [countdown, setCountdown] = useState<number | null>(null);
   const startedCode = useRef('');
   const phones = online?.players.filter((player) => player.seat > 0) ?? [];
-  const requiredPhones = mode === 'cpu' ? 1 : 2;
+  const requiredPhones = mode === 'cpu' || mode === 'practice' ? 1 : 2;
   useEffect(() => {
     if (online?.isHost) preloadSoccer().catch(() => {});
   }, [online?.isHost]);
@@ -292,6 +294,13 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     replaying: false, statsVersion: 0, presentation: 'live',
   });
   const radarRef = useRef<RadarHandle | null>(null);
+  const [drillChoice, setDrillChoice] = useSetting(DRILL);
+  const practiceRef = useRef<PracticeState | null>(null);
+  const practiceDoneAt = useRef(0);
+  const [practiceHud, setPracticeHud] = useState<PracticeView | null>(null);
+  const tutorialRef = useRef<TutorialState | null>(null);
+  const [tutorialHud, setTutorialHud] = useState<TutorialState | null>(null);
+  const practiceStatusTimer = useRef(0);
   const movement = useRef({ x: 0, z: 0 });
   const worldRef = useRef<World | null>(null);
   const statsObserver = useRef(createStatsObserver());
@@ -382,9 +391,24 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     };
   }, [audioEnabled, sound]);
 
+  const practicing = currentMode === 'practice';
+  const freshWorld = () => {
+    const seed = Math.floor(Date.now() % 0xffff_ffff);
+    if (!practicing) {
+      practiceRef.current = null;
+      const fresh = createWorld(seed, halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
+      setupHumans(fresh, currentMode, online);
+      return fresh;
+    }
+    const practice = createPracticeState(drillChoice);
+    practiceRef.current = practice;
+    const fresh = createWorld(seed, 360, 1);
+    setupHumans(fresh, currentMode, online);
+    setupDrill(practice, fresh);
+    return fresh;
+  };
   if (!worldRef.current) {
-    worldRef.current = createWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
-    setupHumans(worldRef.current, currentMode, online);
+    worldRef.current = freshWorld();
     sound.reset(worldRef.current);
     lastScore.current = [...worldRef.current.score];
   }
@@ -407,18 +431,22 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
 
   useEffect(() => {
     if (shell.status !== 'ready') return;
-    const fresh = createWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
+    const fresh = freshWorld();
     matchSeats.current = null;
     setPhoneGone(false);
     controllerPlayers.current.clear();
-    setupHumans(fresh, currentMode, online);
-    const forced = debugConfig.setpiece;
-    if (forced === 'shootout') startShootout(fresh);
-    else if (forced && ['corner', 'free-kick', 'penalty', 'goal-kick', 'throw-in'].includes(forced)) {
-      const kind = forced === 'throw-in' ? 'kick-in' : forced as 'corner' | 'free-kick' | 'penalty' | 'goal-kick';
-      setRestart(fresh, 0, kind, { x: kind === 'corner' ? 52.35 : kind === 'penalty' ? 41.5 : kind === 'goal-kick' ? -47 : 28, z: kind === 'corner' || kind === 'kick-in' ? 33.85 : 0 });
+    if (!practicing) {
+      const forced = debugConfig.setpiece;
+      if (forced === 'shootout') startShootout(fresh);
+      else if (forced && ['corner', 'free-kick', 'penalty', 'goal-kick', 'throw-in'].includes(forced)) {
+        const kind = forced === 'throw-in' ? 'kick-in' : forced as 'corner' | 'free-kick' | 'penalty' | 'goal-kick';
+        setRestart(fresh, 0, kind, { x: kind === 'corner' ? 52.35 : kind === 'penalty' ? 41.5 : kind === 'goal-kick' ? -47 : 28, z: kind === 'corner' || kind === 'kick-in' ? 33.85 : 0 });
+      }
     }
     worldRef.current = fresh;
+    practiceDoneAt.current = 0;
+    tutorialRef.current = null;
+    setTutorialHud(null);
     previousRenderSnapshot.current = captureSnapshot(fresh, createSnapshot(fresh));
     interpolatedWorld.current = structuredClone(fresh);
     statsObserver.current.reset();
@@ -432,6 +460,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     simulationTime.current = 0;
     accumulator.current = 0;
     lastScore.current = [...fresh.score];
+    sound.reset(fresh);
     previousHudEvent.current = fresh.event;
     previousHudEventTime.current = fresh.eventTime;
     hudEventKey.current = 0;
@@ -442,8 +471,39 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       selectedId: 6, stamina: 1, state: null, targetId: null, power: null,
       replaying: false, statsVersion: 0, presentation: 'live',
     });
-    sound.reset(fresh);
-  }, [shell.status, modeChoice, halfMinutes, online?.round, online?.seat, online?.players]);
+    setPracticeHud(practiceRef.current ? practiceView(practiceRef.current) : null);
+  }, [shell.status, modeChoice, halfMinutes, drillChoice, online?.round, online?.seat, online?.players]);
+
+  useEffect(() => {
+    if (shell.status !== 'playing' || online && !online.isHost || online?.watching || tutorialSeen()) return;
+    if (currentMode !== 'cpu' && currentMode !== 'practice') return;
+    tutorialRef.current = createTutorial();
+    setTutorialHud(tutorialRef.current);
+  }, [shell.status, currentMode]);
+
+  const endTutorial = () => {
+    if (!tutorialRef.current) return;
+    tutorialRef.current = null;
+    setTutorialHud(null);
+    markTutorialSeen();
+  };
+
+  const pickPractice = (pick: string) => {
+    if (pick === 'skip') { endTutorial(); return; }
+    const practice = practiceRef.current;
+    const current = worldRef.current;
+    if (!practice || !current) return;
+    if (pick === 'again') setupDrill(practice, current);
+    else if (DRILLS.some((drill) => drill.id === pick)) {
+      selectDrill(practice, current, pick as DrillId);
+      setDrillChoice(pick as DrillId);
+    } else return;
+    sfx.play('select');
+    renderDirty.current = true;
+    setPracticeHud(practiceView(practice));
+  };
+  const pickPracticeRef = useRef(pickPractice);
+  pickPracticeRef.current = pickPractice;
 
   useEffect(() => {
     const release = sfx.retain();
@@ -538,6 +598,10 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         remoteCommands.current.set(player.id, command);
         return;
       }
+      if (room.isHost && packet.k === 'pd') {
+        if (packet.seat === from) pickPracticeRef.current(packet.pick);
+        return;
+      }
       if (!room.isHost && from === 0 && packet.k === 's') {
         if (packet.seq <= snapshotSequence.current) return;
         snapshotSequence.current = packet.seq;
@@ -595,7 +659,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   };
 
   const makeCommand = (id: number, p2: boolean, dt: number): ControlCommand => {
-    const state = keyboardInput(keys, p2, !p2 && !online && currentMode === 'cpu');
+    const state = keyboardInput(keys, p2, !p2 && !online && (currentMode === 'cpu' || practicing));
     const current = worldRef.current!;
     const player = current.players[id]!;
     const defending = nearestCarrier(current)?.team !== player.team;
@@ -802,7 +866,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         simulationTime.current += STEP;
         const commands = simulationCommands.current;
         commands.clear();
-        for (const team of [0, 1] as const) {
+        for (const team of practiceRef.current ? [] : [0, 1] as const) {
           const generated = computeAI(current, levelRef.current, STEP, Math.floor(simulationTime.current / STEP), team, aiCommands.current[team]);
           for (const [id, command] of generated) commands.set(id, command);
         }
@@ -815,9 +879,27 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         }
         const previousPhase = current.phase;
         if (stepIndex === steps - 1 && previousRenderSnapshot.current) captureSnapshot(current, previousRenderSnapshot.current);
-        stepWorld(current, STEP, commands, debugConfig.clockScale);
+        const practice = practiceRef.current;
+        if (practice) {
+          const command = [...commands.values()].find((entry) => entry.pressed && (entry.action === 'pass' || entry.action === 'shoot'));
+          if (practice.phase === 'done' && command && simulationTime.current - practiceDoneAt.current > 1) setupDrill(practice, current);
+          stepPractice(practice, current, STEP, commands, levelRef.current, Math.floor(simulationTime.current / STEP), aiCommands.current[1]);
+          if (practice.phase === 'done' && !practiceDoneAt.current) practiceDoneAt.current = simulationTime.current;
+          if (practice.phase !== 'done') practiceDoneAt.current = 0;
+          for (const event of practice.events) {
+            if (event !== 'goal') sfx.play(event === 'good' ? 'coin' : event === 'done' ? (practice.newBest ? 'win' : 'select') : 'hit');
+          }
+          practice.events.length = 0;
+        } else stepWorld(current, STEP, commands, debugConfig.clockScale);
         statsObserver.current.observe(current, STEP);
         matchContext && (matchContext.current = { world: current, stats: statsObserver.current.stats });
+        const tutorial = tutorialRef.current;
+        if (tutorial) {
+          const kick = current.kickEvent && current.players[current.kickEvent.playerId]?.team === 0 ? current.kickEvent.action : null;
+          const moving = [...commands].some(([id, entry]) => current.players[id]?.human && Math.hypot(entry.move.x, entry.move.z) > 0.3);
+          tutorialRef.current = stepTutorial(tutorial, { moving, passed: kick === 'pass' || kick === 'through' || kick === 'lob', shot: kick === 'shoot' || kick === 'finesse' }, STEP);
+          if (tutorialRef.current.finished) endTutorial();
+        }
         const assignments = reconcileControllers(current, controllerPlayers.current);
         for (const [seat, id] of assignments) {
           const old = controllerPlayers.current.get(seat);
@@ -865,6 +947,14 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       if (snapshotTimer.current >= 0.05) {
         snapshotTimer.current %= 0.05;
         room.send({ t: 'soccer', k: 's', r: room.round || 1, seq: snapshotSequence.current++, state: cloneSnapshot(current) });
+      }
+      practiceStatusTimer.current += dt;
+      const practice = practiceRef.current;
+      const tutorial = tutorialRef.current;
+      if ((practice || tutorial) && practiceStatusTimer.current >= 0.4) {
+        practiceStatusTimer.current = 0;
+        const view = practice ? practiceView(practice) : null;
+        room.send({ t: 'soccer', k: 'pp', r: room.round || 1, seq: snapshotSequence.current++, drill: view?.drill ?? '', prompt: view?.prompt ?? '', hint: view?.hint ?? '', score: view?.score ?? '', best: view?.best ?? '', done: !!view?.done, tutorial: tutorial ? tutorialText(tutorial) : '' });
       }
     }
 
@@ -933,6 +1023,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     const sceneStart = soccerPerfEnabled ? performance.now() : 0;
     viewRef.current?.update(renderWorld, dt, performance.now() / 1000, localTeam, camera, target, indicatorPower);
     if (soccerPerfEnabled) recordSoccerPerf('sceneUpdateMs', performance.now() - sceneStart);
+    viewRef.current?.setMarkers(practiceRef.current?.markers ?? []);
     hudTimer.current += dt;
     if (hudTimer.current > 0.09) {
       hudTimer.current = 0;
@@ -954,10 +1045,14 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       };
       setHud((previous) => shallowHudEqual(previous, nextHud) ? previous : nextHud);
       radarRef.current?.draw(renderWorld, target);
+      if (practiceRef.current) setPracticeHud(practiceView(practiceRef.current));
+      setTutorialHud(tutorialRef.current);
     }
     if (!isOnlineGuest) renderDirty.current = true;
     if (current.phase === 'full-time') finishMatch(current);
   };
+
+  const scheme: ControlScheme = online?.isHost ? 'phone' : shell.touch ? 'touch' : 'keys';
 
   useGameLoop(update, () => {
     if (!renderDirty.current) return;
@@ -973,7 +1068,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   });
 
   return (
-    <div className="g-soccer-stage">
+    <div className={`g-soccer-stage${practicing ? ' is-practice' : ''}`}>
       <div className="g-soccer-canvas" ref={ref} />
       <LoadProgress className="is-stage" />
       <Hud state={hud} watching={!!online?.watching} radarRef={radarRef} world={world} />
@@ -984,6 +1079,8 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       {audioEnabled && shell.status === 'playing' && !muted && volumeChoice !== 'off' && soundLocked && (
         <div className="g-soccer-sound-lock">Click or press any key for sound</div>
       )}
+      {practicing && practiceHud && shell.status === 'playing' && <PracticePanel view={practiceHud} scheme={scheme} compact={shell.touch} onPick={pickPractice} />}
+      {tutorialHud && shell.status === 'playing' && <TutorialOverlay tutorial={tutorialHud} scheme={scheme} seconds={TUTORIAL_SECONDS} onSkip={endTutorial} />}
       {shell.touch && shell.status === 'playing' && !online?.watching && <Stick movement={movement} />}
       {shell.touch && shell.status === 'playing' && !online?.watching && <TouchControls buttons={[
         { key: 'KeyJ', label: 'pass / contain' },
@@ -1103,6 +1200,7 @@ export function PhoneController() {
   const previousScore = useRef<[number, number]>([0, 0]);
   const [displayOnly, setDisplayOnly] = useState(true);
   const [mode, setMode] = useState<Mode>('cpu');
+  const [practiceStatus, setPracticeStatus] = useState<PhonePracticeStatus | null>(null);
   const [showGame, setShowGame] = useState(false);
   const [showConnectedToast, setShowConnectedToast] = useState(true);
   const [chargeProgress, setChargeProgress] = useState(0);
@@ -1296,6 +1394,9 @@ export function PhoneController() {
       } else if (packet?.k === 'cfg') {
         setDisplayOnly(true);
         if (packet.mode) setMode(packet.mode);
+        if (packet.mode !== 'practice') setPracticeStatus((status) => status?.tutorial ? status : null);
+      } else if (packet?.k === 'pp') {
+        setPracticeStatus(packet.drill || packet.tutorial ? { drill: packet.drill, prompt: packet.prompt, hint: packet.hint, score: packet.score, best: packet.best, done: packet.done, tutorial: packet.tutorial } : null);
       }
     });
     const timer = window.setInterval(() => {
@@ -1417,6 +1518,7 @@ export function PhoneController() {
         <button className="g-soccer-pad-trigger" {...pad('RT: Sprint (hold)', sprintDown, sprintUp)}><b>RT</b><small>Sprint</small></button>
       </div>
       <div className="g-soccer-pad-strip">
+        {practiceStatus && <PhonePracticeStrip status={practiceStatus} onPick={(pick) => online.send({ t: 'soccer', k: 'pd', r: online.round || 1, seq: sequence.current++, seat: online.seat, pick })} />}
         <div className="g-soccer-pad-score" aria-label={`Bay City ${score[0]}, Northshore ${score[1]}`}>
           <span className={myTeam === 0 ? 'is-mine' : undefined}>BAY CITY</span>
           <strong>{score[0]}<i>–</i>{score[1]}</strong>
