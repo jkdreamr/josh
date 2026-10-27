@@ -186,8 +186,10 @@ export const GHILLIE = { still: 0.6, near: 4 };
 export const LEADER_MIN = 3;
 /** About how far a bounce pad carries an egg that glides straight on. */
 export const PAD_FLY = Math.round((PAD.y / FALL) * GLIDE);
-/** Remote eggs are drawn this far in the past, between the last two updates. */
+/** Remote eggs are drawn at least this far in the past, between the reports either side of then... */
 export const INTERP = 0.1;
+/** ...and as far back as the gaps between their reports have lately needed (a slow or patchy connection), up to this. */
+export const INTERP_MAX = 0.3;
 /** The slot numbers: two guns, the melee weapon, and whatever there is to throw. */
 export const SLOT_MELEE = 2;
 export const SLOT_THROW = 3;
@@ -557,6 +559,18 @@ export type Fighter = {
   ai: Ai | null;
   /** Remote eggs: recent reports, newest last, and what they hold. */
   snaps: Snap[];
+  /**
+   * Remote eggs: how far in the past they're drawn (see INTERP), the longest wait for a report lately (easing off),
+   * and what's left of the last correction to where they're drawn (meters, and radians of aim), eased out.
+   */
+  lag: number;
+  need: number;
+  /** Remote eggs: when the last report came, and the usual wait between them. */
+  heard: number;
+  gap: number;
+  ox: number;
+  oz: number;
+  oa: number;
   show: { w: Held | null; r: number; flags: number };
   /** Loot ids asked of the host, and when. */
   pending: Map<number, number>;
@@ -1120,6 +1134,13 @@ function newFighter(id: number, e: Entrant, x: number, z: number, team: number):
     input: noInput(),
     ai: null,
     snaps: [],
+    lag: INTERP,
+    need: 0,
+    heard: 0,
+    gap: 1 / 15,
+    ox: 0,
+    oz: 0,
+    oa: 0,
     show: { w: null, r: 0, flags: 0 },
     pending: new Map(),
     keyAsk: -1,
@@ -4092,36 +4113,103 @@ export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: n
   }
   f.show = { w: s.w, r: s.r, flags: s.flags };
   f.hitT = s.flags & F_HIT ? 0.2 : 0;
-  snaps.push({ at: m.clock, x: s.x, z: s.z, y: s.y, aim: s.aim, vx: s.vx, vz: s.vz });
+  // the wait for this report since the one before: the longest lately sets how far back the egg is drawn, and one
+  // that comes hard on the heels of the last (held up on the way) counts from a little after it, so the egg doesn't
+  // dart between the two
+  const prev = snaps[snaps.length - 1];
+  let when = m.clock;
+  if (prev) {
+    const wait = m.clock - f.heard;
+    f.gap += (wait - f.gap) * 0.1;
+    when = Math.max(m.clock, prev.at + f.gap * 0.6);
+    f.need = Math.max(when - prev.at, f.need - wait * NEED_EASE);
+  }
+  f.heard = m.clock;
+  snaps.push({ at: when, x: s.x, z: s.z, y: s.y, aim: s.aim, vx: s.vx, vz: s.vz });
   if (snaps.length > 8) snaps.splice(0, snaps.length - 8);
   if (snaps.length === 1) {
     f.x = s.x;
     f.z = s.z;
     f.y = s.y;
     f.aim = s.aim;
+    f.ox = f.oz = f.oa = 0;
+    return;
   }
+  // news that it isn't quite where we've been drawing it (it turned while we guessed it went straight on): it stays
+  // where it's drawn, and eases over to the right place (see follow), unless that's far off
+  trace(snaps, m.clock - f.lag);
+  const ox = f.x - traced.x;
+  const oz = f.z - traced.z;
+  const far = ox * ox + oz * oz > SNAP_D * SNAP_D;
+  f.ox = far ? 0 : ox;
+  f.oz = far ? 0 : oz;
+  f.oa = far ? 0 : angleDiff(f.aim, traced.aim);
 }
 
-/** Moves a remote egg to where it was INTERP seconds ago, between the reports either side of then. */
-function follow(m: Match, f: Fighter, dt: number) {
-  const snaps = f.snaps;
-  if (!snaps.length || f.phase === 'out') return;
-  const t = m.clock - INTERP;
+/** How fast the longest wait for a report eases off (seconds a second). */
+const NEED_EASE = 0.05;
+/** How fast a remote egg is drawn further back when its reports come further apart, and nearer again (seconds a second). */
+const LAG_UP = 0.2;
+const LAG_DOWN = 0.05;
+/** A correction this far (meters) is made at once; anything less eases out at this rate. */
+const SNAP_D = 3;
+const EASE = 10;
+/** Where trace puts a remote egg. */
+const traced = { x: 0, z: 0, y: 0, aim: 0, vx: 0, vz: 0 };
+
+/** Where an egg was at time `t` by its reports: between the two either side of then, or a moment on from the last. */
+function trace(snaps: Snap[], t: number) {
   const last = snaps[snaps.length - 1];
+  let a = last;
+  let b = last;
+  let u = 0;
   if (t >= last.at) {
     // nothing newer yet: carry on a moment at the last speed
     const ahead = Math.min(0.25, t - last.at);
-    place(f, last, last.x + last.vx * ahead, last.z + last.vz * ahead, last.y, last.aim);
-  } else if (t <= snaps[0].at) {
-    place(f, snaps[0], snaps[0].x, snaps[0].z, snaps[0].y, snaps[0].aim);
-  } else {
+    traced.x = last.x + last.vx * ahead;
+    traced.z = last.z + last.vz * ahead;
+    traced.y = last.y;
+    traced.aim = last.aim;
+    traced.vx = last.vx;
+    traced.vz = last.vz;
+    return;
+  }
+  if (t <= snaps[0].at) a = b = snaps[0];
+  else {
     let i = 0;
     while (i < snaps.length - 2 && snaps[i + 1].at <= t) i++;
-    const a = snaps[i];
-    const b = snaps[i + 1];
-    const u = clamp((t - a.at) / Math.max(1e-6, b.at - a.at), 0, 1);
-    place(f, b, a.x + (b.x - a.x) * u, a.z + (b.z - a.z) * u, a.y + (b.y - a.y) * u, a.aim + angleDiff(b.aim, a.aim) * u);
+    a = snaps[i];
+    b = snaps[i + 1];
+    u = clamp((t - a.at) / Math.max(1e-6, b.at - a.at), 0, 1);
   }
+  traced.x = a.x + (b.x - a.x) * u;
+  traced.z = a.z + (b.z - a.z) * u;
+  traced.y = a.y + (b.y - a.y) * u;
+  traced.aim = a.aim + angleDiff(b.aim, a.aim) * u;
+  traced.vx = b.vx;
+  traced.vz = b.vz;
+}
+
+/**
+ * Moves a remote egg to where it was a moment ago (see INTERP), between the reports either side of then: further back
+ * while they come further apart, so it glides on rather than stopping short and jumping, with any correction eased in.
+ */
+function follow(m: Match, f: Fighter, dt: number) {
+  const snaps = f.snaps;
+  if (!snaps.length || f.phase === 'out') return;
+  const want = clamp(f.need + 0.02, INTERP, INTERP_MAX);
+  f.lag = clamp(want, f.lag - LAG_DOWN * dt, f.lag + LAG_UP * dt);
+  trace(snaps, m.clock - f.lag);
+  const k = Math.exp(-EASE * dt);
+  f.ox *= k;
+  f.oz *= k;
+  f.oa *= k;
+  f.x = clampX(traced.x + f.ox, 30);
+  f.z = clamp(traced.z + f.oz, -EDGE - 30, EDGE + 30);
+  f.y = traced.y;
+  f.aim = traced.aim + f.oa;
+  f.vx = traced.vx;
+  f.vz = traced.vz;
   if (f.phase === 'ground' && f.y < 0.5) {
     f.bush = coverOf(m, f.x, f.z);
     f.inside = buildingAt(m.map, f.x, f.z);
@@ -4134,15 +4222,6 @@ function follow(m: Match, f: Fighter, dt: number) {
     f.wet = false;
     f.warm = false;
   }
-}
-
-function place(f: Fighter, speed: Snap, x: number, z: number, y: number, aim: number) {
-  f.x = clampX(x, 30);
-  f.z = clamp(z, -EDGE - 30, EDGE + 30);
-  f.y = y;
-  f.aim = aim;
-  f.vx = speed.vx;
-  f.vz = speed.vz;
 }
 
 // -------------------------------------------------------------------------------------------------------------------
@@ -5191,12 +5270,19 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   }
 }
 
+/** The containers in each building, by building, for stocked. */
+const holds = new WeakMap<GameMap, number[][]>();
+
 /** Whether a basement still has something in it: a container nobody has opened or broken, or loot on its floor. */
 function stocked(m: Match, u: number) {
   const b = m.map.buildings[u];
   if (!b) return false;
   const inside = (x: number, z: number) => Math.abs(x - b.x) < b.w / 2 && Math.abs(z - b.z) < b.d / 2;
-  for (const c of m.map.containers) if (!m.opened[c.id] && c.kind !== 'supply' && inside(c.x, c.z)) return true;
+  // (the containers in each building, found once a map: every computer egg asks of every stairway, often)
+  let held = holds.get(m.map);
+  if (!held) holds.set(m.map, (held = []));
+  const ids = (held[u] ??= m.map.containers.filter((c) => c.kind !== 'supply' && inside(c.x, c.z)).map((c) => c.id));
+  for (const id of ids) if (!m.opened[id]) return true;
   let any = false;
   lootNear(m, b.x, b.z, Math.max(b.w, b.d) / 2, (l) => {
     if (inside(l.x, l.z)) any = true;

@@ -41,6 +41,8 @@ const BUS_SCALE = 1.35;
 const OVERVIEW = 150;
 /** Loot is drawn while the camera is this close (from higher up it's specks). */
 const LOOT_VIEW = 40;
+/** The most pieces of loot first drawn in one frame. */
+const LOOT_MADE = 8;
 const TILT = (58 * Math.PI) / 180;
 const FOV = 42;
 const HALF_FOV = ((FOV / 2) * Math.PI) / 180;
@@ -4052,7 +4054,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const editMark = many(G.box, basic(0xffd75e, { transparent: true, opacity: 0.55, depthWrite: false }), 4);
   const builtShade = many(G.plane, basic(0x10182a, { map: keep(softSquareTexture(THREE)), transparent: true, opacity: 0.4, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }), BUILT_MAX / 2);
   builtShade.renderOrder = 1;
-  for (const im of [...Object.values(builtBoxes), ...Object.values(builtRoofs), printBoxes, printRoofs, planBoxes, planBad, planRoofs, editMark, builtShade]) {
+  const builtMeshes = [...Object.values(builtBoxes), ...Object.values(builtRoofs), printBoxes, printRoofs, planBoxes, planBad, planRoofs, editMark, builtShade];
+  for (const im of builtMeshes) {
     im.setColorAt(0, color.setHex(0xffffff));
     im.count = 0;
     im.frustumCulled = false;
@@ -4385,7 +4388,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   let gloom = 0;
   let shownGloom = 0;
   const fog = scene.fog as T.Fog;
-  const cam = { x: 0, z: 0, view: OVERVIEW, ready: false };
+  const cam = { x: 0, z: 0, view: OVERVIEW, ready: false, phase: null as Fighter['phase'] | null, glide: 0 };
   const vec = new THREE.Vector3();
   const vec2 = new THREE.Vector3();
 
@@ -4726,15 +4729,24 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         cam.view = cam.ready ? cam.view : want;
         cam.ready = true;
       }
-      cam.x = damp(cam.x, tx, 9, dt);
-      cam.z = damp(cam.z, tz, 9, dt);
+      // off the bus, the view eases over to the glider (framed a little differently) rather than lurching
+      const phase = focus && !opts.overview ? focus.phase : null;
+      if (phase !== cam.phase) {
+        if (cam.phase === 'bus') cam.glide = 1;
+        cam.phase = phase;
+      }
+      cam.glide = Math.max(0, cam.glide - dt);
+      const follow = 9 - 6 * cam.glide;
+      cam.x = damp(cam.x, tx, follow, dt);
+      cam.z = damp(cam.z, tz, follow, dt);
       cam.view = damp(cam.view, want, 2.2, dt);
       const aspect = width / height;
       const t = Math.tan(((FOV / 2) * Math.PI) / 180);
       const dist = aspect >= 1 ? cam.view / t : cam.view / (aspect * t);
       shake = Math.max(0, shake - dt * 2.5);
-      const jx = (Math.random() - 0.5) * shake;
-      const jz = (Math.random() - 0.5) * shake;
+      // a shake that wobbles rather than jumping about from frame to frame
+      const jx = (Math.sin(clock * 47) + Math.sin(clock * 29.3)) * 0.25 * shake;
+      const jz = (Math.sin(clock * 41.7 + 1) + Math.sin(clock * 23.1 + 2)) * 0.25 * shake;
       camera.position.set(cam.x + jx, Math.sin(TILT) * dist, cam.z + Math.cos(TILT) * dist + jz);
       camera.lookAt(cam.x + jx, 0, cam.z + jz);
       // haze only far past what's in frame
@@ -4980,6 +4992,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           lootViews.delete(id);
         }
       }
+      // (a few new ones a frame: a town's worth coming into view at once would be one long frame)
+      let made = 0;
       for (const l of m.loot.values()) {
         const near = showLoot && Math.abs(l.x - cam.x) < lootW && l.z - cam.z > -lootN && l.z - cam.z < lootS;
         let lv = lootViews.get(l.id);
@@ -4988,6 +5002,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           continue;
         }
         if (!lv) {
+          if (made++ >= LOOT_MADE) continue;
           lv = lootView(l);
           lootViews.set(l.id, lv);
         }
@@ -5028,7 +5043,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
             drawPiece(w, pieceIn(m, s) ? planBad : planBoxes, planRoofs, 0xffffff, 0xffffff, 1, false);
           }
       }
-      for (const im of [...Object.values(builtBoxes), ...Object.values(builtRoofs), printBoxes, printRoofs, planBoxes, planBad, planRoofs, editMark, builtShade]) {
+      for (const im of builtMeshes) {
         im.count = drawnAt.get(im) ?? 0;
         if (!im.count) continue;
         im.instanceMatrix.needsUpdate = true;

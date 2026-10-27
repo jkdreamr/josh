@@ -621,6 +621,7 @@ function Play({ mode }: { mode: StageMode }) {
   const mateEls = useRef<(HTMLDivElement | null)[]>([]);
   /** The emote bubbles over eggs, by egg. */
   const bubbles = useRef(new Map<number, HTMLDivElement>());
+  const bubbleHalf = useMemo(() => new WeakMap<HTMLDivElement, number>(), []);
   // hit marks where our shots land, the names of loot near us, and the wash of a stun grenade's flash
   const marks = useRef<Pop[]>(Array.from({ length: 6 }, () => ({ el: null, x: 0, y: 0, z: 0, age: 9, live: false })));
   const markAt = useRef(0);
@@ -1718,8 +1719,9 @@ function Play({ mode }: { mode: StageMode }) {
       el.style.visibility = '';
       const age = m.clock - f.emoteAt;
       el.style.opacity = calm ? '1' : Math.max(0, Math.min(1, age / 0.18, (EMOTE_T - age) / 0.5)).toFixed(2);
-      // (kept on the screen, sideways)
-      const half = el.offsetWidth / 2 + 4;
+      // (kept on the screen, sideways; its width read once, not every frame between the moves)
+      let half = bubbleHalf.get(el);
+      if (half === undefined) bubbleHalf.set(el, (half = el.offsetWidth / 2 + 4));
       const x = Math.max(half, Math.min(w - half, at.x));
       el.style.transform = `translate(${x.toFixed(1)}px, ${(at.y - (shown.has(id) && !mark ? TAG_H + 12 : 4)).toFixed(1)}px) translate(-50%, -100%)`;
     }
