@@ -1,15 +1,15 @@
 import type * as T from 'three';
 import type { World, Player, Team } from './logic.ts';
-import { FIELD, FORMATION, jerseyNumber, PLAYER_COUNT, TEAM_SIZE, teamDir, teamOf } from './logic.ts';
+import { FIELD, jerseyNumber, teamDir } from './logic.ts';
 import { disposeTree, damp } from './gl.ts';
 import { adTexture, ballNumberTexture, ballTexture, markingsTexture, pitchTextures } from './textures.ts';
-import { animateSoccerSkeleton, captureSoccerBoneBinds, createSoccerAnimationScratch, type BoneBind, type SoccerAnimationScratch, type SoccerPose } from './player.ts';
 import { IDENTITY_BASIS, type ViewBasis } from './input.ts';
+import { approachAngle, bindSoccerRig, bodyFrameVelocity, createSoccerAnimationInput, createSoccerAnimator, kickingFoot, playSoccerClip, preferredFoot, soccerClipActive, soccerDribbleOffset, updateSoccerAnimator, type SoccerAnimator, type SoccerClip } from './player.ts';
 
 type Three = typeof import('three');
 export type CameraMode = 'broadcast' | 'end' | 'replay';
 export type TimeMode = 'night' | 'golden';
-type Actor = { root: T.Group; body: T.Group; legs: [T.Mesh, T.Mesh]; fallback: T.Group; marker: T.Mesh; arrow: T.Mesh; carrierRing: T.Mesh; powerBar: T.Group; powerFill: T.Mesh; number: T.Mesh; phase: number; loaded: boolean; skinned: T.Object3D | null; boneBinds: BoneBind[]; animation: SoccerAnimationScratch; pose: SoccerPose | null; poseTime: number; celebrated: boolean; replayAction: string | null };
+type Actor = { root: T.Group; anim: SoccerAnimator; contact: T.Mesh; fallback: T.Group; marker: T.Mesh; arrow: T.Mesh; carrierRing: T.Mesh; powerBar: T.Group; powerFill: T.Mesh; number: T.Mesh; prevCooldown: number; prevAction: string; lastKick: World['kickEvent']; keeperShot: boolean; celebrated: boolean; lodTick: number; lodDt: number };
 type Crowd = { mesh: T.InstancedMesh; count: number; phases: number[]; baseY: number[]; fixtures: T.MeshStandardMaterial[] };
 
 export type SoccerView = {
@@ -27,6 +27,31 @@ const teamKit = [
   { shirt: '#112744', shorts: '#7bc9ee', trim: '#c7efff', keeper: '#f18548' },
 ] as const;
 const skinTones = ['#b87550', '#f0c19a', '#8e5942', '#d79b70', '#b88768'];
+
+function isKeeper(player: Player) {
+  return player.slot === 'GK';
+}
+
+function kickClip(action: string): SoccerClip | null {
+  if (action === 'pass' || action === 'through') return 'pass';
+  if (action === 'shoot' || action === 'finesse') return 'shot';
+  if (action === 'lob' || action === 'cross') return 'lob';
+  return null;
+}
+
+function replayClip(action: string): SoccerClip | null {
+  if (action === 'kick') return 'shot';
+  if (action === 'pass') return 'pass';
+  if (action === 'tackle') return 'tackle';
+  if (action === 'slide') return 'slide';
+  if (action === 'skill' || action === 'stepover' || action === 'step-over') return 'skill';
+  return null;
+}
+
+function startClip(actor: Actor, clip: SoccerClip, side: number, power: number, force = false) {
+  if (!force && soccerClipActive(actor.anim) && actor.anim.clip === clip) return;
+  playSoccerClip(actor.anim, clip, side, power);
+}
 
 function standard(THREE: Three, color: string, roughness = 0.76, metalness = 0) {
   return new THREE.MeshStandardMaterial({ color, roughness, metalness });
@@ -54,12 +79,12 @@ function createPlayer(THREE: Three, player: Player, lite: boolean): Actor {
   const root = new THREE.Group();
   root.scale.setScalar(1.14);
   const fallback = new THREE.Group();
-  const model = new THREE.Group();
-  root.add(fallback);
+  const anim = createSoccerAnimator(THREE, (player.id * 0.618) % 1, preferredFoot(player.id));
+  anim.figure.add(fallback);
   const kit = teamKit[player.team]!;
-  const shirt = standard(THREE, player.slot === 'GK' ? kit.keeper : kit.shirt, 0.52);
+  const shirt = standard(THREE, isKeeper(player) ? kit.keeper : kit.shirt, 0.52);
   const trim = standard(THREE, kit.trim, 0.62, 0.06);
-  const shorts = standard(THREE, player.slot === 'GK' ? '#162536' : kit.shorts, 0.68);
+  const shorts = standard(THREE, isKeeper(player) ? '#162536' : kit.shorts, 0.68);
   const socks = standard(THREE, player.team === 0 ? '#f7f4ec' : '#10243a', 0.73);
   const boot = standard(THREE, '#172027', 0.38, 0.18);
   const skin = standard(THREE, skinTones[player.id % skinTones.length]!, 0.83);
@@ -129,10 +154,10 @@ function createPlayer(THREE: Three, player: Player, lite: boolean): Actor {
   const powerFill = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.032), new THREE.MeshBasicMaterial({ color: '#e6f36d', side: THREE.DoubleSide }));
   powerBar.position.set(0, 1.98, 0); powerBack.rotation.x = -Math.PI / 2; powerFill.rotation.x = -Math.PI / 2;
   powerFill.position.y = 0.002; powerBar.add(powerBack, powerFill); powerBar.visible = false; root.add(powerBar);
-  root.add(model);
+  root.add(anim.figure);
   void boots;
   void digit;
-  return { root, body: fallback, legs, fallback, marker, arrow, carrierRing, powerBar, powerFill, number, phase: player.id * 0.83, loaded: false, skinned: null, boneBinds: [], animation: createSoccerAnimationScratch(THREE), pose: null, poseTime: 0, celebrated: false, replayAction: null };
+  return { root, anim, contact, fallback, marker, arrow, carrierRing, powerBar, powerFill, number, prevCooldown: 0, prevAction: 'idle', lastKick: null, keeperShot: false, celebrated: false, lodTick: 0, lodDt: 0 };
 }
 
 function makeCrowd(THREE: Three, parent: T.Object3D, lite: boolean): Crowd {
@@ -431,14 +456,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   ball.castShadow = true; scene.add(ball);
   const ballShadow = new THREE.Mesh(new THREE.CircleGeometry(0.32, 20), new THREE.MeshBasicMaterial({ color: '#06150e', transparent: true, opacity: 0.32, depthWrite: false }));
   ballShadow.rotation.x = -Math.PI / 2; ballShadow.position.y = 0.025; scene.add(ballShadow);
-  const actors: Actor[] = [];
+  const actors = new Map<number, Actor>();
   const materialCache = new Map<string, Map<T.Material, T.Material>>();
-  const worldPlayers = Array.from({ length: PLAYER_COUNT }, (_, id) => ({ id, team: teamOf(id), slot: FORMATION[id % TEAM_SIZE]!.slot, x: 0, z: 0, vx: 0, vz: 0, facing: 0, stamina: 1, human: false, controlled: false, cooldown: 0, action: 'idle' }));
-  for (const p of worldPlayers) {
-    const actor = createPlayer(THREE, p, lite);
-    actors.push(actor);
-    scene.add(actor.root);
-  }
   const loadedAssets = new Map<string, Promise<{ scene: T.Object3D; clone: (source: T.Object3D) => T.Object3D }>>();
   const loadPlayer = (player: Player, actor: Actor) => {
     const url = `/models/soccer/${player.id % 2 ? 'male' : 'female'}.glb`;
@@ -462,16 +481,22 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
         mesh.castShadow = false;
         mesh.frustumCulled = false;
         const source = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        const variant = `${player.team}:${player.slot === 'GK' ? 'keeper' : 'field'}`;
+        const variant = `${player.team}:${isKeeper(player) ? 'keeper' : 'field'}`;
         let variants = materialCache.get(variant);
         if (!variants) { variants = new Map(); materialCache.set(variant, variants); }
         const materials = source.map((material) => {
           let cloned = variants!.get(material);
           if (!cloned) {
             cloned = material.clone() as T.MeshStandardMaterial;
-            if (cloned instanceof THREE.MeshStandardMaterial) {
-              if (material.name === 'shirt') cloned.color.set(player.slot === 'GK' ? teamKit[player.team]!.keeper : teamKit[player.team]!.shirt);
-              if (material.name === 'shorts') cloned.color.set(teamKit[player.team]!.shorts);
+            const name = material.name.trim().toLowerCase();
+            const shirt = name === 'shirt' || name.includes('jersey');
+            const shorts = name === 'shorts' || name.includes('short');
+            if (shirt || shorts) {
+              const color = shirt
+                ? isKeeper(player) ? teamKit[player.team]!.keeper : teamKit[player.team]!.shirt
+                : isKeeper(player) ? '#162536' : teamKit[player.team]!.shorts;
+              const materialColor = (cloned as T.MeshStandardMaterial).color;
+              materialColor?.set(color);
             }
             variants!.set(material, cloned);
           }
@@ -480,17 +505,26 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
         mesh.material = Array.isArray(mesh.material) ? materials : materials[0]!;
       });
       actor.fallback.visible = false;
-      actor.root.add(body);
-      actor.skinned = body;
-      actor.boneBinds = captureSoccerBoneBinds(THREE, actor.root, body);
-      actor.loaded = true;
+      bindSoccerRig(THREE, actor.anim, body);
     }).catch(() => {
       if (import.meta.env.DEV) console.warn(`Soccer player model unavailable: ${url}; using procedural player`);
     });
   };
-  actors.forEach((actor, index) => loadPlayer(worldPlayers[index]!, actor));
+  const ensureActor = (player: Player) => {
+    let actor = actors.get(player.id);
+    if (actor) return actor;
+    actor = createPlayer(THREE, player, lite);
+    actors.set(player.id, actor);
+    scene.add(actor.root);
+    loadPlayer(player, actor);
+    return actor;
+  };
 
   const matrix = new THREE.Object3D();
+  const animationInput = createSoccerAnimationInput();
+  const frustum = new THREE.Frustum();
+  const frustumMatrix = new THREE.Matrix4();
+  const playerSphere = new THREE.Sphere(new THREE.Vector3(), 1.5);
   let crowdTimer = 0;
   let crowdRoar = 0;
   let elapsed = 0;
@@ -532,90 +566,15 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     crowdTimer += dt; adTimer += dt;
     if (adTimer > 0.08) { ads.draw(elapsed); adTimer = 0; }
     let currentCarrier: World['players'][number] | null = null;
+    let controlledPlayer: World['players'][number] | null = null;
+    let controlled: World['players'][number] | null = null;
     for (const player of world.players) {
-      if (Math.hypot(world.ball.x - player.x, world.ball.z - player.z) < 0.8) {
-        currentCarrier = player;
-        break;
-      }
+      if (currentCarrier === null && Math.hypot(world.ball.x - player.x, world.ball.z - player.z) < 0.8) currentCarrier = player;
+      if (controlledPlayer === null && player.id === world.controlled[humanTeam]) controlledPlayer = player;
+      if (controlled === null && player.controlled) controlled = player;
     }
-    for (const player of world.players) {
-      const actor = actors[player.id]!;
-      actor.root.position.set(player.x, 0, player.z);
-      const speed = Math.hypot(player.vx, player.vz);
-      if (world.kickEvent?.playerId === player.id) {
-        actor.pose = world.kickEvent.action === 'pass' || world.kickEvent.action === 'through'
-          ? 'pass'
-          : world.kickEvent.action === 'shoot' || world.kickEvent.action === 'finesse' || world.kickEvent.action === 'lob'
-            ? 'shoot'
-            : null;
-        actor.poseTime = 0.42;
-      } else if (cameraMode === 'replay' && player.action !== actor.replayAction && (player.action === 'kick' || player.action === 'pass')) {
-        actor.pose = player.action === 'kick' ? 'shoot' : 'pass';
-        actor.poseTime = 0.42;
-      }
-      actor.replayAction = cameraMode === 'replay' ? player.action : null;
-      if (world.phase !== 'goal') actor.celebrated = false;
-      const scoringTeam = world.event.startsWith('bay city') ? 0 : 1;
-      if (world.phase === 'goal' && player.team === scoringTeam && player.slot !== 'GK' && !actor.celebrated) {
-        actor.pose = 'celebrate';
-        actor.poseTime = 2.1;
-        actor.celebrated = true;
-      }
-      if (player.slot === 'GK' && (player.action === 'catch' || player.action === 'dive')) {
-        actor.pose = player.action;
-        actor.poseTime = Math.max(actor.poseTime, 0.24);
-      } else if (player.action === 'slide' || player.action === 'tackle') {
-        actor.pose = player.action;
-        actor.poseTime = Math.max(actor.poseTime, player.cooldown);
-      }
-      const keeperShot = player.slot === 'GK'
-        && world.ball.vx * -teamDir(player.team, world.endsSwapped) > 1
-        && Math.abs(world.ball.x - player.x) < 9;
-      if (keeperShot && player.action !== 'catch' && actor.pose !== 'dive') {
-        actor.pose = 'dive';
-        actor.poseTime = 0.48;
-      } else if (player.slot === 'GK' && !keeperShot && actor.poseTime <= 0 && actor.pose === 'dive') {
-        actor.pose = null;
-      }
-      actor.poseTime = Math.max(0, actor.poseTime - dt);
-      actor.root.rotation.z = damp(actor.root.rotation.z, actor.pose === 'dive' ? Math.sign(world.ball.z - player.z || 1) * 0.28 : 0, 10, dt);
-      const face = speed > 0.1 ? Math.atan2(player.vx, player.vz) : player.facing;
-      const yawDelta = Math.atan2(Math.sin(face - actor.root.rotation.y), Math.cos(face - actor.root.rotation.y));
-      actor.root.rotation.y = damp(actor.root.rotation.y, actor.root.rotation.y + yawDelta, 12, dt);
-      actor.phase += dt * (5 + speed * 0.9);
-      const run = Math.min(1, speed / 6);
-      actor.legs[0].rotation.x = Math.sin(actor.phase) * run * 0.65;
-      actor.legs[1].rotation.x = Math.sin(actor.phase + Math.PI) * run * 0.65;
-      actor.body.rotation.z = player.action === 'slide' ? Math.PI / 2 : Math.sin(actor.phase * 0.5) * run * 0.035;
-      actor.body.rotation.x = -run * 0.07;
-      actor.marker.visible = player.controlled || player.id === targetId;
-      (actor.marker.material as T.MeshBasicMaterial).color.set(player.id === targetId && !player.controlled ? '#fff28a' : player.team === 0 ? '#ff5368' : '#73defa');
-      if (player.controlled || player.id === targetId) (actor.marker.material as T.MeshBasicMaterial).opacity = 0.72 + Math.sin(elapsed * 5) * 0.18;
-      actor.arrow.visible = player.controlled;
-      actor.carrierRing.visible = currentCarrier?.id === player.id;
-      actor.powerBar.visible = false;
-      actor.root.scale.y = currentCarrier?.id === player.id && player.action === 'kick' ? 1.05 + Math.sin(elapsed * 24) * 0.03 : 1;
-      if (actor.skinned) {
-        const pose = actor.poseTime > 0 ? actor.pose : player.slot === 'GK' ? 'ready' : speed > 0.18 ? 'run' : null;
-        animateSoccerSkeleton(
-          THREE,
-          actor.root,
-          actor.boneBinds,
-          actor.phase,
-          speed,
-          pose,
-          actor.animation,
-          actor.poseTime > 0 ? 1 - actor.poseTime / 0.42 : 0,
-          currentCarrier?.id === player.id,
-        );
-      }
-    }
-    ball.position.set(world.ball.x, world.ball.y, world.ball.z);
-    ball.rotation.z += world.ball.vx * dt / 0.11;
-    ball.rotation.x += world.ball.vz * dt / 0.11;
-    ballShadow.position.set(world.ball.x, 0.028, world.ball.z);
-    const shadowScale = Math.max(0.25, 1.1 - world.ball.y * 0.2);
-    ballShadow.scale.set(shadowScale, shadowScale, 1);
+    let dribbleOffsetX = 0;
+    let dribbleOffsetZ = 0;
     const crowdSignal = world.phase === 'goal' ? 1 : world.ball.x * teamDir(humanTeam, world.endsSwapped) > 11 ? 0.2 : 0;
     crowdRoar = damp(crowdRoar, Math.max(crowdSignal, 0.05), world.phase === 'goal' ? 2 : 0.35, dt);
     if (crowdTimer > 0.1) {
@@ -653,10 +612,10 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
 
     const portrait = camera.aspect < 0.72;
     const attackDir = teamDir(humanTeam, world.endsSwapped);
-    const controlledPlayer = world.players.find((player) => player.id === world.controlled[humanTeam]);
     const focusX = world.phase === 'restart' ? controlledPlayer?.x ?? world.ball.x : world.ball.x;
+    const tracking = world.phase === 'restart' ? 0.35 : 0.82;
     const trackedX = cameraMode === 'broadcast'
-      ? Math.max(-FIELD.length * 0.16, Math.min(FIELD.length * 0.16, focusX * 0.35 + attackDir * FIELD.goalWidth * 0.3))
+      ? Math.max(-FIELD.length * 0.38, Math.min(FIELD.length * 0.38, focusX * tracking + attackDir * FIELD.goalWidth * 0.3))
       : world.ball.x * 0.35;
     target.set(
       trackedX + (portrait && cameraMode === 'broadcast' ? attackDir * FIELD.goalWidth * 0.28 : attackDir * FIELD.goalWidth * 0.2),
@@ -667,7 +626,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     else if (cameraMode === 'broadcast' && portrait) desired.set(target.x - attackDir * FIELD.width * 0.42, FIELD.width * 0.24, target.z);
     else if (cameraMode === 'broadcast') desired.set(target.x, FIELD.width * 0.25, -FIELD.width * 0.55);
     else desired.set(target.x - attackDir * FIELD.length * 0.26, FIELD.width * 0.2, target.z);
-    const zoom = cameraMode === 'replay' ? 36 : portrait && cameraMode === 'broadcast' ? 72 : 28;
+    const zoom = cameraMode === 'replay' ? 36 : portrait && cameraMode === 'broadcast' ? 68 : 27;
     camera.fov = damp(camera.fov, zoom, 2.4, dt);
     camera.updateProjectionMatrix();
     if (!cameraReady) {
@@ -690,7 +649,131 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
         lastViewBasis = { forward, right: { x: -forward.z, z: forward.x } };
       }
     }
-    const controlled = world.players.find((player) => player.controlled);
+    frustumMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
+    frustum.setFromProjectionMatrix(frustumMatrix);
+    const scoringTeam = world.event.startsWith('bay city') ? 0 : 1;
+    for (const player of world.players) {
+      const actor = ensureActor(player);
+      actor.root.position.set(player.x, 0, player.z);
+      const speed = Math.hypot(player.vx, player.vz);
+      const kickEvent = world.kickEvent;
+      const eventForPlayer = kickEvent?.playerId === player.id;
+      if (eventForPlayer && kickEvent && kickEvent !== actor.lastKick) {
+        const clip = kickClip(kickEvent.action);
+        if (clip) {
+          const foot = kickingFoot(actor.root.rotation.y, world.ball.vx, world.ball.vz, actor.anim.foot);
+          startClip(actor, clip, foot === 'l' ? 1 : -1, kickEvent.power, true);
+        }
+      } else if (!eventForPlayer && player.cooldown > actor.prevCooldown + 0.05) {
+        const clip = replayClip(player.action);
+        if (clip) {
+          const side = player.action === 'slide'
+            ? bodyFrameVelocity(actor.root.rotation.y, player.vx, player.vz, actor.anim.frame).side >= 0 ? 1 : -1
+            : kickingFoot(actor.root.rotation.y, world.ball.x - player.x, world.ball.z - player.z, actor.anim.foot) === 'l' ? 1 : -1;
+          startClip(actor, clip, side, 0.5);
+        }
+      }
+      actor.lastKick = kickEvent;
+      if (world.phase !== 'goal') actor.celebrated = false;
+      const celebrating = world.phase === 'goal' && cameraMode !== 'replay' && player.team === scoringTeam && !isKeeper(player);
+      if (celebrating && !actor.celebrated) {
+        startClip(actor, 'celebrate', 1, 0.5);
+        actor.celebrated = true;
+      }
+      const ownGoalX = -teamDir(player.team, world.endsSwapped) * FIELD.length / 2;
+      const ballSpeed = Math.hypot(world.ball.vx, world.ball.vz);
+      const towardOwnGoal = world.ball.vx * -teamDir(player.team, world.endsSwapped) > 0;
+      if (isKeeper(player)) {
+        if (player.action !== actor.prevAction && (player.action === 'dive' || player.action === 'catch' || player.action === 'parry')) {
+          const side = bodyFrameVelocity(actor.root.rotation.y, world.ball.x - player.x, world.ball.z - player.z, actor.anim.frame).side >= 0 ? 1 : -1;
+          startClip(actor, player.action === 'dive' ? 'dive' : 'catch', side, 0.5);
+          actor.keeperShot = true;
+        }
+        if (ballSpeed < 6 || !towardOwnGoal) actor.keeperShot = false;
+        if (!actor.keeperShot && ballSpeed > 10 && towardOwnGoal) {
+          const timeToPlane = (ownGoalX - world.ball.x) / world.ball.vx;
+          if (timeToPlane > 0 && timeToPlane < 0.42) {
+            const keeperZ = player.z + player.vz * timeToPlane;
+            const lateral = world.ball.z + world.ball.vz * timeToPlane - keeperZ;
+            const side = bodyFrameVelocity(
+              actor.root.rotation.y,
+              world.ball.x + world.ball.vx * timeToPlane - player.x,
+              lateral,
+              actor.anim.frame,
+            ).side >= 0 ? 1 : -1;
+            startClip(actor, Math.abs(lateral) > 0.7 ? 'dive' : 'catch', side, 0.5);
+            actor.keeperShot = true;
+          }
+        }
+      } else {
+        actor.keeperShot = false;
+      }
+      const carrying = currentCarrier?.id === player.id;
+      const carrierDx = currentCarrier ? currentCarrier.x - player.x : 0;
+      const carrierDz = currentCarrier ? currentCarrier.z - player.z : 0;
+      const jockey = !isKeeper(player) && speed < 6.5 && currentCarrier !== null
+        && currentCarrier.team !== player.team && Math.hypot(carrierDx, carrierDz) < 4.5;
+      if (!soccerClipActive(actor.anim) || (actor.anim.clip !== 'slide' && actor.anim.clip !== 'dive')) {
+        let facing = actor.root.rotation.y;
+        if (celebrating) facing = Math.atan2(camera.position.x - player.x, camera.position.z - player.z);
+        else if (jockey && currentCarrier) facing = Math.atan2(carrierDx, carrierDz);
+        else if (speed > 0.4) facing = Math.atan2(player.vx, player.vz);
+        else if (player.controlled) facing = player.facing;
+        else facing = Math.atan2(world.ball.x - player.x, world.ball.z - player.z);
+        actor.root.rotation.y = approachAngle(actor.root.rotation.y, facing, 10, dt, 9);
+      }
+      actor.marker.visible = player.controlled || player.id === targetId;
+      (actor.marker.material as T.MeshBasicMaterial).color.set(player.id === targetId && !player.controlled ? '#fff28a' : player.team === 0 ? '#ff5368' : '#73defa');
+      if (player.controlled || player.id === targetId) (actor.marker.material as T.MeshBasicMaterial).opacity = 0.72 + Math.sin(elapsed * 5) * 0.18;
+      actor.arrow.visible = player.controlled;
+      actor.carrierRing.visible = carrying;
+      actor.powerBar.visible = false;
+      const input = animationInput;
+      input.vx = player.vx;
+      input.vz = player.vz;
+      input.yaw = actor.root.rotation.y;
+      input.scale = actor.root.scale.x;
+      input.time = time;
+      input.carrying = carrying;
+      input.jockey = jockey;
+      input.keeperSet = isKeeper(player) && Math.abs(world.ball.x - ownGoalX) < 25;
+      input.lookX = world.ball.x - player.x;
+      input.lookY = world.ball.y;
+      input.lookZ = world.ball.z - player.z;
+      input.charge = carrying && player.controlled ? power : null;
+      playerSphere.center.set(player.x, 1, player.z);
+      const offscreen = !frustum.intersectsSphere(playerSphere);
+      const cameraDx = player.x - camera.position.x;
+      const cameraDy = 1 - camera.position.y;
+      const cameraDz = player.z - camera.position.z;
+      const interval = offscreen ? 4 : cameraDx * cameraDx + cameraDy * cameraDy + cameraDz * cameraDz > 35 * 35 ? 2 : 1;
+      actor.lodDt += dt;
+      actor.lodTick = (actor.lodTick + 1) % interval;
+      if (interval === 1 || actor.lodTick === player.id % interval) {
+        updateSoccerAnimator(actor.anim, input, actor.lodDt);
+        actor.lodDt = 0;
+      }
+      const lift = Math.max(0, actor.anim.figure.position.y);
+      actor.contact.position.x = actor.anim.figure.position.x;
+      actor.contact.position.z = actor.anim.figure.position.z;
+      const contactMaterial = actor.contact.material as T.MeshBasicMaterial;
+      contactMaterial.opacity = 0.28 * (1 - Math.min(1, Math.max(0, (lift - 0.2) / 1.3)));
+      const contactScale = 1 - Math.min(0.6, lift * 0.35);
+      actor.contact.scale.set(contactScale, contactScale, 1);
+      if (carrying && speed > 0.8 && !soccerClipActive(actor.anim) && world.ball.y < 0.3) {
+        const offset = soccerDribbleOffset(actor.anim, speed) / speed;
+        dribbleOffsetX = player.vx * offset;
+        dribbleOffsetZ = player.vz * offset;
+      }
+      actor.prevCooldown = player.cooldown;
+      actor.prevAction = player.action;
+    }
+    ball.position.set(world.ball.x + dribbleOffsetX, world.ball.y, world.ball.z + dribbleOffsetZ);
+    ball.rotation.z += world.ball.vx * dt / 0.11;
+    ball.rotation.x += world.ball.vz * dt / 0.11;
+    ballShadow.position.set(ball.position.x, 0.028, ball.position.z);
+    const shadowScale = Math.max(0.25, 1.1 - world.ball.y * 0.2);
+    ballShadow.scale.set(shadowScale, shadowScale, 1);
     if (controlled) {
       projected.set(controlled.x, 2.75, controlled.z).project(camera);
       const visible = projected.z >= -1 && projected.z <= 1 && Math.abs(projected.x) < 1.05 && Math.abs(projected.y) < 1.05;

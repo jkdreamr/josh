@@ -1,7 +1,8 @@
 import type { World } from './logic.ts';
+import { wrapAngle } from './player.ts';
 
 export const REPLAY_SECONDS = 6;
-type PlayerFrame = { x: number; z: number; facing: number; action: string };
+type PlayerFrame = { x: number; z: number; vx: number; vz: number; facing: number; cooldown: number; action: string };
 type BallFrame = { x: number; y: number; z: number; vx: number; vy: number; vz: number };
 export type ReplayFrame = { time: number; players: PlayerFrame[]; ball: BallFrame };
 
@@ -13,14 +14,14 @@ export function createReplayWorld(template: World): World {
     score: [...template.score],
     restartAt: { ...template.restartAt },
     controlled: [...template.controlled],
-    kickEvent: template.kickEvent ? { ...template.kickEvent } : null,
+    kickEvent: null,
   };
 }
 
 export function appendReplayFrame(buffer: ReplayFrame[], world: World, time: number) {
   buffer.push({
     time,
-    players: world.players.map(({ x, z, facing, action }) => ({ x, z, facing, action })),
+    players: world.players.map(({ x, z, vx, vz, facing, cooldown, action }) => ({ x, z, vx, vz, facing, cooldown, action })),
     ball: {
       x: world.ball.x, y: world.ball.y, z: world.ball.z,
       vx: world.ball.vx, vy: world.ball.vy, vz: world.ball.vz,
@@ -52,7 +53,10 @@ export function sampleReplay(buffer: ReplayFrame[], time: number, template: Worl
     const b = after.players[i]!;
     player.x = a.x + (b.x - a.x) * amount;
     player.z = a.z + (b.z - a.z) * amount;
-    player.facing = a.facing + (b.facing - a.facing) * amount;
+    player.vx = a.vx + (b.vx - a.vx) * amount;
+    player.vz = a.vz + (b.vz - a.vz) * amount;
+    player.facing = wrapAngle(a.facing + wrapAngle(b.facing - a.facing) * amount);
+    player.cooldown = a.cooldown + (b.cooldown - a.cooldown) * amount;
     player.action = amount < 0.5 ? a.action : b.action;
   }
   result.ball.x = before.ball.x + (after.ball.x - before.ball.x) * amount;
@@ -69,6 +73,7 @@ export function sampleReplay(buffer: ReplayFrame[], time: number, template: Worl
   result.eventTime = template.eventTime;
   result.half = template.half;
   result.endsSwapped = template.endsSwapped;
+  result.kickEvent = null;
   return result;
 }
 
