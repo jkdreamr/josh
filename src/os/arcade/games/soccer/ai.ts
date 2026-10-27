@@ -1,4 +1,5 @@
 import { createWorld, distance, FIELD, FORMATION, findReceiver, groundPassPower, isCross, nearestCarrier, restartTaker, shotAim, stepWorld, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
+import { cpuMayTackle, offsidePosition, onsideProgress, stepUpLine } from './rules.ts';
 
 export const LEVEL_NAMES = ['easy', 'normal', 'hard'] as const;
 export type Level = (typeof LEVEL_NAMES)[number];
@@ -9,7 +10,7 @@ const keeperReadNoise = { easy: 0.28, normal: 0.08, hard: 0.01 } as const;
 const decisionInterval = { easy: 0.7, normal: 0.3, hard: 0.24 } as const;
 const noise = { easy: 0.65, normal: 0.2, hard: 0.03 } as const;
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
-const outfield = (player: Player) => player.slot !== 'GK';
+const outfield = (player: Player) => player.slot !== 'GK' && !player.sentOff;
 type Role = { line: 'gk' | 'def' | 'mid' | 'att'; lateral: number; freedom: number; overlap?: boolean };
 const ROLES: Record<string, Role> = {
   GK: { line: 'gk', lateral: 0, freedom: 0 },
@@ -87,7 +88,7 @@ function laneClearance(world: World, from: Point, to: Point, team: Team, shot = 
   const length2 = dx * dx + dz * dz || 1;
   let clearance = 10;
   for (const p of world.players) {
-    if (p.team === team || shot && !outfield(p)) continue;
+    if (p.team === team || p.sentOff || shot && !outfield(p)) continue;
     const t = ((p.x - from.x) * dx + (p.z - from.z) * dz) / length2;
     if (t <= 0.04 || t >= 1.05) continue;
     clearance = Math.min(clearance, Math.hypot(p.x - from.x - dx * t, p.z - from.z - dz * t));
@@ -148,7 +149,7 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
   const dir = teamDir(player.team, world.endsSwapped);
   const goalX = dir * FIELD.length / 2;
   const goalDistance = Math.hypot(goalX - player.x, player.z);
-  const opponents = world.players.filter((p) => p.team !== player.team);
+  const opponents = world.players.filter((p) => p.team !== player.team && !p.sentOff);
   const pressure = Math.min(...opponents.map((p) => distance(p, player)));
   const facingForward = Math.sin(player.facing) * dir > 0.4;
   const nearest = [...opponents].sort((a, b) => distance(a, player) - distance(b, player))[0]!;
@@ -174,7 +175,8 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
   const lastDefender = Math.max(...opponents.filter(outfield).map((p) => p.x * dir));
   let best: { receiver: Player; action: 'pass' | 'through' | 'lob'; score: number } | null = null;
   for (const receiver of world.players) {
-    if (receiver.team !== player.team || receiver.id === player.id) continue;
+    if (receiver.team !== player.team || receiver.id === player.id || receiver.sentOff
+      || level !== 'easy' && offsidePosition(world, receiver)) continue;
     const gap = distance(player, receiver);
     if (gap < 3 || gap > longitudinal(0.4)) continue;
     const forward = (receiver.x - player.x) * dir;
@@ -188,7 +190,8 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
     if (Math.abs(player.z) > lateral(0.3) && player.x * dir > longitudinal(0.22) && roleOf(receiver).line === 'att'
       && Math.abs(receiver.z) < lateral(0.2) && space > 3) action = 'lob';
     const aim = { x: receiver.x - player.x, z: receiver.z - player.z };
-    if (findReceiver(world, player, aim, action === 'through', action === 'lob' && isCross(world, player))?.id !== receiver.id) continue;
+    if (findReceiver(world, player, aim, action === 'through', action === 'lob' && isCross(world, player),
+      !!world.rules?.offside && level !== 'easy')?.id !== receiver.id) continue;
     const score = forward * 0.16 + Math.min(space, 6) * 0.12 + Math.min(lane, 4) * 0.08
       - gap * 0.025 + (action === 'through' ? 0.5 : 0) + optionNoise
       + (receiver.slot === 'GK' ? -0.8 : 0);
@@ -196,7 +199,7 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
   }
   if (best && ((pressure < 2.5 && (best.receiver.x - player.x) * dir > -1) || pressure < 1.4
     || (best.score > 1.5 && (best.receiver.x - player.x) * dir > 4) || player.slot === 'GK')) {
-    return { move: { x: 0, z: 0 }, action: best.action, pressed: true,
+    return { move: { x: 0, z: 0 }, action: best.action, pressed: true, allowOffside: level === 'easy',
       power: best.action === 'pass' ? groundPassPower(distance(player, best.receiver)) : 0.5,
       aim: { x: best.receiver.x - player.x, z: best.receiver.z - player.z } };
   }
@@ -212,9 +215,10 @@ function shapeTarget(world: World, p: Player, state: MatchState) {
   const role = roleOf(p);
   const anchor = hasBall ? clamp(ballProgress - longitudinal(0.07), -longitudinal(0.24), longitudinal(0.19))
     : clamp(ballProgress - longitudinal(0.1), -longitudinal(0.31), longitudinal(0.1));
-  const siblings = world.players.filter((q) => q.team === p.team && q.slot === p.slot);
-  const homeSide = FORMATION[rosterIndex(world, p)]?.slot === p.slot
-    ? FORMATION[rosterIndex(world, p)]!.z / FIELD.width
+  const siblings = world.players.filter((q) => q.team === p.team && !q.sentOff && q.slot === p.slot);
+  const formation = FORMATION[p.formation ?? rosterIndex(world, p)];
+  const homeSide = formation?.slot === p.slot
+    ? formation.z / FIELD.width
     : role.lateral + (siblings.indexOf(p) - (siblings.length - 1) / 2) * 0.24;
   const side = world.ball.z * (hasBall ? 0.15 : 0.5);
   let progress = anchor + longitudinal(role.line === 'def' ? (hasBall ? -0.17 : -0.15) : role.line === 'att' ? (hasBall ? 0.21 : 0.15) : 0.02);
@@ -225,7 +229,7 @@ function shapeTarget(world: World, p: Player, state: MatchState) {
     const dirFacing = Math.sin(carrier.facing) * dir;
     if (role.line === 'att') {
       const line = Math.max(...world.players.filter((q) => q.team !== p.team && outfield(q)).map((q) => q.x * dir));
-      const pressure = Math.min(...world.players.filter((q) => q.team !== p.team).map((q) => distance(q, carrier)));
+      const pressure = Math.min(...world.players.filter((q) => q.team !== p.team && !q.sentOff).map((q) => distance(q, carrier)));
       progress = carrier.x * dir + longitudinal(0.13);
       if (dirFacing > 0.4 && pressure > 3.5 && tickWindow(state.tick)) progress = Math.max(progress, line + 1);
       z = lateral(homeSide) + (carrier.z > 0 ? -1 : 1) * lateral(0.1);
@@ -234,8 +238,8 @@ function shapeTarget(world: World, p: Player, state: MatchState) {
   }
   const run = state.runs.get(p.id);
   if (hasBall && run) return { x: run.x, z: run.z };
-  const keeper = world.players.find((q) => q.team === p.team && q.slot === 'GK')!;
-  progress = Math.max(progress, keeper.x * dir + 0.75);
+  const keeper = world.players.find((q) => q.team === p.team && q.slot === 'GK' && !q.sentOff);
+  if (keeper) progress = Math.max(progress, keeper.x * dir + 0.75);
   return { x: dir * clamp(progress, -longitudinal(0.44), longitudinal(0.44)), z: clamp(z, -lateral(0.4), lateral(0.4)) };
 }
 
@@ -248,7 +252,7 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
   const targets = new Map<number, Point>();
   for (const side of [0, 1] as const) {
     if (team !== undefined && team !== side) continue;
-    const players = world.players.filter((p) => p.team === side);
+    const players = world.players.filter((p) => p.team === side && !p.sentOff);
     const dir = teamDir(side, world.endsSwapped);
     const ownGoal = { x: -dir * FIELD.length / 2, z: 0 };
     const defenders = players.filter(outfield).sort((a, b) => distance(a, world.ball) - distance(b, world.ball));
@@ -293,7 +297,7 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
       }
       if (state.possession !== side || !carrier && world.passTarget === null) {
         if (p.id === presser?.id) {
-          const receiver = world.players.find((q) => q.id === world.passTarget && q.team !== side);
+          const receiver = world.players.find((q) => q.id === world.passTarget && q.team !== side && !q.sentOff);
           const opponent = carrier?.team !== side ? carrier ?? receiver : receiver;
           if (opponent) {
             const dx = ownGoal.x - opponent.x, dz = -opponent.z;
@@ -304,9 +308,10 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
             const facingAway = Math.sin(opponent.facing) * -dir < 0.2;
             const exposed = distance(opponent, world.ball) > 0.48;
             const reacts = (tick + rosterIndex(world, p) * 2) % Math.round(reaction[level] * 60) === 0;
+            const mayTackle = cpuMayTackle(world, p, opponent);
             commands.set(p.id, { move: gap < 1.38 && reacts && (exposed || facingAway) ? targetMove(p, world.ball.x, world.ball.z) : distance(p, target) < 0.65
               ? { x: opponent.vx / 6, z: opponent.vz / 6 } : move,
-              sprint: distance(p, target) > 4, action: carrier && gap < 1.38 && (exposed || facingAway) ? 'tackle' : null, pressed: reacts });
+              sprint: distance(p, target) > 4, action: carrier && mayTackle && gap < 1.38 && (exposed || facingAway) ? 'tackle' : null, pressed: reacts });
           } else {
             const flight = clamp(distance(p, world.ball) / 8, 0, 0.7);
             commands.set(p.id, { move: targetMove(p, clamp(world.ball.x + world.ball.vx * flight, -longitudinal(0.48), longitudinal(0.48)),
@@ -354,9 +359,12 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
   for (const p of shaped) {
     const target = targets.get(p.id)!;
     const dir = teamDir(p.team, world.endsSwapped);
-    const keeper = world.players.find((q) => q.team === p.team && q.slot === 'GK')!;
-    const progress = Math.max(target.x * dir, keeper.x * dir + 0.75);
-    commands.set(p.id, { move: targetMove(p, dir * clamp(progress, -longitudinal(0.44), longitudinal(0.44)), clamp(target.z, -lateral(0.4), lateral(0.4))),
+    const keeper = world.players.find((q) => q.team === p.team && q.slot === 'GK' && !q.sentOff);
+    const progress = Math.max(target.x * dir, keeper ? keeper.x * dir + 0.75 : -longitudinal(0.44));
+    let targetX = dir * clamp(progress, -longitudinal(0.44), longitudinal(0.44));
+    const adjusted = onsideProgress(world, p, targetX * dir);
+    targetX = dir * (roleOf(p).line === 'def' ? stepUpLine(world, p, adjusted) : adjusted);
+    commands.set(p.id, { move: targetMove(p, targetX, clamp(target.z, -lateral(0.4), lateral(0.4))),
       sprint: state.possession !== p.team && tick - state.teams[p.team].changedAt < 90 });
   }
   for (const p of world.phase === 'live' ? world.players : []) {

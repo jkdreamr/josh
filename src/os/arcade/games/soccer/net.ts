@@ -1,9 +1,10 @@
 import { FIELD, PLAYER_COUNT, teamOf, type World } from './logic.ts';
 import type { ControlCommand } from './input.ts';
+import { validRules } from './rules.ts';
 
 export type MovePacket = { t: 'soccer'; k: 'mv'; r: number; seq: number; seat: number; x: number; z: number; ax: number; az: number; power: number; buttons: number; held: number; sx?: number; sz?: number };
 export type SnapshotPacket = { t: 'soccer'; k: 's'; r: number; seq: number; state: World };
-export type ConfigPacket = { t: 'soccer'; k: 'cfg'; r: number; seq: number; half: 2 | 3 | 4 | 6; level: 0 | 1 | 2; displayOnly: boolean; mode?: 'cpu' | 'versus' | 'coop' };
+export type ConfigPacket = { t: 'soccer'; k: 'cfg'; r: number; seq: number; half: 2 | 3 | 4 | 6; level: 0 | 1 | 2; displayOnly: boolean; mode?: 'cpu' | 'versus' | 'coop'; offside?: boolean };
 export type SoccerPacket = MovePacket | SnapshotPacket | ConfigPacket;
 const finite = (v: unknown, abs: number) => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= abs;
 const quantized = (v: unknown) => finite(v, 1) && Math.abs((v as number) * 100 - Math.round((v as number) * 100)) < 1e-6;
@@ -21,6 +22,8 @@ function validWorld(value: unknown): value is World {
     && inRange(p.x, -FIELD.length / 2 - 2, FIELD.length / 2 + 2) && inRange(p.z, -FIELD.width / 2 - 2, FIELD.width / 2 + 2)
     && inRange(p.vx, -10, 10) && inRange(p.vz, -10, 10) && inRange(p.facing, -Math.PI * 2, Math.PI * 2)
     && inRange(p.stamina, 0, 1) && typeof p.human === 'boolean' && typeof p.controlled === 'boolean'
+    && (p.sentOff === undefined || typeof p.sentOff === 'boolean')
+    && (p.formation === undefined || Number.isInteger(p.formation) && p.formation >= 0 && p.formation <= 10)
     && inRange(p.cooldown, 0, 30) && (p.touchCd === undefined || inRange(p.touchCd, 0, 30))
     && (p.planting === undefined || typeof p.planting === 'boolean') && typeof p.action === 'string' && p.action.length <= 24)) return false;
   if (!ball || !inRange(ball.x, -80, 80) || !inRange(ball.y, 0, 40) || !inRange(ball.z, -60, 60)
@@ -34,7 +37,7 @@ function validWorld(value: unknown): value is World {
     || !inRange(w.restartClock, 0, 360) || typeof w.event !== 'string' || w.event.length > 80
     || !Array.isArray(w.controlled) || w.controlled.length !== 2 || !w.controlled.every((id) => Number.isInteger(id) && id >= 0 && id < PLAYER_COUNT)
     || (w.passTarget !== null && w.passTarget !== undefined && (!Number.isInteger(w.passTarget) || w.passTarget < 0 || w.passTarget >= PLAYER_COUNT))
-    || typeof w.passControl !== 'boolean') return false;
+    || typeof w.passControl !== 'boolean' || !validRules(w.rules)) return false;
   const kickEvent = w.kickEvent;
   if (w.carrierId !== undefined && w.carrierId !== null && !w.players.some((p) => p.id === w.carrierId)) return false;
   if (w.lastToucherId !== undefined && w.lastToucherId !== null && !w.players.some((p) => p.id === w.lastToucherId)) return false;
@@ -88,11 +91,13 @@ export function parsePacket(value: unknown): SoccerPacket | null {
   if (p.k === 'cfg') {
     if (![2, 3, 4, 6].includes(p.half as number) || ![0, 1, 2].includes(p.level as number)
       || (p.displayOnly !== undefined && typeof p.displayOnly !== 'boolean')
+      || (p.offside !== undefined && typeof p.offside !== 'boolean')
       || (p.mode !== undefined && !['cpu', 'versus', 'coop'].includes(p.mode as string))) return null;
     return {
       t: 'soccer', k: 'cfg', r: p.r as number, seq: p.seq as number,
       half: p.half as ConfigPacket['half'], level: p.level as ConfigPacket['level'], displayOnly: p.displayOnly === true,
       ...(p.mode === undefined ? {} : { mode: p.mode as ConfigPacket['mode'] }),
+      ...(p.offside === undefined ? {} : { offside: p.offside as boolean }),
     };
   }
   if (p.k === 'mv') {

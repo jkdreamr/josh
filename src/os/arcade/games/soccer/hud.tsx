@@ -1,7 +1,8 @@
-import { FIELD, jerseyNumber, matchClock, type World } from './logic.ts';
+import { FIELD, jerseyNumber, type World } from './logic.ts';
+import { clockLabel } from './rules.ts';
 
 export function Hud({ world, targetId, selectedId, watching, replaying, power, contain }: { world: World; targetId: number | null; selectedId?: number; watching: boolean; replaying: boolean; power?: number | null; contain?: boolean }) {
-  const clock = matchClock(world);
+  const clock = clockLabel(world);
   const selected = world.players[selectedId ?? world.controlled[0]];
   const state = selected?.action === 'jockey' ? contain ? 'CONTAIN' : 'JOCKEY' : selected?.action === 'shield' ? 'SHIELD'
     : selected?.slide ? 'SLIDE' : selected && Math.hypot(selected.vx, selected.vz) > 7.1 ? 'SPRINT' : null;
@@ -49,7 +50,7 @@ function Radar({ world, targetId }: { world: World; targetId: number | null }) {
     <div className="g-soccer-radar" aria-label="Match radar">
       <div className="g-soccer-radar-half" />
       <div className="g-soccer-radar-circle" />
-      {world.players.map((player) => (
+      {world.players.filter((player) => !player.sentOff).map((player) => (
         <i
           key={player.id}
           className={`g-soccer-radar-dot ${player.team === 0 ? 'is-home' : 'is-away'}${player.id === targetId ? ' is-target' : ''}${player.controlled ? ' is-controlled' : ''}`}

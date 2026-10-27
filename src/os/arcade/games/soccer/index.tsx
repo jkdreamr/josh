@@ -10,6 +10,7 @@ import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } 
 import { goalRoar, kickThump, netSwish, startCrowd, whistle } from './audio.ts';
 import { createScene, type CameraMode, type SoccerView, type TimeMode } from './scene.ts';
 import { Hud, PowerMeter } from './hud.tsx';
+import { Referee } from './referee.tsx';
 import { playerForSeat, type Mode } from './seats.ts';
 import './soccer.css';
 import QRCode from 'qrcode';
@@ -24,12 +25,20 @@ const LEVEL = defineSetting<LevelName>('soccer:level', ['easy', 'normal', 'hard'
 const CAMERA = defineSetting<Camera>('soccer:camera', ['broadcast', 'end'], 'broadcast', { live: true });
 const TIME = defineSetting<Time>('soccer:time', ['night', 'golden'], 'night', { live: true });
 const DISPLAY_ONLY = defineSetting<'on' | 'off'>('soccer:display-only', ['on', 'off'], 'on');
+const OFFSIDE = defineSetting<'on' | 'off'>('soccer:offside', ['on', 'off'], 'on');
+
+function createMatchWorld(seed = 71423, halfLength = 120, humans: 1 | 2 = 1) {
+  const world = createWorld(seed, halfLength, humans);
+  if (world.rules) world.rules.offside = getSetting(OFFSIDE) === 'on';
+  return world;
+}
 
 const modeOptions = [['cpu', 'vs CPU'], ['versus', '2P versus'], ['coop', '2P co-op']] as const;
 const phoneModeOptions = [['cpu', 'vs CPU'], ['versus', '2 players'], ['coop', 'Co-op']] as const;
 const halfOptions = [['2', '2 min'], ['4', '4 min'], ['6', '6 min']] as const;
 const cameraOptions = [['broadcast', 'Broadcast'], ['end', 'End to end']] as const;
 const timeOptions = [['night', 'Night'], ['golden', 'Golden hour']] as const;
+const offsideOptions = [['on', 'On'], ['off', 'Off']] as const;
 const commandKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyJ', 'KeyK', 'KeyL', 'KeyI', 'KeyU', 'KeyQ', 'KeyE', 'Space', 'Period', 'Slash', 'Semicolon', 'Quote', 'Comma', 'ShiftLeft', 'ShiftRight'];
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
@@ -39,6 +48,7 @@ function Settings({ online = false }: { online?: boolean }) {
   const [level, setLevel] = useSetting(LEVEL);
   const [camera, setCamera] = useSetting(CAMERA);
   const [time, setTime] = useSetting(TIME);
+  const [offside, setOffside] = useSetting(OFFSIDE);
   return (
     <div className="g-soccer-settings">
       {!online && <Segmented label="Match" value={mode} options={modeOptions} onChange={setMode} />}
@@ -46,6 +56,7 @@ function Settings({ online = false }: { online?: boolean }) {
       <Segmented label="Difficulty" value={level} options={levelOptions} onChange={setLevel} />
       <Segmented label="Camera" value={camera} options={cameraOptions} onChange={setCamera} />
       <Segmented label="Time of day" value={time} options={timeOptions} onChange={setTime} />
+      <Segmented label="Offside" value={offside} options={offsideOptions} onChange={setOffside} />
     </div>
   );
 }
@@ -228,6 +239,7 @@ function Play() {
   const [modeChoice, setModeChoice] = useSetting(MODE);
   const [halfChoice, setHalfChoice] = useSetting(HALF);
   const [levelChoice, setLevelChoice] = useSetting(LEVEL);
+  const [offsideChoice, setOffsideChoice] = useSetting(OFFSIDE);
   const [cameraChoice] = useSetting(CAMERA);
   const [timeChoice] = useSetting(TIME);
   const [power, setPower] = useState<number | null>(null);
@@ -236,7 +248,7 @@ function Play() {
   const [replayActive, setReplayActive] = useState(false);
   const [targetId, setTargetId] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState(6);
-  const [hudWorld, setHudWorld] = useState<World>(() => createWorld());
+  const [hudWorld, setHudWorld] = useState<World>(() => createMatchWorld());
   const movement = useRef({ x: 0, z: 0 });
   const worldRef = useRef<World | null>(null);
   const viewRef = useRef<SoccerView | null>(null);
@@ -297,7 +309,7 @@ function Play() {
   const halfMinutes = online?.quick ? 3 : Number(halfChoice);
   const currentMode: Mode = modeChoice;
   if (!worldRef.current) {
-    worldRef.current = createWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
+    worldRef.current = createMatchWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
     setupHumans(worldRef.current, currentMode, online);
   }
   if (!replayWorld.current) replayWorld.current = createReplayWorld(worldRef.current);
@@ -307,12 +319,12 @@ function Play() {
 
   useEffect(() => {
     if (shell.status !== 'ready') return;
-    const fresh = createWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
+    const fresh = createMatchWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
     controllerPlayers.current.clear();
     setupHumans(fresh, currentMode, online);
     worldRef.current = fresh;
     setHudWorld(fresh);
-  }, [shell.status, modeChoice, halfMinutes, online?.round, online?.seat, online?.players]);
+  }, [shell.status, modeChoice, halfMinutes, offsideChoice, online?.round, online?.seat, online?.players]);
 
   useEffect(() => {
     const release = sfx.retain();
@@ -397,10 +409,11 @@ function Play() {
         setLevelChoice((['easy', 'normal', 'hard'] as const)[packet.level]!);
         setHalfChoice(String(packet.half) as Minutes);
         if (packet.mode) setModeChoice(packet.mode);
+        if (packet.offside !== undefined) setOffsideChoice(packet.offside ? 'on' : 'off');
       }
     });
     return off;
-  }, [online, online?.round, online?.isHost, setHalfChoice, setLevelChoice, setModeChoice]);
+  }, [online, online?.round, online?.isHost, setHalfChoice, setLevelChoice, setModeChoice, setOffsideChoice]);
 
   useEffect(() => {
     if (!online?.isHost) return;
@@ -410,11 +423,12 @@ function Play() {
       level: onlineRef.current?.quick ? 1 : levelIndex(levelChoice),
       displayOnly: true,
       mode: modeChoice,
+      offside: offsideChoice === 'on',
     });
     sendConfig();
     const timer = window.setInterval(sendConfig, 1500);
     return () => window.clearInterval(timer);
-  }, [online?.isHost, online?.round, online?.quick, halfChoice, levelChoice, modeChoice]);
+  }, [online?.isHost, online?.round, online?.quick, halfChoice, levelChoice, modeChoice, offsideChoice]);
 
   const soundForWorld = (current: World) => {
     if (current.kickEvent) {
@@ -426,7 +440,7 @@ function Play() {
       replayStartedAt.current = simulationTime.current;
       replaySkipped.current = false;
     }
-    if (current.event !== lastEvent.current && /kick off|kickoff|foul|half time|full time|kick-in|corner|goal kick|free kick|penalty|second half/i.test(current.event)) {
+    if (current.event !== lastEvent.current && /kick off|kickoff|foul|offside|half time|full time|kick-in|corner|goal kick|free kick|penalty|second half/i.test(current.event)) {
       whistle();
     }
     lastEvent.current = current.event;
@@ -638,6 +652,7 @@ function Play() {
     }
 
     if (debugConfig.enabled) {
+      (window as Window & { __soccerWorld?: World }).__soccerWorld = current;
       debugTimer.current += dt;
       if (debugTimer.current >= 1) {
         debugTimer.current %= 1;
@@ -714,6 +729,7 @@ function Play() {
     <div className="g-soccer-stage">
       <div className="g-soccer-canvas" ref={ref} />
       <Hud world={hudWorld} targetId={targetId} selectedId={selectedId} power={power ?? hudPower} contain={containing} watching={!!online?.watching} replaying={replayActive} />
+      <Referee world={hudWorld} />
       {shell.touch && shell.status === 'playing' && !online?.watching && <Stick movement={movement} />}
       {shell.touch && shell.status === 'playing' && !online?.watching && <TouchControls buttons={[
         { key: 'KeyJ', label: 'pass / contain' },
