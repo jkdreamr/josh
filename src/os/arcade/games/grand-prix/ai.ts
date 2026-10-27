@@ -171,7 +171,8 @@ export type Driver = {
 };
 
 export function createDriver(line: Line, pace: number, seed: number): Driver {
-  const v = pace >= 1 ? line.v : speedProfile(line, MU_LINE * pace);
+  // (above 1 the driver plans for more grip than the line does, using what the tyres hold in reserve)
+  const v = pace === 1 ? line.v : speedProfile(line, MU_LINE * pace);
   return { pace, v, steerI: 0, side: 0, sideTarget: 0, sideHold: 0, wobble: 0, seed };
 }
 
