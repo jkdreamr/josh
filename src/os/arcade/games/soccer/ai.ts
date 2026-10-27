@@ -381,6 +381,13 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
           target = { x: threat.x + dx / length * 1.5, z: threat.z + dz / length * 1.5 };
         }
       }
+      if (roleOf(p).line === 'def' && distance(p, world.ball) > 12) {
+        const time = tick * dt;
+        target = {
+          x: clamp(target.x + Math.sin(time * 1.35 + p.id * 1.7) * 0.45, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3),
+          z: clamp(target.z + Math.cos(time * 1.05 + p.id * 0.9) * 0.65, -FIELD.width / 2 + 0.3, FIELD.width / 2 - 0.3),
+        };
+      }
       targets.set(p.id, target);
     }
   }
