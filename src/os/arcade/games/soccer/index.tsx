@@ -5,7 +5,8 @@ import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
 import { chargePower, IDENTITY_BASIS, screenToWorld, gamepadInput, keyboardInput, reconcileControllers, type ControlCommand, type GamepadHistory } from './input.ts';
 import { acceptMovePacket, cloneSnapshot, consumeCommand, movePacket, parsePacket, type RemoteSeat } from './net.ts';
-import { createWorld, distance, teamOf, findReceiver, matchClock, nearestCarrier, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
+import { createWorld, distance, teamOf, findReceiver, matchClock, nearestCarrier, setRestart, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
+import { setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { SoccerSound, type CommentaryMode } from './audio.ts';
 import type { CameraMode, SoccerView, TimeMode } from './scene.ts';
@@ -317,11 +318,12 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const lastFrameTime = useRef<number | null>(null);
   const debugTimer = useRef(0);
   const debugConfig = useMemo(() => {
-    if (typeof location === 'undefined') return { enabled: false, clockScale: 1 };
+    if (typeof location === 'undefined') return { enabled: false, clockScale: 1, setpiece: null };
     const params = new URLSearchParams(location.search);
     const value = Number(params.get('soccerdebug'));
     return {
       enabled: params.has('soccerdebug'),
+      setpiece: import.meta.env.DEV && params.has('soccerdebug') ? params.get('setpiece') : null,
       clockScale: params.has('soccerdebug') && Number.isFinite(value) ? Math.max(1, Math.min(20, value)) : 1,
     };
   }, []);
@@ -410,6 +412,12 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     setPhoneGone(false);
     controllerPlayers.current.clear();
     setupHumans(fresh, currentMode, online);
+    const forced = debugConfig.setpiece;
+    if (forced === 'shootout') startShootout(fresh);
+    else if (forced && ['corner', 'free-kick', 'penalty', 'goal-kick', 'throw-in'].includes(forced)) {
+      const kind = forced === 'throw-in' ? 'kick-in' : forced as 'corner' | 'free-kick' | 'penalty' | 'goal-kick';
+      setRestart(fresh, 0, kind, { x: kind === 'corner' ? 52.35 : kind === 'penalty' ? 41.5 : kind === 'goal-kick' ? -47 : 28, z: kind === 'corner' || kind === 'kick-in' ? 33.85 : 0 });
+    }
     worldRef.current = fresh;
     previousRenderSnapshot.current = captureSnapshot(fresh, createSnapshot(fresh));
     interpolatedWorld.current = structuredClone(fresh);
@@ -650,7 +658,8 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     reported.current = true;
     const room = onlineRef.current;
     const draw = current.score[0] === current.score[1];
-    const winner: Team | null = draw ? null : current.score[0] > current.score[1] ? 0 : 1;
+    const pensWinner = shootoutWinner(current);
+    const winner: Team | null = pensWinner ?? (draw ? null : current.score[0] > current.score[1] ? 0 : 1);
     if (room?.isHost) {
       const seats = winner === null ? undefined : winner === 0 ? [0, 2] : [1, 3];
       room.reportResult(room.round, seats?.[0] ?? null, seats);
@@ -660,7 +669,8 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       : winner === localTeam ? 'you win' : 'match lost';
     const stats = statsObserver.current.stats;
     const [homePossession, awayPossession] = possessionShare(stats);
-    const detail = `${CLUBS[0].name.toLowerCase()} ${current.score[0]} - ${current.score[1]} ${CLUBS[1].name.toLowerCase()} · shots ${stats.teams[0].shots}-${stats.teams[1].shots} · possession ${homePossession}%-${awayPossession}%`;
+    const penalties = pensWinner !== null ? ` · pens ${shootoutScore(current).join(' - ')}` : '';
+    const detail = `${CLUBS[0].name.toLowerCase()} ${current.score[0]} - ${current.score[1]} ${CLUBS[1].name.toLowerCase()} · ${matchClock(current)}' · shots ${stats.teams[0].shots}-${stats.teams[1].shots} · possession ${homePossession}%-${awayPossession}%${penalties}`;
     fullTimeResult.current = { title, detail };
     showPresentation('full-time');
   };
@@ -888,6 +898,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       if (soccerPerfEnabled) recordSoccerPerf('interpolationMs', performance.now() - interpolationStart);
     } else renderWorld = current;
     let camera: CameraMode = presentation.current === 'intro' ? 'intro' : cameraRef.current;
+    if (renderWorld.phase === 'restart' && renderWorld.setPiece && ['corner', 'free-kick', 'penalty'].includes(renderWorld.setPiece.kind)) camera = 'setpiece';
     const replayClock = isOnlineGuest ? performance.now() / 1000 : simulationTime.current;
     if (!replaySkipped.current && replayStartedAt.current !== null && current.phase === 'goal') {
       if (!replaySkipped.current) {
@@ -1073,7 +1084,7 @@ function PadStick({ movement, onChange }: { movement: { current: { x: number; z:
   );
 }
 
-function PhoneController() {
+export function PhoneController() {
   const online = useOnline();
   const movement = useRef({ x: 0, z: 0 });
   const held = useRef<Command['action']>(null);
@@ -1088,7 +1099,6 @@ function PhoneController() {
   const jockey = useRef(false);
   const faceRefs = useRef<Partial<Record<FaceKey, HTMLButtonElement | null>>>({});
   const facePointers = useRef(new Map<number, FaceKey | null>());
-  const [attacking, setAttacking] = useState(false);
   const [score, setScore] = useState<[number, number]>([0, 0]);
   const previousScore = useRef<[number, number]>([0, 0]);
   const [displayOnly, setDisplayOnly] = useState(true);
@@ -1186,6 +1196,11 @@ function PhoneController() {
     const snapshot = phoneWorld.current;
     return !!snapshot && nearestCarrier(snapshot)?.team === teamOf(playerForSeat(online?.seat ?? 0, displayOnly, mode));
   };
+  const phonePlayerId = () => {
+    const assigned = playerForSeat(online?.seat ?? 0, displayOnly, mode);
+    const snapshot = phoneWorld.current;
+    return snapshot && !snapshot.players[assigned]?.human ? snapshot.controlled[teamOf(assigned)] : assigned;
+  };
   const send = (action: Command['action'] = null, pressed = false, power = chargePower(chargeStartedAt.current === null ? 0 : (performance.now() - chargeStartedAt.current) / 1000), switchNearest = false, edge = false) => {
     if (!online) return;
     const now = performance.now();
@@ -1246,7 +1261,8 @@ function PhoneController() {
     }, remaining);
   };
   const beginCharge = (action: Command['action']) => {
-    if (!phoneHasBall() && phoneWorld.current && nearestCarrier(phoneWorld.current) && action !== 'pass') {
+    const taker = phoneWorld.current?.phase === 'restart' && phoneWorld.current.setPiece?.takerId === phonePlayerId();
+    if (!taker && !phoneHasBall() && phoneWorld.current && nearestCarrier(phoneWorld.current) && action !== 'pass') {
       send(action, true, undefined, false, true);
       return;
     }
@@ -1274,7 +1290,6 @@ function PhoneController() {
       const packet = parsePacket(data);
       if (packet?.k === 's') {
         phoneWorld.current = packet.state;
-        setAttacking(nearestCarrier(packet.state)?.team === teamOf(playerForSeat(online.seat, displayOnly, mode)));
         if (packet.state.score.some((value, index) => value !== previousScore.current[index])) navigator.vibrate?.([70, 40, 120]);
         previousScore.current = [...packet.state.score];
         setScore(packet.state.score);
@@ -1290,14 +1305,19 @@ function PhoneController() {
     return () => { off(); window.clearInterval(timer); window.clearTimeout(stickSendTimer.current); };
   }, [online, mode, displayOnly]);
   if (!online) return null;
-  const phonePlayer = playerForSeat(online.seat, displayOnly, mode);
+  const phonePlayer = phonePlayerId();
   const myTeam = teamOf(phonePlayer);
+  const attacking = phoneHasBall();
+  const labels = phoneWorld.current ? setPieceLabels(phoneWorld.current, teamOf(phonePlayer), phonePlayer) : null;
+  const taking = phoneWorld.current?.phase === 'restart' && phoneWorld.current.setPiece?.takerId === phonePlayer;
   if (showGame) return <><Play key={`phone-game-${online.round ?? 0}`} audioEnabled={false} /><button className="g-soccer-phone-show" type="button" onClick={() => setShowGame(false)}>Controller</button></>;
   const chargeName = chargingAction === 'pass' ? 'Pass' : chargingAction === 'shoot' ? 'Shoot' : chargingAction === 'through' ? 'Through' : chargingAction === 'lob' ? 'Lob' : chargingAction === 'skill' ? 'Skill' : 'Hold to charge';
   const chargingKey = FACE_KEYS.find((key) => FACE[key] === chargingAction) ?? null;
-  const faceLabel: Record<FaceKey, string> = attacking
-    ? { a: 'Pass', b: 'Shoot', x: 'Lob · Cross', y: 'Through' }
-    : { a: 'Switch', b: 'Tackle', x: 'Slide', y: 'Through' };
+  const faceLabel: Record<FaceKey, string> = labels
+    ? { a: labels.a, b: labels.b, x: labels.x, y: labels.y }
+    : attacking
+      ? { a: 'Pass', b: 'Shoot', x: 'Lob · Cross', y: 'Through' }
+      : { a: 'Switch', b: 'Tackle', x: 'Slide', y: 'Through' };
   const faceHint: Partial<Record<FaceKey, string>> = attacking ? {} : { a: 'hold Contain' };
   const faceAt = (event: PointerEvent<HTMLElement>) => hitButton({ x: event.clientX, y: event.clientY }, FACE_KEYS.flatMap((id) => {
     const rect = faceRefs.current[id]?.getBoundingClientRect();
@@ -1340,8 +1360,8 @@ function PhoneController() {
   const [bumperDown, bumperUp] = hold(shoulder);
   const [sprintDown, sprintUp] = hold(sprint);
   const ltLabel = attacking ? 'Shield' : 'Jockey';
-  const lbLabel = attacking ? 'Skill' : 'Switch';
-  const rbLabel = attacking ? 'Finesse' : 'Press';
+  const lbLabel = labels?.lb ?? (attacking ? 'Skill' : 'Switch');
+  const rbLabel = labels?.rb ?? (attacking ? 'Finesse' : 'Press');
   return (
     <div className={`g-soccer-phone-controller g-soccer-pad ${attacking ? 'is-attack' : 'is-defend'}`}>
       <div className="g-soccer-pad-body" aria-hidden="true"><i className="is-left" /><i className="is-right" /></div>
@@ -1390,7 +1410,7 @@ function PhoneController() {
       </div>
       <div className="g-soccer-pad-shoulders is-left">
         <button className="g-soccer-pad-trigger" {...pad(`LT: ${ltLabel} (hold)`, jockeyDown, jockeyUp)}><b>LT</b><small>{ltLabel}</small></button>
-        <button className="g-soccer-pad-bumper" {...pad(`LB: ${lbLabel}`, () => send(attacking ? 'skill' : null, attacking, 0.1, !attacking, true))}><b>LB</b><small>{lbLabel}</small></button>
+        <button className="g-soccer-pad-bumper" {...pad(`LB: ${lbLabel}`, () => send(taking || attacking ? 'skill' : null, taking || attacking, 0.1, !taking && !attacking, true))}><b>LB</b><small>{lbLabel}</small></button>
       </div>
       <div className="g-soccer-pad-shoulders is-right">
         <button className="g-soccer-pad-bumper" {...pad(`RB: ${rbLabel} (hold)`, bumperDown, bumperUp)}><b>RB</b><small>{rbLabel}</small></button>
@@ -1405,6 +1425,7 @@ function PhoneController() {
         <div className={`g-soccer-pad-meter${chargeProgress > 0.85 ? ' is-over' : ''}`} role="progressbar" aria-label={`${chargeName} power`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(chargeProgress * 100)}>
           <i style={{ width: `${chargeProgress * 100}%` }} />
           <span>{chargingAction ? `${chargeName} · ${Math.round(chargeProgress * 100)}%` : 'Hold a button to charge'}</span>
+          {labels && <small className="g-soccer-setpiece-hint">{labels.title} · {labels.hint}</small>}
         </div>
         <div className="g-soccer-pad-center">
           <em className="g-soccer-pad-mode">{attacking ? 'Attack' : 'Defend'}</em>

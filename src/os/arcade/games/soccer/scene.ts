@@ -11,7 +11,7 @@ import { approachAngle, bindSoccerRig, bodyFrameVelocity, createSoccerAnimationI
 import type { SoccerRenderStats } from './perf.ts';
 
 type Three = typeof import('three');
-export type CameraMode = 'broadcast' | 'end' | 'replay' | 'intro';
+export type CameraMode = 'broadcast' | 'end' | 'replay' | 'intro' | 'setpiece';
 export type TimeMode = 'night' | 'golden' | 'overcast' | 'rain';
 export type SoccerCameraNdc = {
   ball: { x: number; y: number };
@@ -245,6 +245,10 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const ballMaterial = new THREE.MeshStandardMaterial({ map: ballMap, roughness: 0.3, metalness: 0.02, emissive: '#c8d8c9', emissiveIntensity: 0.22 });
   const ball = new THREE.Mesh(new THREE.SphereGeometry(0.11, lite ? 16 : 28, lite ? 12 : 20), ballMaterial);
   ball.castShadow = true; scene.add(ball);
+  const reticle = new THREE.Mesh(new THREE.RingGeometry(0.35, 0.48, 32), new THREE.MeshBasicMaterial({ color: '#ffe887', side: THREE.DoubleSide, depthTest: false, toneMapped: false, transparent: true, opacity: 0.9 }));
+  reticle.visible = false;
+  reticle.renderOrder = 10;
+  scene.add(reticle);
   const ballShadow = new THREE.Mesh(new THREE.CircleGeometry(0.32, 20), new THREE.MeshBasicMaterial({ color: '#06150e', transparent: true, opacity: 0.32, depthWrite: false }));
   ballShadow.rotation.x = -Math.PI / 2; ballShadow.position.y = 0.025; scene.add(ballShadow);
   const actors = new Map<number, Actor>();
@@ -486,6 +490,25 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     else if (broadcast && portrait) desired.set(target.x - attackDir * FIELD.width * 0.42, FIELD.width * 0.24, target.z);
     else if (broadcast) desired.set(target.x, FIELD.width * 0.25, -FIELD.width * 0.56);
     else desired.set(target.x - attackDir * FIELD.length * 0.26, FIELD.width * 0.2, target.z);
+    const setPiece = world.setPiece;
+    reticle.visible = world.phase === 'restart' && !!setPiece;
+    if (setPiece) {
+      const mouth = setPiece.kind === 'penalty' || setPiece.kind === 'free-kick' && setPiece.option === 'direct';
+      reticle.rotation.set(mouth ? 0 : -Math.PI / 2, mouth ? Math.PI / 2 : 0, 0);
+      reticle.scale.setScalar(mouth ? 1 : 4);
+      reticle.position.set(setPiece.aim.x, mouth ? setPiece.aim.y : 0.12, setPiece.aim.z);
+      if (cameraMode === 'setpiece') {
+        const dx = setPiece.aim.x - world.ball.x, dz = setPiece.aim.z - world.ball.z;
+        const gap = Math.max(0.01, Math.hypot(dx, dz)), behind = setPiece.kind === 'penalty' ? 6 : 9;
+        target.set(setPiece.aim.x, setPiece.aim.y, setPiece.aim.z);
+        desired.set(world.ball.x - dx / gap * behind, setPiece.kind === 'penalty' ? 1.9 : 3.5, world.ball.z - dz / gap * behind + (setPiece.kind === 'penalty' ? 2.4 : 0));
+        if (setPiece.kind === 'corner') {
+          desired.x = Math.max(-FIELD.length / 2 + 3, Math.min(FIELD.length / 2 - 3, desired.x));
+          desired.z = Math.max(-FIELD.width / 2 + 5, Math.min(FIELD.width / 2 - 5, desired.z));
+          desired.y = 8;
+        }
+      }
+    }
     if (broadcast) {
       target.add(cameraSafeOffset);
       desired.add(cameraSafeOffset);
@@ -493,7 +516,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       cameraSafeOffset.set(0, 0, 0);
     }
     const broadcastZoom = portrait ? 68 : 31;
-    const zoom = cameraMode === 'replay' ? 36 : cameraMode === 'broadcast' || cameraMode === 'intro' ? broadcastZoom : 28;
+    const zoom = cameraMode === 'setpiece' ? portrait ? 62 : 42 : cameraMode === 'replay' ? 36 : cameraMode === 'broadcast' || cameraMode === 'intro' ? broadcastZoom : 28;
     if (cameraMode === 'intro') {
       const p = Math.max(0, Math.min(1, (time - (introStartedAt ?? time)) / 5.5));
       const t = p * p * (3 - 2 * p);
@@ -661,7 +684,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     ballShadow.position.set(ball.position.x, 0.028, ball.position.z);
     const shadowScale = Math.max(0.25, 1.1 - world.ball.y * 0.2);
     ballShadow.scale.set(shadowScale, shadowScale, 1);
-    if (controlled) {
+    if (controlled && cameraMode !== 'setpiece') {
       projected.set(controlled.x, 2.75, controlled.z).project(camera);
       const visible = projected.z >= -1 && projected.z <= 1 && Math.abs(projected.x) < 1.05 && Math.abs(projected.y) < 1.05;
       indicator.style.display = visible ? 'grid' : 'none';

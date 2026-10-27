@@ -1,5 +1,6 @@
 import { createBall, stepBall, type BallState } from './physics.ts';
 import { FIELD } from './field.ts';
+import { arrangeSetPiece, stepSetPiece, setPieceCommands, stepSetPieceRun, startShootout, resolveShootoutKick, stepShootout, type SetPiece, type SetPieceRun, type Shootout } from './setpieces.ts';
 export { FIELD } from './field.ts';
 
 export const STEP = 1 / 60;
@@ -44,6 +45,10 @@ export type Player = Point & {
 export type Command = { move: Point; sprint?: boolean; jockey?: boolean; autoJockey?: boolean; contain?: boolean; switchDir?: Point | null; switchNearest?: boolean; action?: Action | null; heldAction?: Action | null; aim?: Point; power?: number; pressed?: boolean; press?: boolean };
 export type Restart = 'kickoff' | 'kick-in' | 'corner' | 'goal-kick' | 'free-kick' | 'penalty' | null;
 export type World = {
+  setPiece?: SetPiece | null;
+  setPieceRun?: SetPieceRun | null;
+  shootout?: Shootout | null;
+  cup?: boolean;
   players: Player[];
   ball: BallState;
   score: [number, number];
@@ -163,7 +168,7 @@ function switchScore(world: World, p: Player) {
   return distance(p, world.ball) + ((p.x - world.ball.x) * teamDir(p.team, world.endsSwapped) > 0 ? 2.5 : 0);
 }
 
-function transferControl(world: World, team: Team, id: number, fromId = world.controlled[team]) {
+export function transferControl(world: World, team: Team, id: number, fromId = world.controlled[team]) {
   for (const p of world.players) {
     if (p.team !== team) continue;
     if (p.id === fromId) {
@@ -348,7 +353,7 @@ export function shotAim(targetZ: number, direction: number): Point {
   return { x: direction * Math.sqrt(1 - z * z), z };
 }
 
-function kick(world: World, player: Player, action: Action, command: Command) {
+export function kick(world: World, player: Player, action: Action, command: Command) {
   const d = teamDir(player.team, world.endsSwapped);
   const charge = clamp(command.power ?? 0.45, 0.1, 1);
   const stick = command.aim ?? command.move;
@@ -600,7 +605,7 @@ function applyAction(world: World, player: Player, command: Command) {
   kick(world, player, command.action, command);
 }
 
-function setRestart(world: World, team: Team, restart: Exclude<Restart, null>, at: Point) {
+export function setRestart(world: World, team: Team, restart: Exclude<Restart, null>, at: Point) {
   world.phase = 'restart';
   world.restart = restart;
   world.restartTeam = team;
@@ -613,7 +618,7 @@ function setRestart(world: World, team: Team, restart: Exclude<Restart, null>, a
     z: clamp(point.z, -FIELD.width / 2 + 0.15, FIELD.width / 2 - 0.15),
   };
   world.ball = { x: world.restartAt.x, y: 0.11, z: world.restartAt.z, vx: 0, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false };
-  world.event = restart === 'goal-kick' ? 'goal kick' : restart;
+  world.event = restart === 'kick-in' ? 'throw-in' : restart === 'goal-kick' ? 'goal kick' : restart;
   world.eventTime = 2;
   world.restartClock = 0;
   world.lastToucherId = null;
@@ -625,6 +630,9 @@ function setRestart(world: World, team: Team, restart: Exclude<Restart, null>, a
   world.passFrom = null;
   for (const p of world.players) { p.buffer = null; p.slide = null; }
   world.switchWait = [0, 0];
+  world.setPieceRun = null;
+  world.setPiece = null;
+  if (restart !== 'kickoff') arrangeSetPiece(world);
 }
 
 function goalSide(world: World, carrier: Player, team: Team, gap: number): Point {
@@ -717,6 +725,7 @@ export function resolveBoundary(world: World) {
 export function resolveKeeperContact(world: World, previousX: number) {
   const ball = world.ball;
   for (const keeper of world.players.filter((p) => p.slot === 'GK')) {
+    if (world.setPieceRun?.penalty?.keeperId === keeper.id) continue;
     const direction = teamDir(keeper.team, world.endsSwapped);
     const plane = -direction * (FIELD.length / 2 - 1.5);
     const crossed = direction > 0 ? previousX > plane && ball.x <= plane : previousX < plane && ball.x >= plane;
@@ -747,7 +756,9 @@ export function resolveKeeperContact(world: World, previousX: number) {
 }
 
 function scoreGoal(world: World, scoring: Team) {
+  if (world.shootout && !world.shootout.done) { resolveShootoutKick(world, true); return; }
   world.score[scoring]++;
+  world.setPieceRun = null;
   world.phase = 'goal';
   world.restart = 'kickoff';
   world.restartTeam = scoring === 0 ? 1 : 0;
@@ -775,6 +786,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
   world.stealProtect = Math.max(0, (world.stealProtect ?? 0) - t);
   world.eventTime = Math.max(0, world.eventTime - t);
   world.kickEvent = null;
+  if (stepShootout(world, t)) return;
   if (world.phase === 'full-time') return;
   if (world.phase === 'goal' || world.phase === 'half-time') {
     if (world.eventTime <= 0) {
@@ -796,6 +808,11 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
   }
   if (world.phase === 'restart') {
     world.restartClock += t;
+    if (world.setPiece) {
+      if (!world.shootout) world.clock = Math.max(0, world.clock - clockStep);
+      stepSetPiece(world, commands, t);
+      return;
+    }
     const taker = restartTaker(world);
     for (const p of world.players) {
       if (p.team === world.restartTeam && p.controlled) movePlayer(p, commands.get(p.id)?.move ?? { x: 0, z: 0 }, !!commands.get(p.id)?.sprint, false, t);
@@ -838,6 +855,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
   const carrier = nearestCarrier(world);
   commands = new Map(commands);
   prepareDefense(world, commands, carrier, t);
+  commands = setPieceCommands(world, commands);
   for (const p of world.players) {
     const command = commands.get(p.id);
     if (p.slide) {
@@ -848,7 +866,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
     const neutral = Math.hypot(command?.move.x ?? 0, command?.move.z ?? 0) < 0.15;
     const receiving = world.passTarget === p.id && !carrier && (!p.human || neutral);
     if (p.human && !receiving && !p.buffer && (!p.controlled || !command)) continue;
-    if (receiving && world.passPoint && distance(p, world.passPoint) < 0.7) world.passPoint = null;
+    if (receiving && world.passPoint && distance(p, world.passPoint) < 0.7 && !world.setPieceRun) world.passPoint = null;
     const receiveTarget = world.passPoint ?? world.ball;
     const receiveGap = distance(p, receiveTarget);
     const receiveMove = receiving ? { x: (receiveTarget.x - p.x) / Math.max(2, receiveGap), z: (receiveTarget.z - p.z) / Math.max(2, receiveGap) } : command?.move ?? { x: 0, z: 0 };
@@ -925,15 +943,24 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
   world.carrierId = nowCarrier && !(nowCarrier.touchCd! > 0) ? nowCarrier.id : null;
   resolveBlocks(world, t);
   stepBall(world.ball, t);
+  stepSetPieceRun(world, t, previousX);
+  if (world.shootout?.pause || world.shootout?.done) return;
   resolveKeeperContact(world, previousX);
   if (goalCrossing(world, previousX)) return;
+  if (world.shootout && !world.shootout.done) {
+    if (Math.abs(world.ball.x) > FIELD.length / 2 + 0.2 || world.ball.inNet || Math.hypot(world.ball.vx, world.ball.vz, world.ball.vy) < 0.5) resolveShootoutKick(world, false);
+    return;
+  }
   resolveBoundary(world);
   world.clock = Math.max(0, world.clock - clockStep);
   if (world.clock <= 0) {
+    world.setPiece = null;
+    world.setPieceRun = null;
     if (world.half === 1) {
       world.phase = 'half-time'; world.event = 'half time'; world.eventTime = 2;
     } else {
       world.phase = 'full-time'; world.event = 'full time';
+      if (world.cup && world.score[0] === world.score[1]) startShootout(world);
     }
   }
 }
