@@ -215,14 +215,20 @@ function rollingFlight(speed: number, range: number) {
   return { speed: travelled >= range ? ball.vx : 0, time };
 }
 
-export function groundPassSpeed(range: number) {
+export function groundPassSpeed(range: number, arrivalSpeed = 4) {
   let low = 4, high = 40;
   for (let i = 0; i < 14; i++) {
     const mid = (low + high) / 2;
-    if (rollingFlight(mid, range).speed < 4) low = mid;
+    if (rollingFlight(mid, range).speed < arrivalSpeed) low = mid;
     else high = mid;
   }
   return clamp((low + high) / 2, 8, 25);
+}
+
+export function groundPassPower(range: number, arrivalSpeed = 4) {
+  const ideal = groundPassSpeed(range);
+  const desired = arrivalSpeed === 4 ? ideal : groundPassSpeed(range, arrivalSpeed);
+  return clamp((desired / ideal - 0.82) / 0.4, 0.1, 1);
 }
 
 export function groundPassTarget(ball: Point, receiver: Pick<Player, 'x' | 'z' | 'vx' | 'vz'>): Point {
@@ -232,6 +238,10 @@ export function groundPassTarget(ball: Point, receiver: Pick<Player, 'x' | 'z' |
     x: clamp(receiver.x + receiver.vx * time, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3),
     z: clamp(receiver.z + receiver.vz * time, -FIELD.width / 2 + 0.3, FIELD.width / 2 - 0.3),
   };
+}
+
+export function isCross(world: World, player: Player) {
+  return Math.abs(player.z) > FIELD.penaltyWidth / 2 && player.x * teamDir(player.team, world.endsSwapped) > FIELD.length / 6;
 }
 
 function lobSpeed(range: number, loft: number) {
@@ -251,6 +261,18 @@ function lobSpeed(range: number, loft: number) {
   return speed;
 }
 
+const SHOT_AIM_WIDTH = FIELD.goalWidth * 0.43;
+
+export function shotTargetZ(player: Pick<Player, 'z'>, stick: Point) {
+  const length = Math.hypot(stick.x, stick.z);
+  return length > 0.2 ? stick.z / length * SHOT_AIM_WIDTH : -Math.sign(player.z || -1) * FIELD.goalWidth * 0.24;
+}
+
+export function shotAim(targetZ: number, direction: number): Point {
+  const z = clamp(targetZ / SHOT_AIM_WIDTH, -1, 1);
+  return { x: direction * Math.sqrt(1 - z * z), z };
+}
+
 function kick(world: World, player: Player, action: Action, command: Command) {
   const d = teamDir(player.team, world.endsSwapped);
   const charge = clamp(command.power ?? 0.45, 0.1, 1);
@@ -258,7 +280,7 @@ function kick(world: World, player: Player, action: Action, command: Command) {
   const stickLength = Math.hypot(stick.x, stick.z);
   const aim = stickLength > 0.2 ? { x: stick.x / stickLength, z: stick.z / stickLength } : { x: Math.sin(player.facing), z: Math.cos(player.facing) };
   const shot = action === 'shoot' || action === 'finesse';
-  const cross = action === 'lob' && Math.abs(player.z) > FIELD.penaltyWidth / 2 && player.x * d > FIELD.length / 6;
+  const cross = action === 'lob' && isCross(world, player);
   const receiver = !shot ? findReceiver(world, player, aim, action === 'through', cross) : undefined;
   let target = receiver ? { x: receiver.x, z: receiver.z } : { x: player.x + aim.x * (5 + charge * 25), z: player.z + aim.z * (5 + charge * 25) };
   let speed = 0, loft = 0;
@@ -292,7 +314,7 @@ function kick(world: World, player: Player, action: Action, command: Command) {
     if (lobSpeed(range, loft) > 24) loft = 0.7;
     speed = Math.min(24, lobSpeed(range, loft));
   } else {
-    target = { x: d * FIELD.length / 2, z: stickLength > 0.2 ? aim.z * FIELD.goalWidth * 0.43 : -Math.sign(player.z || -1) * FIELD.goalWidth * 0.24 };
+    target = { x: d * FIELD.length / 2, z: shotTargetZ(player, stick) };
     const goalDistance = distance(player, { x: d * FIELD.length / 2, z: 0 });
     const threshold = 0.78 + clamp(goalDistance / 60, 0, 0.14) + (action === 'finesse' ? 0.06 : 0);
     loft = 0.07 + charge * 0.09 + Math.max(0, charge - threshold) * 3.2;
