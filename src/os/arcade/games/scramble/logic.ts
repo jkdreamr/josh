@@ -1380,6 +1380,12 @@ export function viewOf(f: Fighter) {
   return (isDeep(f.x) ? Math.min(DEEP_VIEW, far) : far) + (f.phase === 'ground' ? levelOf(f.y) * HIGH_VIEW : 0);
 }
 
+/** How much of the island a screen shows round the egg it follows (half the screen's height, in meters): on foot, and gliding down. */
+export const GROUND_VIEW = 14;
+export const DROP_VIEW = 34;
+/** What a screen following egg `f` shows of the island (half its height, in meters): more through a scope, up high, and from up in the air. */
+export const viewAt = (f: Fighter) => (f.phase === 'drop' ? DROP_VIEW + (f.y / BUS_Y) * 20 : GROUND_VIEW + viewOf(f));
+
 /** Does an egg carry the scope of this level? 1x (level 0) it always has. */
 export const hasScope = (f: { scopes: number }, lv: number) => lv === 0 || (lv > 0 && lv <= MAX_SCOPE && (f.scopes & (1 << (lv - 1))) !== 0);
 
@@ -4186,6 +4192,31 @@ export function concealed(m: Match, f: Fighter, viewer: Fighter | undefined) {
   if (!m.zones.length) return false;
   const cloud = zoneAt(m, 'flour', f.x, f.z);
   return !!cloud && cloud !== zoneAt(m, 'flour', viewer.x, viewer.z);
+}
+
+/**
+ * How long a screen keeps showing an egg once something says to hide it (a bush, a cornfield, flour, a roof, a
+ * ghillie suit, the wall beside the doorway we peek through), and keeps it hidden once that says to show it, in
+ * seconds: an egg on the edge of one, or a step either side of where it starts to show, never blinks out or in. One
+ * that has just fired shows at once.
+ */
+export const SEEN_HOLD = { hide: 0.4, show: 0.15 };
+
+/** What a screen shows of an egg: `on` while it's drawn, and how long whatever hides it has said otherwise (`t`). */
+export type Seen = { on: boolean; t: number };
+
+/**
+ * One frame (`dt` seconds) of what a screen shows of an egg that whatever hides it says to `hide` or not (see
+ * SEEN_HOLD); `now` makes the change at once (an egg that has just fired, or one that has only now come into view).
+ * Whether it's drawn.
+ */
+export function seenStep(s: Seen, hide: boolean, dt: number, now = false) {
+  if (s.on !== hide) s.t = 0;
+  else if (now || (s.t += dt) >= (hide ? SEEN_HOLD.hide : SEEN_HOLD.show)) {
+    s.on = !hide;
+    s.t = 0;
+  }
+  return s.on;
 }
 
 /** In a ghillie suit, still and quiet on the grass: hard to make out from more than a few steps away. */

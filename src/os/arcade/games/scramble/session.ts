@@ -1,7 +1,7 @@
 // One client's side of an online Scramble match: what it does with each message from the room, what it sends on its
 // regular tick, the events it queues and flushes, and when the match is over. Pure, so a whole room can be simulated
 // in a test; index.tsx connects it to the real room.
-import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, MAX_TEAMS, TEAM_SIZE, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, ordinal, owned, step, teamCount, teamsLeft, type Entrant, type Ev, type Fighter, type Level, type Match, type Mode } from './logic.ts';
+import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, MAX_TEAMS, TEAM_SIZE, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, ordinal, owned, step, teamCount, teamsLeft, viewAt, type Entrant, type Ev, type Fighter, type Level, type Match, type Mode } from './logic.ts';
 import { BUS_Y, stormEnd } from './map.ts';
 import { actorOf, applyNet, endOf, guestState, hostState, packEvents, parsePacket, pieceEv, placesOf, stateKey, stateOf, toNet, type NetEv, type State } from './net.ts';
 
@@ -25,12 +25,18 @@ const DOWN_BY = 4 + BUS_Y / FALL + 4;
 
 /**
  * How far (along x and along z) from the egg a guest watches (its own, or the one it watches once its own is out) the
- * host reports each egg whenever it has changed: farther than anyone sees on the ground, and gliding down. Everything
- * else, and eggs still on the bus, goes every FAR_EVERY ticks; eggs that are out every OUT_EVERY (a guest takes one out
- * on its own a moment after the news of how never comes).
+ * host reports each egg whenever it has changed: farther than anyone sees on the ground without a scope, and gliding
+ * down, and at least as far as its screen may reach (see reachOf). Everything else, and eggs still on the bus, goes
+ * every FAR_EVERY ticks; eggs that are out every OUT_EVERY (a guest takes one out on its own a moment after the news
+ * of how never comes).
  */
 export const NEAR = 100;
 export const NEAR_GLIDE = 130;
+/**
+ * How far to the side a guest's screen may reach from the egg it follows: about three times what it shows up and down
+ * on the widest screen (2.2 to 1), with room to spare, so no egg it can see moves in jerks of FAR_EVERY ticks.
+ */
+export const reachOf = (f: Fighter) => Math.max(f.phase === 'ground' ? NEAR : NEAR_GLIDE, viewAt(f) * 3 + 10);
 export const FAR_EVERY = 6;
 export const OUT_EVERY = 15;
 
@@ -343,7 +349,7 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
 export function statesFor(m: Match, g: Fighter, states: (State | undefined)[], keys: (string | undefined)[], sent: (string | undefined)[], tick: number, watch: number): [number, State][] {
   // whoever its own egg is out, the egg it watches (or, until it says, everyone)
   const at = g.phase === 'out' ? m.fighters[watch] : g;
-  const near = at?.phase === 'ground' ? NEAR : NEAR_GLIDE;
+  const near = at ? reachOf(at) : NEAR;
   const list: [number, State][] = [];
   for (const f of m.fighters) {
     const st = states[f.id];
