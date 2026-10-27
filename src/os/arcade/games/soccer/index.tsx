@@ -5,7 +5,7 @@ import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
 import { chargePower, IDENTITY_BASIS, keyboardInput, screenToWorld } from './input.ts';
 import { cloneSnapshot, commandFromPacket, movePacket, parsePacket } from './net.ts';
-import { createWorld, distance, FIELD, findReceiver, matchClock, stepWorld, STEP, switchPlayer, teamDir, teamOf, type Command, type Team, type World } from './logic.ts';
+import { createWorld, distance, FIELD, findReceiver, matchClock, stepWorld, STEP, teamDir, teamOf, type Command, type Team, type World } from './logic.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { goalRoar, kickThump, netSwish, startCrowd, whistle } from './audio.ts';
 import { createScene, type CameraMode, type SoccerView, type TimeMode } from './scene.ts';
@@ -497,22 +497,7 @@ function Play() {
       shotPower = 0.1;
     }
     charging.current.set(id, charge);
-    const hasBall = current.ball.y < 0.75 && distance(player, current.ball) < 0.64;
-    let press = false;
-    if (current.phase === 'live' && !hasBall) {
-      if (action === 'pass' && !online && currentMode !== 'coop') {
-        switchPlayer(current, player.team, state.move);
-        action = null;
-        pressed = false;
-      } else if (action === 'pass') {
-        action = null;
-        pressed = false;
-      }
-      if (action === 'shoot') action = 'tackle';
-      else if (action === 'through') action = 'slide';
-      else if (action === 'lob') { action = null; press = true; }
-    }
-    return { move: state.move, sprint: state.sprint, action, heldAction: charge.holding ? state.heldAction : null, pressed, press, power: shotPower, aim };
+    return { move: state.move, sprint: state.sprint, action, heldAction: charge.holding ? state.heldAction : null, pressed, power: shotPower, aim };
   };
 
   const finishMatch = (current: World) => {
@@ -597,10 +582,11 @@ function Play() {
         for (const [id, command] of commandsForUsers) commands.set(id, command);
         if (room?.isHost) {
           for (const [id, command] of remoteCommands.current) {
-            commands.set(id, command);
+            commands.set(id, { ...command });
             command.action = null;
             command.pressed = false;
-            command.press = false;
+            command.switchNearest = false;
+            command.switchDir = null;
           }
         }
         const previousPhase = current.phase;
@@ -618,7 +604,8 @@ function Play() {
         for (const command of commands.values()) {
           command.action = null;
           command.pressed = false;
-          command.press = false;
+          command.switchNearest = false;
+          command.switchDir = null;
         }
       }
       if (stepped) renderDirty.current = true;
