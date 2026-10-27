@@ -9,6 +9,7 @@ import { createWorld, distance, FIELD, teamOf, findReceiver, matchClock, nearest
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { goalRoar, kickThump, netSwish, startCrowd, whistle } from './audio.ts';
 import { createScene, type CameraMode, type SoccerView, type TimeMode } from './scene.ts';
+import type { PitchPattern } from './stadium.ts';
 import { Hud, PowerMeter } from './hud.tsx';
 import { playerForSeat, type Mode } from './seats.ts';
 import './soccer.css';
@@ -16,20 +17,21 @@ import QRCode from 'qrcode';
 
 type Minutes = '2' | '4' | '6';
 type Camera = 'broadcast' | 'end';
-type Time = 'night' | 'golden';
 
 const MODE = defineSetting<Mode>('soccer:mode', ['cpu', 'versus', 'coop'], 'cpu');
 const HALF = defineSetting<Minutes>('soccer:half', ['2', '4', '6'], '4');
 const LEVEL = defineSetting<LevelName>('soccer:level', ['easy', 'normal', 'hard'], 'normal');
 const CAMERA = defineSetting<Camera>('soccer:camera', ['broadcast', 'end'], 'broadcast', { live: true });
-const TIME = defineSetting<Time>('soccer:time', ['night', 'golden'], 'night', { live: true });
+const TIME = defineSetting<TimeMode>('soccer:time', ['night', 'golden', 'overcast', 'rain'], 'night', { live: true });
+const PITCH = defineSetting<PitchPattern>('soccer:pitch', ['stripes', 'checker'], 'stripes', { live: true });
 const DISPLAY_ONLY = defineSetting<'on' | 'off'>('soccer:display-only', ['on', 'off'], 'on');
 
 const modeOptions = [['cpu', 'vs CPU'], ['versus', '2P versus'], ['coop', '2P co-op']] as const;
 const phoneModeOptions = [['cpu', 'vs CPU'], ['versus', '2 players'], ['coop', 'Co-op']] as const;
 const halfOptions = [['2', '2 min'], ['4', '4 min'], ['6', '6 min']] as const;
 const cameraOptions = [['broadcast', 'Broadcast'], ['end', 'End to end']] as const;
-const timeOptions = [['night', 'Night'], ['golden', 'Golden hour']] as const;
+const timeOptions = [['night', 'Night'], ['golden', 'Golden hour'], ['overcast', 'Overcast'], ['rain', 'Rain']] as const;
+const pitchOptions = [['stripes', 'Stripes'], ['checker', 'Checkerboard']] as const;
 const commandKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyJ', 'KeyK', 'KeyL', 'KeyI', 'KeyU', 'KeyQ', 'KeyE', 'Space', 'Period', 'Slash', 'Semicolon', 'Quote', 'Comma', 'ShiftLeft', 'ShiftRight'];
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
@@ -39,6 +41,7 @@ function Settings({ online = false }: { online?: boolean }) {
   const [level, setLevel] = useSetting(LEVEL);
   const [camera, setCamera] = useSetting(CAMERA);
   const [time, setTime] = useSetting(TIME);
+  const [pitch, setPitch] = useSetting(PITCH);
   return (
     <div className="g-soccer-settings">
       {!online && <Segmented label="Match" value={mode} options={modeOptions} onChange={setMode} />}
@@ -46,6 +49,7 @@ function Settings({ online = false }: { online?: boolean }) {
       <Segmented label="Difficulty" value={level} options={levelOptions} onChange={setLevel} />
       <Segmented label="Camera" value={camera} options={cameraOptions} onChange={setCamera} />
       <Segmented label="Time of day" value={time} options={timeOptions} onChange={setTime} />
+      <Segmented label="Pitch" value={pitch} options={pitchOptions} onChange={setPitch} />
     </div>
   );
 }
@@ -230,6 +234,7 @@ function Play() {
   const [levelChoice, setLevelChoice] = useSetting(LEVEL);
   const [cameraChoice] = useSetting(CAMERA);
   const [timeChoice] = useSetting(TIME);
+  const [pitchChoice] = useSetting(PITCH);
   const [power, setPower] = useState<number | null>(null);
   const [hudPower, setHudPower] = useState<number | null>(null);
   const [containing, setContaining] = useState(false);
@@ -245,6 +250,7 @@ function Play() {
   const levelRef = useRef<Level>(online?.quick ? 'normal' : levelChoice);
   const cameraRef = useRef<CameraMode>(cameraChoice);
   const timeRef = useRef<TimeMode>(timeChoice);
+  const pitchRef = useRef<PitchPattern>(pitchChoice);
   const accumulator = useRef(0);
   const simulationTime = useRef(0);
   const lastFrameTime = useRef<number | null>(null);
@@ -293,6 +299,7 @@ function Play() {
   levelRef.current = online?.quick ? 'normal' : levelChoice;
   cameraRef.current = cameraChoice;
   timeRef.current = timeChoice;
+  pitchRef.current = pitchChoice;
 
   const halfMinutes = online?.quick ? 3 : Number(halfChoice);
   const currentMode: Mode = modeChoice;
@@ -324,7 +331,7 @@ function Play() {
   useEffect(() => {
     const host = ref.current;
     if (!THREE || !host) return;
-    const view = createScene(THREE, host, shell.touch, timeRef.current);
+    const view = createScene(THREE, host, shell.touch, timeRef.current, pitchRef.current);
     if (!view) return;
     viewRef.current = view;
     view.resize(size.w, size.h);
@@ -344,10 +351,16 @@ function Play() {
   }, [size.w, size.h, shell]);
 
   useEffect(() => {
-    viewRef.current?.setTime(timeChoice === 'golden' ? 'golden' : 'night');
+    viewRef.current?.setTime(timeChoice);
     renderDirty.current = true;
     shell.invalidate();
   }, [timeChoice, shell]);
+
+  useEffect(() => {
+    viewRef.current?.setPattern(pitchChoice);
+    renderDirty.current = true;
+    shell.invalidate();
+  }, [pitchChoice, shell]);
 
   useEffect(() => {
     if (!online) return;
