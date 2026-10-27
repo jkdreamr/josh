@@ -34,7 +34,11 @@ function validWorld(value: unknown): value is World {
     || !inRange(w.restartClock, 0, 360) || typeof w.event !== 'string' || w.event.length > 80
     || !Array.isArray(w.controlled) || w.controlled.length !== 2 || !w.controlled.every((id) => Number.isInteger(id) && id >= 0 && id < PLAYER_COUNT)
     || (w.passTarget !== null && w.passTarget !== undefined && (!Number.isInteger(w.passTarget) || w.passTarget < 0 || w.passTarget >= PLAYER_COUNT))
-    || typeof w.passControl !== 'boolean') return false;
+    || (w.passFrom !== null && w.passFrom !== undefined && (!Number.isInteger(w.passFrom) || w.passFrom < 0 || w.passFrom >= PLAYER_COUNT))
+    || typeof w.passControl !== 'boolean'
+    || (w.stealProtect !== undefined && !inRange(w.stealProtect, 0, 0.9))
+    || (w.stealWinnerId !== undefined && w.stealWinnerId !== null
+      && (!Number.isInteger(w.stealWinnerId) || w.stealWinnerId < 0 || w.stealWinnerId >= PLAYER_COUNT))) return false;
   const kickEvent = w.kickEvent;
   if (w.carrierId !== undefined && w.carrierId !== null && !w.players.some((p) => p.id === w.carrierId)) return false;
   if (w.lastToucherId !== undefined && w.lastToucherId !== null && !w.players.some((p) => p.id === w.lastToucherId)) return false;

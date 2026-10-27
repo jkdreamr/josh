@@ -85,8 +85,8 @@ test('a tap pass is assisted to an open receiver and transfers control', () => {
     const g = createWorld(seed, 120);
     g.phase = 'live';
     g.restart = null;
-    const carrier = g.players[1]!;
-    const receiver = g.players[2]!;
+    const carrier = g.players[6]!;
+    const receiver = g.players[7]!;
     carrier.x = -7; carrier.z = 0; carrier.human = true; carrier.controlled = true;
     receiver.x = -3; receiver.z = seed % 2 ? 0.2 : -0.2;
     for (const teammate of g.players.filter((player) => player.team === carrier.team && player.id !== carrier.id && player.id !== receiver.id)) {
