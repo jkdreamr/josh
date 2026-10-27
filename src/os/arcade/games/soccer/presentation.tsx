@@ -142,7 +142,7 @@ export function IntroCard() {
         <h1><b>{CLUBS[0].name}</b><span>vs</span><b>{CLUBS[1].name}</b></h1>
         <p>4-3-3 · 4-3-3 <i /> harbor park · kick off</p>
         <div className="g-soccer-intro-rosters">
-          {CLUBS.map((club, team) => (
+          {CLUBS.map((club) => (
             <section key={club.abbr}>
               <h2>{club.short}</h2>
               <ol>
