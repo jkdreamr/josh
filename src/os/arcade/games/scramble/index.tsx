@@ -1625,13 +1625,14 @@ function Play({ mode }: { mode: StageMode }) {
         continue;
       }
       const f = m.fighters[id];
-      const at = f && (f.phase === 'ground' || f.phase === 'drop') ? v.project(f.x, f.y + (f.id === focus ? 2.9 : 3.2), f.z) : null;
+      const at = f && (f.phase === 'ground' || f.phase === 'drop') ? v.project(f.x, f.y + 2.3, f.z) : null;
       if (!at) {
         if (el.style.visibility !== 'hidden') el.style.visibility = 'hidden';
         continue;
       }
+      // over its name tag, when that's up
       el.style.visibility = '';
-      el.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -100%)`;
+      el.style.transform = `translate(${at.x.toFixed(1)}px, ${(at.y - (shown.has(id) ? TAG_H + 8 : 4)).toFixed(1)}px) translate(-50%, -100%)`;
     }
     // hit marks: a quick X that grows a little and fades
     for (const p of marks.current) {
@@ -2761,7 +2762,7 @@ function EmoteWheel({ wheel, size, teams, pick, ammo, wait, touch }: { wheel: Wh
             const [cx, cy] = [Math.sin(am) * mid, -Math.cos(am) * mid];
             return (
               <g key={k} className={pick === k ? 'is-on' : undefined}>
-                <path d={`M${pt(r0, a0)}L${pt(r1, a0)}A${r1} ${r1} 0 0 1 ${pt(r1, a1)}L${pt(r0, a1)}A${r0} ${r0} 0 0 0 ${pt(r0, a0)}Z`} />
+                <path className="is-slice" d={`M${pt(r0, a0)}L${pt(r1, a0)}A${r1} ${r1} 0 0 1 ${pt(r1, a1)}L${pt(r0, a1)}A${r0} ${r0} 0 0 0 ${pt(r0, a0)}Z`} />
                 <g transform={`translate(${(cx - ic / 2).toFixed(1)} ${(cy - ic / 2 - (label ? 6 : 0)).toFixed(1)})`}>
                   <EmoteIcon k={k} a={ammo} size={ic} />
                 </g>
