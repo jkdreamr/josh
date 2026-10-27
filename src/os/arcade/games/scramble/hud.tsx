@@ -906,8 +906,6 @@ const armorLine = (kind: ArmorKind) => `${cap(ARMOR_NAMES[kind].slice(1).join(',
 export const USE_KEYS: Record<UseId, string> = { bandage: '5', medkit: '6', mini: '7', shield: '8', coffee: '9', smoothie: '0', tart: 'T' };
 /** The keyboard code for a key above. */
 export const keyCode = (k: string) => (/^\d$/.test(k) ? `Digit${k}` : `Key${k}`);
-/** What your team's ring, name tags and outlines look like. */
-const TEAM_COLOR_NAME = 'teal';
 /** The keys that build each piece (and pick it for Space), the material key and the edit key. */
 export const PIECE_KEYS: Record<Plan, string> = { wall: 'Z', ramp: 'X', floor: 'C', roof: 'V', box: 'B' };
 export const MAT_KEY = 'N';
@@ -1234,10 +1232,10 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
         <h3>Duos and squads</h3>
         <ul>
           <li>
-            <b>Teams.</b> In duos you play in teams of two (twenty five teams), in squads teams of four (twelve of four and one of two). Pick the mode by Play, on the Play with Bots card, or as host of a room. Your teammates have a {TEAM_COLOR_NAME} ring under them, a {TEAM_COLOR_NAME} name tag and outline you can see through walls, and show on both maps in their own colors. Nobody can hurt a teammate: shots go past them, and swings, blasts, barrels, hot sauce, stun grenades and impulse eggs leave them be. The storm hurts everyone.
+            <b>Teams.</b> In duos you play in teams of two (twenty five teams), in squads teams of four (twelve of four and one of two). Pick the mode by Play, on the Play with Bots card, or as host of a room. Everyone on a team has a number and a color of their own (teal, amber, pink or violet): a ring under them, an outline you see through walls and roofs, their name tag with their number on it pointing down at them, their pings, the team panel and their dot on both maps all wear it, and yours is on the teams pill. Everyone else's name tag is dark with a red edge. A teammate off the screen (or up or down a stairway from you) shows as their number at the edge with an arrow their way and how far. Nobody can hurt a teammate: shots go past them, and swings, blasts, barrels, hot sauce, stun grenades and impulse eggs leave them be. The storm hurts everyone.
           </li>
           <li>
-            <b>Knocked down.</b> Run out of health while a teammate still stands and you're knocked down, not out: you crawl, can't shoot or use anything, and bleed out over {BLEED_T} seconds. Anyone who hits you meanwhile finishes you off sooner.
+            <b>Knocked down.</b> Run out of health while a teammate still stands and you're knocked down, not out: you crawl, can't shoot or use anything, and bleed out over {BLEED_T} seconds. Anyone who hits you meanwhile finishes you off sooner. A knocked teammate turns red on their name tag, marker, team panel row and map dot, and while nobody is reviving them a call for help up top says who and how far.
           </li>
           <li>
             <b>Reviving.</b> {touch ? 'Hold the pick up button' : 'Hold E'} by a knocked teammate for {REVIVE_T} seconds to get them back up with {REVIVE_HP} health (you stand still while you do, and they stop bleeding). The team panel under the pills shows how everyone is doing.

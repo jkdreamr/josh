@@ -242,11 +242,12 @@ export const REVIVE_HP = 30;
 export const PING_T = 8;
 export const PING_COOL = 0.6;
 /**
- * The ring and name tags of the eggs on your team, and each one's own color (by its place on the team) for its pings
- * and on the team panel.
+ * Each egg's own color on its team (by its place there): its ring, outline, name tag, marker, pings, its number on the
+ * team panel and its dot on the maps. None of them is red, which is the other teams' (their name tags) and a knocked
+ * egg's.
  */
-export const TEAM_COLOR = '#2ee6c9';
 export const MATE_COLORS = ['#2ee6c9', '#ffb020', '#ff5ca8', '#9b8cff'];
+export const FOE_COLOR = '#ff4d4d';
 export type Phase = 'bus' | 'drop' | 'ground' | 'out';
 export const PHASES: readonly Phase[] = ['bus', 'drop', 'ground', 'out'];
 export type Kind = 'player' | 'bot' | 'remote';
@@ -990,6 +991,8 @@ export const teamCount = (m: Match) => m.teams.reduce((n, ids) => n + (ids.lengt
 /** An egg's place on its team (0 for the first), for its color there. */
 export const mateIndex = (m: Match, f: Fighter) => Math.max(0, (m.teams[f.team] ?? []).indexOf(f.id));
 export const mateColor = (m: Match, f: Fighter) => MATE_COLORS[mateIndex(m, f) % MATE_COLORS.length];
+/** An egg's number on its team, from 1: on its marker, its name tag, the team panel and the big map. */
+export const mateNumber = (m: Match, f: Fighter) => mateIndex(m, f) + 1;
 const none = <K extends string>(keys: readonly K[]) => Object.fromEntries(keys.map((k) => [k, 0])) as Record<K, number>;
 
 function newFighter(id: number, e: Entrant, x: number, z: number, team: number): Fighter {
@@ -2223,6 +2226,65 @@ export const beingRevived = (m: Match, f: Fighter) => !!revivedBy(m, f);
 
 /** How far along an egg's revive is, 0..1 (by the clock of whoever we heard it from). */
 export const reviveShare = (m: Match, f: Fighter) => (f.reviving >= 0 ? clamp((m.clock - f.reviveAt) / REVIVE_T, 0, 1) : 0);
+
+/** What the markers pointing the way to a teammate show. */
+export type MateMark = {
+  id: number;
+  n: number;
+  color: string;
+  /** How far off, from the ground above anyone underground. */
+  dist: number;
+  /** 1 up a stairway from us, -1 down one, 0 on our level. */
+  level: number;
+  down: boolean;
+  /** Knocked down with nobody reviving it. */
+  help: boolean;
+};
+
+/** The rest of the team of the egg we see (in solo, nobody), off the bus and still in. */
+export function mateMarks(m: Match, eye: Fighter | undefined): MateMark[] {
+  if (m.mode === 'solo' || !eye) return [];
+  const out: MateMark[] = [];
+  for (const o of teamOf(m, eye.team)) {
+    if (o === eye || (o.phase !== 'ground' && o.phase !== 'drop')) continue;
+    const down = o.down && o.phase === 'ground';
+    out.push({
+      id: o.id,
+      n: mateNumber(m, o),
+      color: mateColor(m, o),
+      dist: Math.hypot(topX(o.x) - topX(eye.x), o.z - eye.z),
+      level: (isDeep(eye.x) ? 1 : 0) - (isDeep(o.x) ? 1 : 0),
+      down,
+      help: down && !revivedBy(m, o),
+    });
+  }
+  return out;
+}
+
+/**
+ * Where on screen a marker for a point goes: the point itself while it's inside the box (left, top, right, bottom),
+ * else where the line to it from (cx, cy) leaves the box, with `off` set and `a` the way it points (radians, 0 right).
+ */
+export function edgeOf(x: number, y: number, cx: number, cy: number, l: number, t: number, r: number, b: number) {
+  if (x >= l && x <= r && y >= t && y <= b) return { x, y, a: 0, off: false };
+  cx = clamp(cx, l, r);
+  cy = clamp(cy, t, b);
+  const dx = x - cx;
+  const dy = y - cy;
+  let k = 1;
+  if (dx > 0) k = Math.min(k, (r - cx) / dx);
+  else if (dx < 0) k = Math.min(k, (l - cx) / dx);
+  if (dy > 0) k = Math.min(k, (b - cy) / dy);
+  else if (dy < 0) k = Math.min(k, (t - cy) / dy);
+  return { x: cx + dx * k, y: cy + dy * k, a: Math.atan2(dy, dx), off: true };
+}
+
+/** The teammate who most needs help: the nearest knocked one nobody is reviving. */
+export function mateInNeed(marks: MateMark[]) {
+  let best: MateMark | null = null;
+  for (const k of marks) if (k.help && (!best || k.dist < best.dist)) best = k;
+  return best;
+}
 
 function startReviving(m: Match, f: Fighter, o: Fighter) {
   f.reviving = o.id;
