@@ -146,24 +146,42 @@
 .g-soccer-watching { position: absolute; top: 21px; left: 18px; color: #d9e1df; font-size: 9px; letter-spacing: .16em; text-transform: uppercase; }
 .g-soccer-replay { position: absolute; top: calc(16px * var(--g-soccer-u)); right: calc(16px * var(--g-soccer-u)); padding: 6px 9px; color: #151b20; background: #ffd76d; border-radius: 3px; font-size: 10px; font-weight: 900; letter-spacing: .14em; box-shadow: 0 4px 18px #0008; }
 
-.g-soccer-power {
+.g-soccer .g-soccer-world-indicator {
   position: absolute;
-  bottom: 24%;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(210px, 30vw);
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  text-align: center;
-  text-transform: uppercase;
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: .15em;
-  text-shadow: 0 2px 5px #000;
+  z-index: 2;
+  display: none;
+  justify-items: center;
+  gap: 3px;
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+  filter: drop-shadow(0 2px 4px #000b);
 }
-.g-soccer-power > div { height: 5px; padding: 1px; border: 1px solid #fff8; border-radius: 5px; background: #061016a8; }
-.g-soccer-power i { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, #80da6c, #fff16c, #f07b51); }
+.g-soccer .g-soccer-world-indicator > i {
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 11px solid var(--player-color);
+  filter: drop-shadow(0 0 4px var(--player-color));
+}
+.g-soccer .g-soccer-world-indicator > span {
+  padding: 3px 6px;
+  border: 1px solid #ffffff55;
+  border-radius: 3px;
+  background: #071722e8;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+.g-soccer .g-soccer-world-indicator > b {
+  width: 64px;
+  height: 4px;
+  border: 1px solid #fff9;
+  border-radius: 4px;
+  background: #061016e8;
+}
 
 .g-soccer-stick {
   display: none;
@@ -239,4 +257,132 @@
   .g-soccer .arcade-touch { bottom: 7px; }
   .g-soccer .arcade-btns { grid-template-columns: repeat(6, 48px); gap: 3px; }
   .g-soccer button.arcade-tbtn { width: 48px; height: 48px; min-width: 48px; min-height: 48px; }
+}
+
+.g-soccer-phone-controller {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  overflow: hidden;
+  background: radial-gradient(circle at 50% 20%, #1e4260, #07121f 72%);
+  color: #f4fbff;
+  touch-action: none;
+  user-select: none;
+}
+.g-soccer-phone-controller header {
+  position: absolute;
+  top: max(12px, env(safe-area-inset-top, 0px));
+  left: max(16px, env(safe-area-inset-left, 0px));
+  right: max(16px, env(safe-area-inset-right, 0px));
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  letter-spacing: .08em;
+}
+.g-soccer-phone-controller header b { font-size: 11px; white-space: nowrap; }
+.g-soccer-phone-controller header strong { font-size: 21px; color: #e9f37a; white-space: nowrap; }
+.g-soccer-phone-controller header button, .g-soccer-phone-show { justify-self: end; border: 1px solid #ffffff44; border-radius: 999px; padding: 8px 11px; color: inherit; background: #10283dcc; font-size: 11px; white-space: nowrap; }
+.g-soccer-phone-charge {
+  position: absolute;
+  top: calc(max(12px, env(safe-area-inset-top, 0px)) + 48px);
+  left: 50%;
+  display: grid;
+  grid-template-columns: max-content minmax(80px, 1fr);
+  align-items: center;
+  gap: 10px;
+  width: min(360px, calc(100% - 40px));
+  transform: translateX(-50%);
+}
+.g-soccer-phone-charge > span { color: #b8d0dc; font-size: 9px; font-weight: 800; letter-spacing: .08em; white-space: nowrap; }
+.g-soccer-phone-charge > div { height: 8px; overflow: hidden; border: 1px solid #ffffff55; border-radius: 8px; background: #07111dcc; }
+.g-soccer-phone-charge i { display: block; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #77d98b, #f2df6d, #f07c5a); transition: width 50ms linear; }
+.g-soccer-phone-controller .g-soccer-stick { left: max(16px, env(safe-area-inset-left, 0px)); bottom: calc(max(140px, 18vh) + env(safe-area-inset-bottom, 0px)); width: clamp(136px, 37vw, 168px); height: clamp(136px, 37vw, 168px); border: 2px solid #bce9ff66; background: #07131dcc; }
+.g-soccer-phone-controller .g-soccer-stick i { width: 42%; height: 42%; background: #c9efff; box-shadow: 0 0 24px #7cd8ff99; }
+.g-soccer-phone-buttons {
+  position: absolute;
+  right: max(16px, env(safe-area-inset-right, 0px));
+  bottom: max(56px, calc(env(safe-area-inset-bottom, 0px) + 44px));
+  display: flex;
+  width: min(206px, 56vw);
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  pointer-events: none;
+}
+.g-soccer-phone-utilities { display: flex; width: 100%; gap: 8px; pointer-events: auto; }
+.g-soccer-phone-action {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 42px;
+  padding: 6px 4px;
+  border: 1px solid #8fb8cf88;
+  border-radius: 13px;
+  background: #1a3b54;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 1.15;
+  text-align: center;
+  white-space: nowrap;
+  touch-action: none;
+}
+.g-soccer-phone-controller .g-soccer-phone-action {
+  border-color: #acd7eb;
+  background: linear-gradient(145deg, #2b6380, #16364f);
+  box-shadow: 0 3px 12px #0008, inset 0 1px #ffffff35;
+}
+.g-soccer-phone-diamond { position: relative; width: 192px; height: 192px; pointer-events: none; }
+.g-soccer-phone-button {
+  position: absolute;
+  display: flex;
+  width: 72px;
+  height: 72px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1px;
+  padding: 2px;
+  border: 2px solid #ffffff75;
+  border-radius: 50%;
+  color: #091624;
+  box-shadow: inset 0 -5px #0002, 0 6px 18px #0005;
+  touch-action: none;
+  pointer-events: auto;
+}
+.g-soccer-phone-button > span { font-size: 21px; font-weight: 950; line-height: 1; }
+.g-soccer-phone-button > small { font-size: 9px; font-weight: 900; line-height: 1; }
+.g-soccer-phone-button:active, .g-soccer-phone-action:active { transform: scale(.94); }
+.g-soccer-phone-button.is-y { top: 0; left: 60px; background: #ddcf62; }
+.g-soccer-phone-button.is-x { top: 60px; left: 0; background: #68b7dd; }
+.g-soccer-phone-button.is-b { top: 60px; right: 0; background: #df6974; }
+.g-soccer-phone-button.is-a { bottom: 0; left: 60px; background: #7ed68c; }
+.g-soccer-phone-show { position: absolute; top: max(12px, env(safe-area-inset-top, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); z-index: 30; }
+.g-soccer-phone-lobby { display: grid; gap: 8px; justify-items: start; padding: 12px; margin-top: 8px; border: 1px solid #ffffff22; border-radius: 12px; background: #0b1725aa; color: #e8f3fa; font-size: 12px; }
+.g-soccer-phone-lobby img { width: 132px; height: 132px; background: white; border-radius: 5px; }
+.g-soccer-phone-lobby label { display: flex; gap: 6px; align-items: center; }
+
+@media (orientation: landscape) {
+  .g-soccer-phone-controller header {
+    top: max(10px, env(safe-area-inset-top, 0px));
+    left: max(24px, env(safe-area-inset-left, 0px));
+    right: max(24px, env(safe-area-inset-right, 0px));
+  }
+  .g-soccer-phone-charge { top: calc(max(10px, env(safe-area-inset-top, 0px)) + 44px); width: min(360px, 44vw); }
+  .g-soccer-phone-controller .g-soccer-stick {
+    left: max(24px, env(safe-area-inset-left, 0px));
+    bottom: max(20px, env(safe-area-inset-bottom, 0px));
+    width: clamp(144px, 36vh, 168px);
+    height: clamp(144px, 36vh, 168px);
+  }
+  .g-soccer-phone-buttons {
+    right: max(24px, env(safe-area-inset-right, 0px));
+    bottom: max(20px, env(safe-area-inset-bottom, 0px));
+    width: min(232px, 30vw);
+  }
+  .g-soccer-phone-action { min-height: 38px; }
 }

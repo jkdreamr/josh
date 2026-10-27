@@ -8,6 +8,7 @@ import { sfx } from './sfx';
 
 type OnlineValue = {
   link: RoomLink;
+  code: string;
   /** Game messages, each handed to the round it was sent for. */
   router: RoundRouter;
   seat: number;
@@ -50,9 +51,9 @@ export function OnlineProvider({
   watching,
   watchers,
   children,
-}: Omit<OnlineValue, 'seat' | 'link' | 'isHost'> & { link: RoomLink | null; seat: number | null; children: ReactNode }) {
+}: Omit<OnlineValue, 'seat' | 'link' | 'isHost' | 'code'> & { link: RoomLink | null; seat: number | null; children: ReactNode }) {
   const value = useMemo(
-    () => link && seat !== null ? { link, router, seat, seats, round, players, bots, isHost: seat === 0, transport, handoffs, quick, pool, watching, watchers } : null,
+    () => link && seat !== null ? { link, code: link.code, router, seat, seats, round, players, bots, isHost: seat === 0, transport, handoffs, quick, pool, watching, watchers } : null,
     [link, router, seat, seats, round, players, bots, transport, handoffs, quick, pool, watching, watchers],
   );
   return <OnlineContext.Provider value={value}>{children}</OnlineContext.Provider>;
@@ -64,6 +65,7 @@ export function useOnline() {
     if (!room) return null;
     return {
       seat: room.seat,
+      code: room.code,
       seats: room.seats,
       round: room.round,
       players: room.players,

@@ -5,10 +5,14 @@ export type InputState = {
   move: Point;
   sprint: boolean;
   action: Command['action'];
+  heldAction: Command['action'];
   pressed: boolean;
-  power: number;
   aim: Point;
 };
+
+export function chargePower(seconds: number) {
+  return Math.max(0.1, Math.min(1, seconds));
+}
 
 export function keyboardInput(keys: KeyState, p2 = false, arrows = false): InputState {
   const x = p2
@@ -32,16 +36,27 @@ export function keyboardInput(keys: KeyState, p2 = false, arrows = false): Input
     else if (keys.pressed('KeyI')) { action = 'lob'; pressed = true; }
     else if (keys.pressed('KeyU')) { action = 'skill'; pressed = true; }
   }
+  const heldAction: Command['action'] = p2
+    ? keys.down('Slash') ? 'shoot'
+      : keys.down('Period') ? 'pass'
+        : keys.down('Semicolon') ? 'through'
+          : keys.down('Quote') ? 'lob'
+            : keys.down('Comma') ? 'skill' : null
+    : keys.down('KeyK') ? 'shoot'
+      : keys.down('KeyJ') ? 'pass'
+        : keys.down('KeyL') ? 'through'
+          : keys.down('KeyI') ? 'lob'
+            : keys.down('KeyU') ? 'skill' : null;
   return {
     move: { x: Math.max(-1, Math.min(1, x)), z: Math.max(-1, Math.min(1, z)) },
     sprint: p2 ? keys.down('ShiftRight') : keys.down('ShiftLeft', 'Shift'),
     action,
+    heldAction,
     pressed,
-    power: keys.down(p2 ? 'Slash' : 'KeyK') ? 0.76 : 0.52,
     aim: { x: x || 1, z: z || 0 },
   };
 }
 
-export function touchInput(move: Point, action: Command['action'], pressed: boolean, sprint: boolean, power = 0.65): InputState {
-  return { move, action, pressed, sprint, power, aim: { x: move.x || 1, z: move.z } };
+export function touchInput(move: Point, action: Command['action'], pressed: boolean, sprint: boolean, _power = 0.65): InputState {
+  return { move, action, heldAction: pressed ? action : null, pressed, sprint, aim: { x: move.x || 1, z: move.z } };
 }

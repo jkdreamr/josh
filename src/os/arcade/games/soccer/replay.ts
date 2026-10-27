@@ -5,6 +5,18 @@ type PlayerFrame = { x: number; z: number; facing: number; action: string };
 type BallFrame = { x: number; y: number; z: number; vx: number; vy: number; vz: number };
 export type ReplayFrame = { time: number; players: PlayerFrame[]; ball: BallFrame };
 
+export function createReplayWorld(template: World): World {
+  return {
+    ...template,
+    players: template.players.map((player) => ({ ...player })),
+    ball: { ...template.ball },
+    score: [...template.score],
+    restartAt: { ...template.restartAt },
+    controlled: [...template.controlled],
+    kickEvent: template.kickEvent ? { ...template.kickEvent } : null,
+  };
+}
+
 export function appendReplayFrame(buffer: ReplayFrame[], world: World, time: number) {
   buffer.push({
     time,
@@ -17,11 +29,12 @@ export function appendReplayFrame(buffer: ReplayFrame[], world: World, time: num
   while (buffer.length && buffer[0]!.time < time - REPLAY_SECONDS) buffer.shift();
 }
 
-export function sampleReplay(buffer: ReplayFrame[], time: number, template: World): World | null {
+export function sampleReplay(buffer: ReplayFrame[], time: number, template: World, output?: World | null): World | null {
   if (!buffer.length) return null;
   let before = buffer[0]!;
   let after = before;
-  for (const frame of buffer) {
+  for (let i = 0; i < buffer.length; i++) {
+    const frame = buffer[i]!;
     if (frame.time <= time) before = frame;
     if (frame.time >= time) {
       after = frame;
@@ -32,20 +45,31 @@ export function sampleReplay(buffer: ReplayFrame[], time: number, template: Worl
   const amount = after.time > before.time
     ? Math.max(0, Math.min(1, (time - before.time) / (after.time - before.time)))
     : 0;
-  const mix = (a: number, b: number) => a + (b - a) * amount;
-  return {
-    ...template,
-    players: template.players.map((player, index) => {
-      const a = before.players[index]!;
-      const b = after.players[index]!;
-      return { ...player, x: mix(a.x, b.x), z: mix(a.z, b.z), facing: mix(a.facing, b.facing), action: amount < 0.5 ? a.action : b.action };
-    }),
-    ball: {
-      ...template.ball,
-      x: mix(before.ball.x, after.ball.x), y: mix(before.ball.y, after.ball.y), z: mix(before.ball.z, after.ball.z),
-      vx: mix(before.ball.vx, after.ball.vx), vy: mix(before.ball.vy, after.ball.vy), vz: mix(before.ball.vz, after.ball.vz),
-    },
-  };
+  const result = output ?? createReplayWorld(template);
+  for (let i = 0; i < result.players.length; i++) {
+    const player = result.players[i]!;
+    const a = before.players[i]!;
+    const b = after.players[i]!;
+    player.x = a.x + (b.x - a.x) * amount;
+    player.z = a.z + (b.z - a.z) * amount;
+    player.facing = a.facing + (b.facing - a.facing) * amount;
+    player.action = amount < 0.5 ? a.action : b.action;
+  }
+  result.ball.x = before.ball.x + (after.ball.x - before.ball.x) * amount;
+  result.ball.y = before.ball.y + (after.ball.y - before.ball.y) * amount;
+  result.ball.z = before.ball.z + (after.ball.z - before.ball.z) * amount;
+  result.ball.vx = before.ball.vx + (after.ball.vx - before.ball.vx) * amount;
+  result.ball.vy = before.ball.vy + (after.ball.vy - before.ball.vy) * amount;
+  result.ball.vz = before.ball.vz + (after.ball.vz - before.ball.vz) * amount;
+  result.score[0] = template.score[0];
+  result.score[1] = template.score[1];
+  result.clock = template.clock;
+  result.phase = template.phase;
+  result.event = template.event;
+  result.eventTime = template.eventTime;
+  result.half = template.half;
+  result.endsSwapped = template.endsSwapped;
+  return result;
 }
 
 export function selectReplay(buffer: ReplayFrame[], end: number) {

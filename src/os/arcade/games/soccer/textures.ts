@@ -14,11 +14,11 @@ export function pitchTextures(THREE: Three, lite: boolean) {
   canvas.width = size; canvas.height = size;
   const ctx = canvas.getContext('2d')!;
   const grass = ctx.createLinearGradient(0, 0, size, 0);
-  grass.addColorStop(0, '#16843b'); grass.addColorStop(0.5, '#2b9b4a'); grass.addColorStop(1, '#197e38');
+  grass.addColorStop(0, '#218d3e'); grass.addColorStop(0.5, '#36a94e'); grass.addColorStop(1, '#21883b');
   ctx.fillStyle = grass;
   ctx.fillRect(0, 0, size, size);
   for (let i = 0; i < 12; i++) {
-    ctx.fillStyle = i % 2 ? 'rgba(220,250,214,.22)' : 'rgba(4,28,16,.16)';
+    ctx.fillStyle = i % 2 ? '#2fa54a' : '#23863b';
     ctx.fillRect(i * size / 12, 0, size / 12, size);
   }
   ctx.strokeStyle = 'rgba(9,57,39,.045)';
@@ -31,7 +31,7 @@ export function pitchTextures(THREE: Three, lite: boolean) {
   const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
   for (let i = 0; i < size * size * 0.012; i++) {
     const shade = Math.floor(38 + random() * 60);
-    ctx.fillStyle = `rgba(${shade},${shade + 45},${shade + 20},${random() * 0.14})`;
+    ctx.fillStyle = `rgba(${shade},${shade + 45},${shade + 20},${random() * 0.22})`;
     ctx.fillRect(random() * size, random() * size, 1 + random() * 2.2, 1 + random() * 3);
   }
   const normalCanvas = document.createElement('canvas');

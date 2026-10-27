@@ -3,17 +3,17 @@ import type { World, Player, Team } from './logic.ts';
 import { FIELD, teamDir } from './logic.ts';
 import { disposeTree, damp } from './gl.ts';
 import { adTexture, ballNumberTexture, ballTexture, markingsTexture, pitchTextures } from './textures.ts';
-import { animateSoccerSkeleton, captureSoccerBoneBinds, type BoneBind, type SoccerPose } from './player.ts';
+import { animateSoccerSkeleton, captureSoccerBoneBinds, createSoccerAnimationScratch, type BoneBind, type SoccerAnimationScratch, type SoccerPose } from './player.ts';
 
 type Three = typeof import('three');
 export type CameraMode = 'broadcast' | 'end' | 'replay';
 export type TimeMode = 'night' | 'golden';
-type Actor = { root: T.Group; body: T.Group; legs: [T.Mesh, T.Mesh]; fallback: T.Group; marker: T.Mesh; number: T.Mesh; phase: number; loaded: boolean; skinned: T.Object3D | null; boneBinds: BoneBind[]; pose: SoccerPose | null; poseTime: number; celebrated: boolean };
-type Crowd = { mesh: T.InstancedMesh; phases: number[]; baseY: number[]; fixtures: T.MeshStandardMaterial[] };
+type Actor = { root: T.Group; body: T.Group; legs: [T.Mesh, T.Mesh]; fallback: T.Group; marker: T.Mesh; arrow: T.Mesh; carrierRing: T.Mesh; powerBar: T.Group; powerFill: T.Mesh; number: T.Mesh; phase: number; loaded: boolean; skinned: T.Object3D | null; boneBinds: BoneBind[]; animation: SoccerAnimationScratch; pose: SoccerPose | null; poseTime: number; celebrated: boolean; replayAction: string | null };
+type Crowd = { mesh: T.InstancedMesh; count: number; phases: number[]; baseY: number[]; fixtures: T.MeshStandardMaterial[] };
 
 export type SoccerView = {
   resize(width: number, height: number): void;
-  update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId?: number | null): void;
+  update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId?: number | null, power?: number | null): void;
   render(): void;
   setTime(mode: TimeMode): void;
   goal(): void;
@@ -114,20 +114,27 @@ function createPlayer(THREE: Three, player: Player, lite: boolean): Actor {
   contact.rotation.x = -Math.PI / 2;
   contact.position.y = 0.02;
   root.add(contact);
-  const marker = new THREE.Mesh(new THREE.RingGeometry(0.43, 0.54, 28), new THREE.MeshBasicMaterial({ color: player.team === 0 ? '#ffe782' : '#73defa', side: THREE.DoubleSide, transparent: true, opacity: 0.92 }));
+  const marker = new THREE.Mesh(new THREE.RingGeometry(0.43, 0.54, 28), new THREE.MeshBasicMaterial({ color: player.team === 0 ? '#ff5368' : '#73defa', side: THREE.DoubleSide, transparent: true, opacity: 0.92 }));
   marker.rotation.x = -Math.PI / 2; marker.position.y = 0.035;
   root.add(marker);
-  const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.23, 3), new THREE.MeshBasicMaterial({ color: player.team === 0 ? '#ffe782' : '#73defa' }));
-  arrow.position.set(0, 2.12, 0); arrow.rotation.x = Math.PI;
+  const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.34, 3), new THREE.MeshBasicMaterial({ color: player.team === 0 ? '#ff5368' : '#73defa' }));
+  arrow.position.set(0, 2.55, 0); arrow.rotation.x = Math.PI;
   root.add(arrow);
+  const carrierRing = new THREE.Mesh(new THREE.RingGeometry(0.52, 0.58, 24), new THREE.MeshBasicMaterial({ color: '#fff1a8', transparent: true, opacity: 0.68, side: THREE.DoubleSide }));
+  carrierRing.rotation.x = -Math.PI / 2; carrierRing.position.y = 0.04; carrierRing.visible = false; root.add(carrierRing);
+  const powerBar = new THREE.Group();
+  const powerBack = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.055), new THREE.MeshBasicMaterial({ color: '#07131b', transparent: true, opacity: 0.86, side: THREE.DoubleSide }));
+  const powerFill = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.032), new THREE.MeshBasicMaterial({ color: '#e6f36d', side: THREE.DoubleSide }));
+  powerBar.position.set(0, 1.98, 0); powerBack.rotation.x = -Math.PI / 2; powerFill.rotation.x = -Math.PI / 2;
+  powerFill.position.y = 0.002; powerBar.add(powerBack, powerFill); powerBar.visible = false; root.add(powerBar);
   root.add(model);
   void boots;
   void digit;
-  return { root, body: fallback, legs, fallback, marker, number, phase: player.id * 0.83, loaded: false, skinned: null, boneBinds: [], pose: null, poseTime: 0, celebrated: false };
+  return { root, body: fallback, legs, fallback, marker, arrow, carrierRing, powerBar, powerFill, number, phase: player.id * 0.83, loaded: false, skinned: null, boneBinds: [], animation: createSoccerAnimationScratch(THREE), pose: null, poseTime: 0, celebrated: false, replayAction: null };
 }
 
 function makeCrowd(THREE: Three, parent: T.Object3D, lite: boolean): Crowd {
-  const count = lite ? 1500 : 4000;
+  const count = lite ? 450 : 1000;
   const geometry = new THREE.CapsuleGeometry(0.12, 0.34, 2, 6);
   const material = new THREE.MeshBasicMaterial({ color: '#ef6672' });
   const mesh = new THREE.InstancedMesh(geometry, material, count);
@@ -143,8 +150,8 @@ function makeCrowd(THREE: Three, parent: T.Object3D, lite: boolean): Crowd {
     const side = endStand ? 1 : 1;
     const x = endStand ? side * (24 + random() * 3.7) : (random() - 0.5) * 48;
     const z = endStand ? (random() - 0.5) * 29 : 16.2 + random() * 8.2;
-    const row = Math.floor(random() * 10);
-    const y = 1.35 + row * 0.46 + random() * 0.12;
+    const row = Math.floor(random() * 2);
+    const y = 1.35 + row * 0.32 + random() * 0.08;
     temp.position.set(x, y, z);
     temp.rotation.set((random() - 0.5) * 0.09, (random() - 0.5) * 0.45, 0);
     temp.scale.set(0.83 + random() * 0.38, 0.82 + random() * 0.45, 0.83 + random() * 0.38);
@@ -157,29 +164,46 @@ function makeCrowd(THREE: Three, parent: T.Object3D, lite: boolean): Crowd {
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   parent.add(mesh);
-  return { mesh, phases, baseY, fixtures: [] };
+  return { mesh, count, phases, baseY, fixtures: [] };
 }
 
 function createStands(THREE: Three, scene: T.Scene, lite: boolean) {
-  const concrete = standard(THREE, '#27384b', 0.82);
-  const seat = standard(THREE, '#aab7c3', 0.62, 0.08);
-  const roof = standard(THREE, '#101c29', 0.55, 0.18);
+  const stands = new THREE.InstancedMesh(
+    new THREE.BoxGeometry(1, 1, 1),
+    standard(THREE, '#ffffff', 0.78),
+    2,
+  );
+  const row = new THREE.Object3D();
+  const concrete = new THREE.Color('#27384b');
+  const seat = new THREE.Color('#aab7c3');
+  let instance = 0;
+  for (let tier = 0; tier < 1; tier++) {
+    for (let index = 0; index < 2; index++) {
+      const y = 1.15 + index * 0.34 + tier * 3.4;
+      const z = 15.2 + index * 0.45 + tier * 4.2;
+      row.position.set(0, y, z);
+      row.scale.set(50 - index * 0.18, 0.15, 0.28);
+      row.updateMatrix();
+      stands.setMatrixAt(instance, row.matrix);
+      stands.setColorAt(instance++, index % 2 ? seat : concrete);
+    }
+  }
+  stands.count = instance;
   for (let tier = 0; tier < 2; tier++) {
-    for (let row = 0; row < 9; row++) {
-      const y = 1.15 + row * 0.4 + tier * 4.05;
-      const z = 15.2 + row * 0.55 + tier * 5.2;
-      box(THREE, scene, [50 - row * 0.18, 0.16, 0.34], [0, y, z], row % 2 ? seat : concrete, false, false);
+    for (let index = 0; index < 9; index++) {
+      const x = 21.4 + index * 0.48 + tier * 4.6;
+      const y = 1.2 + index * 0.4 + tier * 4.05;
+      row.position.set(x, y, 0);
+      row.scale.set(0.3, 0.16, 29 - index * 0.18);
+      row.updateMatrix();
+      stands.setMatrixAt(instance, row.matrix);
+      stands.setColorAt(instance++, index % 2 ? seat : concrete);
     }
   }
-  for (const side of [1]) {
-    for (let tier = 0; tier < 2; tier++) {
-      for (let row = 0; row < 9; row++) {
-        const x = side * (21.4 + row * 0.48 + tier * 4.6);
-        const y = 1.2 + row * 0.4 + tier * 4.05;
-        box(THREE, scene, [0.3, 0.16, 29 - row * 0.18], [x, y, 0], row % 2 ? seat : concrete, false, false);
-      }
-    }
-  }
+  stands.instanceMatrix.needsUpdate = true;
+  if (stands.instanceColor) stands.instanceColor.needsUpdate = true;
+  scene.add(stands);
+  const roof = standard(THREE, '#101c29', 0.55, 0.18);
   box(THREE, scene, [54, 0.45, 0.8], [0, 9.2, 23.4], roof);
   box(THREE, scene, [0.8, 0.45, 35], [28.1, 9.2, 0], roof);
   box(THREE, scene, [0.8, 0.45, 35], [-28.1, 9.2, 0], roof);
@@ -209,30 +233,47 @@ function buildGoal(THREE: Three, scene: T.Scene, sign: number, white: T.Material
   const group = new THREE.Group();
   const x = sign * (FIELD.length / 2 + 0.05);
   const back = sign * 23.4;
-  const postX = x;
-  const netMat = standard(THREE, '#c9d8d5', 0.72);
-  for (const z of [-2.5, 2.5]) {
-    const post = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, FIELD.goalHeight, 14), white);
-    post.position.set(postX, FIELD.goalHeight / 2, z);
-    post.castShadow = true; group.add(post);
-    const rearPost = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, FIELD.goalHeight, 8), netMat);
-    rearPost.position.set(back, FIELD.goalHeight / 2, z); group.add(rearPost);
+  const frame = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.075, 0.075, 1, 12), white, 6);
+  const bar = new THREE.Object3D();
+  const frameParts: [number, number, number, number, number][] = [
+    [x, FIELD.goalHeight / 2, -2.5, FIELD.goalHeight, 0],
+    [x, FIELD.goalHeight / 2, 2.5, FIELD.goalHeight, 0],
+    [back, FIELD.goalHeight / 2, -2.5, FIELD.goalHeight, 0],
+    [back, FIELD.goalHeight / 2, 2.5, FIELD.goalHeight, 0],
+    [x, FIELD.goalHeight, 0, FIELD.goalWidth, Math.PI / 2],
+    [back, FIELD.goalHeight, 0, FIELD.goalWidth, Math.PI / 2],
+  ];
+  for (let i = 0; i < frameParts.length; i++) {
+    const [px, py, pz, length, rotation] = frameParts[i]!;
+    bar.position.set(px, py, pz);
+    bar.rotation.set(rotation, 0, 0);
+    bar.scale.set(1, length, 1);
+    bar.updateMatrix();
+    frame.setMatrixAt(i, bar.matrix);
   }
-  const crossbar = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, FIELD.goalWidth, 14), white);
-  crossbar.rotation.x = Math.PI / 2; crossbar.position.set(postX, FIELD.goalHeight, 0); crossbar.castShadow = true; group.add(crossbar);
-  const backBar = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, FIELD.goalWidth, 8), netMat);
-  backBar.rotation.x = Math.PI / 2; backBar.position.set(back, FIELD.goalHeight, 0); group.add(backBar);
+  frame.instanceMatrix.needsUpdate = true;
+  frame.castShadow = true;
+  group.add(frame);
+
+  const vertices: number[] = [];
+  const segment = (ax: number, ay: number, az: number, bx: number, by: number, bz: number) => {
+    vertices.push(ax, ay, az, bx, by, bz);
+  };
   for (let i = 0; i <= 10; i++) {
     const z = -2.5 + i * 0.5;
-    const net = cylinderBetween(THREE, group, new THREE.Vector3(postX, 0, z), new THREE.Vector3(back, 0, z), 0.012, netMat);
-    net.userData.flex = i;
+    segment(x, 0, z, back, 0, z);
   }
   for (let i = 0; i <= 8; i++) {
     const y = i * FIELD.goalHeight / 8;
-    cylinderBetween(THREE, group, new THREE.Vector3(postX, y, -2.5), new THREE.Vector3(back, y, -2.5), 0.01, netMat);
-    cylinderBetween(THREE, group, new THREE.Vector3(postX, y, 2.5), new THREE.Vector3(back, y, 2.5), 0.01, netMat);
+    segment(x, y, -2.5, back, y, -2.5);
+    segment(x, y, 2.5, back, y, 2.5);
   }
-  group.position.x = 0;
+  const netGeometry = new THREE.BufferGeometry();
+  netGeometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+  const net = new THREE.LineSegments(netGeometry, new THREE.LineBasicMaterial({ color: '#d2e0dc', transparent: true, opacity: 0.7, depthWrite: false }));
+  group.add(net);
+  group.userData.netGeometry = netGeometry;
+  group.userData.netBase = new Float32Array(vertices);
   scene.add(group);
   return group;
 }
@@ -254,6 +295,14 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const canvas = renderer.domElement;
   canvas.style.cssText = 'display:block;width:100%;height:100%;touch-action:none';
   host.appendChild(canvas);
+  const indicator = document.createElement('div');
+  indicator.className = 'g-soccer-world-indicator';
+  const indicatorArrow = document.createElement('i');
+  const indicatorName = document.createElement('span');
+  const indicatorPower = document.createElement('b');
+  indicator.append(indicatorArrow, indicatorName, indicatorPower);
+  host.appendChild(indicator);
+  const projected = new THREE.Vector3();
 
   const scene = new THREE.Scene();
   const night = timeMode === 'night';
@@ -285,15 +334,15 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   drawSky(night);
   scene.background = null;
   scene.fog = new THREE.Fog(night ? '#142438' : '#d99a71', 65, 130);
-  const camera = new THREE.PerspectiveCamera(31, 1, 0.1, 180);
+  const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 180);
   const hemi = new THREE.HemisphereLight(night ? '#d0e0e8' : '#fff0d4', '#162b22', night ? 0.85 : 1.75);
   scene.add(hemi);
   const key = new THREE.DirectionalLight(night ? '#f0f6ff' : '#ffc27d', night ? 3.2 : 2.7);
   key.position.set(-20, night ? 34 : 12, night ? 13 : -24);
   key.castShadow = true;
-  key.shadow.mapSize.set(lite ? 1024 : 2048, lite ? 1024 : 2048);
-  key.shadow.camera.left = -30; key.shadow.camera.right = 30;
-  key.shadow.camera.top = 25; key.shadow.camera.bottom = -25;
+  key.shadow.mapSize.set(1024, 1024);
+  key.shadow.camera.left = -36; key.shadow.camera.right = 36;
+  key.shadow.camera.top = 30; key.shadow.camera.bottom = -30;
   key.shadow.camera.near = 1; key.shadow.camera.far = 90;
   key.shadow.bias = -0.00035; key.shadow.normalBias = 0.028;
   scene.add(key);
@@ -301,22 +350,24 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(82, 62), standard(THREE, '#163b28', 0.96));
   ground.rotation.x = -Math.PI / 2; ground.position.y = -0.2; ground.receiveShadow = true; scene.add(ground);
   const textures = pitchTextures(THREE, lite);
-  const turf = new THREE.MeshStandardMaterial({ map: textures.color, normalMap: textures.normal, roughnessMap: textures.roughness, color: '#c0f5a8', emissive: '#092b12', emissiveIntensity: 0.12, roughness: 0.72, metalness: 0.025 });
+  const turf = new THREE.MeshStandardMaterial({ map: textures.color, normalMap: textures.normal, roughnessMap: textures.roughness, color: '#ffffff', emissive: '#10431c', emissiveIntensity: 0.24, roughness: 0.72, metalness: 0.025 });
   const pitch = new THREE.Mesh(new THREE.PlaneGeometry(FIELD.length, FIELD.width), turf);
   pitch.rotation.x = -Math.PI / 2; pitch.position.y = 0.005; pitch.receiveShadow = true; scene.add(pitch);
-  for (let i = 0; i < 12; i++) {
-    const stripe = new THREE.Mesh(
-      new THREE.PlaneGeometry(FIELD.length / 12, FIELD.width),
-      new THREE.MeshBasicMaterial({
-        color: i % 2 ? '#b6e9aa' : '#0b4a26',
-        transparent: true,
-        opacity: 0.07,
-        depthWrite: false,
-      }),
-    );
-    stripe.rotation.x = -Math.PI / 2;
-    stripe.position.set(-FIELD.length / 2 + (i + 0.5) * FIELD.length / 12, 0.012, 0);
-    scene.add(stripe);
+  const stripeGeometry = new THREE.PlaneGeometry(FIELD.length / 12, FIELD.width);
+  stripeGeometry.rotateX(-Math.PI / 2);
+  const stripeMeshes = [
+    new THREE.InstancedMesh(stripeGeometry, new THREE.MeshBasicMaterial({ color: '#b8efb2', transparent: true, opacity: 0.1, depthWrite: false }), 6),
+    new THREE.InstancedMesh(stripeGeometry, new THREE.MeshBasicMaterial({ color: '#071a0b', transparent: true, opacity: 0.08, depthWrite: false }), 6),
+  ];
+  const stripeTransform = new THREE.Object3D();
+  for (let index = 0; index < 12; index++) {
+    stripeTransform.position.set(-FIELD.length / 2 + (index + 0.5) * FIELD.length / 12, 0.012, 0);
+    stripeTransform.updateMatrix();
+    stripeMeshes[index % 2]!.setMatrixAt(Math.floor(index / 2), stripeTransform.matrix);
+  }
+  for (const stripes of stripeMeshes) {
+    stripes.instanceMatrix.needsUpdate = true;
+    scene.add(stripes);
   }
   const mark = markingsTexture(THREE);
   const lines = new THREE.Mesh(new THREE.PlaneGeometry(FIELD.length, FIELD.width), new THREE.MeshBasicMaterial({ map: mark, transparent: true, opacity: 0.91, depthWrite: false }));
@@ -381,6 +432,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const ballShadow = new THREE.Mesh(new THREE.CircleGeometry(0.32, 20), new THREE.MeshBasicMaterial({ color: '#06150e', transparent: true, opacity: 0.32, depthWrite: false }));
   ballShadow.rotation.x = -Math.PI / 2; ballShadow.position.y = 0.025; scene.add(ballShadow);
   const actors: Actor[] = [];
+  const materialCache = new Map<string, Map<T.Material, T.Material>>();
   const worldPlayers = Array.from({ length: 10 }, (_, id) => ({ id, team: (id < 5 ? 0 : 1) as Team, slot: (['GK', 'DEF', 'LM', 'RM', 'FWD'][id % 5]) as Player['slot'], x: 0, z: 0, vx: 0, vz: 0, facing: 0, stamina: 1, human: false, controlled: false, cooldown: 0, action: 'idle' }));
   for (const p of worldPlayers) {
     const actor = createPlayer(THREE, p, lite);
@@ -407,13 +459,22 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       body.traverse((object) => {
         const mesh = object as T.Mesh;
         if (!mesh.isMesh) return;
-        mesh.castShadow = !lite;
+        mesh.castShadow = false;
         mesh.frustumCulled = false;
         const source = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        const variant = `${player.team}:${player.slot === 'GK' ? 'keeper' : 'field'}`;
+        let variants = materialCache.get(variant);
+        if (!variants) { variants = new Map(); materialCache.set(variant, variants); }
         const materials = source.map((material) => {
-          const cloned = material.clone() as T.MeshStandardMaterial;
-          if (material.name === 'shirt') cloned.color.set(player.slot === 'GK' ? teamKit[player.team]!.keeper : teamKit[player.team]!.shirt);
-          if (material.name === 'shorts') cloned.color.set(teamKit[player.team]!.shorts);
+          let cloned = variants!.get(material);
+          if (!cloned) {
+            cloned = material.clone() as T.MeshStandardMaterial;
+            if (cloned instanceof THREE.MeshStandardMaterial) {
+              if (material.name === 'shirt') cloned.color.set(player.slot === 'GK' ? teamKit[player.team]!.keeper : teamKit[player.team]!.shirt);
+              if (material.name === 'shorts') cloned.color.set(teamKit[player.team]!.shorts);
+            }
+            variants!.set(material, cloned);
+          }
           return cloned;
         });
         mesh.material = Array.isArray(mesh.material) ? materials : materials[0]!;
@@ -438,9 +499,23 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const glowMaterial = new THREE.MeshBasicMaterial({ color: '#f58a49', transparent: true, opacity: 0.38, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
   const glow = new THREE.Mesh(new THREE.SphereGeometry(0.48, 20, 16), glowMaterial);
   glow.position.set(15, 9, 24); scene.add(glow);
-  let target = new THREE.Vector3(0, 0, 0);
+  const target = new THREE.Vector3(0, 0, 0);
+  const desired = new THREE.Vector3(0, 0, 0);
+  const lookAt = new THREE.Vector3(0, 0, 0);
   let cameraReady = false;
   let width = 1, height = 1;
+  const debug = typeof location !== 'undefined' && new URLSearchParams(location.search).has('soccerdebug');
+  const quality = {
+    dpr: Math.min(window.devicePixelRatio || 1, lite ? 1.5 : 2),
+    slow: 0,
+    stable: 0,
+    lastRender: 0,
+    avgMs: 16.7,
+    shadows: true,
+    crowdHalf: false,
+    nextLog: 0,
+  };
+  renderer.setPixelRatio(quality.dpr);
   const onLost = (event: Event) => event.preventDefault();
   canvas.addEventListener('webglcontextlost', onLost);
 
@@ -448,15 +523,21 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     width = Math.max(1, w); height = Math.max(1, h);
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
-    camera.fov = height > width ? 60 : 32;
+    camera.fov = height > width ? 84 : 34;
     camera.updateProjectionMatrix();
   }
 
-  function update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId: number | null = null) {
+  function update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId: number | null = null, power: number | null = null) {
     elapsed += Math.min(0.05, dt);
     crowdTimer += dt; adTimer += dt;
     if (adTimer > 0.08) { ads.draw(elapsed); adTimer = 0; }
-    const currentCarrier = world.players.find((p) => Math.hypot(world.ball.x - p.x, world.ball.z - p.z) < 0.8);
+    let currentCarrier: World['players'][number] | null = null;
+    for (const player of world.players) {
+      if (Math.hypot(world.ball.x - player.x, world.ball.z - player.z) < 0.8) {
+        currentCarrier = player;
+        break;
+      }
+    }
     for (const player of world.players) {
       const actor = actors[player.id]!;
       actor.root.position.set(player.x, 0, player.z);
@@ -468,7 +549,11 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
             ? 'shoot'
             : null;
         actor.poseTime = 0.42;
+      } else if (cameraMode === 'replay' && player.action !== actor.replayAction && (player.action === 'kick' || player.action === 'pass')) {
+        actor.pose = player.action === 'kick' ? 'shoot' : 'pass';
+        actor.poseTime = 0.42;
       }
+      actor.replayAction = cameraMode === 'replay' ? player.action : null;
       if (world.phase !== 'goal') actor.celebrated = false;
       const scoringTeam = world.event.startsWith('bay city') ? 0 : 1;
       if (world.phase === 'goal' && player.team === scoringTeam && player.slot !== 'GK' && !actor.celebrated) {
@@ -503,10 +588,11 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       actor.body.rotation.z = player.action === 'slide' ? Math.PI / 2 : Math.sin(actor.phase * 0.5) * run * 0.035;
       actor.body.rotation.x = -run * 0.07;
       actor.marker.visible = player.controlled || player.id === targetId;
-      (actor.marker.material as T.MeshBasicMaterial).color.set(player.id === targetId && !player.controlled ? '#fff28a' : player.team === 0 ? '#ffe782' : '#73defa');
+      (actor.marker.material as T.MeshBasicMaterial).color.set(player.id === targetId && !player.controlled ? '#fff28a' : player.team === 0 ? '#ff5368' : '#73defa');
       if (player.controlled || player.id === targetId) (actor.marker.material as T.MeshBasicMaterial).opacity = 0.72 + Math.sin(elapsed * 5) * 0.18;
-      const arrow = actor.root.children.find((child) => child instanceof THREE.Mesh && child !== actor.marker && child.position.y > 2);
-      if (arrow) arrow.visible = player.controlled;
+      actor.arrow.visible = player.controlled;
+      actor.carrierRing.visible = currentCarrier?.id === player.id;
+      actor.powerBar.visible = false;
       actor.root.scale.y = currentCarrier?.id === player.id && player.action === 'kick' ? 1.05 + Math.sin(elapsed * 24) * 0.03 : 1;
       if (actor.skinned) {
         const pose = actor.poseTime > 0 ? actor.pose : player.slot === 'GK' ? 'ready' : speed > 0.18 ? 'run' : null;
@@ -517,6 +603,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
           actor.phase,
           speed,
           pose,
+          actor.animation,
           actor.poseTime > 0 ? 1 - actor.poseTime / 0.42 : 0,
           currentCarrier?.id === player.id,
         );
@@ -547,27 +634,39 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       crowdTimer = 0;
     }
     for (let i = 0; i < cornerFlags.length; i++) cornerFlags[i]!.rotation.z = Math.sin(elapsed * 2.5 + i) * 0.045;
-    if (world.ball.inNet) for (const goal of goals) goal.rotation.z = Math.sin(elapsed * 8) * 0.035;
-    else goals.forEach((goal) => { goal.rotation.z *= Math.exp(-dt * 4); });
+    for (const goal of goals) {
+      const geometry = goal.userData.netGeometry as T.BufferGeometry;
+      const attribute = geometry.getAttribute('position') as T.BufferAttribute;
+      const positions = attribute.array as Float32Array;
+      const base = goal.userData.netBase as Float32Array;
+      const pulse = world.ball.inNet ? Math.max(0, Math.min(1, world.eventTime / 1.6)) : 0;
+      for (let i = 0; i < positions.length; i += 3) {
+        const x = base[i]!, y = base[i + 1]!, z = base[i + 2]!;
+        const distance = Math.hypot(world.ball.x - x, world.ball.y - y, world.ball.z - z);
+        const wave = Math.sin(elapsed * 16 - distance * 2.4) * Math.max(0, 1 - distance / 6) * pulse * 0.12;
+        positions[i + 1] = y + wave * 0.35;
+        positions[i + 2] = z + wave;
+      }
+      attribute.needsUpdate = true;
+    }
 
     const portrait = camera.aspect < 0.72;
-    const trackedX = cameraMode === 'broadcast'
-      ? Math.max(-5.5, Math.min(5.5, world.ball.x * 0.28))
-      : world.ball.x * 0.35;
     const attackDir = teamDir(humanTeam, world.endsSwapped);
+    const controlledPlayer = world.players.find((player) => player.id === world.controlled[humanTeam]);
+    const focusX = world.phase === 'restart' ? controlledPlayer?.x ?? world.ball.x : world.ball.x;
+    const trackedX = cameraMode === 'broadcast'
+      ? Math.max(-5.5, Math.min(5.5, focusX * 0.28 + attackDir * 2.4))
+      : world.ball.x * 0.35;
     target.set(
-      trackedX + (portrait && cameraMode === 'broadcast' ? attackDir * 4 : 0),
+      trackedX + (portrait && cameraMode === 'broadcast' ? attackDir * 2 : attackDir * 1.5),
       0.55,
-      world.ball.z * 0.3 + (portrait ? 0 : 2.5),
+      world.ball.z * 0.22,
     );
-    const desired = cameraMode === 'replay'
-      ? new THREE.Vector3(world.ball.x - attackDir * 8, 5.2, world.ball.z + 13)
-      : cameraMode === 'broadcast'
-        ? portrait
-          ? new THREE.Vector3(target.x - attackDir * 42, 20, target.z)
-          : new THREE.Vector3(target.x, 19, target.z - 48)
-        : new THREE.Vector3(target.x - attackDir * 23, 14.5, target.z);
-    const zoom = cameraMode === 'replay' ? 36 : portrait ? 60 : Math.abs(world.ball.x) > 14 ? 30 : 32;
+    if (cameraMode === 'replay') desired.set(world.ball.x - attackDir * 8, 5.2, world.ball.z + 13);
+    else if (cameraMode === 'broadcast' && portrait) desired.set(target.x - attackDir * 25, 15.5, target.z);
+    else if (cameraMode === 'broadcast') desired.set(target.x, 14.5, -29.5);
+    else desired.set(target.x - attackDir * 24, 13.5, target.z);
+    const zoom = cameraMode === 'replay' ? 36 : portrait && cameraMode === 'broadcast' ? 86 : Math.abs(world.ball.x) > 14 ? 35 : 34;
     camera.fov = damp(camera.fov, zoom, 2.4, dt);
     camera.updateProjectionMatrix();
     if (!cameraReady) {
@@ -578,9 +677,30 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       camera.position.x = damp(camera.position.x, desired.x, 2.8, dt);
       camera.position.y = damp(camera.position.y, desired.y, 2.8, dt);
       camera.position.z = damp(camera.position.z, desired.z, 2.8, dt);
-      const lookAt = new THREE.Vector3(target.x, target.y, target.z);
+      lookAt.set(target.x, target.y, target.z);
       camera.lookAt(lookAt);
     }
+    camera.updateMatrixWorld(true);
+    const controlled = world.players.find((player) => player.controlled);
+    if (controlled) {
+      projected.set(controlled.x, 2.75, controlled.z).project(camera);
+      const visible = projected.z >= -1 && projected.z <= 1 && Math.abs(projected.x) < 1.05 && Math.abs(projected.y) < 1.05;
+      indicator.style.display = visible ? 'grid' : 'none';
+      if (visible) {
+        indicator.style.left = `${(projected.x * 0.5 + 0.5) * width}px`;
+        indicator.style.top = `${(0.5 - projected.y * 0.5) * height}px`;
+        indicator.style.setProperty('--player-color', controlled.team === 0 ? '#ff5368' : '#73defa');
+        const name = controlled.slot === 'GK' ? 'A. MORGAN' : controlled.slot === 'FWD' ? 'M. RIVERA' : controlled.id === 1 ? 'J. KIM' : 'D. PARK';
+        indicatorName.textContent = `NO. ${controlled.slot === 'GK' ? 1 : controlled.id % 4 + 2}  ${name}`;
+        indicatorPower.style.width = power === null ? '0%' : `${Math.round(Math.max(0.04, power) * 100)}%`;
+        indicatorPower.style.visibility = power === null ? 'hidden' : 'visible';
+        indicatorPower.style.backgroundColor = (power ?? 0) > 0.85 ? '#ff755f' : '#e6f36d';
+      }
+    } else indicator.style.display = 'none';
+    key.position.set(target.x - 18, night ? 30 : 18, target.z + (night ? -18 : 20));
+    key.target.position.set(target.x, 0, target.z);
+    key.target.updateMatrixWorld();
+    key.shadow.camera.updateProjectionMatrix();
     void time;
   }
 
@@ -595,24 +715,75 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     glowMaterial.opacity = dark ? 0.02 : 0.42;
     glowMaterial.color.set(dark ? '#d4e6ff' : '#f58a49');
     glow.position.set(dark ? 0 : -12, dark ? 30 : 5.5, dark ? 0 : 24);
-    turf.color.set(dark ? '#c0f5a8' : '#f2da91');
-    turf.emissive.set(dark ? '#092b12' : '#25150a');
-    turf.emissiveIntensity = dark ? 0.12 : 0.08;
+    turf.color.set(dark ? '#ffffff' : '#fff0d0');
+    turf.emissive.set(dark ? '#10431c' : '#3b200b');
+    turf.emissiveIntensity = dark ? 0.24 : 0.12;
     renderer.toneMappingExposure = dark ? 1.25 : 1.1;
   }
 
   setTime(timeMode);
 
+  function reduceQuality() {
+    if (quality.dpr > 1.01) {
+      quality.dpr = quality.dpr > 1.75 ? 1.5 : quality.dpr > 1.35 ? 1.25 : 1;
+      renderer.setPixelRatio(quality.dpr);
+      return;
+    }
+    if (quality.shadows) {
+      quality.shadows = false;
+      key.castShadow = false;
+      renderer.shadowMap.enabled = false;
+      return;
+    }
+    if (!quality.crowdHalf) {
+      quality.crowdHalf = true;
+      crowd.mesh.count = Math.ceil(crowd.count / 2);
+    }
+  }
+
+  function render() {
+    const now = performance.now();
+    if (quality.lastRender > 0) {
+      const frameMs = now - quality.lastRender;
+      quality.avgMs = quality.avgMs * 0.92 + frameMs * 0.08;
+      if (quality.avgMs > 20) {
+        quality.slow++;
+        quality.stable = 0;
+        if (quality.slow >= 45) {
+          reduceQuality();
+          quality.slow = 0;
+        }
+      } else {
+        quality.slow = 0;
+        quality.stable++;
+      }
+    }
+    quality.lastRender = now;
+    renderer.render(scene, camera);
+    if (debug && now >= quality.nextLog) {
+      quality.nextLog = now + 3000;
+      console.info('[soccerdebug]', {
+        dpr: quality.dpr,
+        frameMs: Number(quality.avgMs.toFixed(1)),
+        calls: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+        shadows: quality.shadows,
+        crowd: crowd.mesh.count,
+      });
+    }
+  }
+
   return {
     resize,
     update,
-    render() { renderer.render(scene, camera); },
+    render,
     setTime,
     goal() { crowdRoar = 1.3; },
     dispose() {
       disposed = true;
       canvas.removeEventListener('webglcontextlost', onLost);
       disposeTree(scene);
+      indicator.remove();
       mark.dispose();
       ballMap.dispose();
       textures.color.dispose(); textures.normal.dispose(); textures.roughness.dispose();
