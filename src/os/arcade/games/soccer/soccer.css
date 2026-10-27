@@ -473,7 +473,7 @@
   display: grid; gap: 6px; padding: 6px 10px; border-radius: 12px; background: rgba(10, 22, 40, .85); color: #fff;
 }
 @media (orientation: landscape) {
-  .g-soccer-phone-practice { top: calc(max(10px, env(safe-area-inset-top, 0px)) + 68px); left: 50%; right: auto; width: min(520px, 56vw); transform: translateX(-50%); }
+  .g-soccer-phone-practice { top: calc(max(10px, env(safe-area-inset-top, 0px)) + 68px); left: max(24px, env(safe-area-inset-left, 0px)); right: calc(max(24px, env(safe-area-inset-right, 0px)) + 208px); max-width: 520px; }
 }
 .g-soccer-phone-practice-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .g-soccer-phone-practice-row p { margin: 0; font-size: 14px; font-weight: 700; line-height: 1.25; }
