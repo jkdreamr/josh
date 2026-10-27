@@ -114,11 +114,11 @@ function createPlayer(THREE: Three, player: Player, lite: boolean): Actor {
   contact.rotation.x = -Math.PI / 2;
   contact.position.y = 0.02;
   root.add(contact);
-  const marker = new THREE.Mesh(new THREE.RingGeometry(0.43, 0.54, 28), new THREE.MeshBasicMaterial({ color: player.team === 0 ? '#ffe782' : '#73defa', side: THREE.DoubleSide, transparent: true, opacity: 0.92 }));
+  const marker = new THREE.Mesh(new THREE.RingGeometry(0.43, 0.54, 28), new THREE.MeshBasicMaterial({ color: player.team === 0 ? '#ff5368' : '#73defa', side: THREE.DoubleSide, transparent: true, opacity: 0.92 }));
   marker.rotation.x = -Math.PI / 2; marker.position.y = 0.035;
   root.add(marker);
-  const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.23, 3), new THREE.MeshBasicMaterial({ color: player.team === 0 ? '#ffe782' : '#73defa' }));
-  arrow.position.set(0, 2.12, 0); arrow.rotation.x = Math.PI;
+  const arrow = new THREE.Mesh(new THREE.ConeGeometry(0.15, 0.34, 3), new THREE.MeshBasicMaterial({ color: player.team === 0 ? '#ff5368' : '#73defa' }));
+  arrow.position.set(0, 2.55, 0); arrow.rotation.x = Math.PI;
   root.add(arrow);
   const carrierRing = new THREE.Mesh(new THREE.RingGeometry(0.52, 0.58, 24), new THREE.MeshBasicMaterial({ color: '#fff1a8', transparent: true, opacity: 0.68, side: THREE.DoubleSide }));
   carrierRing.rotation.x = -Math.PI / 2; carrierRing.position.y = 0.04; carrierRing.visible = false; root.add(carrierRing);
@@ -134,7 +134,7 @@ function createPlayer(THREE: Three, player: Player, lite: boolean): Actor {
 }
 
 function makeCrowd(THREE: Three, parent: T.Object3D, lite: boolean): Crowd {
-  const count = lite ? 1500 : 4000;
+  const count = lite ? 450 : 1000;
   const geometry = new THREE.CapsuleGeometry(0.12, 0.34, 2, 6);
   const material = new THREE.MeshBasicMaterial({ color: '#ef6672' });
   const mesh = new THREE.InstancedMesh(geometry, material, count);
@@ -150,8 +150,8 @@ function makeCrowd(THREE: Three, parent: T.Object3D, lite: boolean): Crowd {
     const side = endStand ? 1 : 1;
     const x = endStand ? side * (24 + random() * 3.7) : (random() - 0.5) * 48;
     const z = endStand ? (random() - 0.5) * 29 : 16.2 + random() * 8.2;
-    const row = Math.floor(random() * 10);
-    const y = 1.35 + row * 0.46 + random() * 0.12;
+    const row = Math.floor(random() * 2);
+    const y = 1.35 + row * 0.32 + random() * 0.08;
     temp.position.set(x, y, z);
     temp.rotation.set((random() - 0.5) * 0.09, (random() - 0.5) * 0.45, 0);
     temp.scale.set(0.83 + random() * 0.38, 0.82 + random() * 0.45, 0.83 + random() * 0.38);
@@ -171,23 +171,24 @@ function createStands(THREE: Three, scene: T.Scene, lite: boolean) {
   const stands = new THREE.InstancedMesh(
     new THREE.BoxGeometry(1, 1, 1),
     standard(THREE, '#ffffff', 0.78),
-    36,
+    2,
   );
   const row = new THREE.Object3D();
   const concrete = new THREE.Color('#27384b');
   const seat = new THREE.Color('#aab7c3');
   let instance = 0;
-  for (let tier = 0; tier < 2; tier++) {
-    for (let index = 0; index < 9; index++) {
-      const y = 1.15 + index * 0.4 + tier * 4.05;
-      const z = 15.2 + index * 0.55 + tier * 5.2;
+  for (let tier = 0; tier < 1; tier++) {
+    for (let index = 0; index < 2; index++) {
+      const y = 1.15 + index * 0.34 + tier * 3.4;
+      const z = 15.2 + index * 0.45 + tier * 4.2;
       row.position.set(0, y, z);
-      row.scale.set(50 - index * 0.18, 0.16, 0.34);
+      row.scale.set(50 - index * 0.18, 0.15, 0.28);
       row.updateMatrix();
       stands.setMatrixAt(instance, row.matrix);
       stands.setColorAt(instance++, index % 2 ? seat : concrete);
     }
   }
+  stands.count = instance;
   for (let tier = 0; tier < 2; tier++) {
     for (let index = 0; index < 9; index++) {
       const x = 21.4 + index * 0.48 + tier * 4.6;
@@ -294,6 +295,14 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const canvas = renderer.domElement;
   canvas.style.cssText = 'display:block;width:100%;height:100%;touch-action:none';
   host.appendChild(canvas);
+  const indicator = document.createElement('div');
+  indicator.className = 'g-soccer-world-indicator';
+  const indicatorArrow = document.createElement('i');
+  const indicatorName = document.createElement('span');
+  const indicatorPower = document.createElement('b');
+  indicator.append(indicatorArrow, indicatorName, indicatorPower);
+  host.appendChild(indicator);
+  const projected = new THREE.Vector3();
 
   const scene = new THREE.Scene();
   const night = timeMode === 'night';
@@ -325,15 +334,15 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   drawSky(night);
   scene.background = null;
   scene.fog = new THREE.Fog(night ? '#142438' : '#d99a71', 65, 130);
-  const camera = new THREE.PerspectiveCamera(31, 1, 0.1, 180);
+  const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 180);
   const hemi = new THREE.HemisphereLight(night ? '#d0e0e8' : '#fff0d4', '#162b22', night ? 0.85 : 1.75);
   scene.add(hemi);
   const key = new THREE.DirectionalLight(night ? '#f0f6ff' : '#ffc27d', night ? 3.2 : 2.7);
   key.position.set(-20, night ? 34 : 12, night ? 13 : -24);
   key.castShadow = true;
   key.shadow.mapSize.set(1024, 1024);
-  key.shadow.camera.left = -30; key.shadow.camera.right = 30;
-  key.shadow.camera.top = 25; key.shadow.camera.bottom = -25;
+  key.shadow.camera.left = -36; key.shadow.camera.right = 36;
+  key.shadow.camera.top = 30; key.shadow.camera.bottom = -30;
   key.shadow.camera.near = 1; key.shadow.camera.far = 90;
   key.shadow.bias = -0.00035; key.shadow.normalBias = 0.028;
   scene.add(key);
@@ -341,25 +350,25 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const ground = new THREE.Mesh(new THREE.PlaneGeometry(82, 62), standard(THREE, '#163b28', 0.96));
   ground.rotation.x = -Math.PI / 2; ground.position.y = -0.2; ground.receiveShadow = true; scene.add(ground);
   const textures = pitchTextures(THREE, lite);
-  const turf = new THREE.MeshStandardMaterial({ map: textures.color, normalMap: textures.normal, roughnessMap: textures.roughness, color: '#c0f5a8', emissive: '#092b12', emissiveIntensity: 0.12, roughness: 0.72, metalness: 0.025 });
+  const turf = new THREE.MeshStandardMaterial({ map: textures.color, normalMap: textures.normal, roughnessMap: textures.roughness, color: '#ffffff', emissive: '#10431c', emissiveIntensity: 0.24, roughness: 0.72, metalness: 0.025 });
   const pitch = new THREE.Mesh(new THREE.PlaneGeometry(FIELD.length, FIELD.width), turf);
   pitch.rotation.x = -Math.PI / 2; pitch.position.y = 0.005; pitch.receiveShadow = true; scene.add(pitch);
-  const mowing = new THREE.InstancedMesh(
-    new THREE.PlaneGeometry(FIELD.length / 12 + 0.01, FIELD.width),
-    new THREE.MeshBasicMaterial({ color: '#fff', transparent: true, opacity: 0.24, depthWrite: false, side: THREE.DoubleSide, toneMapped: false }),
-    12,
-  );
-  const band = new THREE.Object3D();
-  for (let i = 0; i < 12; i++) {
-    band.position.set(-FIELD.length / 2 + (i + 0.5) * FIELD.length / 12, 0.012, 0);
-    band.rotation.x = -Math.PI / 2;
-    band.updateMatrix();
-    mowing.setMatrixAt(i, band.matrix);
-    mowing.setColorAt(i, new THREE.Color(i % 2 ? '#d5efae' : '#4f9656'));
+  const stripeGeometry = new THREE.PlaneGeometry(FIELD.length / 12, FIELD.width);
+  stripeGeometry.rotateX(-Math.PI / 2);
+  const stripeMeshes = [
+    new THREE.InstancedMesh(stripeGeometry, new THREE.MeshBasicMaterial({ color: '#b8efb2', transparent: true, opacity: 0.1, depthWrite: false }), 6),
+    new THREE.InstancedMesh(stripeGeometry, new THREE.MeshBasicMaterial({ color: '#071a0b', transparent: true, opacity: 0.08, depthWrite: false }), 6),
+  ];
+  const stripeTransform = new THREE.Object3D();
+  for (let index = 0; index < 12; index++) {
+    stripeTransform.position.set(-FIELD.length / 2 + (index + 0.5) * FIELD.length / 12, 0.012, 0);
+    stripeTransform.updateMatrix();
+    stripeMeshes[index % 2]!.setMatrixAt(Math.floor(index / 2), stripeTransform.matrix);
   }
-  mowing.instanceMatrix.needsUpdate = true;
-  if (mowing.instanceColor) mowing.instanceColor.needsUpdate = true;
-  scene.add(mowing);
+  for (const stripes of stripeMeshes) {
+    stripes.instanceMatrix.needsUpdate = true;
+    scene.add(stripes);
+  }
   const mark = markingsTexture(THREE);
   const lines = new THREE.Mesh(new THREE.PlaneGeometry(FIELD.length, FIELD.width), new THREE.MeshBasicMaterial({ map: mark, transparent: true, opacity: 0.91, depthWrite: false }));
   lines.rotation.x = -Math.PI / 2; lines.position.y = 0.018; scene.add(lines);
@@ -514,7 +523,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     width = Math.max(1, w); height = Math.max(1, h);
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
-    camera.fov = height > width ? 84 : 28;
+    camera.fov = height > width ? 84 : 34;
     camera.updateProjectionMatrix();
   }
 
@@ -579,17 +588,11 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       actor.body.rotation.z = player.action === 'slide' ? Math.PI / 2 : Math.sin(actor.phase * 0.5) * run * 0.035;
       actor.body.rotation.x = -run * 0.07;
       actor.marker.visible = player.controlled || player.id === targetId;
-      (actor.marker.material as T.MeshBasicMaterial).color.set(player.id === targetId && !player.controlled ? '#fff28a' : player.team === 0 ? '#ffe782' : '#73defa');
+      (actor.marker.material as T.MeshBasicMaterial).color.set(player.id === targetId && !player.controlled ? '#fff28a' : player.team === 0 ? '#ff5368' : '#73defa');
       if (player.controlled || player.id === targetId) (actor.marker.material as T.MeshBasicMaterial).opacity = 0.72 + Math.sin(elapsed * 5) * 0.18;
       actor.arrow.visible = player.controlled;
       actor.carrierRing.visible = currentCarrier?.id === player.id;
-      actor.powerBar.visible = player.controlled && power !== null;
-      if (actor.powerBar.visible) {
-        const amount = Math.max(0.04, power ?? 0);
-        actor.powerFill.scale.x = amount;
-        actor.powerFill.position.x = (amount - 1) * 0.43;
-        (actor.powerFill.material as T.MeshBasicMaterial).color.set(amount > 0.85 ? '#ff755f' : '#e6f36d');
-      }
+      actor.powerBar.visible = false;
       actor.root.scale.y = currentCarrier?.id === player.id && player.action === 'kick' ? 1.05 + Math.sin(elapsed * 24) * 0.03 : 1;
       if (actor.skinned) {
         const pose = actor.poseTime > 0 ? actor.pose : player.slot === 'GK' ? 'ready' : speed > 0.18 ? 'run' : null;
@@ -648,10 +651,12 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     }
 
     const portrait = camera.aspect < 0.72;
-    const trackedX = cameraMode === 'broadcast'
-      ? Math.max(-5.5, Math.min(5.5, world.ball.x * 0.28))
-      : world.ball.x * 0.35;
     const attackDir = teamDir(humanTeam, world.endsSwapped);
+    const controlledPlayer = world.players.find((player) => player.id === world.controlled[humanTeam]);
+    const focusX = world.phase === 'restart' ? controlledPlayer?.x ?? world.ball.x : world.ball.x;
+    const trackedX = cameraMode === 'broadcast'
+      ? Math.max(-5.5, Math.min(5.5, focusX * 0.28 + attackDir * 2.4))
+      : world.ball.x * 0.35;
     target.set(
       trackedX + (portrait && cameraMode === 'broadcast' ? attackDir * 2 : attackDir * 1.5),
       0.55,
@@ -659,9 +664,9 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     );
     if (cameraMode === 'replay') desired.set(world.ball.x - attackDir * 8, 5.2, world.ball.z + 13);
     else if (cameraMode === 'broadcast' && portrait) desired.set(target.x - attackDir * 25, 15.5, target.z);
-    else if (cameraMode === 'broadcast') desired.set(target.x, 12.5, -25);
+    else if (cameraMode === 'broadcast') desired.set(target.x, 14.5, -29.5);
     else desired.set(target.x - attackDir * 24, 13.5, target.z);
-    const zoom = cameraMode === 'replay' ? 36 : portrait && cameraMode === 'broadcast' ? 86 : Math.abs(world.ball.x) > 14 ? 30 : 28;
+    const zoom = cameraMode === 'replay' ? 36 : portrait && cameraMode === 'broadcast' ? 86 : Math.abs(world.ball.x) > 14 ? 35 : 34;
     camera.fov = damp(camera.fov, zoom, 2.4, dt);
     camera.updateProjectionMatrix();
     if (!cameraReady) {
@@ -675,7 +680,24 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       lookAt.set(target.x, target.y, target.z);
       camera.lookAt(lookAt);
     }
-    key.position.set(target.x - 18, night ? 30 : 18, target.z + 15);
+    camera.updateMatrixWorld(true);
+    const controlled = world.players.find((player) => player.controlled);
+    if (controlled) {
+      projected.set(controlled.x, 2.75, controlled.z).project(camera);
+      const visible = projected.z >= -1 && projected.z <= 1 && Math.abs(projected.x) < 1.05 && Math.abs(projected.y) < 1.05;
+      indicator.style.display = visible ? 'grid' : 'none';
+      if (visible) {
+        indicator.style.left = `${(projected.x * 0.5 + 0.5) * width}px`;
+        indicator.style.top = `${(0.5 - projected.y * 0.5) * height}px`;
+        indicator.style.setProperty('--player-color', controlled.team === 0 ? '#ff5368' : '#73defa');
+        const name = controlled.slot === 'GK' ? 'A. MORGAN' : controlled.slot === 'FWD' ? 'M. RIVERA' : controlled.id === 1 ? 'J. KIM' : 'D. PARK';
+        indicatorName.textContent = `NO. ${controlled.slot === 'GK' ? 1 : controlled.id % 4 + 2}  ${name}`;
+        indicatorPower.style.width = power === null ? '0%' : `${Math.round(Math.max(0.04, power) * 100)}%`;
+        indicatorPower.style.visibility = power === null ? 'hidden' : 'visible';
+        indicatorPower.style.backgroundColor = (power ?? 0) > 0.85 ? '#ff755f' : '#e6f36d';
+      }
+    } else indicator.style.display = 'none';
+    key.position.set(target.x - 18, night ? 30 : 18, target.z + (night ? -18 : 20));
     key.target.position.set(target.x, 0, target.z);
     key.target.updateMatrixWorld();
     key.shadow.camera.updateProjectionMatrix();
@@ -693,9 +715,9 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     glowMaterial.opacity = dark ? 0.02 : 0.42;
     glowMaterial.color.set(dark ? '#d4e6ff' : '#f58a49');
     glow.position.set(dark ? 0 : -12, dark ? 30 : 5.5, dark ? 0 : 24);
-    turf.color.set(dark ? '#c0f5a8' : '#f2da91');
-    turf.emissive.set(dark ? '#092b12' : '#25150a');
-    turf.emissiveIntensity = dark ? 0.12 : 0.08;
+    turf.color.set(dark ? '#ffffff' : '#fff0d0');
+    turf.emissive.set(dark ? '#10431c' : '#3b200b');
+    turf.emissiveIntensity = dark ? 0.24 : 0.12;
     renderer.toneMappingExposure = dark ? 1.25 : 1.1;
   }
 
@@ -761,6 +783,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       disposed = true;
       canvas.removeEventListener('webglcontextlost', onLost);
       disposeTree(scene);
+      indicator.remove();
       mark.dispose();
       ballMap.dispose();
       textures.color.dispose(); textures.normal.dispose(); textures.roughness.dispose();

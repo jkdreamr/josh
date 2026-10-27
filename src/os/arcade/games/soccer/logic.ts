@@ -398,8 +398,9 @@ function goalCrossing(world: World, previousX: number) {
   return false;
 }
 
-export function stepWorld(world: World, dt: number, commands: Map<number, Command> = new Map()) {
+export function stepWorld(world: World, dt: number, commands: Map<number, Command> = new Map(), clockScale = 1) {
   const t = Math.min(0.05, Math.max(0, dt));
+  const clockStep = t * Math.max(0, Math.min(20, Number.isFinite(clockScale) ? clockScale : 1));
   world.eventTime = Math.max(0, world.eventTime - t);
   world.kickEvent = null;
   if (world.phase === 'full-time') return;
@@ -444,7 +445,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
       ?? world.players.find((p) => p.team === world.restartTeam && p.controlled)
       ?? world.players.filter((p) => p.team === world.restartTeam).sort((a, b) => distance(a, world.restartAt) - distance(b, world.restartAt))[0]!;
     const action = commands.get(taker.id);
-    world.clock = Math.max(0, world.clock - t);
+    world.clock = Math.max(0, world.clock - clockStep);
     const moved = Math.hypot(action?.move.x ?? 0, action?.move.z ?? 0) > 0.05;
     if ((action?.pressed && action.action) || moved || world.restartClock >= 10) {
       world.phase = 'live';
@@ -513,7 +514,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
   resolveKeeperContact(world, previousX);
   if (goalCrossing(world, previousX)) return;
   resolveBoundary(world);
-  world.clock = Math.max(0, world.clock - t);
+  world.clock = Math.max(0, world.clock - clockStep);
   if (world.clock <= 0) {
     if (world.half === 1) {
       world.phase = 'half-time'; world.event = 'half time'; world.eventTime = 2;

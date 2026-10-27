@@ -102,6 +102,13 @@ test('match clock advances and maps each half to 45 minutes', () => {
   assert.equal(matchClock(g), 90);
 });
 
+test('debug clock scale accelerates the match clock', () => {
+  const g = world();
+  const before = g.clock;
+  stepWorld(g, 1 / 60, new Map(), 4);
+  assert.ok(Math.abs(g.clock - (before - 4 / 60)) < 1e-9);
+});
+
 test('a goal kick is always taken by the goalkeeper', () => {
   const g = createWorld(12, 120);
   g.restart = 'goal-kick';

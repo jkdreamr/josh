@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
 import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useThree, useOnline, useSetting, getSetting, Segmented, defineSetting, levelOptions, levelIndex, TouchControls, sfx } from '../../kit';
 import type { LevelName } from '../../kit/controls';
 import { meta } from './meta.ts';
@@ -208,6 +208,17 @@ function Play() {
   const timeRef = useRef<TimeMode>(timeChoice);
   const accumulator = useRef(0);
   const simulationTime = useRef(0);
+  const lastFrameTime = useRef<number | null>(null);
+  const debugTimer = useRef(0);
+  const debugConfig = useMemo(() => {
+    if (typeof location === 'undefined') return { enabled: false, clockScale: 1 };
+    const params = new URLSearchParams(location.search);
+    const value = Number(params.get('soccerdebug'));
+    return {
+      enabled: params.has('soccerdebug'),
+      clockScale: params.has('soccerdebug') && Number.isFinite(value) ? Math.max(1, Math.min(20, value)) : 1,
+    };
+  }, []);
   const replayFrames = useRef<ReplayFrame[]>([]);
   const replayWorld = useRef<World | null>(null);
   const replayStartedAt = useRef<number | null>(null);
@@ -469,7 +480,11 @@ function Play() {
     shellRef.current.gameOver(undefined, { title, detail });
   };
 
-  const update = (dt: number) => {
+  const update = (loopDt: number) => {
+    const now = performance.now();
+    const previousFrame = lastFrameTime.current;
+    const dt = loopDt <= 0 ? 0 : Math.min(0.75, Math.max(0, previousFrame === null ? loopDt : (now - previousFrame) / 1000));
+    lastFrameTime.current = now;
     const current = worldRef.current;
     const room = onlineRef.current;
     if (!current || shellRef.current.status !== 'playing') return;
@@ -540,7 +555,7 @@ function Play() {
         const previousScore0 = current.score[0];
         const previousScore1 = current.score[1];
         const previousEvent = current.event;
-        stepWorld(current, STEP, commands);
+        stepWorld(current, STEP, commands, debugConfig.clockScale);
         accumulator.current -= STEP;
         if (current.kickEvent || current.phase !== previousPhase || current.score[0] !== previousScore0 || current.score[1] !== previousScore1 || current.event !== previousEvent) soundForWorld(current);
         if (current.phase === 'goal' && replayStartedAt.current === null) replayStartedAt.current = simulationTime.current;
@@ -568,6 +583,26 @@ function Play() {
       if (snapshotTimer.current >= 0.05) {
         snapshotTimer.current %= 0.05;
         room.send({ t: 'soccer', k: 's', r: room.round || 1, seq: snapshotSequence.current++, state: cloneSnapshot(current) });
+      }
+    }
+
+    if (debugConfig.enabled) {
+      debugTimer.current += dt;
+      if (debugTimer.current >= 1) {
+        debugTimer.current %= 1;
+        const state = {
+          phase: current.phase,
+          clock: current.clock,
+          matchMinute: matchClock(current),
+          clockScale: debugConfig.clockScale,
+          half: current.half,
+          controlled: [...current.controlled],
+          ball: { x: current.ball.x, y: current.ball.y, z: current.ball.z, vx: current.ball.vx, vz: current.ball.vz },
+          passTarget: current.passTarget,
+          players: current.players.map(({ id, x, z, controlled, human }) => ({ id, x, z, controlled, human })),
+        };
+        (window as Window & { __soccerDebugState?: typeof state }).__soccerDebugState = state;
+        console.info('[soccerdebug-state]', { phase: state.phase, clock: Number(state.clock.toFixed(2)), half: state.half, controlled: state.controlled, players: state.players });
       }
     }
 
@@ -623,7 +658,7 @@ function Play() {
   return (
     <div className="g-soccer-stage">
       <div className="g-soccer-canvas" ref={ref} />
-      <Hud world={hudWorld} power={power} targetId={targetId} selectedId={selectedId} watching={!!online?.watching} replaying={replayActive} />
+      <Hud world={hudWorld} targetId={targetId} selectedId={selectedId} watching={!!online?.watching} replaying={replayActive} />
       {shell.touch && shell.status === 'playing' && !online?.watching && <Stick movement={movement} />}
       {shell.touch && shell.status === 'playing' && !online?.watching && <TouchControls buttons={[
         { key: 'KeyJ', label: 'pass / switch' },

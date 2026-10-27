@@ -146,24 +146,42 @@
 .g-soccer-watching { position: absolute; top: 21px; left: 18px; color: #d9e1df; font-size: 9px; letter-spacing: .16em; text-transform: uppercase; }
 .g-soccer-replay { position: absolute; top: calc(16px * var(--g-soccer-u)); right: calc(16px * var(--g-soccer-u)); padding: 6px 9px; color: #151b20; background: #ffd76d; border-radius: 3px; font-size: 10px; font-weight: 900; letter-spacing: .14em; box-shadow: 0 4px 18px #0008; }
 
-.g-soccer-power {
+.g-soccer .g-soccer-world-indicator {
   position: absolute;
-  bottom: 24%;
-  left: 50%;
-  transform: translateX(-50%);
-  width: min(210px, 30vw);
-  display: flex;
-  flex-direction: column;
-  gap: 5px;
-  text-align: center;
-  text-transform: uppercase;
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: .15em;
-  text-shadow: 0 2px 5px #000;
+  z-index: 2;
+  display: none;
+  justify-items: center;
+  gap: 3px;
+  pointer-events: none;
+  transform: translate(-50%, -100%);
+  filter: drop-shadow(0 2px 4px #000b);
 }
-.g-soccer-power > div { height: 5px; padding: 1px; border: 1px solid #fff8; border-radius: 5px; background: #061016a8; }
-.g-soccer-power i { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, #80da6c, #fff16c, #f07b51); }
+.g-soccer .g-soccer-world-indicator > i {
+  width: 0;
+  height: 0;
+  border-left: 7px solid transparent;
+  border-right: 7px solid transparent;
+  border-top: 11px solid var(--player-color);
+  filter: drop-shadow(0 0 4px var(--player-color));
+}
+.g-soccer .g-soccer-world-indicator > span {
+  padding: 3px 6px;
+  border: 1px solid #ffffff55;
+  border-radius: 3px;
+  background: #071722e8;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: .04em;
+  white-space: nowrap;
+}
+.g-soccer .g-soccer-world-indicator > b {
+  width: 64px;
+  height: 4px;
+  border: 1px solid #fff9;
+  border-radius: 4px;
+  background: #061016e8;
+}
 
 .g-soccer-stick {
   display: none;
@@ -262,8 +280,8 @@
 .g-soccer-phone-button.is-x { top: 22%; left: 9%; background: #68b7dd; }
 .g-soccer-phone-button.is-b { top: 22%; right: 0; background: #df6974; }
 .g-soccer-phone-button.is-a { bottom: 0; left: 50%; background: #7ed68c; }
-.g-soccer-phone-action { position: absolute; left: 0; top: 2%; border: 1px solid #ffffff55; border-radius: 14px; padding: 10px 12px; background: #142d43dd; color: #fff; font-weight: 700; }
-.g-soccer-phone-action.is-sprint { left: auto; right: 0; top: auto; bottom: -9%; }
+.g-soccer-phone-action { position: absolute; left: 0; top: 56%; border: 1px solid #ffffff55; border-radius: 14px; padding: 6px 8px; background: #142d43dd; color: #fff; font-size: 12px; font-weight: 700; white-space: nowrap; }
+.g-soccer-phone-action.is-sprint { left: auto; right: 0; top: 56%; bottom: auto; }
 .g-soccer-phone-show { position: absolute; inset: auto 14px 14px auto; z-index: 30; }
 .g-soccer-phone-lobby { display: grid; gap: 8px; justify-items: start; padding: 12px; margin-top: 8px; border: 1px solid #ffffff22; border-radius: 12px; background: #0b1725aa; color: #e8f3fa; font-size: 12px; }
 .g-soccer-phone-lobby img { width: 132px; height: 132px; background: white; border-radius: 5px; }
