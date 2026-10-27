@@ -73,6 +73,12 @@ export const appGames: AppGame[] = [
 
 export const getAppGame = (id: string) => appGames.find((game) => game.id === id);
 
+export function isPhoneControllerInvite(search: string, mobile: boolean) {
+  if (!mobile) return false;
+  const params = new URLSearchParams(search);
+  return params.get('game') === 'soccer' && /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{4}$/.test(params.get('room') ?? '');
+}
+
 /**
  * Where a room's game opens from anywhere on the OS, for invite links and Open Rooms: Cox Box and the app games in
  * their own apps, every other game in Chrome's arcade.

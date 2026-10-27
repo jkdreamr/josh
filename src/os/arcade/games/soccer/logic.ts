@@ -61,6 +61,7 @@ export type World = {
   controlled: [number, number];
   kickEvent: { playerId: number; action: Action; power: number; time: number } | null;
   passTarget: number | null;
+  passFrom?: number | null;
   passControl: boolean;
   carrierId?: number | null;
   lastToucherId?: number | null;
@@ -118,7 +119,7 @@ export function createWorld(seed = 71423, halfLength = 120, humans: 1 | 2 = 1): 
     players, ball: { x: 0, y: 0.11, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false },
     score: [0, 0], clock: halfLength, halfLength, half: 1, endsSwapped: false,
     phase: 'restart', restart: 'kickoff', restartTeam: 0, restartAt: { x: 0, z: 0 },
-    lastTouch: 0, seed: seed >>> 0 || 1, event: 'kick off', eventTime: 1.35, restartClock: 0, controlled: [6, TEAM_SIZE + 6], kickEvent: null, passTarget: null, passControl: false, carrierId: null, lastToucherId: null, passPoint: null,
+    lastTouch: 0, seed: seed >>> 0 || 1, event: 'kick off', eventTime: 1.35, restartClock: 0, controlled: [6, TEAM_SIZE + 6], kickEvent: null, passTarget: null, passFrom: null, passControl: false, carrierId: null, lastToucherId: null, passPoint: null,
     switchAt: [-1, -1], switchWait: [0, 0], dribbleAt: [-1, -1],
   };
   placeKickoffPositions(world, 0);
@@ -158,14 +159,19 @@ function switchScore(world: World, p: Player) {
   return distance(p, world.ball) + ((p.x - world.ball.x) * teamDir(p.team, world.endsSwapped) > 0 ? 2.5 : 0);
 }
 
-function transferControl(world: World, team: Team, id: number) {
-  const currentId = world.controlled[team];
+function transferControl(world: World, team: Team, id: number, fromId = world.controlled[team]) {
   for (const p of world.players) {
-    if (p.team !== team || p.human && p.id !== currentId) continue;
-    p.human = p.id === id;
-    p.controlled = p.id === id;
+    if (p.team !== team) continue;
+    if (p.id === fromId) {
+      p.human = false;
+      p.controlled = false;
+    }
+    if (p.id === id) {
+      p.human = true;
+      p.controlled = true;
+    }
   }
-  world.controlled[team] = id;
+  if (fromId === world.controlled[team]) world.controlled[team] = id;
 }
 
 export function movePlayer(player: Player, input: Point, sprint: boolean, carrying: boolean, dt: number, jockey = false) {
@@ -347,9 +353,11 @@ function kick(world: World, player: Player, action: Action, command: Command) {
   world.kickEvent = { playerId: player.id, action, power: charge, time: world.clock };
   if (action === 'pass' || action === 'through' || action === 'lob') {
     world.passTarget = receiver?.id ?? null;
+    world.passFrom = receiver ? player.id : null;
     world.passControl = !!receiver && player.human;
   } else {
     world.passTarget = null;
+    world.passFrom = null;
     world.passControl = false;
   }
   player.action = action === 'shoot' || action === 'finesse' ? 'kick' : 'pass';
@@ -536,6 +544,7 @@ function setRestart(world: World, team: Team, restart: Exclude<Restart, null>, a
   world.carrierId = null;
   world.passPoint = null;
   world.passTarget = null;
+  world.passFrom = null;
   for (const p of world.players) { p.buffer = null; p.slide = null; }
   world.switchWait = [0, 0];
 }
@@ -778,13 +787,14 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
     }
   }
   const nowCarrier = nearestCarrier(world);
-  if (nowCarrier && world.passTarget === nowCarrier.id) {
-    if (world.passControl) {
-      if (!nowCarrier.human || nowCarrier.controlled) transferControl(world, nowCarrier.team, nowCarrier.id);
+  if (nowCarrier && world.passTarget !== null) {
+    if (world.passTarget === nowCarrier.id && world.passControl && !nowCarrier.human) {
+      transferControl(world, nowCarrier.team, nowCarrier.id, world.passFrom ?? world.controlled[nowCarrier.team]);
     }
     world.passTarget = null;
     world.passControl = false;
     world.passPoint = null;
+    world.passFrom = null;
   }
   if (nowCarrier) {
     world.lastTouch = nowCarrier.team;

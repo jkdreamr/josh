@@ -10,7 +10,7 @@ import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } 
 import { goalRoar, kickThump, netSwish, startCrowd, whistle } from './audio.ts';
 import { createScene, type CameraMode, type SoccerView, type TimeMode } from './scene.ts';
 import { Hud, PowerMeter } from './hud.tsx';
-import { playerForSeat, type Mode } from './seats.ts';
+import { missingPhoneSeats, playerForSeat, type Mode } from './seats.ts';
 import './soccer.css';
 import QRCode from 'qrcode';
 
@@ -234,6 +234,7 @@ function Play() {
   const [hudPower, setHudPower] = useState<number | null>(null);
   const [containing, setContaining] = useState(false);
   const [replayActive, setReplayActive] = useState(false);
+  const [phoneGone, setPhoneGone] = useState(false);
   const [targetId, setTargetId] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState(6);
   const [hudWorld, setHudWorld] = useState<World>(() => createWorld());
@@ -246,6 +247,7 @@ function Play() {
   const cameraRef = useRef<CameraMode>(cameraChoice);
   const timeRef = useRef<TimeMode>(timeChoice);
   const accumulator = useRef(0);
+  const matchSeats = useRef<number[] | null>(null);
   const simulationTime = useRef(0);
   const lastFrameTime = useRef<number | null>(null);
   const debugTimer = useRef(0);
@@ -308,6 +310,8 @@ function Play() {
   useEffect(() => {
     if (shell.status !== 'ready') return;
     const fresh = createWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
+    matchSeats.current = null;
+    setPhoneGone(false);
     controllerPlayers.current.clear();
     setupHumans(fresh, currentMode, online);
     worldRef.current = fresh;
@@ -522,6 +526,20 @@ function Play() {
     const current = worldRef.current;
     const room = onlineRef.current;
     if (!current || shellRef.current.status !== 'playing') return;
+    const presentPhoneSeats = room?.players.filter((player) => player.seat > 0).map((player) => player.seat) ?? [];
+    let phoneDisconnected = false;
+    if (room?.isHost) {
+      if (matchSeats.current === null) matchSeats.current = [...presentPhoneSeats];
+      const missing = missingPhoneSeats(matchSeats.current, presentPhoneSeats);
+      if (missing.length === 0) {
+        for (const seat of presentPhoneSeats) {
+          if (!matchSeats.current.includes(seat)) matchSeats.current.push(seat);
+        }
+      }
+      phoneDisconnected = missingPhoneSeats(matchSeats.current, presentPhoneSeats).length > 0;
+    }
+    setPhoneGone(phoneDisconnected);
+    if (phoneDisconnected) accumulator.current = 0;
     crowdIntensity.current = current.phase === 'goal'
       ? 1
       : 0.08 + Math.min(0.82, Math.max(0, (Math.abs(current.ball.x) - FIELD.penaltyDepth * 0.42) / (FIELD.length / 2 - FIELD.penaltyDepth * 0.42)) * 0.75);
@@ -576,7 +594,7 @@ function Play() {
       }
     }
 
-    if (!isOnlineGuest) {
+    if (!isOnlineGuest && !phoneDisconnected) {
       accumulator.current += dt;
       let stepped = false;
       while (accumulator.current >= STEP) {
@@ -621,7 +639,7 @@ function Play() {
         }
       }
       if (stepped) renderDirty.current = true;
-    } else {
+    } else if (isOnlineGuest) {
       guestRenderTimer.current += dt;
       if (guestRenderTimer.current >= 1 / 30) {
         guestRenderTimer.current %= 1 / 30;
@@ -714,6 +732,7 @@ function Play() {
     <div className="g-soccer-stage">
       <div className="g-soccer-canvas" ref={ref} />
       <Hud world={hudWorld} targetId={targetId} selectedId={selectedId} power={power ?? hudPower} contain={containing} watching={!!online?.watching} replaying={replayActive} />
+      {phoneGone && <div className="g-soccer-phone-gone" role="status">Phone disconnected — reopen the link</div>}
       {shell.touch && shell.status === 'playing' && !online?.watching && <Stick movement={movement} />}
       {shell.touch && shell.status === 'playing' && !online?.watching && <TouchControls buttons={[
         { key: 'KeyJ', label: 'pass / contain' },

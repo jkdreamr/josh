@@ -52,11 +52,13 @@ export function stepBall(ball: BallState, dt: number) {
       if (!postClear) {
         ball.x = end * (FIELD_X - BALL_RADIUS);
         ball.vx = -ball.vx * 0.7;
+        ball.inNet = false;
       } else if (ball.y > GOAL_HEIGHT - BALL_RADIUS && ball.y < GOAL_HEIGHT + 0.08) {
         ball.y = GOAL_HEIGHT - BALL_RADIUS;
         ball.vy = -Math.abs(ball.vy) * 0.7;
         ball.x = end * (FIELD_X - BALL_RADIUS);
         ball.vx = -ball.vx * 0.7;
+        ball.inNet = false;
       } else if (Math.abs(ball.x) > FIELD_X + 0.15) {
         ball.inNet = true;
         ball.vx *= Math.exp(-5 * h);
