@@ -1,6 +1,10 @@
 import { FIELD, jerseyNumber, matchClock, type World } from './logic.ts';
+import { clubById, matchKits, rosterName } from './teams.ts';
+import { Crest } from './crest.tsx';
 
 export function Hud({ world, targetId, selectedId, watching, replaying, power, contain }: { world: World; targetId: number | null; selectedId?: number; watching: boolean; replaying: boolean; power?: number | null; contain?: boolean }) {
+  const clubs = [clubById(world.clubs?.[0]), clubById(world.clubs?.[1])] as const;
+  const kits = matchKits(clubs[0], clubs[1]);
   const clock = matchClock(world);
   const selected = world.players[selectedId ?? world.controlled[0]];
   const state = selected?.action === 'jockey' ? contain ? 'CONTAIN' : 'JOCKEY' : selected?.action === 'shield' ? 'SHIELD'
@@ -8,9 +12,9 @@ export function Hud({ world, targetId, selectedId, watching, replaying, power, c
   return (
     <div className="g-soccer-hud">
       <div className="g-soccer-scoreboard">
-        <div className="g-soccer-club g-soccer-home"><i />BAY</div>
+        <div className="g-soccer-club g-soccer-home"><Crest club={clubs[0]} size={17} /><i style={{ backgroundColor: kits.home.shirt }} />{clubs[0].short}</div>
         <strong>{world.score[0]} <span>:</span> {world.score[1]}</strong>
-        <div className="g-soccer-club g-soccer-away">NSU<i /></div>
+        <div className="g-soccer-club g-soccer-away">{clubs[1].short}<i style={{ backgroundColor: kits.away.shirt }} /><Crest club={clubs[1]} size={17} /></div>
         <div className="g-soccer-clock"><b>{clock}'</b><span>{world.half === 1 ? '1ST HALF' : '2ND HALF'}</span></div>
       </div>
       {world.eventTime > 0 && world.event && (
@@ -24,7 +28,7 @@ export function Hud({ world, targetId, selectedId, watching, replaying, power, c
       )}
       <div className="g-soccer-player-tag">
         <b>NO. {selected ? jerseyNumber(selected.id) : 8}</b>
-        <span>{selected?.slot === 'ST' ? 'M. RIVERA' : selected?.slot === 'GK' ? 'A. MORGAN' : selected?.slot === 'CM' ? 'J. KIM' : 'D. PARK'}</span>
+        <span>{selected ? rosterName(clubs[selected.team], selected.id % 11) : 'player'}</span>
         <small>stamina</small><i><em style={{ width: `${(selected?.stamina ?? 1) * 100}%` }} /></i>
         {state && <strong className="g-soccer-state">{state}</strong>}
         {power != null && <PowerMeter power={power} />}

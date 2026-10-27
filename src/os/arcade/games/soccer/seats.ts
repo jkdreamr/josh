@@ -1,6 +1,6 @@
 import { TEAM_SIZE, teamOf } from './logic.ts';
-
-export type Mode = 'cpu' | 'versus' | 'coop';
+import type { Mode } from './modes.ts';
+export type { Mode } from './modes.ts';
 
 const homeSeatOrder = [6, 9, 5, 7, 3, 8, 10, 1, 2, 4] as const;
 const playerForSideSeat = (side: 0 | 1, index: number) => side * TEAM_SIZE + homeSeatOrder[index % homeSeatOrder.length]!;
@@ -20,3 +20,24 @@ export const seatForPlayer = (id: number, displayOnly: boolean, mode: Mode = 'cp
   if (displayOnly && mode === 'coop') return position + 1;
   return displayOnly ? position * 2 + side + 1 : position * 2 + side;
 };
+
+export type ControllerMember = { seat: number; role: 'host' | 'phone' | 'mac'; side: 0 | 1 };
+
+export function assignControllers(members: ControllerMember[], mode: Mode, comp: 'quick' | 'cup' | 'online') {
+  const assignments = new Map<number, number>();
+  if (comp !== 'online') {
+    for (const member of members) {
+      if (member.role === 'phone') assignments.set(member.seat, playerForSeat(member.seat, true, mode));
+    }
+    return assignments;
+  }
+  for (const side of [0, 1] as const) {
+    const phones = members.filter((member) => member.role === 'phone' && member.side === side).sort((a, b) => a.seat - b.seat);
+    phones.forEach((member, index) => assignments.set(member.seat, playerForSideSeat(side, index)));
+    if (!phones.length) {
+      const mac = members.find((member) => (member.role === 'host' || member.role === 'mac') && member.side === side);
+      if (mac) assignments.set(mac.seat, playerForSideSeat(side, 0));
+    }
+  }
+  return assignments;
+}

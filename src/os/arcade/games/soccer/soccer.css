@@ -1,3 +1,246 @@
+.g-soccer-setting-clubs,
+.g-soccer-lobby-clubs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.g-soccer-setting-clubs label,
+.g-soccer-lobby-club label {
+  display: grid;
+  gap: 5px;
+  color: #aebdb8;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+}
+.g-soccer-setting-clubs select,
+.g-soccer-lobby-club select {
+  min-width: 0;
+  border: 1px solid #3b4c45;
+  border-radius: 8px;
+  padding: 8px 10px;
+  color: #eef5ec;
+  background: #18231e;
+  font: inherit;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.g-soccer-phone-lobby {
+  display: grid;
+  grid-template-columns: minmax(130px, 180px) minmax(0, 1fr);
+  gap: 18px;
+  width: min(720px, calc(100vw - 36px));
+}
+.g-soccer-phone-qr,
+.g-soccer-guest-card {
+  display: flex;
+  align-items: center;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid #334a3e;
+  border-radius: 14px;
+  color: #eff6eb;
+  background: #111a16;
+  text-align: center;
+}
+.g-soccer-phone-qr img,
+.g-soccer-guest-card img {
+  width: 100%;
+  max-width: 170px;
+  border-radius: 8px;
+}
+.g-soccer-phone-lobby-content {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+.g-soccer-phone-connections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: #abef9f;
+  font-size: 12px;
+}
+.g-soccer-phone-connections span {
+  padding: 6px 9px;
+  border-radius: 99px;
+  background: #1c3526;
+}
+.g-soccer-phone-connections .is-waiting {
+  color: #c0c8c1;
+  background: #252d28;
+}
+.g-soccer-lobby-club {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+.g-soccer-lobby-club label { flex: 1; }
+.g-soccer-cup-card {
+  overflow-x: auto;
+  padding: 10px;
+  border: 1px solid #31463a;
+  border-radius: 12px;
+  background: #121a16;
+}
+.g-soccer-cup-bracket {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(100px, 1fr));
+  gap: 8px;
+  color: #dce7db;
+  font-size: 10px;
+}
+.g-soccer-cup-bracket section { display: flex; flex-direction: column; gap: 5px; }
+.g-soccer-cup-bracket section > b {
+  color: #a8bbad;
+  font-size: 9px;
+  text-transform: uppercase;
+}
+.g-soccer-cup-bracket section > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  border-radius: 7px;
+  background: #202c25;
+}
+.g-soccer-cup-bracket section > div.is-user { outline: 1px solid #86e3a4; }
+.g-soccer-cup-bracket small { color: #96aa9c; }
+.g-soccer-cup-next {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 8px;
+  color: #e0e9e1;
+  font-size: 11px;
+}
+.g-soccer-cup-next button {
+  border: 1px solid #4a6253;
+  border-radius: 8px;
+  padding: 6px 9px;
+  color: #e8f3e8;
+  background: #263b2d;
+}
+.g-soccer-cup-empty {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #31463a;
+  border-radius: 12px;
+  color: #dce7db;
+  background: #121a16;
+}
+.g-soccer-lobby-ready {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: #bbcabf;
+  font-size: 12px;
+}
+.g-soccer-phone-settings { color: #acb9b0; font-size: 11px; }
+.g-soccer-guest-lobby {
+  display: grid;
+  place-items: center;
+  width: min(520px, calc(100vw - 32px));
+}
+.g-soccer-guest-card { width: 100%; padding: 24px; }
+.g-soccer-guest-card h2 { margin: 0; font-size: 19px; }
+.g-soccer-guest-card p { margin: 2px 0; color: #aebbb0; font-size: 12px; }
+.g-soccer-guest-club-actions { display: flex; gap: 8px; }
+.g-soccer-guest-club-actions button,
+.g-soccer-picker-arrow {
+  min-width: 44px;
+  min-height: 42px;
+  border: 1px solid #415648;
+  border-radius: 12px;
+  color: #f0f5ee;
+  background: #1c2921;
+  font: inherit;
+  font-size: 18px;
+}
+.g-soccer-friend-link { margin: 0; color: #aebdb0; font-size: 12px; overflow-wrap: anywhere; }
+.g-soccer-friend-link a { color: #b8f5c2; }
+.g-soccer-eyebrow { color: #9ee3aa; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
+.g-soccer-phone-picker {
+  display: flex;
+  flex-direction: column;
+  min-height: 100dvh;
+  padding: max(18px, env(safe-area-inset-top)) 20px max(18px, env(safe-area-inset-bottom));
+  color: #f2f7ee;
+  background: radial-gradient(ellipse at 50% 26%, #254431, #111a16 62%);
+}
+.g-soccer-phone-picker header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  color: #b8c9bc;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+.g-soccer-phone-picker header strong { color: #f1f7ef; font-size: 13px; letter-spacing: .1em; }
+.g-soccer-picker-mode {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 22px auto 0;
+  width: min(420px, 100%);
+  font-size: 12px;
+}
+.g-soccer-picker-mode span { color: #a6b5aa; }
+.g-soccer-picker-mode strong { color: #d8f7dc; text-transform: uppercase; }
+.g-soccer-picker-mode .is-focused { color: #9df1aa; }
+.g-soccer-picker-club {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  margin: auto;
+  text-align: center;
+}
+.g-soccer-picker-identity { display: flex; align-items: center; flex-direction: column; gap: 9px; }
+.g-soccer-picker-identity h2 { margin: 0; font-size: clamp(24px, 7vw, 34px); }
+.g-soccer-picker-identity span { color: #b5c7b9; font-size: 12px; }
+.g-soccer-picker-controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: min(420px, 100%);
+  margin: 0 auto 16px;
+}
+.g-soccer-picker-controls > div { display: flex; gap: 10px; }
+.g-soccer-picker-controls button {
+  min-width: 92px;
+  min-height: 52px;
+  border: 1px solid #415648;
+  border-radius: 14px;
+  color: #f0f5ee;
+  background: #1c2921;
+  font: inherit;
+  font-size: 12px;
+}
+.g-soccer-picker-controls .is-ready { color: #112117; border-color: #9beaab; background: #9beaab; }
+.g-soccer-phone-picker .g-soccer-stick {
+  width: 114px;
+  height: 114px;
+  flex: 0 0 auto;
+}
+.g-soccer-phone-picker .g-soccer-stick i { width: 47px; height: 47px; }
+.g-soccer-picker-help,
+.g-soccer-picker-wait { color: #aebdb0; text-align: center; font-size: 11px; }
+@media (max-width: 540px) {
+  .g-soccer-phone-lobby { grid-template-columns: minmax(92px, 120px) minmax(0, 1fr); gap: 10px; }
+  .g-soccer-phone-qr { padding: 8px; font-size: 10px; }
+  .g-soccer-phone-qr img { max-width: 105px; }
+  .g-soccer-lobby-clubs { grid-template-columns: 1fr; }
+  .g-soccer-lobby-club > svg { width: 32px; height: 32px; }
+  .g-soccer-phone-lobby .arcade-segmented { flex-wrap: wrap; }
+}
 .g-soccer {
   --g-soccer-u: 1;
   overflow: hidden;

@@ -4,28 +4,31 @@ import type { LevelName } from '../../kit/controls';
 import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
 import { chargePower, IDENTITY_BASIS, screenToWorld, gamepadInput, keyboardInput, reconcileControllers, type ControlCommand, type GamepadHistory } from './input.ts';
-import { cloneSnapshot, commandFromPacket, consumeCommand, mergeRemoteCommand, movePacket, parsePacket } from './net.ts';
+import { cloneSnapshot, commandFromPacket, consumeCommand, mergeRemoteCommand, movePacket, parsePacket, type LobbyMember } from './net.ts';
 import { createWorld, distance, FIELD, teamOf, findReceiver, matchClock, nearestCarrier, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { goalRoar, kickThump, netSwish, startCrowd, whistle } from './audio.ts';
 import { createScene, type CameraMode, type SoccerView, type TimeMode } from './scene.ts';
 import { Hud, PowerMeter } from './hud.tsx';
-import { playerForSeat, type Mode } from './seats.ts';
+import { assignControllers, playerForSeat, type ControllerMember, type Mode } from './seats.ts';
+import { MODE, COMPETITION, HOME_CLUB, AWAY_CLUB } from './settings.ts';
+import { COMPETITIONS, type CompetitionId } from './modes.ts';
+import { CLUBS, clubById, DEFAULT_CLUBS } from './teams.ts';
+import { PhoneLobby as SoccerPhoneLobby, PhoneTeamPicker, publishLobby, sideForRoom, useLobbyState } from './lobby.tsx';
+import { createCup, loadCup, matchOutcome, recordUserResult, saveCup } from './cup.ts';
+import { simulateShootout } from './shootout.ts';
 import './soccer.css';
-import QRCode from 'qrcode';
 
 type Minutes = '2' | '4' | '6';
 type Camera = 'broadcast' | 'end';
 type Time = 'night' | 'golden';
 
-const MODE = defineSetting<Mode>('soccer:mode', ['cpu', 'versus', 'coop'], 'cpu');
 const HALF = defineSetting<Minutes>('soccer:half', ['2', '4', '6'], '4');
 const LEVEL = defineSetting<LevelName>('soccer:level', ['easy', 'normal', 'hard'], 'normal');
 const CAMERA = defineSetting<Camera>('soccer:camera', ['broadcast', 'end'], 'broadcast', { live: true });
 const TIME = defineSetting<Time>('soccer:time', ['night', 'golden'], 'night', { live: true });
 const DISPLAY_ONLY = defineSetting<'on' | 'off'>('soccer:display-only', ['on', 'off'], 'on');
 
-const modeOptions = [['cpu', 'vs CPU'], ['versus', '2P versus'], ['coop', '2P co-op']] as const;
 const halfOptions = [['2', '2 min'], ['4', '4 min'], ['6', '6 min']] as const;
 const cameraOptions = [['broadcast', 'Broadcast'], ['end', 'End to end']] as const;
 const timeOptions = [['night', 'Night'], ['golden', 'Golden hour']] as const;
@@ -34,13 +37,30 @@ const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n
 
 function Settings({ online = false }: { online?: boolean }) {
   const [mode, setMode] = useSetting(MODE);
+  const [competition, setCompetition] = useSetting(COMPETITION);
+  const [homeClub, setHomeClub] = useSetting(HOME_CLUB);
+  const [awayClub, setAwayClub] = useSetting(AWAY_CLUB);
   const [half, setHalf] = useSetting(HALF);
   const [level, setLevel] = useSetting(LEVEL);
   const [camera, setCamera] = useSetting(CAMERA);
   const [time, setTime] = useSetting(TIME);
+  const definition = COMPETITIONS.find((entry) => entry.id === competition) ?? COMPETITIONS[0]!;
+  const changeCompetition = (value: CompetitionId) => {
+    const next = COMPETITIONS.find((entry) => entry.id === value) ?? COMPETITIONS[0]!;
+    setCompetition(next.id);
+    if (!next.arrangements.includes(mode)) setMode(next.arrangements[0]!);
+  };
+  const availableModes = definition.arrangements.map((arrangement) => [
+    arrangement, arrangement === 'cpu' ? 'vs CPU' : arrangement === 'versus' ? '2P versus' : '2P co-op',
+  ] as const);
   return (
     <div className="g-soccer-settings">
-      {!online && <Segmented label="Match" value={mode} options={modeOptions} onChange={setMode} />}
+      {!online && <Segmented label="Competition" value={competition} options={COMPETITIONS.map(({ id, label }) => [id, label] as const)} onChange={changeCompetition} />}
+      {!online && <Segmented label="Match" value={mode} options={availableModes} onChange={setMode} />}
+      <div className="g-soccer-setting-clubs">
+        <label>Your club<select value={homeClub} onChange={(event) => setHomeClub(event.currentTarget.value)}>{CLUBS.map((club) => <option key={club.id} value={club.id} disabled={club.id === awayClub}>{club.name}</option>)}</select></label>
+        <label>Opponent<select value={awayClub} onChange={(event) => setAwayClub(event.currentTarget.value)}>{CLUBS.map((club) => <option key={club.id} value={club.id} disabled={club.id === homeClub}>{club.name}</option>)}</select></label>
+      </div>
       <Segmented label="Half length" value={half} options={halfOptions} onChange={setHalf} />
       <Segmented label="Difficulty" value={level} options={levelOptions} onChange={setLevel} />
       <Segmented label="Camera" value={camera} options={cameraOptions} onChange={setCamera} />
@@ -91,22 +111,25 @@ function Stick({ movement }: { movement: { current: { x: number; z: number } } }
   );
 }
 
-function setupHumans(world: World, mode: Mode, online: ReturnType<typeof useOnline>) {
-  const displayOnly = !!online;
+function setupHumans(world: World, mode: Mode, online: ReturnType<typeof useOnline>, competition: CompetitionId, lobbyMembers: LobbyMember[] = []) {
   for (const player of world.players) {
     player.human = false;
     player.controlled = false;
   }
   if (online) {
-    for (const member of online.players) {
-      if (member.seat === 0 && displayOnly) continue;
-      const player = world.players[playerForSeat(member.seat, displayOnly, mode)]!;
+    const members: ControllerMember[] = online.players.filter((member) => member.seat >= 0).map((member) => {
+      const known = lobbyMembers.find((entry) => entry.seat === member.seat);
+      return known ?? { seat: member.seat, role: member.seat === 0 ? 'host' : 'phone', side: member.seat === 0 ? 0 : 1 };
+    });
+    const assignments = assignControllers(members, mode, competition);
+    for (const id of assignments.values()) {
+      const player = world.players[id]!;
       player.human = true;
       player.controlled = true;
       const team = player.team;
       if (!world.players.some((p) => p.team === team && p.id !== player.id && p.human)) world.controlled[team] = player.id;
     }
-    return;
+    return assignments;
   }
   const ids = mode === 'versus' ? [6, 17] : mode === 'coop' ? [6, 9] : [6];
   ids.forEach((id) => {
@@ -115,88 +138,7 @@ function setupHumans(world: World, mode: Mode, online: ReturnType<typeof useOnli
   });
   world.controlled[0] = 6;
   world.controlled[1] = 17;
-}
-
-function PhoneLobby() {
-  const online = useOnline();
-  const [mode, setMode] = useSetting(MODE);
-  const [, setDisplayOnly] = useSetting(DISPLAY_ONLY);
-  const [qr, setQr] = useState('');
-  const [countdown, setCountdown] = useState<number | null>(null);
-  const startedCode = useRef('');
-  const phones = online?.players.filter((player) => player.seat > 0) ?? [];
-  const requiredPhones = mode === 'cpu' ? 1 : 2;
-  useEffect(() => {
-    if (!online?.code || typeof location === 'undefined') return;
-    const url = `${location.protocol}//${location.host}/?game=soccer&room=${online.code}`;
-    void QRCode.toDataURL(url, { errorCorrectionLevel: 'H', margin: 2, width: 280 }).then(setQr).catch(() => setQr(''));
-  }, [online?.code]);
-  useEffect(() => {
-    if (online?.isHost && getSetting(DISPLAY_ONLY) !== 'on') setDisplayOnly('on');
-  }, [online?.isHost, setDisplayOnly]);
-  useEffect(() => {
-    if (!online?.isHost) {
-      setCountdown(null);
-      return;
-    }
-    if (online.round > 0) {
-      startedCode.current = online.code;
-      setCountdown(null);
-      return;
-    }
-    if (startedCode.current === online.code || phones.length < requiredPhones) {
-      setCountdown(null);
-      return;
-    }
-    let seconds = 3;
-    setCountdown(seconds);
-    const timer = window.setInterval(() => {
-      seconds -= 1;
-      if (seconds <= 0) {
-        window.clearInterval(timer);
-        startedCode.current = online.code;
-        setCountdown(null);
-        online.start();
-      } else {
-        setCountdown(seconds);
-      }
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [online?.code, online?.isHost, online?.players, online?.round, online?.start, phones.length, requiredPhones]);
-  if (!online?.isHost) return null;
-  const fallback = typeof location === 'undefined' ? '' : `${location.host}/?room=${online.code}`;
-  const fallbackHref = typeof location === 'undefined' ? '' : `${location.protocol}//${fallback}`;
-  return (
-    <div className="g-soccer-phone-lobby">
-      <div className="g-soccer-phone-qr">
-        {qr && <img src={qr} alt="Phone controller QR code" />}
-        <strong>Scan with your iPhone camera</strong>
-      </div>
-      <div className="g-soccer-phone-lobby-content">
-        <div className="g-soccer-phone-connections" role="status">
-          {Array.from({ length: requiredPhones }, (_, index) => phones[index]
-            ? <span key={index}>Phone {index + 1} connected ✓</span>
-            : <span className="is-waiting" key={index}>{index === 0 ? 'Waiting for phone…' : `Waiting for phone ${index + 1}…`}</span>)}
-        </div>
-        {countdown !== null && <strong className="g-soccer-phone-countdown" role="status">Starting in {countdown}…</strong>}
-        <div className="g-soccer-phone-toggle" role="group" aria-label="How many phones">
-          <button type="button" aria-pressed={mode === 'cpu'} onClick={() => setMode('cpu')}>1 phone · vs CPU</button>
-          <button type="button" aria-pressed={mode !== 'cpu'} onClick={() => setMode(mode === 'coop' ? 'coop' : 'versus')}>2 phones</button>
-        </div>
-        {mode !== 'cpu' && (
-          <div className="g-soccer-phone-toggle is-secondary" role="group" aria-label="Team setup">
-            <button type="button" aria-pressed={mode === 'coop'} onClick={() => setMode('coop')}>Same team</button>
-            <button type="button" aria-pressed={mode === 'versus'} onClick={() => setMode('versus')}>Against each other</button>
-          </div>
-        )}
-        {fallback && <p className="g-soccer-phone-fallback">No camera? Go to <a href={fallbackHref}>{fallback}</a></p>}
-        <details className="g-soccer-phone-settings">
-          <summary>Settings</summary>
-          <Settings online />
-        </details>
-      </div>
-    </div>
-  );
+  return new Map<number, number>(ids.map((id, index) => [index, id]));
 }
 
 function interpolate(a: World, b: World, t: number): World {
@@ -236,8 +178,12 @@ function Play() {
   const keys = useKeys();
   const THREE = useThree();
   const online = useOnline();
+  const lobbyState = useLobbyState();
   const { ref, size } = useCanvas<HTMLDivElement>();
   const [modeChoice, setModeChoice] = useSetting(MODE);
+  const [competitionChoice, setCompetitionChoice] = useSetting(COMPETITION);
+  const [homeClubChoice, setHomeClubChoice] = useSetting(HOME_CLUB);
+  const [awayClubChoice, setAwayClubChoice] = useSetting(AWAY_CLUB);
   const [halfChoice, setHalfChoice] = useSetting(HALF);
   const [levelChoice, setLevelChoice] = useSetting(LEVEL);
   const [cameraChoice] = useSetting(CAMERA);
@@ -307,24 +253,29 @@ function Play() {
   timeRef.current = timeChoice;
 
   const halfMinutes = online?.quick ? 3 : Number(halfChoice);
-  const currentMode: Mode = modeChoice;
+  const currentCompetition = online && lobbyState ? lobbyState.comp : competitionChoice;
+  const currentMode: Mode = online && lobbyState ? lobbyState.mode : modeChoice;
+  const currentClubs: [string, string] = online && lobbyState ? [...lobbyState.clubs] : [homeClubChoice, awayClubChoice];
   if (!worldRef.current) {
-    worldRef.current = createWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
-    setupHumans(worldRef.current, currentMode, online);
+    worldRef.current = createWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1, currentClubs);
+    worldRef.current.cup = currentCompetition === 'cup';
+    controllerPlayers.current = setupHumans(worldRef.current, currentMode, online, currentCompetition, lobbyState?.members);
   }
   if (!replayWorld.current) replayWorld.current = createReplayWorld(worldRef.current);
   const world = worldRef.current!;
-  const localPlayerIds = online ? online.seat < 0 || (online.isHost && displayOnlyRoom.current) ? [] : [controllerPlayers.current.get(online.seat) ?? playerForSeat(online.seat, displayOnlyRoom.current, currentMode)] : currentMode === 'versus' ? [world.controlled[0], world.controlled[1]] : currentMode === 'coop' ? [controllerPlayers.current.get(0) ?? 6, controllerPlayers.current.get(1) ?? 9] : [world.controlled[0]];
+  const localOnlineId = online ? controllerPlayers.current.get(online.seat) : undefined;
+  const localPlayerIds = online ? online.seat < 0 || localOnlineId === undefined ? [] : [localOnlineId] : currentMode === 'versus' ? [world.controlled[0], world.controlled[1]] : currentMode === 'coop' ? [controllerPlayers.current.get(0) ?? 6, controllerPlayers.current.get(1) ?? 9] : [world.controlled[0]];
   const localTeam = localPlayerIds.length ? teamOf(localPlayerIds[0]!) : 0;
 
   useEffect(() => {
     if (shell.status !== 'ready') return;
-    const fresh = createWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
+    const fresh = createWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1, currentClubs);
+    fresh.cup = currentCompetition === 'cup';
     controllerPlayers.current.clear();
-    setupHumans(fresh, currentMode, online);
+    controllerPlayers.current = setupHumans(fresh, currentMode, online, currentCompetition, lobbyState?.members);
     worldRef.current = fresh;
     setHudWorld(fresh);
-  }, [shell.status, modeChoice, halfMinutes, online?.round, online?.seat, online?.players]);
+  }, [shell.status, modeChoice, halfMinutes, online?.round, online?.seat, online?.players, currentCompetition, currentClubs[0], currentClubs[1], lobbyState?.members]);
 
   useEffect(() => {
     const release = sfx.retain();
@@ -409,10 +360,12 @@ function Play() {
         setLevelChoice((['easy', 'normal', 'hard'] as const)[packet.level]!);
         setHalfChoice(String(packet.half) as Minutes);
         if (packet.mode) setModeChoice(packet.mode);
+        if (packet.comp) setCompetitionChoice(packet.comp);
+        if (packet.clubs) { setHomeClubChoice(packet.clubs[0]); setAwayClubChoice(packet.clubs[1]); }
       }
     });
     return off;
-  }, [online, online?.round, online?.isHost, setHalfChoice, setLevelChoice, setModeChoice]);
+  }, [online, online?.round, online?.isHost, setHalfChoice, setLevelChoice, setModeChoice, setCompetitionChoice, setHomeClubChoice, setAwayClubChoice]);
 
   useEffect(() => {
     if (!online?.isHost) return;
@@ -422,11 +375,13 @@ function Play() {
       level: onlineRef.current?.quick ? 1 : levelIndex(levelChoice),
       displayOnly: true,
       mode: modeChoice,
+      comp: currentCompetition,
+      clubs: currentClubs,
     });
     sendConfig();
     const timer = window.setInterval(sendConfig, 1500);
     return () => window.clearInterval(timer);
-  }, [online?.isHost, online?.round, online?.quick, halfChoice, levelChoice, modeChoice]);
+  }, [online?.isHost, online?.round, online?.quick, halfChoice, levelChoice, modeChoice, currentCompetition, currentClubs[0], currentClubs[1]]);
 
   const soundForWorld = (current: World) => {
     if (current.kickEvent) {
@@ -511,18 +466,35 @@ function Play() {
 
   const finishMatch = (current: World) => {
     if (reported.current || current.phase !== 'full-time') return;
+    const outcome = currentCompetition === 'cup' ? matchOutcome(current) : { score: current.score };
+    if (!outcome) return;
     reported.current = true;
     const room = onlineRef.current;
-    const draw = current.score[0] === current.score[1];
-    const winner: Team | null = draw ? null : current.score[0] > current.score[1] ? 0 : 1;
-    if (room?.isHost) {
-      const seats = winner === null ? undefined : winner === 0 ? [0, 2] : [1, 3];
-      room.reportResult(room.round, seats?.[0] ?? null, seats);
-    }
-    const title = winner === null ? 'full time · draw' : online
-      ? (teamOf(room?.seat === undefined ? 0 : playerForSeat(room.seat, displayOnlyRoom.current, currentMode)) === winner ? 'you win' : 'match over')
+    const draw = outcome.score[0] === outcome.score[1];
+    let winner: Team | null = draw ? null : outcome.score[0] > outcome.score[1] ? 0 : 1;
+    const home = clubById(current.clubs?.[0] ?? DEFAULT_CLUBS[0]);
+    const away = clubById(current.clubs?.[1] ?? DEFAULT_CLUBS[1]);
+    let detail = `${home.name} ${outcome.score[0]} - ${outcome.score[1]} ${away.name} · ${matchClock(current)}'`;
+    let title = winner === null ? 'full time · draw' : online
+      ? (localPlayerIds.some((id) => teamOf(id) === winner) ? 'you win' : 'match over')
       : winner === localTeam ? 'you win' : 'match lost';
-    const detail = `bay city ${current.score[0]} - ${current.score[1]} northshore · ${matchClock(current)}'`;
+    if (currentCompetition === 'cup') {
+      const cup = loadCup() ?? createCup(home.id, current.seed);
+      const penalties = draw ? outcome.pens ?? simulateShootout(current.seed, home, away).score : undefined;
+      if (penalties) {
+        winner = penalties[0] > penalties[1] ? 0 : 1;
+        detail += ` (${penalties[0]}-${penalties[1]} pens)`;
+      }
+      const nextCup = recordUserResult(cup, outcome.score, penalties);
+      saveCup(nextCup);
+      title = nextCup.champion ? 'cup winners!' : nextCup.out ? 'knocked out'
+        : nextCup.round === 1 ? 'through to the semi-finals'
+        : nextCup.round === 2 ? 'through to the final' : 'through to the next round';
+    }
+    if (room?.isHost) {
+      const seats = winner === null ? [] : [...controllerPlayers.current].filter(([, id]) => teamOf(id) === winner).map(([seat]) => seat);
+      room.reportResult(room.round, seats[0] ?? null, seats);
+    }
     shellRef.current.gameOver(undefined, { title, detail });
   };
 
@@ -546,15 +518,19 @@ function Play() {
         if (player) { player.human = false; player.controlled = false; }
         controllerPlayers.current.delete(seat); remoteCommands.current.delete(id);
       }
+      const roomMembers: ControllerMember[] = room.players.filter((entry) => entry.seat >= 0).map((entry) => {
+        const known = lobbyState?.members.find((member) => member.seat === entry.seat);
+        return known ?? { seat: entry.seat, role: entry.seat === 0 ? 'host' : 'phone', side: entry.seat === 0 ? 0 : 1 };
+      });
+      const assigned = assignControllers(roomMembers, currentMode, currentCompetition);
+      for (const [seat, id] of assigned) {
+        if (currentCompetition === 'online' || !controllerPlayers.current.has(seat)) controllerPlayers.current.set(seat, id);
+      }
       for (const entry of room.players) {
-        if (entry.seat === 0 && displayOnlyRoom.current || entry.seat < 0) continue;
-        if (!controllerPlayers.current.has(entry.seat)) {
-          const preferred = playerForSeat(entry.seat, displayOnlyRoom.current, currentMode);
-          const occupied = [...controllerPlayers.current.values()];
-          const id = occupied.includes(preferred) ? current.players.find((p) => p.team === teamOf(preferred) && !occupied.includes(p.id))?.id : preferred;
-          if (id !== undefined) controllerPlayers.current.set(entry.seat, id);
-        }
-        const player = current.players[controllerPlayers.current.get(entry.seat)!];
+        if (entry.seat === 0 && displayOnlyRoom.current && currentCompetition !== 'online' || entry.seat < 0) continue;
+        const id = controllerPlayers.current.get(entry.seat);
+        if (id === undefined) continue;
+        const player = current.players[id];
         if (player) { player.human = true; player.controlled = true; }
       }
     } else if (currentMode === 'coop' && controllerPlayers.current.size === 0) {
@@ -744,6 +720,7 @@ function Play() {
 
 function PhoneController() {
   const online = useOnline();
+  const lobbyState = useLobbyState();
   const movement = useRef({ x: 0, z: 0 });
   const held = useRef<Command['action']>(null);
   const sprint = useRef(false);
@@ -836,7 +813,12 @@ function PhoneController() {
   }, []);
   const phoneHasBall = () => {
     const snapshot = phoneWorld.current;
-    return !!snapshot && nearestCarrier(snapshot)?.team === teamOf(playerForSeat(online?.seat ?? 0, displayOnly, mode));
+    const seat = online?.seat ?? 0;
+    const member = lobbyState?.members.find((entry) => entry.seat === seat)
+      ?? { seat, role: 'phone' as const, side: sideForRoom(online?.code) };
+    const playerId = assignControllers([member], mode, lobbyState?.comp ?? 'quick').get(seat)
+      ?? playerForSeat(seat, displayOnly, mode);
+    return !!snapshot && nearestCarrier(snapshot)?.team === teamOf(playerId);
   };
   const send = (action: Command['action'] = null, pressed = false, power = chargePower(chargeStartedAt.current === null ? 0 : (performance.now() - chargeStartedAt.current) / 1000), switchNearest = false) => {
       if (!online) return;
@@ -881,6 +863,7 @@ function PhoneController() {
     const off = online.onMessage((from, data) => {
       if (from !== 0) return;
       const packet = parsePacket(data);
+      if (packet?.k === 'lobby') publishLobby(packet);
       if (packet?.k === 's') {
         phoneWorld.current = packet.state;
         if (packet.state.score.some((value, index) => value !== previousScore.current[index])) navigator.vibrate?.([70, 40, 120]);
@@ -898,7 +881,9 @@ function PhoneController() {
     return () => { off(); window.clearInterval(timer); };
   }, [online, mode, displayOnly]);
   if (!online) return null;
-  const phonePlayer = playerForSeat(online.seat, displayOnly, mode);
+  if (online.round === 0) return <PhoneTeamPicker online={online} />;
+  const controllerMembers = lobbyState?.members ?? [{ seat: online.seat, role: 'phone' as const, side: sideForRoom(online.code) }];
+  const phonePlayer = assignControllers(controllerMembers, mode, lobbyState?.comp ?? 'quick').get(online.seat) ?? playerForSeat(online.seat, displayOnly, mode);
   const attacking = phoneHasBall();
   if (showGame) return <><Play key={`phone-game-${online.round ?? 0}`} /><button className="g-soccer-phone-show" type="button" onClick={() => setShowGame(false)}>Controller</button></>;
   const button = (action: Command['action'], key: string, label: string, className: string) => (
@@ -917,7 +902,7 @@ function PhoneController() {
     <div className="g-soccer-phone-controller">
       {showConnectedToast && <div className="g-soccer-phone-connected" role="status">Connected — look at your Mac</div>}
       <header>
-        <b>{teamOf(phonePlayer) === 1 ? 'NORTHSHORE' : 'BAY CITY'}</b>
+        <b>{clubById(phoneWorld.current?.clubs?.[teamOf(phonePlayer)] ?? lobbyState?.clubs[teamOf(phonePlayer)] ?? DEFAULT_CLUBS[teamOf(phonePlayer)]).name.toUpperCase()}</b>
         <strong>{score[0]} · {score[1]}</strong>
         <button type="button" onClick={() => setShowGame(true)}>Show game</button>
       </header>
@@ -963,7 +948,7 @@ export default function Soccer({ onExit, roomCode }: { onExit?: () => void; room
       roomCode={roomCode}
       phoneFirst
       setup={<Settings />}
-      hostSetup={<PhoneLobby />}
+      hostSetup={<SoccerPhoneLobby />}
       defaultBots={0}
       botNames={['bay city bot', 'northshore bot', 'wing bot', 'keeper bot']}
       quickNote="2v2, normal bots, and three-minute halves."
