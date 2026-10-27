@@ -20,7 +20,8 @@ function validWorld(value: unknown): value is World {
     && inRange(p.x, -FIELD.length / 2 - 2, FIELD.length / 2 + 2) && inRange(p.z, -FIELD.width / 2 - 2, FIELD.width / 2 + 2)
     && inRange(p.vx, -10, 10) && inRange(p.vz, -10, 10) && inRange(p.facing, -Math.PI * 2, Math.PI * 2)
     && inRange(p.stamina, 0, 1) && typeof p.human === 'boolean' && typeof p.controlled === 'boolean'
-    && inRange(p.cooldown, 0, 30) && typeof p.action === 'string' && p.action.length <= 24)) return false;
+    && inRange(p.cooldown, 0, 30) && (p.touchCd === undefined || inRange(p.touchCd, 0, 30))
+    && (p.planting === undefined || typeof p.planting === 'boolean') && typeof p.action === 'string' && p.action.length <= 24)) return false;
   if (!ball || !inRange(ball.x, -80, 80) || !inRange(ball.y, 0, 40) || !inRange(ball.z, -60, 60)
     || !inRange(ball.vx, -100, 100) || !inRange(ball.vy, -100, 100) || !inRange(ball.vz, -100, 100)
     || !inRange(ball.spin, -1000, 1000) || typeof ball.grounded !== 'boolean' || typeof ball.inNet !== 'boolean') return false;
@@ -34,6 +35,11 @@ function validWorld(value: unknown): value is World {
     || (w.passTarget !== null && w.passTarget !== undefined && (!Number.isInteger(w.passTarget) || w.passTarget < 0 || w.passTarget >= PLAYER_COUNT))
     || typeof w.passControl !== 'boolean') return false;
   const kickEvent = w.kickEvent;
+  if (w.carrierId !== undefined && w.carrierId !== null && !w.players.some((p) => p.id === w.carrierId)) return false;
+  if (w.lastToucherId !== undefined && w.lastToucherId !== null && !w.players.some((p) => p.id === w.lastToucherId)) return false;
+  if (w.passPoint != null && (!finite(w.passPoint.x, 150) || !finite(w.passPoint.z, 100))) return false;
+  if (w.players.some((p) => p.buffer != null && (!['pass', 'through', 'lob', 'shoot', 'finesse'].includes(p.buffer.action)
+    || !inRange(p.buffer.power, 0, 1) || !finite(p.buffer.aim?.x, 150) || !finite(p.buffer.aim?.z, 150) || !inRange(p.buffer.t, 0, 1)))) return false;
   if (kickEvent !== null && (!kickEvent || !Number.isInteger(kickEvent.playerId) || kickEvent.playerId < 0 || kickEvent.playerId >= PLAYER_COUNT
     || !slots.includes(w.players[kickEvent.playerId]?.slot ?? '') || typeof kickEvent.action !== 'string'
     || kickEvent.action.length > 24 || !inRange(kickEvent.power, 0, 1) || !inRange(kickEvent.time, 0, 360))) return false;
