@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createMatchStatsObserver, simulateCpuMatch, simulateCpuMatchStats } from '../src/os/arcade/games/soccer/ai.ts';
-import { createWorld } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, TEAM_SIZE } from '../src/os/arcade/games/soccer/logic.ts';
 
 test('statistics do not alter the seeded simulation', () => {
   const measured = simulateCpuMatchStats(47, 'hard', 'easy', 30);
@@ -32,10 +32,10 @@ test('observer excludes restarts and counts teammate receptions, interceptions, 
   assert.equal(stats.teams[0].passesCompleted, 1);
   world.players[2]!.x = -15;
   kick('pass');
-  world.players[6]!.x = world.ball.x; world.players[6]!.z = world.ball.z;
+  world.players[TEAM_SIZE + 6]!.x = world.ball.x; world.players[TEAM_SIZE + 6]!.z = world.ball.z;
   observe(world);
   assert.equal(stats.teams[0].passesCompleted, 1);
-  world.players[6]!.x = -15;
+  world.players[TEAM_SIZE + 6]!.x = -15;
   kick('shoot');
   world.lastTouch = 1; world.event = 'keeper parries'; world.eventTime = 1.1;
   observe(world); observe(world);
@@ -53,7 +53,7 @@ test('observer counts possession per live tick and infers a new successful tackl
   const { stats, observe } = createMatchStatsObserver();
   const world = createWorld();
   world.phase = 'live';
-  const player = world.players[6]!;
+  const player = world.players[TEAM_SIZE + 6]!;
   player.x = world.ball.x; player.z = world.ball.z;
   player.action = 'tackle'; player.cooldown = 0.35; world.lastTouch = 1;
   observe(world); observe(world);

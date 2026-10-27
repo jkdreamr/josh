@@ -1,28 +1,33 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { computeAI, keeperTarget, simulateCpuMatch, simulateCpuMatchStats } from '../src/os/arcade/games/soccer/ai.ts';
-import { createWorld, distance, FIELD, stepWorld, type Player } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, distance, FIELD, stepWorld, TEAM_SIZE, type Player } from '../src/os/arcade/games/soccer/logic.ts';
 
 let measured: ReturnType<typeof simulateCpuMatchStats>[] | undefined;
 const normalMatches = () => measured ??= [2, 17, 31, 47, 59, 71, 89, 103].map((seed) => simulateCpuMatchStats(seed, 'normal', 'normal', 480));
+let additional: ReturnType<typeof simulateCpuMatchStats>[] | undefined;
+const additionalMatches = () => additional ??= [127, 139, 151, 163, 179, 191, 211, 229].map((seed) => simulateCpuMatchStats(seed, 'normal', 'normal', 480));
 
 function tacticalWorld() {
   const world = createWorld(47);
   world.phase = 'live'; world.restart = null;
-  for (const p of world.players) { p.human = false; p.controlled = false; }
+  for (const [i, p] of world.players.entries()) {
+    p.human = false; p.controlled = false;
+    if (p.slot !== 'GK') { p.x = p.team === 0 ? -35 : 35; p.z = (i % TEAM_SIZE - 5) * 5; }
+  }
   return world;
 }
 
 test('human players never receive AI movement', () => {
   const g = createWorld();
   const commands = computeAI(g, 'normal', 1 / 60, 1);
-  assert.equal(commands.has(g.players[1]!.id), false);
+  assert.equal(commands.has(g.players[6]!.id), false);
   assert.ok([...commands.keys()].every((id) => !g.players[id]!.human));
 });
 
 test('players respect the sprint speed cap', () => {
   simulateCpuMatch(1234, 'hard', 'easy', 8, (world) => {
-    for (const p of world.players) assert.ok(Math.hypot(p.vx, p.vz) <= 8.01);
+    for (const p of world.players) assert.ok(Math.hypot(p.vx, p.vz) <= 9.01);
   });
 });
 
@@ -30,52 +35,52 @@ test('seeded four-minute halves have plausible average scoring', () => {
   let total = 0;
   for (const { world: g } of normalMatches()) {
     assert.equal(g.phase, 'full-time');
-    assert.ok(g.score[0] + g.score[1] <= 10, `score: ${g.score.join('-')}`);
+    assert.ok(g.score[0] + g.score[1] <= 8, `score: ${g.score.join('-')}`);
     total += g.score[0] + g.score[1];
   }
-  assert.ok(total / 8 >= 2 && total / 8 <= 6, `average goals: ${total / 8}`);
+  assert.ok(total / 8 >= 1 && total / 8 <= 5, `average goals: ${total / 8}`);
 });
 
 test('scoring generalizes to eight additional seeds', () => {
-  const goals = [127, 139, 151, 163, 179, 191, 211, 229].map((seed) => {
-    const world = simulateCpuMatch(seed, 'normal', 'normal', 480);
+  const goals = additionalMatches().map(({ world }) => {
     assert.equal(world.phase, 'full-time');
     return world.score[0] + world.score[1];
   });
-  assert.ok(goals.every((n) => n <= 10), `goals: ${goals}`);
+  assert.ok(goals.every((n) => n <= 8), `goals: ${goals}`);
   const mean = goals.reduce((sum, n) => sum + n, 0) / goals.length;
-  assert.ok(mean >= 2 && mean <= 6, `other-seed average goals: ${mean}`);
+  assert.ok(mean >= 1 && mean <= 5, `other-seed average goals: ${mean}`);
 });
 
 test('normal matches have realistic passing, shot conversion, possession and no strong home bias', () => {
-  const matches = normalMatches();
-  const sum = (key: 'shots' | 'goals' | 'passesAttempted' | 'passesCompleted' | 'possessionTicks', team?: number) => matches.reduce((n, m) => n + (team === undefined ? m.teams[0][key] + m.teams[1][key] : m.teams[team]![key]), 0);
-  const completion = sum('passesCompleted') / sum('passesAttempted');
-  const shotsPerGoal = sum('shots') / sum('goals');
-  const homePossession = sum('possessionTicks', 0) / sum('possessionTicks');
-  assert.ok(completion >= 0.6 && completion <= 0.9, `pass completion: ${completion}`);
-  for (const team of [0, 1]) {
-    const rate = sum('passesCompleted', team) / sum('passesAttempted', team);
-    assert.ok(rate >= 0.6 && rate <= 0.9, `team ${team} pass completion: ${rate}`);
+  for (const matches of [normalMatches(), additionalMatches()]) {
+    const sum = (key: 'shots' | 'goals' | 'passesAttempted' | 'passesCompleted' | 'possessionTicks', team?: number) => matches.reduce((n, m) => n + (team === undefined ? m.teams[0][key] + m.teams[1][key] : m.teams[team]![key]), 0);
+    const completion = sum('passesCompleted') / sum('passesAttempted');
+    const shotsPerGoal = sum('shots') / sum('goals');
+    const homePossession = sum('possessionTicks', 0) / sum('possessionTicks');
+    assert.ok(completion >= 0.65 && completion <= 0.9, `pass completion: ${completion}`);
+    for (const team of [0, 1]) {
+      const rate = sum('passesCompleted', team) / sum('passesAttempted', team);
+      assert.ok(rate >= 0.65 && rate <= 0.9, `team ${team} pass completion: ${rate}`);
+    }
+    assert.ok(shotsPerGoal >= 3 && shotsPerGoal <= 10, `shots per goal: ${shotsPerGoal}`);
+    assert.ok(homePossession >= 0.35 && homePossession <= 0.65, `home carried-time share: ${homePossession}`);
+    const wins = matches.filter((m) => m.world.score[0] > m.world.score[1]).length;
+    const losses = matches.filter((m) => m.world.score[0] < m.world.score[1]).length;
+    if (matches === measured) assert.ok(Math.abs(wins - losses) <= 3, `home W/L: ${wins}/${losses}`);
   }
-  assert.ok(shotsPerGoal >= 3 && shotsPerGoal <= 8, `shots per goal: ${shotsPerGoal}`);
-  assert.ok(homePossession >= 0.35 && homePossession <= 0.65, `home carried-time share: ${homePossession}`);
-  const wins = matches.filter((m) => m.world.score[0] > m.world.score[1]).length;
-  const losses = matches.filter((m) => m.world.score[0] < m.world.score[1]).length;
-  assert.ok(Math.abs(wins - losses) <= 3, `home W/L: ${wins}/${losses}`);
 });
 
 test('keeper shades toward the predicted ball crossing and steps out one-on-one', () => {
   const g = createWorld();
-  const keeper = g.players[5]!;
-  g.ball.x = 10;
+  const keeper = g.players[TEAM_SIZE]!;
+  g.ball.x = FIELD.length / 2 - 11;
   g.ball.z = -1;
   g.ball.vx = 10;
-  g.ball.vz = 2;
+  g.ball.vz = 3;
   const intercept = keeperTarget(g, keeper);
   assert.ok(intercept.z > 0);
   const normalX = intercept.x;
-  g.ball.x = 15;
+  g.ball.x = FIELD.length / 2 - 6;
   const oneOnOneX = keeperTarget(g, keeper).x;
   assert.ok(oneOnOneX < normalX);
 });
@@ -97,6 +102,7 @@ test('CPU teams hold shape without sustained teammate clumping', () => {
   let playerSamples = 0;
   let clumpedSamples = 0;
   let samples = 0;
+  const shape = [{ samples: 0, length: 0, width: 0 }, { samples: 0, length: 0, width: 0 }];
   for (const seed of [17, 47, 89]) {
     let tick = 0;
     simulateCpuMatch(seed, 'normal', 'normal', 120, (world) => {
@@ -114,9 +120,9 @@ test('CPU teams hold shape without sustained teammate clumping', () => {
         for (let a = 0; a < players.length && !grouped; a++) {
           for (let b = a + 1; b < players.length && !grouped; b++) {
             for (let c = b + 1; c < players.length; c++) {
-              if (distance(players[a]!, players[b]!) < 4
-                && distance(players[a]!, players[c]!) < 4
-                && distance(players[b]!, players[c]!) < 4) {
+              if (distance(players[a]!, players[b]!) < 5
+                && distance(players[a]!, players[c]!) < 5
+                && distance(players[b]!, players[c]!) < 5) {
                 grouped = true;
                 break;
               }
@@ -124,14 +130,25 @@ test('CPU teams hold shape without sustained teammate clumping', () => {
           }
         }
         if (grouped) clumpedSamples++;
+        const carrier = world.players.find((p) => distance(p, world.ball) < 0.64);
+        if (carrier) {
+          const measurement = shape[carrier.team === team ? 0 : 1]!;
+          measurement.samples++;
+          measurement.length += Math.max(...players.map((p) => p.x)) - Math.min(...players.map((p) => p.x));
+          measurement.width += Math.max(...players.map((p) => p.z)) - Math.min(...players.map((p) => p.z));
+        }
       }
     });
   }
   assert.ok(samples > 0, 'expected live-phase samples');
   const meanNearestDistance = nearestDistanceTotal / playerSamples;
   const clumpFraction = clumpedSamples / (samples * 2);
-  assert.ok(meanNearestDistance >= 4.5, `mean nearest teammate distance: ${meanNearestDistance.toFixed(2)}m`);
+  assert.ok(meanNearestDistance >= 8, `mean nearest teammate distance: ${meanNearestDistance.toFixed(2)}m`);
   assert.ok(clumpFraction < 0.05, `three-player clump fraction: ${(clumpFraction * 100).toFixed(1)}%`);
+  const [attack, defence] = shape.map((s) => ({ length: s.length / s.samples, width: s.width / s.samples }));
+  assert.ok(attack!.width > defence!.width + 2, `width in/out: ${attack!.width}/${defence!.width}`);
+  assert.ok(defence!.length >= 25 && defence!.length <= 40, `defensive block length: ${defence!.length}`);
+  assert.ok(defence!.width >= 30 && defence!.width <= 45, `defensive block width: ${defence!.width}`);
 });
 
 test('CPU carrier completes a progressive pass to a teammate', () => {
@@ -144,7 +161,7 @@ test('CPU carrier completes a progressive pass to a teammate', () => {
   carrier.controlled = false;
   carrier.x = -5; carrier.z = 0;
   g.ball.x = -4.7; g.ball.z = 0;
-  receiver.x = 0; receiver.z = 0; receiver.slot = 'DEF';
+  receiver.x = 0; receiver.z = 0; receiver.slot = 'CB';
   for (const p of g.players.filter((player) => player.team === 1)) {
     p.x = 14 + p.id * 0.2;
     p.z = 10;
@@ -167,7 +184,7 @@ test('CPU carrier completes a progressive pass to a teammate', () => {
 test('presser jockeys goal-side instead of diving onto the carrier', () => {
   const world = tacticalWorld();
   world.lastTouch = 1;
-  const opponent = world.players[6]!;
+  const opponent = world.players[TEAM_SIZE + 6]!;
   opponent.x = 0; opponent.z = 0;
   world.ball.x = -0.4; world.ball.z = 0;
   const presser = world.players[1]!;
@@ -180,15 +197,15 @@ test('presser jockeys goal-side instead of diving onto the carrier', () => {
 test('covering defender marks the dangerous runner goal-side', () => {
   const world = tacticalWorld();
   world.lastTouch = 1;
-  const carrier = world.players[6]!;
+  const carrier = world.players[TEAM_SIZE + 6]!;
   carrier.x = 0; carrier.z = 0;
   world.ball.x = -0.4; world.ball.z = 0;
   world.players[2]!.x = -1; world.players[2]!.z = -1;
   world.players[3]!.x = -5; world.players[3]!.z = 3;
   const defender = world.players[1]!;
-  defender.x = -10; defender.z = 0;
-  const attacker = world.players[9]!;
-  attacker.x = -9; attacker.z = 1;
+  defender.x = -27; defender.z = -15;
+  const attacker = world.players[TEAM_SIZE + 9]!;
+  attacker.x = -26; attacker.z = -14;
   const command = computeAI(world, 'normal', 1 / 60, 1, 0).get(defender.id)!;
   assert.ok(command.move.x < 0);
   assert.ok(command.move.z > 0);
@@ -198,7 +215,7 @@ test('CPU teammates cover when the nearest presser is human or controlled', () =
   for (const control of ['human', 'controlled'] as const) {
     const world = tacticalWorld();
     world.lastTouch = 1;
-    const carrier = world.players[6]!;
+    const carrier = world.players[TEAM_SIZE + 6]!;
     carrier.x = 0; carrier.z = 0;
     world.ball.x = -0.4; world.ball.z = 0;
     const human = world.players[1]!;
@@ -253,7 +270,7 @@ test('keepers commit after elapsed reaction time regardless of the shot tick mod
     const world = tacticalWorld();
     const keeper = world.players.find((p) => p.team === 1 && p.slot === 'GK')!;
     keeper.z = 0;
-    world.ball.x = 8; world.ball.z = 1.8; world.ball.vx = 20; world.ball.vz = 0;
+    world.ball.x = FIELD.length / 2 - 14; world.ball.z = 1.8; world.ball.vx = 20; world.ball.vz = 0;
     world.kickEvent = { playerId: 1, action: 'shoot', power: 0.75, time: world.clock };
     computeAI(world, 'hard', 1 / 60, start, 1);
     world.kickEvent = null;
@@ -275,7 +292,7 @@ test('keeper reads recognize fast shots without an event, delay by level, and ig
     const world = tacticalWorld();
     const keeper = world.players.find((p) => p.team === 1 && p.slot === 'GK')!;
     keeper.z = 0;
-    world.ball.x = 8; world.ball.z = 1.8; world.ball.vx = 20; world.ball.vz = 0;
+    world.ball.x = FIELD.length / 2 - 14; world.ball.z = 1.8; world.ball.vx = 20; world.ball.vz = 0;
     computeAI(world, level, 1 / 60, 17, 1);
     computeAI(world, level, 1 / 60, 27, 1);
     assert.equal(keeper.action, level === 'hard' ? 'dive' : 'ready');
@@ -289,7 +306,7 @@ test('a human keeper is not given a dive decision', () => {
   const world = tacticalWorld();
   const keeper = world.players.find((p) => p.team === 1 && p.slot === 'GK')!;
   keeper.human = true; keeper.action = 'human';
-  world.ball.x = 8; world.ball.z = 1.8; world.ball.vx = 20;
+  world.ball.x = FIELD.length / 2 - 14; world.ball.z = 1.8; world.ball.vx = 20;
   computeAI(world, 'hard', 1 / 60, 17, 1);
   const commands = computeAI(world, 'hard', 1 / 60, 40, 1);
   assert.equal(commands.has(keeper.id), false);

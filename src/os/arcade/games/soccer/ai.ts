@@ -1,10 +1,10 @@
-import { createWorld, distance, FIELD, findReceiver, stepWorld, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
+import { createWorld, distance, FIELD, FORMATION, findReceiver, restartTaker, stepWorld, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
 
 export const LEVEL_NAMES = ['easy', 'normal', 'hard'] as const;
 export type Level = (typeof LEVEL_NAMES)[number];
 const reaction = { easy: 0.6, normal: 0.3, hard: 0.18 } as const;
 const keeperReaction = { easy: 0.6, normal: 0.42, hard: 0.2 } as const;
-const keeperReadDelay = { easy: 0.7, normal: 0.5, hard: 0.16 } as const;
+const keeperReadDelay = { easy: 0.7, normal: 0.36, hard: 0.16 } as const;
 const keeperReadNoise = { easy: 0.28, normal: 0.08, hard: 0.01 } as const;
 const decisionInterval = { easy: 0.7, normal: 0.3, hard: 0.24 } as const;
 const noise = { easy: 0.65, normal: 0.2, hard: 0.03 } as const;
@@ -19,8 +19,12 @@ const ROLES: Record<string, Role> = {
   FWD: { line: 'att', lateral: 0, freedom: 0.2 },
   LB: { line: 'def', lateral: -0.38, freedom: 0.1, overlap: true },
   CB: { line: 'def', lateral: 0, freedom: 0.03 },
+  LCB: { line: 'def', lateral: -0.13, freedom: 0.03 },
+  RCB: { line: 'def', lateral: 0.13, freedom: 0.03 },
   RB: { line: 'def', lateral: 0.38, freedom: 0.1, overlap: true },
   CM: { line: 'mid', lateral: 0, freedom: 0.1 },
+  LCM: { line: 'mid', lateral: -0.19, freedom: 0.1 },
+  RCM: { line: 'mid', lateral: 0.19, freedom: 0.1 },
   LW: { line: 'att', lateral: -0.36, freedom: 0.19 },
   ST: { line: 'att', lateral: 0, freedom: 0.2 },
   RW: { line: 'att', lateral: 0.36, freedom: 0.19 },
@@ -211,10 +215,12 @@ function shapeTarget(world: World, p: Player, state: MatchState) {
   const anchor = hasBall ? clamp(ballProgress - longitudinal(0.07), -longitudinal(0.24), longitudinal(0.19))
     : clamp(ballProgress - longitudinal(0.1), -longitudinal(0.31), longitudinal(0.1));
   const siblings = world.players.filter((q) => q.team === p.team && q.slot === p.slot);
-  const homeSide = role.lateral + (siblings.indexOf(p) - (siblings.length - 1) / 2) * 0.24;
+  const homeSide = FORMATION[rosterIndex(world, p)]?.slot === p.slot
+    ? FORMATION[rosterIndex(world, p)]!.z / FIELD.width
+    : role.lateral + (siblings.indexOf(p) - (siblings.length - 1) / 2) * 0.24;
   const side = world.ball.z * (hasBall ? 0.15 : 0.5);
-  let progress = anchor + longitudinal(role.line === 'def' ? (hasBall ? -0.17 : -0.12) : role.line === 'att' ? (hasBall ? 0.21 : 0.14) : 0.02);
-  let z = lateral(homeSide) * (hasBall ? 1 : 0.48) + side;
+  let progress = anchor + longitudinal(role.line === 'def' ? (hasBall ? -0.17 : -0.15) : role.line === 'att' ? (hasBall ? 0.21 : 0.15) : 0.02);
+  let z = lateral(homeSide) * (hasBall ? 1 : 0.75) + side;
   if (hasBall && role.line === 'def' && ballProgress > 0) progress = clamp(ballProgress - longitudinal(0.29), -longitudinal(0.05), longitudinal(0.12));
   const carrier = state.carrier;
   if (hasBall && carrier?.team === p.team) {
@@ -257,9 +263,7 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
       if (p.human || p.controlled) continue;
       if (world.phase !== 'live') {
         if (world.phase === 'restart' && side === world.restartTeam) {
-          const taker = (world.restart === 'goal-kick' ? players.find((q) => q.slot === 'GK') : undefined)
-            ?? players.find((q) => q.controlled)
-            ?? [...players].sort((a, b) => distance(a, world.restartAt) - distance(b, world.restartAt))[0]!;
+          const taker = restartTaker(world);
           if (p.id === taker.id) {
             const receiver = players.filter((q) => q.id !== p.id && outfield(q))
               .sort((a, b) => distance(a, world.restartAt) - distance(b, world.restartAt))[0]!;
@@ -317,7 +321,9 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
       }
       let target = shapeTarget(world, p, state);
       if (state.possession !== side) {
-        const threat = threats.find((q) => !marked.has(q.id) && distance(q, target) < longitudinal(1 / 6));
+        const line = roleOf(p).line;
+        const threat = threats.find((q) => !marked.has(q.id) && distance(q, target) < longitudinal(0.14)
+          && roleOf(q).line === (line === 'def' ? 'att' : line === 'att' ? 'def' : 'mid'));
         if (threat) {
           marked.add(threat.id);
           const dx = ownGoal.x - threat.x, dz = -threat.z;
@@ -336,9 +342,9 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
       if (a.team !== b.team) continue;
       let dx = tb.x - ta.x, dz = tb.z - ta.z;
       const gap = Math.hypot(dx, dz);
-      if (gap >= 5.5) continue;
+      if (gap >= 9) continue;
       if (gap < 0.01) { dx = 0; dz = roleOf(a).lateral < 0 ? 1 : -1; }
-      const scale = (5.5 - gap) / (Math.hypot(dx, dz) || 1) / 2;
+      const scale = (9 - gap) / (Math.hypot(dx, dz) || 1) / 2;
       ta.x -= dx * scale; ta.z -= dz * scale;
       tb.x += dx * scale; tb.z += dz * scale;
     }
@@ -358,8 +364,8 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
     for (const mate of world.players) {
       if (mate.team !== p.team || mate.id === p.id || !outfield(mate)) continue;
       const gap = distance(p, mate);
-      if (gap >= 5) continue;
-      const strength = (5 - gap) / 5;
+      if (gap >= 8) continue;
+      const strength = (8 - gap) / 8;
       x += (p.x - mate.x) / Math.max(0.5, gap) * strength;
       z += (p.z - mate.z) / Math.max(0.5, gap) * strength;
     }
