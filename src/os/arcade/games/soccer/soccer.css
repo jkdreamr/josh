@@ -490,6 +490,24 @@
   .g-soccer-phone-lobby { grid-template-columns: 1fr; gap: 18px; }
   .g-soccer-phone-qr img { width: min(180px, 100%); height: auto; aspect-ratio: 1; }
 }
+.g-soccer-state { display: block; grid-column: 1 / -1; margin-top: 5px; color: #ffe67d; font-size: 10px; letter-spacing: .12em; }
+.g-soccer-power { position: relative; height: 12px; margin-top: 5px; overflow: hidden; border: 1px solid #ffffff66; border-radius: 5px; background: linear-gradient(90deg, #07111dcc 85%, #a7334d88 85%); }
+.g-soccer-power > i { display: block; height: 100%; background: #83db91; }
+.g-soccer-power::after { content: ""; position: absolute; left: 85%; top: 0; bottom: 0; border-left: 1px solid #ff6b7f; }
+.g-soccer-power > span { position: absolute; right: 1px; top: 0; color: white; font-size: 8px; line-height: 12px; }
+.g-soccer-power.is-over > i { background: #f04c64; }
+.g-soccer-player-tag > .g-soccer-power { grid-column: 1 / -1; }
+.g-soccer-player-tag .g-soccer-power > span { font-size: 8px; line-height: 12px; }
+.g-soccer-phone-charge .g-soccer-power { margin: 0; height: 12px; }
+.g-soccer-phone-controller .g-soccer-stick { display: block; width: clamp(112px, 34vw, 152px); height: clamp(112px, 34vw, 152px); bottom: max(84px, calc(env(safe-area-inset-bottom, 0px) + 64px)); }
+.g-soccer-phone-buttons { --g-soccer-diamond: clamp(160px, 48vw, 192px); width: var(--g-soccer-diamond); }
+.g-soccer-phone-diamond { width: var(--g-soccer-diamond); height: var(--g-soccer-diamond); }
+.g-soccer-phone-button { width: 37.5%; height: 37.5%; }
+.g-soccer-phone-button.is-y, .g-soccer-phone-button.is-a { left: 31.25%; }
+.g-soccer-phone-button.is-x, .g-soccer-phone-button.is-b { top: 31.25%; }
+.g-soccer-phone-button > small { max-width: 100%; padding: 0 3px; font-size: 9px; line-height: 1.1; white-space: normal; }
+.g-soccer-phone-utilities { gap: 5px; }
+.g-soccer-phone-action { white-space: normal; }
 
 @media (orientation: landscape) {
   .g-soccer-phone-controller header {
@@ -507,7 +525,7 @@
   .g-soccer-phone-buttons {
     right: max(24px, env(safe-area-inset-right, 0px));
     bottom: max(20px, env(safe-area-inset-bottom, 0px));
-    width: min(232px, 30vw);
+    width: var(--g-soccer-diamond);
   }
   .g-soccer-phone-action { min-height: 38px; }
 }
