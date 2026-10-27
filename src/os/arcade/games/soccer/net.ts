@@ -3,8 +3,11 @@ import type { ControlCommand } from './input.ts';
 
 export type MovePacket = { t: 'soccer'; k: 'mv'; r: number; seq: number; seat: number; x: number; z: number; ax: number; az: number; power: number; buttons: number; held: number; sx?: number; sz?: number };
 export type SnapshotPacket = { t: 'soccer'; k: 's'; r: number; seq: number; state: World };
-export type ConfigPacket = { t: 'soccer'; k: 'cfg'; r: number; seq: number; half: 2 | 3 | 4 | 6; level: 0 | 1 | 2; displayOnly: boolean; mode?: 'cpu' | 'versus' | 'coop' };
-export type SoccerPacket = MovePacket | SnapshotPacket | ConfigPacket;
+export type ConfigPacket = { t: 'soccer'; k: 'cfg'; r: number; seq: number; half: 2 | 3 | 4 | 6; level: 0 | 1 | 2; displayOnly: boolean; mode?: 'cpu' | 'versus' | 'coop' | 'practice' };
+export type PracticePickPacket = { t: 'soccer'; k: 'pd'; r: number; seq: number; seat: number; pick: string };
+export type PracticeStatusPacket = { t: 'soccer'; k: 'pp'; r: number; seq: number; drill: string; prompt: string; hint: string; score: string; best: string; done: boolean; tutorial: string };
+export type SoccerPacket = MovePacket | SnapshotPacket | ConfigPacket | PracticePickPacket | PracticeStatusPacket;
+const shortText = (value: unknown, max = 160) => typeof value === 'string' && value.length <= max;
 const finite = (v: unknown, abs: number) => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= abs;
 const quantized = (v: unknown) => finite(v, 1) && Math.abs((v as number) * 100 - Math.round((v as number) * 100)) < 1e-6;
 const inRange = (v: unknown, min: number, max: number) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
@@ -88,7 +91,7 @@ export function parsePacket(value: unknown): SoccerPacket | null {
   if (p.k === 'cfg') {
     if (![2, 3, 4, 6].includes(p.half as number) || ![0, 1, 2].includes(p.level as number)
       || (p.displayOnly !== undefined && typeof p.displayOnly !== 'boolean')
-      || (p.mode !== undefined && !['cpu', 'versus', 'coop'].includes(p.mode as string))) return null;
+      || (p.mode !== undefined && !['cpu', 'versus', 'coop', 'practice'].includes(p.mode as string))) return null;
     return {
       t: 'soccer', k: 'cfg', r: p.r as number, seq: p.seq as number,
       half: p.half as ConfigPacket['half'], level: p.level as ConfigPacket['level'], displayOnly: p.displayOnly === true,
@@ -102,6 +105,14 @@ export function parsePacket(value: unknown): SoccerPacket | null {
       || ((p.sx !== undefined || p.sz !== undefined) && (!quantized(p.sx) || !quantized(p.sz)))
       || !Number.isInteger(p.held) || (p.held as number) < 0 || (p.held as number) > 527 || ((p.held as number) & ~527) !== 0) return null;
     return { t: 'soccer', k: 'mv', r: p.r as number, seq: p.seq as number, seat: p.seat as number, x: p.x as number, z: p.z as number, ax: p.ax as number, az: p.az as number, power: p.power as number, buttons: p.buttons as number, held: p.held as number, ...(p.sx === undefined ? {} : { sx: p.sx as number, sz: p.sz as number }) };
+  }
+  if (p.k === 'pd') {
+    if (!Number.isInteger(p.seat) || (p.seat as number) < 0 || (p.seat as number) > 3 || !shortText(p.pick, 24)) return null;
+    return { t: 'soccer', k: 'pd', r: p.r as number, seq: p.seq as number, seat: p.seat as number, pick: p.pick as string };
+  }
+  if (p.k === 'pp') {
+    if (![p.drill, p.prompt, p.hint, p.score, p.best, p.tutorial].every((text) => shortText(text)) || typeof p.done !== 'boolean') return null;
+    return { t: 'soccer', k: 'pp', r: p.r as number, seq: p.seq as number, drill: p.drill as string, prompt: p.prompt as string, hint: p.hint as string, score: p.score as string, best: p.best as string, done: p.done as boolean, tutorial: p.tutorial as string };
   }
   if (p.k === 's' && validWorld(p.state)) {
     return { t: 'soccer', k: 's', r: p.r as number, seq: p.seq as number, state: structuredClone(p.state) };

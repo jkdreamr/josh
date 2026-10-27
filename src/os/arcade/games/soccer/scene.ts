@@ -4,6 +4,8 @@ import { FIELD, jerseyNumber, teamDir } from './logic.ts';
 import { disposeTree, damp } from './gl.ts';
 import { adTexture, ballNumberTexture, ballTexture, markingsTexture, pitchTextures } from './textures.ts';
 import { IDENTITY_BASIS, type ViewBasis } from './input.ts';
+import { createPracticeMarkers } from './practice-markers.ts';
+import type { PracticeMarker } from './practice.ts';
 import { approachAngle, bindSoccerRig, bodyFrameVelocity, createSoccerAnimationInput, createSoccerAnimator, kickingFoot, playSoccerClip, preferredFoot, soccerClipActive, soccerDribbleOffset, updateSoccerAnimator, type SoccerAnimator, type SoccerClip } from './player.ts';
 
 type Three = typeof import('three');
@@ -27,6 +29,7 @@ export type SoccerView = {
   render(): void;
   setTime(mode: TimeMode): void;
   goal(): void;
+  setMarkers(markers: readonly PracticeMarker[]): void;
   dispose(): void;
 };
 
@@ -336,6 +339,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const projected = new THREE.Vector3();
 
   const scene = new THREE.Scene();
+  const practiceMarkers = createPracticeMarkers(THREE, scene);
   const night = timeMode === 'night';
   const skyCanvas = document.createElement('canvas');
   skyCanvas.width = 16; skyCanvas.height = 256;
@@ -1005,8 +1009,10 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     render,
     setTime,
     goal() { crowdRoar = 1.3; },
+    setMarkers(markers) { practiceMarkers.set(markers, performance.now() / 1000); },
     dispose() {
       disposed = true;
+      practiceMarkers.dispose();
       canvas.removeEventListener('webglcontextlost', onLost);
       disposeTree(scene);
       indicator.remove();
