@@ -4,6 +4,7 @@ import { FIELD, teamDir } from './logic.ts';
 import { disposeTree, damp } from './gl.ts';
 import { adTexture, ballNumberTexture, ballTexture, markingsTexture, pitchTextures } from './textures.ts';
 import { animateSoccerSkeleton, captureSoccerBoneBinds, createSoccerAnimationScratch, type BoneBind, type SoccerAnimationScratch, type SoccerPose } from './player.ts';
+import { IDENTITY_BASIS, type ViewBasis } from './input.ts';
 
 type Three = typeof import('three');
 export type CameraMode = 'broadcast' | 'end' | 'replay';
@@ -13,6 +14,7 @@ type Crowd = { mesh: T.InstancedMesh; count: number; phases: number[]; baseY: nu
 
 export type SoccerView = {
   resize(width: number, height: number): void;
+  viewBasis(): ViewBasis;
   update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId?: number | null, power?: number | null): void;
   render(): void;
   setTime(mode: TimeMode): void;
@@ -335,6 +337,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   scene.background = null;
   scene.fog = new THREE.Fog(night ? '#142438' : '#d99a71', 65, 130);
   const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 180);
+  const cameraDirection = new THREE.Vector3();
+  let lastViewBasis: ViewBasis = IDENTITY_BASIS;
   const hemi = new THREE.HemisphereLight(night ? '#d0e0e8' : '#fff0d4', '#162b22', night ? 0.85 : 1.75);
   scene.add(hemi);
   const key = new THREE.DirectionalLight(night ? '#f0f6ff' : '#ffc27d', night ? 3.2 : 2.7);
@@ -579,8 +583,9 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       }
       actor.poseTime = Math.max(0, actor.poseTime - dt);
       actor.root.rotation.z = damp(actor.root.rotation.z, actor.pose === 'dive' ? Math.sign(world.ball.z - player.z || 1) * 0.28 : 0, 10, dt);
-      const face = speed > 0.1 ? Math.atan2(player.vx, player.vz) : teamDir(player.team, world.endsSwapped) * Math.PI / 2;
-      actor.root.rotation.y = damp(actor.root.rotation.y, face, 12, dt);
+      const face = speed > 0.1 ? Math.atan2(player.vx, player.vz) : player.facing;
+      const yawDelta = Math.atan2(Math.sin(face - actor.root.rotation.y), Math.cos(face - actor.root.rotation.y));
+      actor.root.rotation.y = damp(actor.root.rotation.y, actor.root.rotation.y + yawDelta, 12, dt);
       actor.phase += dt * (5 + speed * 0.9);
       const run = Math.min(1, speed / 6);
       actor.legs[0].rotation.x = Math.sin(actor.phase) * run * 0.65;
@@ -681,6 +686,14 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       camera.lookAt(lookAt);
     }
     camera.updateMatrixWorld(true);
+    if (cameraMode !== 'replay') {
+      camera.getWorldDirection(cameraDirection);
+      const forwardLength = Math.hypot(cameraDirection.x, cameraDirection.z);
+      if (forwardLength >= 1e-3) {
+        const forward = { x: cameraDirection.x / forwardLength, z: cameraDirection.z / forwardLength };
+        lastViewBasis = { forward, right: { x: -forward.z, z: forward.x } };
+      }
+    }
     const controlled = world.players.find((player) => player.controlled);
     if (controlled) {
       projected.set(controlled.x, 2.75, controlled.z).project(camera);
@@ -775,6 +788,12 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
 
   return {
     resize,
+    viewBasis() {
+      return {
+        right: { ...lastViewBasis.right },
+        forward: { ...lastViewBasis.forward },
+      };
+    },
     update,
     render,
     setTime,

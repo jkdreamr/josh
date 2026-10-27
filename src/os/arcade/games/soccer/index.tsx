@@ -3,7 +3,7 @@ import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useThree, useOnli
 import type { LevelName } from '../../kit/controls';
 import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
-import { chargePower, keyboardInput } from './input.ts';
+import { chargePower, IDENTITY_BASIS, keyboardInput, screenToWorld } from './input.ts';
 import { cloneSnapshot, commandFromPacket, movePacket, parsePacket } from './net.ts';
 import { createWorld, distance, findReceiver, matchClock, stepWorld, STEP, switchPlayer, teamDir, type Command, type Team, type World } from './logic.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
@@ -361,9 +361,18 @@ function Play() {
         if (packet.seat !== from || packet.seat < 0 || packet.seat > 3) return;
         if (packet.seq <= (lastRemoteSeq.current.get(from) ?? -1)) return;
         lastRemoteSeq.current.set(from, packet.seq);
+        const current = worldRef.current;
+        const player = current?.players[playerForSeat(from, displayOnlyRoom.current, currentMode)];
+        if (!current || !player || !player.human) return;
         const command = commandFromPacket(packet);
-        const player = worldRef.current?.players[playerForSeat(from, displayOnlyRoom.current, currentMode)];
-        if (!player || !player.human) return;
+        if (displayOnlyRoom.current) {
+          const basis = viewRef.current?.viewBasis() ?? IDENTITY_BASIS;
+          command.move = screenToWorld(command.move, basis);
+          const aim = screenToWorld(command.aim ?? { x: 0, z: 0 }, basis);
+          command.aim = Math.hypot(aim.x, aim.z) > 0.05
+            ? aim
+            : { x: teamDir(player.team, current.endsSwapped), z: 0 };
+        }
         remoteCommands.current.set(player.id, command);
         return;
       }
@@ -456,6 +465,7 @@ function Play() {
     }
     const current = worldRef.current!;
     const player = current.players[id]!;
+    state.move = screenToWorld(state.move, viewRef.current?.viewBasis() ?? IDENTITY_BASIS);
     const aim = Math.hypot(state.move.x, state.move.z) > 0.05
       ? { ...state.move }
       : { x: teamDir(player.team, current.endsSwapped), z: 0 };
