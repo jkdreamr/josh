@@ -1096,6 +1096,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   };
   const mats: T.Material[] = [];
   const mat = <X extends T.Material>(x: X) => {
+    // see-through and two-sided: drawn in one pass, not back faces then front (twice the draws, and a shader lookup each)
+    if (x.transparent && x.side === THREE.DoubleSide) x.forceSinglePass = true;
     mats.push(x);
     return x;
   };
@@ -2770,7 +2772,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const carBodies = many(G.box, lambert(0xffffff), map.cars.length);
   const carCabins = many(G.box, lambert(0xffffff), map.cars.length);
   const carTops = many(G.box, lambert(0xffffff), map.cars.length);
-  const wheels = many(G.cyl, M.dark, map.cars.length * 4);
+  // (their own material: one shared with plain meshes would switch shaders between them every frame)
+  const wheels = many(G.cyl, lambert(0x2b2d33), map.cars.length * 4);
   map.cars.forEach((c, i) => {
     const ry = c.alongX ? Math.PI / 2 : 0;
     const len = c.alongX ? c.hw * 2 : c.hd * 2;
@@ -3184,6 +3187,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   );
   stormWall.position.y = 44;
   stormWall.renderOrder = 3;
+  // (it keeps both passes: its far side shows through its near one)
+  (stormWall.material as T.Material).forceSinglePass = false;
   scene.add(stormWall);
   // a bright seam along the ground where the storm begins
   const seam = freeRing(THREE, 160);
@@ -3670,7 +3675,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     crackHeavy: many(G.egg, lambert(0x5a3a1e, { map: crackTex, alphaTest: 0.3 }), N),
     shadow: many(G.disc, M.shadow, N),
     canopy: many(canopyGeo, gliderMat, N),
-    panels: many(panelGeo, gliderMat, N),
+    // (a material of their own, as the canopy's colors per egg make its shader a different one)
+    panels: many(panelGeo, lambert(0xffffff, { side: THREE.DoubleSide }), N),
   };
   for (const im of Object.values(eggBits)) {
     // they move every frame, so there's no box round them to cull by
@@ -4666,6 +4672,17 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         fl.position.y = fl.scale.y / 2 + 0.05;
       });
     }
+  }
+
+  // every shader the match needs, built now rather than the first time something shows mid-match (a hitch of up to a
+  // second on a phone): all that's in the scene, shown or not, and each material that is only swapped in or made later
+  // on a stand-in (a zone's materials are made one a zone, so one of each kind)
+  {
+    const warm = new THREE.Group();
+    for (const x of [...mats, flourMat(), sauceMat(), jamMat(), grownMat()]) if (!(x as T.LineBasicMaterial).isLineBasicMaterial) warm.add(new THREE.Mesh(G.box, x));
+    scene.add(warm);
+    gl.renderer.compile(scene, camera);
+    scene.remove(warm);
   }
 
   const view: View = {
