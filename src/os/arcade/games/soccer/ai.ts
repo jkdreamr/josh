@@ -357,8 +357,8 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
               sprint: distance(p, target) > 4, action: carrier && gap < 1.38 && (exposed || facingAway) ? 'tackle' : null, pressed: reacts });
           } else {
             const flight = clamp(distance(p, world.ball) / 8, 0, 0.7);
-            commands.set(p.id, { move: targetMove(p, clamp(world.ball.x + world.ball.vx * flight, -longitudinal(0.48), longitudinal(0.48)),
-              clamp(world.ball.z + world.ball.vz * flight, -lateral(0.46), lateral(0.46))), sprint: true });
+            commands.set(p.id, { move: targetMove(p, clamp(world.ball.x + world.ball.vx * flight, -FIELD.length / 2, FIELD.length / 2),
+              clamp(world.ball.z + world.ball.vz * flight, -FIELD.width / 2, FIELD.width / 2)), sprint: true });
           }
           continue;
         }
