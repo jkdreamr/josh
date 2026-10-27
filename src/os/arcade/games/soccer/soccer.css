@@ -932,7 +932,6 @@
   }
 .g-soccer-phone-action { min-height: 38px; }
 }
-
 .g-soccer-phone-lobby {
   width: 100%;
   max-width: 720px;
@@ -1556,3 +1555,25 @@
 .g-soccer-phone-practice-row button { padding: 6px 12px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, .3); background: transparent; color: #fff; font: 600 12px/1 inherit; }
 .g-soccer-phone-practice .g-soccer-drills { flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start; }
 .g-soccer-phone-practice .g-soccer-drills button { flex: none; padding: 6px 10px; font-size: 12px; }
+.g-soccer-phone-flash {
+  position: absolute;
+  inset: 0;
+  z-index: 20;
+  pointer-events: none;
+  animation: g-soccer-phone-flash 380ms ease-out both;
+}
+.g-soccer-phone-flash.is-goal {
+  --g-soccer-phone-flash-peak: .5;
+  background: radial-gradient(circle at center, #ffe17b99 0%, #ffbd4c55 45%, #ffb84a00 100%);
+}
+.g-soccer-phone-flash.is-shot {
+  --g-soccer-phone-flash-peak: .3;
+  background: radial-gradient(circle at center, #b9efff99 0%, #83d8ff44 42%, #72ccff00 100%);
+}
+@keyframes g-soccer-phone-flash {
+  0%, 100% { opacity: 0; }
+  22% { opacity: var(--g-soccer-phone-flash-peak); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-soccer-phone-flash { display: none; animation: none; }
+}

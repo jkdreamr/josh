@@ -11,6 +11,7 @@ import { createPracticeMarkers } from './practice-markers.ts';
 import type { PracticeMarker } from './practice.ts';
 import { approachAngle, bindSoccerRig, bodyFrameVelocity, createSoccerAnimationInput, createSoccerAnimator, kickingFoot, playSoccerClip, preferredFoot, soccerClipActive, soccerDribbleOffset, updateSoccerAnimator, type SoccerAnimator, type SoccerClip } from './player.ts';
 import type { SoccerRenderStats } from './perf.ts';
+import { createFxLayer, type FxDirector } from './fx.ts';
 
 type Three = typeof import('three');
 export type CameraMode = 'broadcast' | 'end' | 'replay' | 'intro' | 'setpiece';
@@ -31,6 +32,7 @@ export type SoccerView = {
   getCameraNdc(): SoccerCameraNdc;
   perfStats(): SoccerRenderStats;
   update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId?: number | null, power?: number | null): void;
+  setFx(director: FxDirector | null): void;
   render(): void;
   /** Resolves once the shaders are compiled; frames rendered meanwhile are skipped. */
   precompile(): Promise<void>;
@@ -206,6 +208,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
 
   const scene = new THREE.Scene();
   const practiceMarkers = createPracticeMarkers(THREE, scene);
+  const fxLayer = createFxLayer(THREE, scene);
+  let fxDirector: FxDirector | null = null;
   const night = timeMode === 'night';
   const skyCanvas = document.createElement('canvas');
   skyCanvas.width = 16; skyCanvas.height = 256;
@@ -752,6 +756,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     ball.rotation.z += world.ball.vx * dt / 0.11;
     ball.rotation.x += world.ball.vz * dt / 0.11;
     ballShadow.position.set(ball.position.x, 0.028, ball.position.z);
+    if (fxDirector) fxLayer.update(fxDirector, ball.position, world.ball, camera, dt);
     const shadowScale = Math.max(0.25, 1.1 - world.ball.y * 0.2);
     ballShadow.scale.set(shadowScale, shadowScale, 1);
     if (controlled && cameraMode !== 'setpiece') {
@@ -840,7 +845,12 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       }
     }
     quality.lastRender = now;
-    renderer.render(scene, camera);
+    fxLayer.applyCamera(camera);
+    try {
+      renderer.render(scene, camera);
+    } finally {
+      fxLayer.restoreCamera(camera);
+    }
     if (debug && now >= quality.nextLog) {
       quality.nextLog = now + 3000;
       console.info('[soccerdebug]', {
@@ -877,6 +887,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       };
     },
     update,
+    setFx(director) { fxDirector = director; },
     render,
     precompile,
     attach(next) {
@@ -898,6 +909,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       practiceMarkers.dispose();
       canvas.removeEventListener('webglcontextlost', onLost);
       stadium.dispose();
+      fxLayer.dispose();
       disposeTree(scene);
       indicator.remove();
       ballMap.dispose();

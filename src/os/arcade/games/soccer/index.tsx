@@ -16,7 +16,7 @@ import { broadcastClock, createStatsObserver, possessionShare } from './broadcas
 import { IntroCard, MatchContext, PausePanel, StatsScreen, type MatchData, type Presentation } from './presentation.tsx';
 import { captureSnapshot, createSnapshot, interpolateInto, type Snapshot } from './render-lerp.ts';
 import { publishSoccerPerf, recordSoccerPerf, recordSoccerRendererStats, soccerPerfEnabled } from './perf.ts';
-import { clampOrigin, followOrigin, haptic, hitButton, STICK, stickVector, type PadPoint } from './pad.ts';
+import { clampOrigin, followOrigin, haptic as padHaptic, hitButton, STICK, stickVector, type PadPoint } from './pad.ts';
 import { assignControllers, missingPhoneSeats, playerForSeat, type ControllerMember, type Mode } from './seats.ts';
 import type { PitchPattern } from './stadium.ts';
 import { createPracticeState, createTutorial, markTutorialSeen, selectDrill, setupDrill, stepPractice, stepTutorial, tutorialSeen, TUTORIAL_SECONDS, DRILLS, type DrillId, type PracticeState, type TutorialState } from './practice.ts';
@@ -28,6 +28,7 @@ import { PhoneLobby as SoccerPhoneLobby, PhoneTeamPicker, publishLobby, sideForR
 import { createCup, loadCup, matchOutcome, recordUserResult, saveCup } from './cup.ts';
 import { simulateShootout } from './shootout.ts';
 import { Referee } from './referee.tsx';
+import { createFxDirector, haptic as fxHaptic, phoneFx, type FxDirector } from './fx.ts';
 import './soccer.css';
 
 type Minutes = '2' | '4' | '6';
@@ -261,6 +262,12 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const hudEventKey = useRef(0);
   const power = useRef<number | null>(null);
   const viewRef = useRef<SoccerView | null>(null);
+  const fxDirectorRef = useRef<FxDirector | null>(null);
+  if (!fxDirectorRef.current) {
+    fxDirectorRef.current = createFxDirector({
+      reducedMotion: typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    });
+  }
   const shellRef = useRef(shell);
   const onlineRef = useRef(online);
   const levelRef = useRef<Level>(online?.quick ? 'normal' : levelChoice);
@@ -288,6 +295,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const replaySkipped = useRef(false);
   const hudTimer = useRef(0);
   const snapshotTimer = useRef(0);
+  const pendingSnapshotKick = useRef<NonNullable<World['kickEvent']> | null>(null);
   const snapshotSequence = useRef(0);
   const inputSequence = useRef(0);
   const inputTimer = useRef(0);
@@ -383,6 +391,18 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   };
 
   useEffect(() => {
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const updatePreference = () => {
+      fxDirectorRef.current?.setReducedMotion(preference.matches);
+      renderDirty.current = true;
+      shell.invalidate();
+    };
+    updatePreference();
+    preference.addEventListener('change', updatePreference);
+    return () => preference.removeEventListener('change', updatePreference);
+  }, [shell.invalidate]);
+
+  useEffect(() => {
     if (shell.status !== 'ready') return;
     controllerPlayers.current.clear();
     const fresh = freshWorld();
@@ -411,6 +431,9 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     fullTimeShown.current = false;
     reported.current = false;
     simulationTime.current = 0;
+    pendingSnapshotKick.current = null;
+    fxDirectorRef.current?.reset();
+    fxDirectorRef.current?.observe(fresh, simulationTime.current);
     accumulator.current = 0;
     lastScore.current = [...fresh.score];
     sound.reset(fresh);
@@ -482,6 +505,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       kept.setPattern(pitchRef.current);
     }
     viewRef.current = view;
+    view.setFx(fxDirectorRef.current);
     view.resize(size.w, size.h);
     view.update(world, 0, performance.now() / 1000, localTeam, cameraRef.current);
     renderDirty.current = true;
@@ -497,6 +521,37 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       parkSoccerView(view, shell.touch);
     };
   }, [stadium, shell.touch]);
+
+  useEffect(() => {
+    if (!debugConfig.enabled) return;
+    const target = window as Window & { __soccerFx?: { trigger: (kind: string, advance?: number) => void } };
+    const debugFx = {
+      trigger(kind: string, advance = 0) {
+        const current = worldRef.current;
+        if (!current) return;
+        const director = fxDirectorRef.current;
+        director?.trigger(kind, current, simulationTime.current);
+        const view = viewRef.current;
+        const steps = Math.max(0, Math.round(advance * 60));
+        const time = performance.now() / 1000;
+        if (steps === 0) {
+          view?.update(current, 0, time, localTeam, cameraRef.current);
+        } else {
+          for (let i = 0; i < steps; i++) {
+            director?.tick(1 / 60);
+            view?.update(current, 1 / 60, time + (i + 1) / 60, localTeam, cameraRef.current);
+          }
+        }
+        renderDirty.current = true;
+        view?.render();
+        shell.invalidate();
+      },
+    };
+    target.__soccerFx = debugFx;
+    return () => {
+      if (target.__soccerFx === debugFx) delete target.__soccerFx;
+    };
+  }, [debugConfig.enabled, shell.invalidate]);
 
   useEffect(() => {
     viewRef.current?.resize(size.w, size.h);
@@ -570,6 +625,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         if (packet.state.phase === 'half-time' && previousPhase !== 'half-time') showPresentation('half-time');
         if (packet.state.phase === 'full-time' && previousPhase !== 'full-time') showPresentation('full-time');
         appendReplayFrame(replayFrames.current, packet.state, now);
+        fxDirectorRef.current?.observe(packet.state, now);
         guestSnapshots.current.push({ time: now, world: packet.state });
         guestSnapshots.current = guestSnapshots.current.slice(-12);
         worldRef.current = packet.state;
@@ -784,6 +840,11 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         for (const command of remoteCommands.current.values()) Object.assign(command, consumeCommand(command));
       }
     }
+    const fxDirector = fxDirectorRef.current!;
+    fxDirector.tick(dt);
+    crowdIntensity.current = current.phase === 'goal'
+      ? 1
+      : 0.08 + Math.min(0.82, Math.max(0, (Math.abs(current.ball.x) - FIELD.penaltyDepth * 0.42) / (FIELD.length / 2 - FIELD.penaltyDepth * 0.42)) * 0.75);
     const isOnlineGuest = !!room && !room.isHost;
     controllerPlayers.current = reconcileControllers(current, controllerPlayers.current);
     if (room) {
@@ -814,6 +875,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
 
     if (presentation.current === 'live' && current.phase === 'goal' && !replaySkipped.current && keys.pressed(...commandKeys)) replaySkipped.current = true;
     if (current.phase === 'goal' && Math.hypot(movement.current.x, movement.current.z) > 0.2) replaySkipped.current = true;
+    if (current.phase === 'goal' && replaySkipped.current && fxDirector.goalPending) fxDirector.goalImpact();
     const commandsForUsers = userCommands.current;
     commandsForUsers.clear();
     const presentationGated = !isOnlineGuest && (presentation.current === 'intro' || presentation.current === 'half-time' || presentation.current === 'full-time');
@@ -876,6 +938,8 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
           }
           practice.events.length = 0;
         } else stepWorld(current, STEP, commands, debugConfig.clockScale);
+        if (current.kickEvent) pendingSnapshotKick.current = { ...current.kickEvent };
+        fxDirector.observe(current, simulationTime.current);
         statsObserver.current.observe(current, STEP);
         matchContext && (matchContext.current = { world: current, stats: statsObserver.current.stats });
         const tutorial = tutorialRef.current;
@@ -931,7 +995,10 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       snapshotTimer.current += dt;
       if (snapshotTimer.current >= 0.05) {
         snapshotTimer.current %= 0.05;
-        room.send({ t: 'soccer', k: 's', r: room.round || 1, seq: snapshotSequence.current++, state: cloneSnapshot(current) });
+        const state = cloneSnapshot(current);
+        if (!state.kickEvent && pendingSnapshotKick.current) state.kickEvent = { ...pendingSnapshotKick.current };
+        pendingSnapshotKick.current = null;
+        room.send({ t: 'soccer', k: 's', r: room.round || 1, seq: snapshotSequence.current++, state });
       }
       practiceStatusTimer.current += dt;
       const practice = practiceRef.current;
@@ -976,13 +1043,18 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     let camera: CameraMode = presentation.current === 'intro' ? 'intro' : cameraRef.current;
     if (renderWorld.phase === 'restart' && renderWorld.setPiece && ['corner', 'free-kick', 'penalty'].includes(renderWorld.setPiece.kind)) camera = 'setpiece';
     const replayClock = isOnlineGuest ? performance.now() / 1000 : simulationTime.current;
+    const replaying = !replaySkipped.current && replayStartedAt.current !== null && current.phase === 'goal';
     if (!replaySkipped.current && replayStartedAt.current !== null && current.phase === 'goal') {
       if (!replaySkipped.current) {
         const from = replayStartedAt.current - 2.4;
-        const progress = clamp((replayClock - replayStartedAt.current) / 3, 0, 1);
+        const progress = fxDirector.replayProgress(clamp((replayClock - replayStartedAt.current) / 3, 0, 1));
         renderWorld = sampleReplay(replayFrames.current, from + progress * 2.4, current, replayWorld.current) ?? current;
         camera = 'replay';
       }
+    }
+    if (!replaying && !isOnlineGuest) {
+      if (current.phase !== 'goal' && fxDirector.goalPending) fxDirector.goalImpact();
+      renderWorld = fxDirector.renderWorld(renderWorld);
     }
     const selectedPlayerId = controllerPlayers.current.get(room?.seat ?? 0) ?? localPlayerIds[0] ?? current.controlled[0];
     const selected = current.players[selectedPlayerId]!;
@@ -1007,7 +1079,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     const remote = remoteCommands.current.get(selectedPlayerId);
     const indicatorPower = aiming?.holding ? chargePower(aiming.seconds) : power.current ?? (remote?.heldAction ? remote.power ?? null : null);
     const sceneStart = soccerPerfEnabled ? performance.now() : 0;
-    viewRef.current?.update(renderWorld, dt, performance.now() / 1000, localTeam, camera, target, indicatorPower);
+    viewRef.current?.update(renderWorld, dt * fxDirector.animScale, performance.now() / 1000, localTeam, camera, target, indicatorPower);
     if (soccerPerfEnabled) recordSoccerPerf('sceneUpdateMs', performance.now() - sceneStart);
     viewRef.current?.setMarkers(practiceRef.current?.markers ?? []);
     hudTimer.current += dt;
@@ -1149,7 +1221,7 @@ function PadStick({ movement, onChange }: { movement: { current: { x: number; z:
         const { rect, margin, travel, thumb } = metrics(event);
         origin.current = clampOrigin(thumb, rect.width, rect.height, margin);
         if (base.current) base.current.dataset.active = '';
-        haptic(8);
+        padHaptic(8);
         draw(thumb, travel);
       }}
       onPointerMove={(event) => {
@@ -1186,6 +1258,10 @@ export function PhoneController() {
   const facePointers = useRef(new Map<number, FaceKey | null>());
   const [score, setScore] = useState<[number, number]>([0, 0]);
   const previousScore = useRef<[number, number]>([0, 0]);
+  const previousKickKey = useRef<string | null>(null);
+  const reducedMotion = useRef(typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const phoneFlashId = useRef(0);
+  const [phoneFlash, setPhoneFlash] = useState<{ id: number; kind: 'goal' | 'shot' } | null>(null);
   const [displayOnly, setDisplayOnly] = useState(true);
   const [mode, setMode] = useState<Mode>('cpu');
   const [practiceStatus, setPracticeStatus] = useState<PhonePracticeStatus | null>(null);
@@ -1277,6 +1353,27 @@ export function PhoneController() {
   useEffect(() => {
     const timer = window.setTimeout(() => setShowConnectedToast(false), 2200);
     return () => window.clearTimeout(timer);
+  }, []);
+  useEffect(() => {
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const updatePreference = () => { reducedMotion.current = preference.matches; };
+    updatePreference();
+    preference.addEventListener('change', updatePreference);
+    const target = window as Window & { __soccerFx?: { trigger: (kind: string, advance?: number) => void } };
+    if (!new URLSearchParams(location.search).has('soccerdebug')) {
+      return () => preference.removeEventListener('change', updatePreference);
+    }
+    const debugFx = {
+      trigger(kind: string, _advance = 0) {
+        if (reducedMotion.current) return;
+        setPhoneFlash({ id: ++phoneFlashId.current, kind: kind.includes('shot') || kind === 'power-shot' ? 'shot' : 'goal' });
+      },
+    };
+    target.__soccerFx = debugFx;
+    return () => {
+      preference.removeEventListener('change', updatePreference);
+      if (target.__soccerFx === debugFx) delete target.__soccerFx;
+    };
   }, []);
   const phoneHasBall = () => {
     const snapshot = phoneWorld.current;
@@ -1372,7 +1469,7 @@ export function PhoneController() {
     setChargingAction(null);
     setChargeProgress(0);
     send(started !== null && vibrate ? action : null, started !== null && vibrate, power, false, started !== null);
-    if (vibrate && started !== null) haptic(18);
+    if (vibrate && started !== null) padHaptic(18);
   };
   useEffect(() => {
     if (!online) return;
@@ -1382,7 +1479,18 @@ export function PhoneController() {
       if (packet?.k === 'lobby') publishLobby(packet);
       if (packet?.k === 's') {
         phoneWorld.current = packet.state;
-        if (packet.state.score.some((value, index) => value !== previousScore.current[index])) navigator.vibrate?.([70, 40, 120]);
+        const phoneTeam = teamOf(playerForSeat(online.seat, displayOnly, mode));
+        const feedback = phoneFx(previousScore.current, previousKickKey.current, packet.state, phoneTeam);
+        if (feedback) {
+          if (feedback === 'goal-for') fxHaptic([70, 40, 120]);
+          else if (feedback === 'goal-against') fxHaptic([40]);
+          else fxHaptic([22]);
+          if (!reducedMotion.current) {
+            setPhoneFlash({ id: ++phoneFlashId.current, kind: feedback === 'shot' ? 'shot' : 'goal' });
+          }
+        }
+        const kick = packet.state.kickEvent;
+        previousKickKey.current = kick ? `${kick.playerId}:${kick.time}:${kick.action}` : null;
         previousScore.current = [...packet.state.score];
         setScore(packet.state.score);
       } else if (packet?.k === 'cfg') {
@@ -1422,7 +1530,7 @@ export function PhoneController() {
   }));
   const pressFace = (key: FaceKey) => {
     markPressed(faceRefs.current[key], true);
-    haptic(10);
+    padHaptic(10);
     beginCharge(FACE[key]);
   };
   const releaseFace = (key: FaceKey, fire: boolean) => {
@@ -1442,7 +1550,7 @@ export function PhoneController() {
       event.preventDefault();
       event.currentTarget.setPointerCapture(event.pointerId);
       markPressed(event.currentTarget, true);
-      haptic(8);
+      padHaptic(8);
       down();
     },
     onPointerUp: (event: PointerEvent<HTMLButtonElement>) => { markPressed(event.currentTarget, false); up?.(); },
@@ -1461,6 +1569,7 @@ export function PhoneController() {
   const rbLabel = labels?.rb ?? (attacking ? 'Finesse' : 'Press');
   return (
     <div className={`g-soccer-phone-controller g-soccer-pad ${attacking ? 'is-attack' : 'is-defend'}`}>
+      {phoneFlash && <div key={phoneFlash.id} className={`g-soccer-phone-flash is-${phoneFlash.kind}`} aria-hidden="true" onAnimationEnd={() => setPhoneFlash(null)} />}
       <div className="g-soccer-pad-body" aria-hidden="true"><i className="is-left" /><i className="is-right" /></div>
       {showConnectedToast && <div className="g-soccer-phone-connected" role="status">Connected — look at your Mac</div>}
       <PadStick movement={movement} onChange={sendStickChange} />
