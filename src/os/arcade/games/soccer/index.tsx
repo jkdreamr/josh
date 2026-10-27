@@ -667,7 +667,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       }
     }
 
-    if (audioEnabled) sound.frame(current, simulationTime.current);
+    if (audioEnabled) sound.frame(current, isOnlineGuest ? now / 1000 : simulationTime.current);
 
     if (debugConfig.enabled) {
       debugTimer.current += dt;
