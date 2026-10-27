@@ -10,10 +10,10 @@ import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } 
 import { goalRoar, kickThump, netSwish, startCrowd, whistle } from './audio.ts';
 import { createScene, type CameraMode, type SoccerView, type TimeMode } from './scene.ts';
 import { Hud } from './hud.tsx';
+import { playerForSeat, seatForPlayer, type Mode } from './seats.ts';
 import './soccer.css';
 import QRCode from 'qrcode';
 
-type Mode = 'cpu' | 'versus' | 'coop';
 type Minutes = '2' | '4' | '6';
 type Camera = 'broadcast' | 'end';
 type Time = 'night' | 'golden';
@@ -26,16 +26,11 @@ const TIME = defineSetting<Time>('soccer:time', ['night', 'golden'], 'night', { 
 const DISPLAY_ONLY = defineSetting<'on' | 'off'>('soccer:display-only', ['on', 'off'], 'on');
 
 const modeOptions = [['cpu', 'vs CPU'], ['versus', '2P versus'], ['coop', '2P co-op']] as const;
+const phoneModeOptions = [['cpu', 'vs CPU'], ['versus', '2 players'], ['coop', 'Co-op']] as const;
 const halfOptions = [['2', '2 min'], ['4', '4 min'], ['6', '6 min']] as const;
 const cameraOptions = [['broadcast', 'Broadcast'], ['end', 'End to end']] as const;
 const timeOptions = [['night', 'Night'], ['golden', 'Golden hour']] as const;
 const commandKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyJ', 'KeyK', 'KeyL', 'KeyI', 'KeyU', 'Period', 'Slash', 'Semicolon', 'Quote', 'Comma', 'ShiftLeft', 'ShiftRight'];
-const playerForSeat = (seat: number, displayOnly = false) => displayOnly
-  ? seat === 0 ? 1 : (seat - 1) % 2 === 0 ? 1 + Math.floor((seat - 1) / 2) : 6 + Math.floor((seat - 2) / 2)
-  : seat % 2 === 0 ? 1 + Math.floor(seat / 2) : 6 + Math.floor(seat / 2);
-const seatForPlayer = (id: number, displayOnly: boolean) => displayOnly
-  ? id < 5 ? 2 * (id - 1) + 1 : 2 * (id - 6) + 2
-  : id < 5 ? 2 * (id - 1) : 2 * (id - 6) + 1;
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
 function Settings({ online = false }: { online?: boolean }) {
@@ -102,7 +97,7 @@ function teamForPlayer(id: number): Team {
 }
 
 function setupHumans(world: World, mode: Mode, online: ReturnType<typeof useOnline>) {
-  const displayOnly = !!online?.isHost && getSetting(DISPLAY_ONLY) === 'on';
+  const displayOnly = !!online;
   for (const player of world.players) {
     player.human = false;
     player.controlled = false;
@@ -110,7 +105,7 @@ function setupHumans(world: World, mode: Mode, online: ReturnType<typeof useOnli
   if (online) {
     for (const member of online.players) {
       if (member.seat === 0 && displayOnly) continue;
-      const player = world.players[playerForSeat(member.seat, displayOnly)]!;
+      const player = world.players[playerForSeat(member.seat, displayOnly, mode)]!;
       player.human = true;
       player.controlled = true;
       const team = player.team;
@@ -129,23 +124,69 @@ function setupHumans(world: World, mode: Mode, online: ReturnType<typeof useOnli
 
 function PhoneLobby() {
   const online = useOnline();
-  const [displayOnly, setDisplayOnly] = useSetting(DISPLAY_ONLY);
+  const [mode, setMode] = useSetting(MODE);
+  const [, setDisplayOnly] = useSetting(DISPLAY_ONLY);
   const [qr, setQr] = useState('');
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const startedCode = useRef('');
+  const phones = online?.players.filter((player) => player.seat > 0) ?? [];
+  const requiredPhones = mode === 'cpu' ? 1 : 2;
   useEffect(() => {
     if (!online?.code || typeof location === 'undefined') return;
-    const url = `${location.origin}/?game=soccer&room=${online.code}`;
-    void QRCode.toDataURL(url, { errorCorrectionLevel: 'H', margin: 1, width: 132 }).then(setQr).catch(() => setQr(''));
+    const url = `${location.protocol}//${location.host}/?game=soccer&room=${online.code}`;
+    void QRCode.toDataURL(url, { errorCorrectionLevel: 'H', margin: 2, width: 280 }).then(setQr).catch(() => setQr(''));
   }, [online?.code]);
   useEffect(() => {
-    if ((online?.players.length ?? 0) > 1) setDisplayOnly('on');
-  }, [online?.players.length, setDisplayOnly]);
+    if (online?.isHost && getSetting(DISPLAY_ONLY) !== 'on') setDisplayOnly('on');
+  }, [online?.isHost, setDisplayOnly]);
+  useEffect(() => {
+    if (!online?.isHost) {
+      setCountdown(null);
+      return;
+    }
+    if (online.round > 0) {
+      startedCode.current = online.code;
+      setCountdown(null);
+      return;
+    }
+    if (startedCode.current === online.code || phones.length < requiredPhones) {
+      setCountdown(null);
+      return;
+    }
+    let seconds = 3;
+    setCountdown(seconds);
+    const timer = window.setInterval(() => {
+      seconds -= 1;
+      if (seconds <= 0) {
+        window.clearInterval(timer);
+        startedCode.current = online.code;
+        setCountdown(null);
+        online.start();
+      } else {
+        setCountdown(seconds);
+      }
+    }, 1000);
+    return () => window.clearInterval(timer);
+  }, [online?.code, online?.isHost, online?.players, online?.round, online?.start, phones.length, requiredPhones]);
   if (!online?.isHost) return null;
+  const invite = typeof location === 'undefined' ? '' : `${location.protocol}//${location.host}/?game=soccer&room=${online.code}`;
   return (
     <div className="g-soccer-phone-lobby">
-      <strong>Phone controllers</strong>
+      <strong>Connect your phone</strong>
+      {countdown !== null && <strong className="g-soccer-phone-countdown" role="status">Starting in {countdown}…</strong>}
       {qr && <img src={qr} alt={`Phone controller QR code for room ${online.code}`} />}
-      <span>Scan with your phone to use it as a controller</span>
-      <label><input type="checkbox" checked={displayOnly === 'on'} onChange={(event) => setDisplayOnly(event.target.checked ? 'on' : 'off')} /> This screen is display only</label>
+      <span>1 Open your phone camera · 2 Scan · 3 Your phone becomes the controller.</span>
+      <b className="g-soccer-room-code">{online.code}</b>
+      {invite && <a href={invite}>{invite}</a>}
+      <Segmented label="Match mode" value={mode} options={phoneModeOptions} onChange={setMode} />
+      <span className="g-soccer-phone-mode-note">vs CPU uses 1 phone · 2 players and Co-op use 2 phones.</span>
+      <div className="g-soccer-phone-connections">
+        {phones.map((player) => {
+          const playerId = playerForSeat(player.seat, true, mode);
+          const teamName = teamForPlayer(playerId) === 0 ? 'Bay City' : 'Northshore';
+          return <span key={player.seat}>Phone {player.seat} connected ✓ ({teamName})</span>;
+        })}
+      </div>
     </div>
   );
 }
@@ -188,9 +229,9 @@ function Play() {
   const THREE = useThree();
   const online = useOnline();
   const { ref, size } = useCanvas<HTMLDivElement>();
-  const [modeChoice] = useSetting(MODE);
-  const [halfChoice] = useSetting(HALF);
-  const [levelChoice] = useSetting(LEVEL);
+  const [modeChoice, setModeChoice] = useSetting(MODE);
+  const [halfChoice, setHalfChoice] = useSetting(HALF);
+  const [levelChoice, setLevelChoice] = useSetting(LEVEL);
   const [cameraChoice] = useSetting(CAMERA);
   const [timeChoice] = useSetting(TIME);
   const [power, setPower] = useState<number | null>(null);
@@ -250,19 +291,20 @@ function Play() {
   const displayOnlyRoom = useRef(getSetting(DISPLAY_ONLY) === 'on');
   shellRef.current = shell;
   onlineRef.current = online;
+  if (online) displayOnlyRoom.current = true;
   levelRef.current = online?.quick ? 'normal' : levelChoice;
   cameraRef.current = cameraChoice;
   timeRef.current = timeChoice;
 
   const halfMinutes = online?.quick ? 3 : Number(halfChoice);
-  const currentMode: Mode = online ? 'cpu' : modeChoice;
+  const currentMode: Mode = modeChoice;
   if (!worldRef.current) {
     worldRef.current = createWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
     setupHumans(worldRef.current, currentMode, online);
   }
   if (!replayWorld.current) replayWorld.current = createReplayWorld(worldRef.current);
   const world = worldRef.current!;
-  const localPlayerIds = online ? online.seat < 0 || (online.isHost && displayOnlyRoom.current) ? [] : [playerForSeat(online.seat, displayOnlyRoom.current)] : currentMode === 'versus' ? [1, 6] : currentMode === 'coop' ? [1, 2] : [world.controlled[0]];
+  const localPlayerIds = online ? online.seat < 0 || (online.isHost && displayOnlyRoom.current) ? [] : [playerForSeat(online.seat, displayOnlyRoom.current, currentMode)] : currentMode === 'versus' ? [1, 6] : currentMode === 'coop' ? [1, 2] : [world.controlled[0]];
   const localTeam = localPlayerIds.length ? teamForPlayer(localPlayerIds[0]!) : 0;
 
   useEffect(() => {
@@ -320,7 +362,7 @@ function Play() {
         if (packet.seq <= (lastRemoteSeq.current.get(from) ?? -1)) return;
         lastRemoteSeq.current.set(from, packet.seq);
         const command = commandFromPacket(packet);
-        const player = worldRef.current?.players[playerForSeat(from, displayOnlyRoom.current)];
+        const player = worldRef.current?.players[playerForSeat(from, displayOnlyRoom.current, currentMode)];
         if (!player || !player.human) return;
         remoteCommands.current.set(player.id, command);
         return;
@@ -342,11 +384,14 @@ function Play() {
       }
       if (!room.isHost && from === 0 && packet.k === 'cfg') {
         levelRef.current = (['easy', 'normal', 'hard'] as const)[packet.level]!;
-        displayOnlyRoom.current = packet.displayOnly;
+        displayOnlyRoom.current = true;
+        setLevelChoice((['easy', 'normal', 'hard'] as const)[packet.level]!);
+        setHalfChoice(String(packet.half) as Minutes);
+        if (packet.mode) setModeChoice(packet.mode);
       }
     });
     return off;
-  }, [online, online?.round, online?.isHost]);
+  }, [online, online?.round, online?.isHost, setHalfChoice, setLevelChoice, setModeChoice]);
 
   useEffect(() => {
     if (!online?.isHost) return;
@@ -354,12 +399,13 @@ function Play() {
       t: 'soccer', k: 'cfg', r: onlineRef.current?.round || 1, seq: configSequence.current++,
       half: onlineRef.current?.quick ? 3 : Number(halfChoice) as 2 | 4 | 6,
       level: onlineRef.current?.quick ? 1 : levelIndex(levelChoice),
-      displayOnly: getSetting(DISPLAY_ONLY) === 'on',
+      displayOnly: true,
+      mode: modeChoice,
     });
     sendConfig();
     const timer = window.setInterval(sendConfig, 1500);
     return () => window.clearInterval(timer);
-  }, [online?.isHost, online?.round, online?.quick, halfChoice, levelChoice]);
+  }, [online?.isHost, online?.round, online?.quick, halfChoice, levelChoice, modeChoice]);
 
   const soundForWorld = (current: World) => {
     if (current.kickEvent) {
@@ -474,7 +520,7 @@ function Play() {
       room.reportResult(room.round, seats?.[0] ?? null, seats);
     }
     const title = winner === null ? 'full time · draw' : online
-      ? (teamForPlayer(room?.seat === undefined ? 0 : playerForSeat(room.seat)) === winner ? 'you win' : 'match over')
+      ? (teamForPlayer(room?.seat === undefined ? 0 : playerForSeat(room.seat, displayOnlyRoom.current, currentMode)) === winner ? 'you win' : 'match over')
       : winner === localTeam ? 'you win' : 'match lost';
     const detail = `bay city ${current.score[0]} - ${current.score[1]} northshore · ${matchClock(current)}'`;
     shellRef.current.gameOver(undefined, { title, detail });
@@ -494,7 +540,7 @@ function Play() {
     const isOnlineGuest = !!room && !room.isHost;
     if (room) {
       for (const player of current.players) {
-        const seat = seatForPlayer(player.id, room.isHost && displayOnlyRoom.current);
+        const seat = seatForPlayer(player.id, room.isHost && displayOnlyRoom.current, currentMode);
         let active = false;
         for (const entry of room.players) if (entry.seat === seat) { active = true; break; }
         const hostDisplay = room.isHost && displayOnlyRoom.current && seat === 0;
@@ -683,10 +729,82 @@ function PhoneController() {
   const [score, setScore] = useState<[number, number]>([0, 0]);
   const previousScore = useRef<[number, number]>([0, 0]);
   const [displayOnly, setDisplayOnly] = useState(true);
+  const [mode, setMode] = useState<Mode>('cpu');
   const [showGame, setShowGame] = useState(false);
   const [chargeProgress, setChargeProgress] = useState(0);
   const [chargingAction, setChargingAction] = useState<Command['action']>(null);
   const chargeStartedAt = useRef<number | null>(null);
+  useEffect(() => {
+    const html = document.documentElement;
+    const body = document.body;
+    const previousHtml = { overflow: html.style.overflow, touchAction: html.style.touchAction, userSelect: html.style.userSelect, webkitUserSelect: html.style.getPropertyValue('-webkit-user-select') };
+    const previousBody = { overflow: body.style.overflow, touchAction: body.style.touchAction, userSelect: body.style.userSelect, webkitUserSelect: body.style.getPropertyValue('-webkit-user-select') };
+    const previousHtmlCallout = html.style.getPropertyValue('-webkit-touch-callout');
+    const previousBodyCallout = body.style.getPropertyValue('-webkit-touch-callout');
+    const chrome = [...document.querySelectorAll<HTMLElement>('.statusbar, .dock-wrap, .menubar, .win-arcade > .mbar, .win-arcade > .traffic, .win-arcade > .titlebar')]
+      .map((element) => ({ element, display: element.style.display }));
+    const arcadeWindow = document.querySelector<HTMLElement>('.win-arcade');
+    const arcadeStyle = arcadeWindow?.getAttribute('style') ?? null;
+    const arcadeBody = arcadeWindow?.querySelector<HTMLElement>(':scope > .win-body');
+    const arcadeBodyStyle = arcadeBody?.getAttribute('style') ?? null;
+    for (const item of chrome) item.element.style.display = 'none';
+    if (arcadeWindow) {
+      Object.assign(arcadeWindow.style, { position: 'fixed', inset: '0', width: '100vw', height: '100dvh', zIndex: '2147483000', borderRadius: '0', transform: 'none' });
+    }
+    if (arcadeBody) Object.assign(arcadeBody.style, { top: '0', inset: '0', padding: '0' });
+    html.style.overflow = 'hidden';
+    html.style.touchAction = 'none';
+    html.style.userSelect = 'none';
+    html.style.setProperty('-webkit-user-select', 'none');
+    html.style.setProperty('-webkit-touch-callout', 'none');
+    body.style.overflow = 'hidden';
+    body.style.touchAction = 'none';
+    body.style.userSelect = 'none';
+    body.style.setProperty('-webkit-user-select', 'none');
+    body.style.setProperty('-webkit-touch-callout', 'none');
+    let live = true;
+    let lock: { release: () => Promise<void> } | null = null;
+    const requestWakeLock = async () => {
+      if (!live || document.visibilityState !== 'visible' || lock) return;
+      try {
+        const wakeLock = (navigator as Navigator & { wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock;
+        lock = await wakeLock?.request('screen') ?? null;
+      } catch {}
+    };
+    const preventGesture = (event: Event) => event.preventDefault();
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') {
+        lock = null;
+        void requestWakeLock();
+      } else {
+        lock = null;
+      }
+    };
+    document.addEventListener('gesturestart', preventGesture, { passive: false });
+    document.addEventListener('visibilitychange', onVisibility);
+    void requestWakeLock();
+    return () => {
+      live = false;
+      document.removeEventListener('gesturestart', preventGesture);
+      document.removeEventListener('visibilitychange', onVisibility);
+      void lock?.release().catch(() => {});
+      Object.assign(html.style, previousHtml);
+      Object.assign(body.style, previousBody);
+      html.style.setProperty('-webkit-user-select', previousHtml.webkitUserSelect);
+      body.style.setProperty('-webkit-user-select', previousBody.webkitUserSelect);
+      html.style.setProperty('-webkit-touch-callout', previousHtmlCallout);
+      body.style.setProperty('-webkit-touch-callout', previousBodyCallout);
+      for (const item of chrome) item.element.style.display = item.display;
+      if (arcadeWindow) {
+        if (arcadeStyle === null) arcadeWindow.removeAttribute('style');
+        else arcadeWindow.setAttribute('style', arcadeStyle);
+      }
+      if (arcadeBody) {
+        if (arcadeBodyStyle === null) arcadeBody.removeAttribute('style');
+        else arcadeBody.setAttribute('style', arcadeBodyStyle);
+      }
+    };
+  }, []);
   const send = (action: Command['action'] = null, pressed = false) => {
     if (!online) return;
     online.send(movePacket(online.round || 1, sequence.current++, online.seat, {
@@ -724,7 +842,10 @@ function PhoneController() {
         if (packet.state.score.some((value, index) => value !== previousScore.current[index])) navigator.vibrate?.([70, 40, 120]);
         previousScore.current = [...packet.state.score];
         setScore(packet.state.score);
-      } else if (packet?.k === 'cfg') setDisplayOnly(packet.displayOnly);
+      } else if (packet?.k === 'cfg') {
+        setDisplayOnly(true);
+        if (packet.mode) setMode(packet.mode);
+      }
     });
     const timer = window.setInterval(() => {
       send();
@@ -733,6 +854,7 @@ function PhoneController() {
     return () => { off(); window.clearInterval(timer); };
   }, [online]);
   if (!online) return null;
+  const phonePlayer = playerForSeat(online.seat, displayOnly, mode);
   if (showGame) return <><Play key={`phone-game-${online.round ?? 0}`} /><button className="g-soccer-phone-show" type="button" onClick={() => setShowGame(false)}>Controller</button></>;
   const button = (action: Command['action'], key: string, label: string, className: string) => (
     <button
@@ -749,7 +871,7 @@ function PhoneController() {
   return (
     <div className="g-soccer-phone-controller">
       <header>
-        <b>{(displayOnly ? online.seat % 2 === 0 : online.seat % 2 === 1) ? 'NORTHSHORE' : 'BAY CITY'}</b>
+        <b>{teamForPlayer(phonePlayer) === 1 ? 'NORTHSHORE' : 'BAY CITY'}</b>
         <strong>{score[0]} · {score[1]}</strong>
         <button type="button" onClick={() => setShowGame(true)}>Show game</button>
       </header>
@@ -762,7 +884,7 @@ function PhoneController() {
         <div className="g-soccer-phone-utilities">
           <button type="button" className="g-soccer-phone-action" onPointerDown={(event) => {
             event.preventDefault();
-            const player = phoneWorld.current?.players[playerForSeat(online.seat, displayOnly)];
+            const player = phoneWorld.current?.players[phonePlayer];
             specialAction.current = player && distance(player, phoneWorld.current!.ball) < 0.8 ? 'skill' : 'pass';
             beginCharge(specialAction.current);
           }} onPointerUp={(event) => { event.preventDefault(); releaseCharge(specialAction.current); }} onPointerCancel={() => releaseCharge(specialAction.current, false)}>Switch / Skill</button>
@@ -787,19 +909,22 @@ function Stage() {
 }
 
 export default function Soccer({ onExit, roomCode }: { onExit?: () => void; roomCode?: string }) {
+  const [, setDisplayOnly] = useSetting(DISPLAY_ONLY);
+  useEffect(() => setDisplayOnly('on'), [setDisplayOnly]);
   return (
     <GameShell
       meta={meta}
       className="g-soccer"
       onExit={onExit}
       roomCode={roomCode}
+      phoneFirst
       setup={<Settings />}
-      hostSetup={<><Settings online /><PhoneLobby /></>}
-      defaultBots={2}
+      hostSetup={<><PhoneLobby /><Settings online /></>}
+      defaultBots={0}
       botNames={['bay city bot', 'northshore bot', 'wing bot', 'keeper bot']}
       quickNote="2v2, normal bots, and three-minute halves."
       quickPool="2v2"
-      soloLabel="play offline"
+      soloLabel="Play with keyboard"
     >
       <Stage />
     </GameShell>

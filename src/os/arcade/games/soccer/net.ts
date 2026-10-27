@@ -2,7 +2,7 @@ import type { Command, World } from './logic.ts';
 
 export type MovePacket = { t: 'soccer'; k: 'mv'; r: number; seq: number; seat: number; x: number; z: number; ax: number; az: number; power: number; buttons: number; held: number };
 export type SnapshotPacket = { t: 'soccer'; k: 's'; r: number; seq: number; state: World };
-export type ConfigPacket = { t: 'soccer'; k: 'cfg'; r: number; seq: number; half: 2 | 3 | 4 | 6; level: 0 | 1 | 2; displayOnly: boolean };
+export type ConfigPacket = { t: 'soccer'; k: 'cfg'; r: number; seq: number; half: 2 | 3 | 4 | 6; level: 0 | 1 | 2; displayOnly: boolean; mode?: 'cpu' | 'versus' | 'coop' };
 export type SoccerPacket = MovePacket | SnapshotPacket | ConfigPacket;
 const finite = (v: unknown, abs: number) => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= abs;
 const quantized = (v: unknown) => finite(v, 1) && Math.abs((v as number) * 100 - Math.round((v as number) * 100)) < 1e-6;
@@ -71,8 +71,13 @@ export function parsePacket(value: unknown): SoccerPacket | null {
   if (p.t !== 'soccer' || !Number.isSafeInteger(p.r) || (p.r as number) < 0 || !Number.isSafeInteger(p.seq) || (p.seq as number) < 0) return null;
   if (p.k === 'cfg') {
     if (![2, 3, 4, 6].includes(p.half as number) || ![0, 1, 2].includes(p.level as number)
-      || (p.displayOnly !== undefined && typeof p.displayOnly !== 'boolean')) return null;
-    return { t: 'soccer', k: 'cfg', r: p.r as number, seq: p.seq as number, half: p.half as ConfigPacket['half'], level: p.level as ConfigPacket['level'], displayOnly: p.displayOnly === true };
+      || (p.displayOnly !== undefined && typeof p.displayOnly !== 'boolean')
+      || (p.mode !== undefined && !['cpu', 'versus', 'coop'].includes(p.mode as string))) return null;
+    return {
+      t: 'soccer', k: 'cfg', r: p.r as number, seq: p.seq as number,
+      half: p.half as ConfigPacket['half'], level: p.level as ConfigPacket['level'], displayOnly: p.displayOnly === true,
+      ...(p.mode === undefined ? {} : { mode: p.mode as ConfigPacket['mode'] }),
+    };
   }
   if (p.k === 'mv') {
     if (!Number.isInteger(p.seat) || (p.seat as number) < 0 || (p.seat as number) > 3 || !quantized(p.x) || !quantized(p.z)

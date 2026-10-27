@@ -260,15 +260,24 @@
 }
 
 .g-soccer-phone-controller {
-  position: absolute;
+  position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: 2147483000;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  box-sizing: border-box;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
   overflow: hidden;
   background: radial-gradient(circle at 50% 20%, #1e4260, #07121f 72%);
   color: #f4fbff;
   touch-action: none;
   user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
 }
+.g-soccer-phone-controller *,
+.g-soccer-phone-controller button { touch-action: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .g-soccer-phone-controller header {
   position: absolute;
   top: max(12px, env(safe-area-inset-top, 0px));
@@ -362,9 +371,14 @@
 .g-soccer-phone-button.is-b { top: 60px; right: 0; background: #df6974; }
 .g-soccer-phone-button.is-a { bottom: 0; left: 60px; background: #7ed68c; }
 .g-soccer-phone-show { position: absolute; top: max(12px, env(safe-area-inset-top, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); z-index: 30; }
-.g-soccer-phone-lobby { display: grid; gap: 8px; justify-items: start; padding: 12px; margin-top: 8px; border: 1px solid #ffffff22; border-radius: 12px; background: #0b1725aa; color: #e8f3fa; font-size: 12px; }
-.g-soccer-phone-lobby img { width: 132px; height: 132px; background: white; border-radius: 5px; }
-.g-soccer-phone-lobby label { display: flex; gap: 6px; align-items: center; }
+.g-soccer-phone-lobby { display: grid; gap: 10px; justify-items: start; padding: 14px; margin-top: 8px; border: 1px solid #ffffff22; border-radius: 12px; background: #0b1725aa; color: #e8f3fa; font-size: 12px; }
+.g-soccer-phone-lobby img { width: min(280px, 100%); height: auto; aspect-ratio: 1; background: white; border-radius: 7px; image-rendering: pixelated; }
+.g-soccer-phone-lobby > span { max-width: 36ch; font-weight: 700; line-height: 1.5; }
+.g-soccer-room-code { font-size: 28px; letter-spacing: .18em; color: #e9f37a; }
+.g-soccer-phone-lobby > a { max-width: 100%; overflow-wrap: anywhere; color: #a8ddff; }
+.g-soccer-phone-mode-note { color: #b8d0dc; font-size: 10px; font-weight: 700; }
+.g-soccer-phone-connections { display: grid; gap: 5px; font-weight: 750; color: #baf1c4; }
+.g-soccer-phone-countdown { padding: 8px 12px; border-radius: 9px; background: #e9f37a; color: #102016; font-size: 16px; }
 
 @media (orientation: landscape) {
   .g-soccer-phone-controller header {

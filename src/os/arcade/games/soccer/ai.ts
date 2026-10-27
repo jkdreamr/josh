@@ -4,21 +4,16 @@ export const LEVEL_NAMES = ['easy', 'normal', 'hard'] as const;
 export type Level = (typeof LEVEL_NAMES)[number];
 const reaction = { easy: 0.45, normal: 0.3, hard: 0.18 } as const;
 const keeperReaction = { easy: 0.3, normal: 0.22, hard: 0.15 } as const;
-const noise = { easy: 1.2, normal: 0.3, hard: 0.08 } as const;
-const slotDepth = { GK: 18.4, DEF: 12, LM: 8, RM: 8, FWD: 3.5 } as const;
+const decisionInterval = { easy: 0.55, normal: 0.3, hard: 0.24 } as const;
+const noise = { easy: 0.28, normal: 0.1, hard: 0.02 } as const;
 const keeperTargetScratch = { x: 0, z: 0 };
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
-
-function nearest(world: World, team: Team, point = world.ball) {
-  let best: Player | null = null;
-  let bestDistance = Infinity;
-  for (const player of world.players) {
-    if (player.team !== team) continue;
-    const d = distance(player, point);
-    if (d < bestDistance) { best = player; bestDistance = d; }
-  }
-  return best!;
-}
+const outfield = (player: Player) => player.slot !== 'GK';
+const targetMove = (player: Player, x: number, z: number) => {
+  const dx = x - player.x;
+  const dz = z - player.z;
+  return Math.hypot(dx, dz) <= 0.6 ? { x: 0, z: 0 } : { x: dx, z: dz };
+};
 
 function laneScore(world: World, from: Player, to: Player) {
   let danger = 0;
@@ -48,7 +43,7 @@ export function keeperTarget(world: World, keeper: Player, target = { x: 0, z: 0
 
 function carrierCommand(world: World, player: Player, level: Level, tick: number): Command {
   const dir = teamDir(player.team, world.endsSwapped);
-  const reactionTick = tick % Math.round(reaction[level] * 60) === 0;
+  const decisionTick = tick % Math.round(decisionInterval[level] * 60) === 0;
   const goalX = dir * (FIELD.length / 2);
   const goalDistance = Math.hypot(goalX - player.x, player.z);
   let pressure = Infinity;
@@ -61,16 +56,15 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
   const evade = nearestOpponent
     ? clamp((player.z - nearestOpponent.z) * 0.12 + (player.x - nearestOpponent.x) * -dir * 0.08, -0.5, 0.5)
     : 0;
-  const lane = clamp(player.z * -0.08 + Math.sin((tick + player.id * 3) * 0.37) * noise[level] + evade, -0.8, 0.8);
-  if (!reactionTick) return { move: { x: dir, z: lane }, sprint: goalDistance > 9, aim: { x: dir, z: lane * 0.45 } };
+  const lane = clamp(player.z * -0.08 + evade, -0.8, 0.8);
+  if (!decisionTick) return { move: { x: dir, z: lane }, sprint: goalDistance > 9, aim: { x: dir, z: lane * 0.45 } };
   const angle = Math.max(0, 1 - Math.abs(player.z) / 9);
   const xg = clamp((17 - goalDistance) / 17, 0, 1) * angle;
   if (pressure < 0.9 && player.x * dir < -7) {
     return { move: { x: -dir, z: player.z > 0 ? -0.7 : 0.7 }, action: 'lob', pressed: true, power: 0.78, aim: { x: dir, z: player.z > 0 ? -0.7 : 0.7 } };
   }
-  const shotThreshold = level === 'easy' ? 0.45 : level === 'normal' ? 0.35 : 0.28;
-  if (reactionTick && xg > shotThreshold && goalDistance < 20 && Math.abs(player.z) < 10 && pressure > 1.4) {
-    const targetZ = (level === 'easy' ? 1 : -1) * Math.sign(player.z || 1) * 2.1;
+  if (xg > 0.35 && goalDistance < 20 && Math.abs(player.z) < 10 && pressure > 1.4) {
+    const targetZ = -Math.sign(player.z) * 2.1;
     const corner = (targetZ - player.z) / Math.max(8, goalDistance);
     return { move: { x: 0, z: 0 }, action: 'shoot', pressed: true, power: clamp(0.7 + (17 - goalDistance) * 0.012, 0.64, 0.88), aim: { x: dir, z: corner } };
   }
@@ -86,10 +80,11 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
     }
     const through = (target.slot === 'FWD' || target.slot === 'LM' || target.slot === 'RM')
       && Math.abs(target.x - player.x) > 3 && space > 2.2;
-    const score = forward * 0.11 + Math.min(5, space) * 0.13 - danger * (level === 'hard' ? 0.65 : level === 'normal' ? 0.5 : 0.3);
+    const optionNoise = Math.sin((tick + target.id * 13 + player.id * 7) * 0.37) * noise[level];
+    const score = forward * 0.11 + Math.min(5, space) * 0.13 - danger * 0.5 + optionNoise;
     if (!candidate || score > candidate.score) candidate = { target, through, score, lane: danger };
   }
-  if (reactionTick && candidate && candidate.score > (level === 'easy' ? 0.18 : 0.08) && (pressure < 4.5 || candidate.score > 0.7)) {
+  if (candidate && candidate.score > 0.08 && (pressure < 4.5 || candidate.score > 0.7)) {
     const target = candidate.target;
     const lead = candidate.through ? 1.5 : 0;
     return {
@@ -105,12 +100,20 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
 
 export function computeAI(world: World, level: Level, dt: number, tick: number, team?: Team, commands = new Map<number, Command>()) {
   commands.clear();
-  const nearestHome = nearest(world, 0);
-  const nearestAway = nearest(world, 1);
   let carrier: Player | null = null;
   for (const player of world.players) {
     if (distance(player, world.ball) < 0.64) { carrier = player; break; }
   }
+  const pressers = new Map<Team, Player>();
+  const secondPressers = new Map<Team, Player>();
+  for (const side of [0, 1] as const) {
+    const candidates = world.players
+      .filter((player) => player.team === side && outfield(player) && !player.human && !player.controlled)
+      .sort((a, b) => distance(a, world.ball) - distance(b, world.ball));
+    if (candidates[0]) pressers.set(side, candidates[0]);
+    if (candidates[1]) secondPressers.set(side, candidates[1]);
+  }
+  const targets = new Map<number, { x: number; z: number }>();
   for (const p of world.players) {
     if (team !== undefined && p.team !== team) continue;
     if (p.human || p.controlled) continue;
@@ -162,43 +165,112 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
     }
     const ownCarrier = carrier?.team === p.team ? carrier : null;
     const opponent = carrier?.team !== p.team ? carrier : null;
-    if (!ownCarrier && (p.team === 0 ? nearestHome : nearestAway).id === p.id) {
-      const dx = world.ball.x - p.x, dz = world.ball.z - p.z;
-      commands.set(p.id, { move: { x: dx, z: dz }, sprint: distance(p, world.ball) > 4, action: distance(p, world.ball) < 1.2 ? 'tackle' : null, pressed: tick % Math.round(reaction[level] * 60) === 0 });
-      continue;
-    }
-    if (opponent && (p.team === 0 ? nearestHome : nearestAway).id === p.id) {
-      const bites = opponent.action === 'skill' && opponent.cooldown > 0 && tick % Math.round(reaction[level] * 60) === 0 && level !== 'hard';
-      const targetX = bites ? opponent.x + Math.sign(opponent.vx || teamDir(p.team, world.endsSwapped)) * 2 : opponent.x;
-      const targetZ = bites ? opponent.z + Math.sign(opponent.vz || 1) * 1.2 : opponent.z;
-      const dx = targetX - p.x, dz = targetZ - p.z;
-      commands.set(p.id, { move: { x: dx, z: dz }, sprint: distance(p, opponent) > 3, action: distance(p, opponent) < 1.25 ? 'tackle' : null, pressed: tick % Math.round(reaction[level] * 60) === 0 });
+    const presser = pressers.get(p.team);
+    if (!ownCarrier && presser?.id === p.id) {
+      const gap = distance(p, world.ball);
+      const movement = opponent && gap <= 1.35
+        ? { x: 0, z: 0 }
+        : targetMove(p, world.ball.x, world.ball.z);
+      commands.set(p.id, {
+        move: movement,
+        sprint: gap > 3,
+        action: gap < 1.4 ? 'tackle' : null,
+        pressed: tick % Math.round(reaction[level] * 60) === 0,
+      });
       continue;
     }
     const attackDir = teamDir(p.team, world.endsSwapped);
-    const slotWidth = p.slot === 'LM' ? -6 : p.slot === 'RM' ? 6 : 0;
-    let supportX = ownCarrier
-      ? ownCarrier.x + attackDir * (p.slot === 'FWD' ? 4 : p.slot === 'DEF' ? -5 : 1)
-      : -attackDir * slotDepth[p.slot] + world.ball.x * 0.35;
-    let supportZ = ownCarrier
-      ? ownCarrier.z + (p.slot === 'LM' ? -5 : p.slot === 'RM' ? 5 : 0)
-      : slotWidth + world.ball.z * 0.25;
-    if (opponent) {
-      let runner: Player | null = null;
-      let runnerScore = -Infinity;
-      for (const candidate of world.players) {
-        if (candidate.team !== opponent.team || candidate.id === opponent.id || candidate.slot === 'GK') continue;
-        const score = (candidate.x - opponent.x) * attackDir - distance(opponent, candidate) * 0.2;
-        if (score > runnerScore) { runner = candidate; runnerScore = score; }
+    let targetX: number;
+    let targetZ: number;
+    if (ownCarrier) {
+      if (p.slot === 'FWD') {
+        let lastDefenderProgress = -Infinity;
+        for (const candidate of world.players) {
+          if (candidate.team === p.team || !outfield(candidate)) continue;
+          lastDefenderProgress = Math.max(lastDefenderProgress, candidate.x * attackDir);
+        }
+        targetX = attackDir * Math.max(ownCarrier.x * attackDir + 6, lastDefenderProgress - 1);
+        targetZ = -Math.sign(ownCarrier.z) * 3;
+      } else if (p.slot === 'LM' || p.slot === 'RM') {
+        targetX = ownCarrier.x + attackDir * 2;
+        targetZ = p.slot === 'LM' ? -8 : 8;
+      } else {
+        targetX = ownCarrier.x - attackDir * 7;
+        targetZ = ownCarrier.z * 0.3;
       }
-      if (runner) {
-        supportX = (opponent.x + runner.x) / 2;
-        supportZ = (opponent.z + runner.z) / 2;
+    } else {
+      const secondPresser = secondPressers.get(p.team);
+      if (opponent && secondPresser?.id === p.id) {
+        let runner: Player | null = null;
+        let runnerScore = -Infinity;
+        const opponentDir = -attackDir;
+        for (const candidate of world.players) {
+          if (candidate.team !== opponent.team || candidate.id === opponent.id || !outfield(candidate)) continue;
+          const score = (candidate.x - opponent.x) * opponentDir - distance(opponent, candidate) * 0.2;
+          if (score > runnerScore) { runner = candidate; runnerScore = score; }
+        }
+        if (runner) {
+          targetX = opponent.x + (runner.x - opponent.x) * 0.4;
+          targetZ = opponent.z + (runner.z - opponent.z) * 0.4;
+        } else {
+          targetX = world.ball.x;
+          targetZ = world.ball.z;
+        }
+      } else if (p.slot === 'DEF') {
+        const ownGoalX = -attackDir * (FIELD.length / 2);
+        const dx = ownGoalX - world.ball.x;
+        const dz = -world.ball.z;
+        const length = Math.hypot(dx, dz) || 1;
+        const keeper = world.players.find((candidate) => candidate.team === p.team && candidate.slot === 'GK')!;
+        const goalSideX = world.ball.x + dx / length * 7;
+        targetX = attackDir * Math.max(goalSideX * attackDir, keeper.x * attackDir + 0.75);
+        targetZ = world.ball.z + dz / length * 7;
+      } else if (p.slot === 'LM' || p.slot === 'RM') {
+        targetX = world.ball.x - attackDir * 3.5;
+        targetZ = (p.slot === 'LM' ? -6 : 6) + 0.35 * world.ball.z;
+      } else {
+        targetX = world.ball.x + attackDir * 2;
+        targetZ = -0.4 * world.ball.z;
       }
     }
-    const targetX = clamp(supportX * 0.55 + p.x * 0.45, -18.8, 18.8);
-    const targetZ = clamp(supportZ * 0.55 + world.ball.z * 0.2 + p.z * 0.25, -11, 11);
-    commands.set(p.id, { move: { x: targetX - p.x, z: targetZ - p.z }, sprint: false });
+    targetX = clamp(targetX, -18.8, 18.8);
+    targetZ = clamp(targetZ, -11, 11);
+    targets.set(p.id, { x: targetX, z: targetZ });
+  }
+  const separated = world.players.filter((player) => outfield(player)
+    && !player.human && !player.controlled && player.id !== carrier?.id && player.id !== pressers.get(player.team)?.id
+    && targets.has(player.id));
+  for (let i = 0; i < separated.length; i++) {
+    const a = separated[i]!;
+    const targetA = targets.get(a.id)!;
+    for (let j = i + 1; j < separated.length; j++) {
+      const b = separated[j]!;
+      if (a.team !== b.team) continue;
+      const targetB = targets.get(b.id)!;
+      let dx = targetB.x - targetA.x;
+      let dz = targetB.z - targetA.z;
+      let gap = Math.hypot(dx, dz);
+      if (gap >= 4) continue;
+      if (gap < 0.001) {
+        dx = b.x - a.x;
+        dz = b.z - a.z;
+        gap = Math.hypot(dx, dz);
+      }
+      if (gap < 0.001) {
+        dx = a.id < b.id ? 1 : -1;
+        dz = 0;
+        gap = 1;
+      }
+      const push = (4 - gap) / 2;
+      targetA.x = clamp(targetA.x - dx / gap * push, -18.8, 18.8);
+      targetA.z = clamp(targetA.z - dz / gap * push, -11, 11);
+      targetB.x = clamp(targetB.x + dx / gap * push, -18.8, 18.8);
+      targetB.z = clamp(targetB.z + dz / gap * push, -11, 11);
+    }
+  }
+  for (const p of separated) {
+    const target = targets.get(p.id)!;
+    commands.set(p.id, { move: targetMove(p, target.x, target.z), sprint: false });
   }
   void dt;
   return commands;
