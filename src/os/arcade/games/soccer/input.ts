@@ -107,9 +107,12 @@ export function reconcileControllers(world: World, assignments: Map<number, numb
   const next = new Map(assignments);
   for (const [seat, id] of assignments) {
     const old = world.players.find((p) => p.id === id);
-    if (!old || old.human) continue;
-    const replacement = world.players.find((p) => p.team === old.team && p.human && ![...next.values()].includes(p.id));
+    if (!old || old.human && !old.sentOff) continue;
+    const assigned = new Set([...next.entries()].filter(([otherSeat]) => otherSeat !== seat).map(([, playerId]) => playerId));
+    const replacement = world.players.find((p) => p.team === old.team && !p.sentOff && p.human && !assigned.has(p.id))
+      ?? world.players.find((p) => p.team === old.team && !p.sentOff && p.id === world.controlled[old.team] && !assigned.has(p.id));
     if (replacement) next.set(seat, replacement.id);
+    else next.delete(seat);
   }
   return next;
 }

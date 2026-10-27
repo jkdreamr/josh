@@ -39,7 +39,8 @@ export function arrangeSetPiece(w: World) {
     const rotation = [...team].sort((a,b) => order.indexOf(a.slot)-order.indexOf(b.slot) || a.id-b.id);
     taker = rotation[w.shootout.kicks[w.restartTeam].length % rotation.length]!;
   }
-  const direct = distance(w.restartAt,{x:g,z:0}) <= 32 && Math.abs(w.restartAt.z) < 24;
+  const indirect = w.rules?.indirect?.team === w.restartTeam;
+  const direct = !indirect && distance(w.restartAt,{x:g,z:0}) <= 32 && Math.abs(w.restartAt.z) < 24;
   w.setPiece = { kind, option: kind === 'corner' ? 'far' : kind === 'penalty' ? 'shot' : kind === 'free-kick' ? direct ? 'direct' : 'cross' : 'long', aim: {x:g,z:0,y:1}, curl: 0, direct, takerId:taker.id, wall:[], keeperDive:null, cpuDelay:kind === 'penalty' ? 2.2 : 1.6 };
   preset(w);
   for (const p of w.players) snap(p,p.x,p.z);

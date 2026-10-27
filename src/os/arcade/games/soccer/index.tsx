@@ -4,11 +4,11 @@ import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
 import { chargePower, IDENTITY_BASIS, screenToWorld, gamepadInput, keyboardInput, reconcileControllers, type ControlCommand, type GamepadHistory } from './input.ts';
 import { acceptMovePacket, cloneSnapshot, consumeCommand, movePacket, parsePacket, type RemoteSeat, type LobbyMember } from './net.ts';
-import { createWorld, distance, FIELD, teamOf, findReceiver, matchClock, nearestCarrier, setRestart, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
+import { createWorld, distance, teamOf, findReceiver, matchClock, nearestCarrier, setRestart, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
 import { setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { SoccerSound, type CommentaryMode } from './audio.ts';
-import type { CameraMode, SoccerView, TimeMode } from './scene.ts';
+import { type CameraMode, type SoccerView, type TimeMode } from './scene.ts';
 import { markShadersReady, parkSoccerView, takeSoccerView, useSoccerStadium } from './load.ts';
 import { LoadProgress } from './loading.tsx';
 import { Hud, type HudState, type RadarHandle } from './hud.tsx';
@@ -27,6 +27,7 @@ import { CLUBS, clubById, DEFAULT_CLUBS } from './teams.ts';
 import { PhoneLobby as SoccerPhoneLobby, PhoneTeamPicker, publishLobby, sideForRoom, useLobbyState } from './lobby.tsx';
 import { createCup, loadCup, matchOutcome, recordUserResult, saveCup } from './cup.ts';
 import { simulateShootout } from './shootout.ts';
+import { Referee } from './referee.tsx';
 import './soccer.css';
 
 type Minutes = '2' | '4' | '6';
@@ -37,6 +38,7 @@ const PITCH = defineSetting<PitchPattern>('soccer:pitch', ['stripes', 'checker']
 const DISPLAY_ONLY = defineSetting<'on' | 'off'>('soccer:display-only', ['on', 'off'], 'on');
 const VOLUME = defineSetting<Volume>('soccer:volume', ['off', 'low', 'mid', 'full'], 'mid', { live: true });
 const COMMENTARY = defineSetting<CommentaryMode>('soccer:commentary', ['voice', 'captions', 'off'], 'voice', { live: true });
+const OFFSIDE = defineSetting<'on' | 'off'>('soccer:offside', ['on', 'off'], 'on');
 
 const modeOptions = [['cpu', 'vs CPU'], ['versus', '2P versus'], ['coop', '2P co-op'], PRACTICE_MODE_OPTION] as const;
 const halfOptions = [['2', '2 min'], ['4', '4 min'], ['6', '6 min']] as const;
@@ -46,6 +48,7 @@ const pitchOptions = [['stripes', 'Stripes'], ['checker', 'Checkerboard']] as co
 const volumeOptions = [['off', 'Off'], ['low', 'Low'], ['mid', 'Mid'], ['full', 'Full']] as const;
 const commentaryOptions = [['voice', 'Voice'], ['captions', 'Captions'], ['off', 'Off']] as const;
 const volumeLevels: Record<Volume, number> = { off: 0, low: 0.35, mid: 0.7, full: 1 };
+const offsideOptions = [['on', 'On'], ['off', 'Off']] as const;
 const commandKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyJ', 'KeyK', 'KeyL', 'KeyI', 'KeyU', 'KeyQ', 'KeyE', 'Space', 'Period', 'Slash', 'Semicolon', 'Quote', 'Comma', 'ShiftLeft', 'ShiftRight'];
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 const shallowHudEqual = (left: HudState, right: HudState) =>
@@ -73,6 +76,7 @@ function Settings({ online = false }: { online?: boolean }) {
   const availableModes = definition.arrangements.map((arrangement) => [
     arrangement, arrangement === 'cpu' ? 'vs CPU' : arrangement === 'versus' ? '2P versus' : '2P co-op',
   ] as const);
+  const [offside, setOffside] = useSetting(OFFSIDE);
   return (
     <div className="g-soccer-settings">
       {!online && <Segmented label="Match" value={mode} options={modeOptions} onChange={setMode} />}
@@ -91,6 +95,7 @@ function Settings({ online = false }: { online?: boolean }) {
       {shell.status === 'paused' && match?.current && <PausePanel match={match.current} />}
       <Segmented label="Sound" value={volume} options={volumeOptions} onChange={setVolume} />
       <Segmented label="Commentary" value={commentary} options={commentaryOptions} onChange={setCommentary} />
+      <Segmented label="Offside" value={offside} options={offsideOptions} onChange={setOffside} />
     </div>
   );
 }
@@ -223,6 +228,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const [awayClubChoice, setAwayClubChoice] = useSetting(AWAY_CLUB);
   const [halfChoice, setHalfChoice] = useSetting(HALF);
   const [levelChoice, setLevelChoice] = useSetting(LEVEL);
+  const [offsideChoice, setOffsideChoice] = useSetting(OFFSIDE);
   const [cameraChoice] = useSetting(CAMERA);
   const [timeChoice] = useSetting(TIME);
   const [pitchChoice] = useSetting(PITCH);
@@ -340,6 +346,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       practiceRef.current = null;
       const fresh = createWorld(seed, halfMinutes * 60, currentMode === 'coop' ? 2 : 1, currentClubs);
       fresh.cup = currentCompetition === 'cup';
+      if (fresh.rules) fresh.rules.offside = offsideChoice === 'on';
       controllerPlayers.current = setupHumans(fresh, currentMode, online, currentCompetition, lobbyState?.members);
       return fresh;
     }
@@ -347,6 +354,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     practiceRef.current = practice;
     const fresh = createWorld(seed, 360, 1, currentClubs);
     fresh.cup = currentCompetition === 'cup';
+    if (fresh.rules) fresh.rules.offside = offsideChoice === 'on';
     controllerPlayers.current = setupHumans(fresh, currentMode, online, currentCompetition, lobbyState?.members);
     setupDrill(practice, fresh);
     return fresh;
@@ -417,7 +425,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       replaying: false, statsVersion: 0, presentation: 'live',
     });
     setPracticeHud(practiceRef.current ? practiceView(practiceRef.current) : null);
-  }, [shell.status, modeChoice, halfMinutes, drillChoice, online?.round, online?.seat, online?.players, currentCompetition, currentClubs[0], currentClubs[1], lobbyState?.members]);
+  }, [shell.status, modeChoice, halfMinutes, drillChoice, offsideChoice, online?.round, online?.seat, online?.players, currentCompetition, currentClubs[0], currentClubs[1], lobbyState?.members]);
 
   useEffect(() => {
     if (shell.status !== 'playing' || online && !online.isHost || online?.watching || tutorialSeen()) return;
@@ -578,10 +586,11 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         if (packet.mode) setModeChoice(packet.mode);
         if (packet.comp) setCompetitionChoice(packet.comp);
         if (packet.clubs) { setHomeClubChoice(packet.clubs[0]); setAwayClubChoice(packet.clubs[1]); }
+        if (packet.offside !== undefined) setOffsideChoice(packet.offside ? 'on' : 'off');
       }
     });
     return off;
-  }, [audioEnabled, online, online?.round, online?.isHost, setHalfChoice, setLevelChoice, setModeChoice, setCompetitionChoice, setHomeClubChoice, setAwayClubChoice, sound]);
+  }, [audioEnabled, online, online?.round, online?.isHost, setHalfChoice, setLevelChoice, setModeChoice, setCompetitionChoice, setHomeClubChoice, setAwayClubChoice, setOffsideChoice, sound]);
 
   useEffect(() => {
     if (!online?.isHost) return;
@@ -593,16 +602,20 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       mode: modeChoice,
       comp: currentCompetition,
       clubs: currentClubs,
+      offside: offsideChoice === 'on',
     });
     sendConfig();
     const timer = window.setInterval(sendConfig, 1500);
     return () => window.clearInterval(timer);
-  }, [online?.isHost, online?.round, online?.quick, halfChoice, levelChoice, modeChoice, currentCompetition, currentClubs[0], currentClubs[1]]);
+  }, [online?.isHost, online?.round, online?.quick, halfChoice, levelChoice, modeChoice, currentCompetition, currentClubs[0], currentClubs[1], offsideChoice]);
 
   const soundForWorld = (current: World) => {
     if (current.phase === 'goal' && lastScore.current.some((score, i) => score !== current.score[i])) {
       replayStartedAt.current = simulationTime.current;
       replaySkipped.current = false;
+    }
+    if (current.phase === 'live' && current.event !== previousHudEvent.current && /card|second yellow/i.test(current.event) && audioEnabled) {
+      sound.synth.play({ kind: 'whistle', pattern: 'short' });
     }
     lastScore.current = [...current.score];
   };
@@ -933,6 +946,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     if (audioEnabled) sound.frame(current, isOnlineGuest ? now / 1000 : simulationTime.current);
 
     if (debugConfig.enabled) {
+      (window as Window & { __soccerWorld?: World }).__soccerWorld = current;
       debugTimer.current += dt;
       if (debugTimer.current >= 1) {
         debugTimer.current %= 1;
@@ -1053,6 +1067,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       )}
       {practicing && practiceHud && shell.status === 'playing' && <PracticePanel view={practiceHud} scheme={scheme} compact={shell.touch} onPick={pickPractice} />}
       {tutorialHud && shell.status === 'playing' && <TutorialOverlay tutorial={tutorialHud} scheme={scheme} seconds={TUTORIAL_SECONDS} onSkip={endTutorial} />}
+      <Referee world={world} />
       {shell.touch && shell.status === 'playing' && !online?.watching && <Stick movement={movement} />}
       {shell.touch && shell.status === 'playing' && !online?.watching && <TouchControls buttons={[
         { key: 'KeyJ', label: 'pass / contain' },

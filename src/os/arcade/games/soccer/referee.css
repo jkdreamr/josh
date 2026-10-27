@@ -1,0 +1,81 @@
+.g-soccer-referee {
+  position: absolute;
+  inset: 0;
+  z-index: 4;
+  pointer-events: none;
+  color: #fff;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+}
+
+.g-soccer-ref-offside {
+  position: absolute;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid #ffffff45;
+  border-radius: 8px;
+  background: linear-gradient(110deg, #0b1725ee, #162a3be8);
+  box-shadow: 0 8px 28px #0008;
+  animation: g-soccer-ref-enter .24s ease-out both;
+}
+
+.g-soccer-ref-offside {
+  top: 92px;
+  left: 50%;
+  padding: 10px 15px;
+  transform: translateX(-50%);
+}
+
+.g-soccer-ref-offside span {
+  display: grid;
+  gap: 3px;
+}
+
+.g-soccer-ref-offside b { font-size: 12px; letter-spacing: .11em; }
+
+.g-soccer-ref-offside small {
+  color: #bac8d0;
+  font-size: 9px;
+  font-weight: 750;
+  letter-spacing: .1em;
+}
+
+.g-soccer-ref-offside > i {
+  position: relative;
+  width: 24px;
+  height: 25px;
+  border-left: 2px solid #f5f2dc;
+}
+
+.g-soccer-ref-offside > i::before {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 17px;
+  height: 12px;
+  background: conic-gradient(#f13d4b 25%, #f6c431 0 50%, #f13d4b 0 75%, #f6c431 0);
+  background-size: 8px 8px;
+  clip-path: polygon(0 0, 100% 0, 78% 50%, 100% 100%, 0 100%);
+  content: '';
+  transform-origin: left center;
+  animation: g-soccer-ref-wave .45s ease-in-out infinite alternate;
+}
+
+.g-soccer-ref-offside.is-left { left: 14px; transform: none; transform-origin: left; }
+.g-soccer-ref-offside.is-right { right: 14px; left: auto; transform: none; transform-origin: right; }
+
+@keyframes g-soccer-ref-enter {
+  from { opacity: 0; translate: 0 -7px; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+@keyframes g-soccer-ref-wave {
+  from { transform: rotate(-4deg); }
+  to { transform: rotate(4deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .g-soccer-ref-offside { animation: none; }
+
+  .g-soccer-ref-offside > i::before { animation: none; }
+}

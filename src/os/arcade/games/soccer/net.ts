@@ -3,10 +3,11 @@ import type { ControlCommand } from './input.ts';
 import { CLUB_IDS } from './teams.ts';
 import { COMPETITIONS, COMPETITION_IDS, type CompetitionId, type Mode } from './modes.ts';
 import type { CupSummary } from './cup.ts';
+import { validRules } from './rules.ts';
 
 export type MovePacket = { t: 'soccer'; k: 'mv'; r: number; seq: number; seat: number; x: number; z: number; ax: number; az: number; power: number; buttons: number; held: number; e?: number; sx?: number; sz?: number };
 export type SnapshotPacket = { t: 'soccer'; k: 's'; r: number; seq: number; state: World };
-export type ConfigPacket = { t: 'soccer'; k: 'cfg'; r: number; seq: number; half: 2 | 3 | 4 | 6; level: 0 | 1 | 2; displayOnly: boolean; mode?: Mode; comp?: CompetitionId; clubs?: [string, string] };
+export type ConfigPacket = { t: 'soccer'; k: 'cfg'; r: number; seq: number; half: 2 | 3 | 4 | 6; level: 0 | 1 | 2; displayOnly: boolean; mode?: Mode; comp?: CompetitionId; clubs?: [string, string]; offside?: boolean };
 export type LobbyMember = { seat: number; role: 'host' | 'phone' | 'mac'; side: 0 | 1 };
 export type LobbyPacket = { t: 'soccer'; k: 'lobby'; r: number; seq: number; comp: CompetitionId; mode: Mode; clubs: [string, string]; focus: [number, number]; ready: [boolean, boolean]; countdown: number | null; members: LobbyMember[]; cup?: CupSummary };
 export type HiPacket = { t: 'soccer'; k: 'hi'; r: number; seq: number; seat: number; role: 'phone' | 'mac'; side: 0 | 1 };
@@ -53,6 +54,8 @@ function validWorld(value: unknown): value is World {
     && inRange(p.x, -FIELD.length / 2 - 2, FIELD.length / 2 + 2) && inRange(p.z, -FIELD.width / 2 - 2, FIELD.width / 2 + 2)
     && inRange(p.vx, -10, 10) && inRange(p.vz, -10, 10) && inRange(p.facing, -Math.PI * 2, Math.PI * 2)
     && inRange(p.stamina, 0, 1) && typeof p.human === 'boolean' && typeof p.controlled === 'boolean'
+    && (p.sentOff === undefined || typeof p.sentOff === 'boolean')
+    && (p.formation === undefined || Number.isInteger(p.formation) && p.formation >= 0 && p.formation <= 10)
     && inRange(p.cooldown, 0, 30) && (p.touchCd === undefined || inRange(p.touchCd, 0, 30))
     && (p.planting === undefined || typeof p.planting === 'boolean') && typeof p.action === 'string' && p.action.length <= 24)) return false;
   if (!ball || !inRange(ball.x, -80, 80) || !inRange(ball.y, 0, 40) || !inRange(ball.z, -60, 60)
@@ -70,7 +73,8 @@ function validWorld(value: unknown): value is World {
     || typeof w.passControl !== 'boolean'
     || (w.stealProtect !== undefined && !inRange(w.stealProtect, 0, 0.9))
     || (w.stealWinnerId !== undefined && w.stealWinnerId !== null
-      && (!Number.isInteger(w.stealWinnerId) || w.stealWinnerId < 0 || w.stealWinnerId >= PLAYER_COUNT))) return false;
+      && (!Number.isInteger(w.stealWinnerId) || w.stealWinnerId < 0 || w.stealWinnerId >= PLAYER_COUNT))
+    || !validRules(w.rules)) return false;
   const kickEvent = w.kickEvent;
   if (w.carrierId !== undefined && w.carrierId !== null && !w.players.some((p) => p.id === w.carrierId)) return false;
   if (w.lastToucherId !== undefined && w.lastToucherId !== null && !w.players.some((p) => p.id === w.lastToucherId)) return false;
@@ -127,6 +131,7 @@ export function parsePacket(value: unknown): SoccerPacket | null {
       || (p.displayOnly !== undefined && typeof p.displayOnly !== 'boolean')
       || (p.mode !== undefined && !validMode(p.comp, p.mode))
       || (p.comp !== undefined && !COMPETITION_IDS.includes(p.comp as CompetitionId))
+      || (p.offside !== undefined && typeof p.offside !== 'boolean')
       || (p.clubs !== undefined && (!Array.isArray(p.clubs) || p.clubs.length !== 2 || !p.clubs.every(validClubId)))) return null;
     return {
       t: 'soccer', k: 'cfg', r: p.r as number, seq: p.seq as number,
@@ -134,6 +139,7 @@ export function parsePacket(value: unknown): SoccerPacket | null {
       ...(p.mode === undefined ? {} : { mode: p.mode as ConfigPacket['mode'] }),
       ...(p.comp === undefined ? {} : { comp: p.comp as CompetitionId }),
       ...(p.clubs === undefined ? {} : { clubs: [...p.clubs] as [string, string] }),
+      ...(p.offside === undefined ? {} : { offside: p.offside as boolean }),
     };
   }
   if (p.k === 'lobby') {

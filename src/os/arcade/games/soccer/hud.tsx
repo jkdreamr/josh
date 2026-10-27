@@ -23,7 +23,6 @@ export type HudState = {
   statsVersion: number;
   presentation: 'intro' | 'live' | 'half-time' | 'full-time';
 };
-
 export type RadarHandle = { draw(world: World, targetId?: number | null): void };
 
 export const Hud = memo(function Hud({ state, watching, radarRef, world }: {
