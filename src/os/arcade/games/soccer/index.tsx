@@ -684,6 +684,9 @@ function PhoneController() {
   const previousScore = useRef<[number, number]>([0, 0]);
   const [displayOnly, setDisplayOnly] = useState(true);
   const [showGame, setShowGame] = useState(false);
+  const [chargeProgress, setChargeProgress] = useState(0);
+  const [chargingAction, setChargingAction] = useState<Command['action']>(null);
+  const chargeStartedAt = useRef<number | null>(null);
   const send = (action: Command['action'] = null, pressed = false) => {
     if (!online) return;
     online.send(movePacket(online.round || 1, sequence.current++, online.seat, {
@@ -695,6 +698,21 @@ function PhoneController() {
       power: pressed ? 0.1 : 0.5,
       aim: movement.current,
     }), { fast: true });
+  };
+  const beginCharge = (action: Command['action']) => {
+    held.current = action;
+    chargeStartedAt.current = performance.now();
+    setChargingAction(action);
+    setChargeProgress(0);
+    send(null, false);
+  };
+  const releaseCharge = (action: Command['action'], vibrate = true) => {
+    held.current = null;
+    chargeStartedAt.current = null;
+    setChargingAction(null);
+    setChargeProgress(0);
+    send(action, true);
+    if (vibrate) navigator.vibrate?.(18);
   };
   useEffect(() => {
     if (!online) return;
@@ -708,37 +726,54 @@ function PhoneController() {
         setScore(packet.state.score);
       } else if (packet?.k === 'cfg') setDisplayOnly(packet.displayOnly);
     });
-    const timer = window.setInterval(() => send(), 1000 / 30);
+    const timer = window.setInterval(() => {
+      send();
+      if (chargeStartedAt.current !== null) setChargeProgress(Math.min(1, (performance.now() - chargeStartedAt.current) / 1000));
+    }, 1000 / 30);
     return () => { off(); window.clearInterval(timer); };
   }, [online]);
   if (!online) return null;
   if (showGame) return <><Play key={`phone-game-${online.round ?? 0}`} /><button className="g-soccer-phone-show" type="button" onClick={() => setShowGame(false)}>Controller</button></>;
-  const button = (action: Command['action'], label: string, className: string) => (
+  const button = (action: Command['action'], key: string, label: string, className: string) => (
     <button
       type="button"
       className={`g-soccer-phone-button ${className}`}
-      onPointerDown={(event) => { event.preventDefault(); held.current = action; send(null, false); }}
-      onPointerUp={(event) => { event.preventDefault(); held.current = null; send(action, true); navigator.vibrate?.(18); }}
-      onPointerCancel={() => { held.current = null; send(action, true); }}
+      aria-label={`${label} (${key})`}
+      onPointerDown={(event) => { event.preventDefault(); beginCharge(action); }}
+      onPointerUp={(event) => { event.preventDefault(); releaseCharge(action); }}
+      onPointerCancel={() => releaseCharge(action, false)}
       onContextMenu={(event) => event.preventDefault()}
-    >{label}</button>
+    ><span>{key}</span><small>{label}</small></button>
   );
+  const chargeName = chargingAction === 'pass' ? 'Pass' : chargingAction === 'shoot' ? 'Shoot' : chargingAction === 'through' ? 'Through' : chargingAction === 'lob' ? 'Lob' : chargingAction === 'skill' ? 'Skill' : 'Hold to charge';
   return (
     <div className="g-soccer-phone-controller">
-      <header><b>{(displayOnly ? online.seat % 2 === 0 : online.seat % 2 === 1) ? 'NORTHSHORE' : 'BAY CITY'}</b><strong>{score[0]} · {score[1]}</strong><button type="button" onClick={() => setShowGame(true)}>Show game</button></header>
+      <header>
+        <b>{(displayOnly ? online.seat % 2 === 0 : online.seat % 2 === 1) ? 'NORTHSHORE' : 'BAY CITY'}</b>
+        <strong>{score[0]} · {score[1]}</strong>
+        <button type="button" onClick={() => setShowGame(true)}>Show game</button>
+      </header>
+      <div className="g-soccer-phone-charge" role="progressbar" aria-label={`${chargeName} power`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(chargeProgress * 100)}>
+        <span>{chargingAction ? `${chargeName} · ${Math.round(chargeProgress * 100)}%` : 'HOLD AN ACTION TO CHARGE'}</span>
+        <div><i style={{ width: `${chargeProgress * 100}%` }} /></div>
+      </div>
       <Stick movement={movement} />
       <div className="g-soccer-phone-buttons">
-        {button('lob', 'X', 'is-x')}
-        {button('through', 'Y', 'is-y')}
-        {button('pass', 'A', 'is-a')}
-        {button('shoot', 'B', 'is-b')}
-        <button type="button" className="g-soccer-phone-action" onPointerDown={() => {
-          const player = phoneWorld.current?.players[playerForSeat(online.seat, displayOnly)];
-          specialAction.current = player && distance(player, phoneWorld.current!.ball) < 0.8 ? 'skill' : 'pass';
-          held.current = specialAction.current;
-          send();
-        }} onPointerUp={() => { held.current = null; send(specialAction.current, true); navigator.vibrate?.(18); }}>Switch / Skill</button>
-        <button type="button" className="g-soccer-phone-action is-sprint" onPointerDown={() => { sprint.current = true; send(); }} onPointerUp={() => { sprint.current = false; send(); }}>Sprint</button>
+        <div className="g-soccer-phone-utilities">
+          <button type="button" className="g-soccer-phone-action" onPointerDown={(event) => {
+            event.preventDefault();
+            const player = phoneWorld.current?.players[playerForSeat(online.seat, displayOnly)];
+            specialAction.current = player && distance(player, phoneWorld.current!.ball) < 0.8 ? 'skill' : 'pass';
+            beginCharge(specialAction.current);
+          }} onPointerUp={(event) => { event.preventDefault(); releaseCharge(specialAction.current); }} onPointerCancel={() => releaseCharge(specialAction.current, false)}>Switch / Skill</button>
+          <button type="button" className="g-soccer-phone-action is-sprint" onPointerDown={(event) => { event.preventDefault(); sprint.current = true; send(); }} onPointerUp={(event) => { event.preventDefault(); sprint.current = false; send(); }}>Sprint (hold)</button>
+        </div>
+        <div className="g-soccer-phone-diamond">
+          {button('lob', 'X', 'Lob', 'is-x')}
+          {button('through', 'Y', 'Through', 'is-y')}
+          {button('pass', 'A', 'Pass', 'is-a')}
+          {button('shoot', 'B', 'Shoot', 'is-b')}
+        </div>
       </div>
     </div>
   );
