@@ -60,3 +60,14 @@ test('a goalkeeper claims a weak central shot but cannot reach the far corner', 
   corner.ball.x = 19.6; corner.ball.y = 0.8; corner.ball.z = 2.2; corner.ball.vx = 25;
   assert.equal(resolveKeeperContact(corner, 19.4), false);
 });
+
+test('a goalkeeper parries a reachable 25 m/s shot', () => {
+  const g = createWorld();
+  const keeper = g.players[5]!;
+  keeper.z = 0;
+  g.ball.x = 19.6; g.ball.y = 0.8; g.ball.z = 0.5; g.ball.vx = 25; g.ball.vy = 0;
+  assert.equal(resolveKeeperContact(g, 19.4), true);
+  assert.equal(g.ball.grounded, false);
+  assert.ok(Math.hypot(g.ball.vx, g.ball.vy, g.ball.vz) > 1);
+  assert.equal(keeper.action, 'parry');
+});

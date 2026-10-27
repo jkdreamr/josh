@@ -7,6 +7,7 @@ import { keyboardInput } from './input.ts';
 import { cloneSnapshot, commandFromPacket, movePacket, parsePacket } from './net.ts';
 import { createWorld, distance, matchClock, stepWorld, STEP, switchPlayer, teamDir, type Command, type Team, type World } from './logic.ts';
 import { appendReplayFrame, sampleReplay, type ReplayFrame } from './replay.ts';
+import { goalRoar, kickThump, netSwish, startCrowd, whistle } from './audio.ts';
 import { createScene, type CameraMode, type SoccerView, type TimeMode } from './scene.ts';
 import { Hud } from './hud.tsx';
 import './soccer.css';
@@ -133,7 +134,9 @@ function interpolate(a: World, b: World, t: number): World {
   return world;
 }
 
-function onlineRenderState(frames: ReplayFrame[], now: number, fallback: World) {
+type NetworkFrame = { time: number; world: World };
+
+function onlineRenderState(frames: NetworkFrame[], now: number, fallback: World) {
   if (!frames.length) return fallback;
   const target = now - 0.1;
   let before = frames[0]!;
@@ -159,6 +162,7 @@ function Play() {
   const [cameraChoice] = useSetting(CAMERA);
   const [timeChoice] = useSetting(TIME);
   const [power, setPower] = useState<number | null>(null);
+  const [replayActive, setReplayActive] = useState(false);
   const [targetId, setTargetId] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState(1);
   const [hudWorld, setHudWorld] = useState<World>(() => createWorld());
@@ -183,13 +187,14 @@ function Play() {
   const configSequence = useRef(0);
   const remoteCommands = useRef(new Map<number, Command>());
   const lastRemoteSeq = useRef(new Map<number, number>());
-  const guestSnapshots = useRef<ReplayFrame[]>([]);
+  const guestSnapshots = useRef<NetworkFrame[]>([]);
   const pendingNetworkAction = useRef<Command | null>(null);
   const charging = useRef(new Map<number, { holding: boolean; seconds: number }>());
   const lastScore = useRef<[number, number]>([0, 0]);
   const reported = useRef(false);
   const lastEvent = useRef('');
   const soundTime = useRef(0);
+  const crowdIntensity = useRef(0.12);
   shellRef.current = shell;
   onlineRef.current = online;
   levelRef.current = online?.quick ? 'normal' : levelChoice;
@@ -214,7 +219,12 @@ function Play() {
     setHudWorld(fresh);
   }, [shell.status, modeChoice, halfMinutes, online?.round, online?.seat, online?.players]);
 
-  useEffect(() => sfx.retain(), []);
+  useEffect(() => {
+    const release = sfx.retain();
+    if (shell.status !== 'playing') return release;
+    const stopCrowd = startCrowd(() => crowdIntensity.current);
+    return () => { stopCrowd(); release(); };
+  }, [shell.status]);
 
   useEffect(() => {
     const host = ref.current;
@@ -237,14 +247,6 @@ function Play() {
   }, [size.w, size.h, shell]);
 
   useEffect(() => viewRef.current?.setTime(timeChoice === 'golden' ? 'golden' : 'night'), [timeChoice]);
-
-  useEffect(() => {
-    if (shell.status !== 'playing') return;
-    const timer = window.setInterval(() => {
-      sfx.noise(1.15, 0.022);
-    }, 1100);
-    return () => window.clearInterval(timer);
-  }, [shell.status]);
 
   useEffect(() => {
     if (!online) return;
@@ -298,17 +300,16 @@ function Play() {
 
   const soundForWorld = (current: World) => {
     if (current.kickEvent) {
-      const pitch = 0.75 + current.kickEvent.power * 0.35;
-      sfx.tone({ freq: 125 * pitch, to: 66 * pitch, dur: 0.1, type: 'triangle', vol: 0.13 });
+      kickThump(current.kickEvent.power);
     }
     if (current.phase === 'goal' && lastScore.current.some((score, i) => score !== current.score[i])) {
-      sfx.noise(0.7, 0.2);
-      sfx.tone({ freq: 392, to: 784, dur: 0.48, type: 'triangle', vol: 0.18 });
+      goalRoar();
+      netSwish();
       replayStartedAt.current = simulationTime.current;
       replaySkipped.current = false;
     }
-    if (current.event !== lastEvent.current && /foul|half time|full time/i.test(current.event)) {
-      sfx.tone({ freq: 960, to: 1260, dur: 0.42, type: 'sine', vol: 0.15 });
+    if (current.event !== lastEvent.current && /kick off|kickoff|foul|half time|full time|kick-in|corner|goal kick|free kick|penalty|second half/i.test(current.event)) {
+      whistle();
     }
     lastEvent.current = current.event;
     lastScore.current = [...current.score];
@@ -385,6 +386,9 @@ function Play() {
     const current = worldRef.current;
     const room = onlineRef.current;
     if (!current || shellRef.current.status !== 'playing') return;
+    crowdIntensity.current = current.phase === 'goal'
+      ? 1
+      : 0.08 + Math.min(0.82, Math.max(0, (Math.abs(current.ball.x) - 7) / 13) * 0.75);
     const isOnlineGuest = !!room && !room.isHost;
     if (room) {
       for (const player of current.players) {
@@ -468,9 +472,9 @@ function Play() {
     const replayClock = isOnlineGuest ? performance.now() / 1000 : simulationTime.current;
     if (!replaySkipped.current && replayStartedAt.current !== null && current.phase === 'goal') {
       if (!replaySkipped.current) {
-        const from = replayStartedAt.current - 4;
+        const from = replayStartedAt.current - 2.4;
         const progress = clamp((replayClock - replayStartedAt.current) / 3, 0, 1);
-        renderWorld = sampleReplay(replayFrames.current, from + progress * 4) ?? current;
+        renderWorld = sampleReplay(replayFrames.current, from + progress * 2.4, current) ?? current;
         camera = 'replay';
       }
     }
@@ -486,6 +490,7 @@ function Play() {
       setHudWorld(structuredClone(current));
       setSelectedId(selectedPlayerId);
       setTargetId(target);
+      setReplayActive(current.phase === 'goal' && !replaySkipped.current);
     }
     if (current.phase === 'full-time') finishMatch(current);
   };
@@ -495,7 +500,7 @@ function Play() {
   return (
     <div className="g-soccer-stage">
       <div className="g-soccer-canvas" ref={ref} />
-      <Hud world={hudWorld} power={power} targetId={targetId} selectedId={selectedId} watching={!!online?.watching} />
+      <Hud world={hudWorld} power={power} targetId={targetId} selectedId={selectedId} watching={!!online?.watching} replaying={replayActive} />
       {shell.touch && shell.status === 'playing' && !online?.watching && <Stick movement={movement} />}
       {shell.touch && shell.status === 'playing' && !online?.watching && <TouchControls buttons={[
         { key: 'KeyJ', label: 'pass / switch' },

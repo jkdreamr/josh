@@ -136,7 +136,13 @@ function kick(world: World, player: Player, action: Action, command: Command) {
   const error = (rng(world) - 0.5) * (0.04 + charge * 0.11 + (1 - player.stamina) * 0.12);
   const a = Math.atan2(az, ax) + error;
   const speed = action === 'pass' ? 9 + charge * 8 : action === 'through' ? 13 + charge * 9 : action === 'lob' ? 11 + charge * 8 : action === 'finesse' ? 18 + charge * 7 : 16 + charge * 14;
-  const loft = action === 'lob' ? 0.42 : action === 'through' ? 0.14 : action === 'shoot' || action === 'finesse' ? 0.16 + charge * 0.25 : 0.05;
+  const loft = action === 'lob'
+    ? 0.42
+    : action === 'through'
+      ? 0.14
+      : action === 'shoot' || action === 'finesse'
+        ? 0.08 + charge * 0.08 + Math.max(0, charge - 0.92) * 0.9
+        : 0.05;
   const horizontal = speed * Math.cos(loft);
   world.ball.vx = Math.cos(a) * horizontal;
   world.ball.vz = Math.sin(a) * horizontal;
@@ -168,6 +174,13 @@ function findReceiver(world: World, from: Player, direction: Point, through: boo
 
 function applyAction(world: World, player: Player, command: Command) {
   if (!command.action || !command.pressed || player.cooldown > 0) return;
+  const capSpeed = () => {
+    const speed = Math.hypot(player.vx, player.vz);
+    if (speed > 8) {
+      player.vx = player.vx / speed * 8;
+      player.vz = player.vz / speed * 8;
+    }
+  };
   if (command.action === 'tackle' || command.action === 'slide') {
     const enemy = world.players.filter((p) => p.team !== player.team).sort((a, b) => distance(a, world.ball) - distance(b, world.ball))[0];
     if (enemy && distance(player, world.ball) < (command.action === 'slide' ? 2.2 : 1.25)) {
@@ -185,6 +198,7 @@ function applyAction(world: World, player: Player, command: Command) {
     }
     player.cooldown = command.action === 'slide' ? 0.7 : 0.35;
     player.action = command.action;
+    capSpeed();
     return;
   }
   if (command.action === 'skill') {
@@ -192,6 +206,7 @@ function applyAction(world: World, player: Player, command: Command) {
     player.vx -= dir * 2.2;
     player.action = 'skill';
     player.cooldown = 0.42;
+    capSpeed();
     return;
   }
   if (!nearestCarrier(world) || nearestCarrier(world)?.id !== player.id) return;
@@ -246,7 +261,8 @@ export function resolveKeeperContact(world: World, previousX: number) {
     const direction = teamDir(keeper.team, world.endsSwapped);
     const plane = -direction * (FIELD.length / 2 - 1.5);
     const crossed = direction > 0 ? previousX > plane && ball.x <= plane : previousX < plane && ball.x >= plane;
-    if (!crossed || ball.y < 0 || ball.y > 2.55 || Math.abs(ball.z - keeper.z) > 2.4) continue;
+    const reach = keeper.action === 'dive' ? 2.4 : 1.1;
+    if (!crossed || ball.y < 0 || ball.y > 2.55 || Math.abs(ball.z - keeper.z) > reach) continue;
     const speed = Math.hypot(ball.vx, ball.vy, ball.vz);
     ball.x = plane + direction * 0.16;
     ball.z = clamp(ball.z, keeper.z - 2.4, keeper.z + 2.4);
@@ -334,7 +350,10 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
         p.z = world.restartAt.z + dz / d * 4;
       }
     }
-    const taker = world.players.find((p) => p.team === world.restartTeam && p.controlled)
+    const taker = (world.restart === 'goal-kick'
+      ? world.players.find((p) => p.team === world.restartTeam && p.slot === 'GK')
+      : undefined)
+      ?? world.players.find((p) => p.team === world.restartTeam && p.controlled)
       ?? world.players.filter((p) => p.team === world.restartTeam).sort((a, b) => distance(a, world.restartAt) - distance(b, world.restartAt))[0]!;
     const action = commands.get(taker.id);
     world.clock = Math.max(0, world.clock - t);

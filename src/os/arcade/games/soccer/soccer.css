@@ -147,6 +147,7 @@
 .g-soccer-radar-dot.is-target { transform: scale(1.5); background: #ffe67d; }
 .g-soccer-radar-ball { width: 4px; height: 4px; background: #f7efcd; box-shadow: 0 0 5px #fff; z-index: 2; }
 .g-soccer-watching { position: absolute; top: 21px; left: 18px; color: #d9e1df; font-size: 9px; letter-spacing: .16em; text-transform: uppercase; }
+.g-soccer-replay { position: absolute; top: calc(16px * var(--g-soccer-u)); right: calc(16px * var(--g-soccer-u)); padding: 6px 9px; color: #151b20; background: #ffd76d; border-radius: 3px; font-size: 10px; font-weight: 900; letter-spacing: .14em; box-shadow: 0 4px 18px #0008; }
 
 .g-soccer-power {
   position: absolute;

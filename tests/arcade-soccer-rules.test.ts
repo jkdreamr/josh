@@ -32,6 +32,19 @@ test('kickoff starts centered and opponents are kept at distance', () => {
   assert.ok(Math.hypot(opponent.x, opponent.z) >= 3.99);
 });
 
+test('a goal kick is always taken by the goalkeeper', () => {
+  const g = createWorld(12, 120);
+  g.restart = 'goal-kick';
+  g.restartTeam = 0;
+  g.restartAt = { x: -18.4, z: 0 };
+  const keeper = g.players[0]!;
+  keeper.x = -10;
+  g.players[1]!.x = -18.4;
+  const command = new Map([[keeper.id, { move: { x: 0, z: 0 }, action: 'pass' as const, pressed: true, aim: { x: 1, z: 0 } }]]);
+  stepWorld(g, 1 / 60, command);
+  assert.equal(g.kickEvent?.playerId, keeper.id);
+});
+
 test('halftime swaps ends and full time ends the match clock', () => {
   const g = world();
   g.clock = 0.005;

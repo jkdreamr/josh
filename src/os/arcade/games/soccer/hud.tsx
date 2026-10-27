@@ -1,6 +1,6 @@
 import { matchClock, type World } from './logic.ts';
 
-export function Hud({ world, power, targetId, selectedId, watching }: { world: World; power: number | null; targetId: number | null; selectedId?: number; watching: boolean }) {
+export function Hud({ world, power, targetId, selectedId, watching, replaying }: { world: World; power: number | null; targetId: number | null; selectedId?: number; watching: boolean; replaying: boolean }) {
   const clock = matchClock(world);
   const selected = world.players[selectedId ?? world.controlled[0]];
   return (
@@ -28,6 +28,7 @@ export function Hud({ world, power, targetId, selectedId, watching }: { world: W
         <small>stamina</small><i><em style={{ width: `${(selected?.stamina ?? 1) * 100}%` }} /></i>
       </div>
       <Radar world={world} targetId={targetId} />
+      {replaying && <div className="g-soccer-replay">REPLAY</div>}
       {watching && <div className="g-soccer-watching">watching</div>}
     </div>
   );

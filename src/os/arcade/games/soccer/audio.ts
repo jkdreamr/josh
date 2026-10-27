@@ -1,7 +1,7 @@
 import { sfx } from '../../kit';
 
-export function startCrowd() {
-  const timer = window.setInterval(() => sfx.noise(0.32, 0.012), 2800);
+export function startCrowd(intensity: () => number = () => 0.25) {
+  const timer = window.setInterval(() => sfx.noise(0.46, 0.004 + Math.min(1, Math.max(0, intensity())) * 0.014), 500);
   return () => window.clearInterval(timer);
 }
 
