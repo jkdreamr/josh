@@ -4,6 +4,7 @@ import { CSS3DObject, CSS3DRenderer } from 'three/examples/jsm/renderers/CSS3DRe
 import { RectAreaLightUniformsLib } from 'three/examples/jsm/lights/RectAreaLightUniformsLib.js';
 import { KD, KW, drawGrille, drawLegends, layoutKeys, type Key3 } from './keyboard';
 import { createSounds } from './audio';
+import { renderPixelRatio } from './pixels';
 
 // MacBook Pro 14" proportions, in centimetres.
 const BW = 31.26;
@@ -392,7 +393,8 @@ async function svgTexture(svg: SVGSVGElement, aniso: number, seed: number) {
 export function createLaptop(o: LaptopOptions): LaptopController {
   const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  const gl = renderer.getContext();
+  const maxDim = Math.min(gl.getParameter(gl.MAX_RENDERBUFFER_SIZE), ...gl.getParameter(gl.MAX_VIEWPORT_DIMS));
   renderer.setClearColor(0x000000, 0);
   renderer.toneMapping = THREE.NeutralToneMapping;
   renderer.toneMappingExposure = 1.0;
@@ -985,7 +987,12 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   const fit = () => {
     W = o.container.clientWidth || window.innerWidth;
     H = o.container.clientHeight || window.innerHeight;
+    renderer.setPixelRatio(renderPixelRatio({ dpr: window.devicePixelRatio, width: W, height: H, maxDim }));
     renderer.setSize(W, H, false);
+    if (gl.drawingBufferWidth < renderer.domElement.width) {
+      renderer.setPixelRatio((gl.drawingBufferWidth / W) * 0.98);
+      renderer.setSize(W, H, false);
+    }
     css.setSize(W, H);
     const f = H / (2 * Math.tan((FOV * DEG) / 2));
     const small = W <= 760;
@@ -1122,6 +1129,17 @@ export function createLaptop(o: LaptopOptions): LaptopController {
 
   const ro = new ResizeObserver(() => fit());
   ro.observe(o.container);
+  let dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+  const onDprChange = () => {
+    fit();
+    watchDpr();
+  };
+  const watchDpr = () => {
+    dprQuery.removeEventListener('change', onDprChange);
+    dprQuery = window.matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`);
+    dprQuery.addEventListener('change', onDprChange);
+  };
+  watchDpr();
   fit();
   Promise.race([stickersDone, new Promise((r) => setTimeout(r, 1500))])
     .then(() => {
@@ -1451,6 +1469,7 @@ export function createLaptop(o: LaptopOptions): LaptopController {
       disposed = true;
       cancelAnimationFrame(raf);
       ro.disconnect();
+      dprQuery.removeEventListener('change', onDprChange);
       o.container.removeEventListener('pointerdown', onDown);
       o.container.removeEventListener('pointermove', onMove);
       o.container.removeEventListener('pointerup', onUp);
