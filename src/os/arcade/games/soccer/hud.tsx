@@ -4,7 +4,7 @@ export function Hud({ world, targetId, selectedId, watching, replaying, power, c
   const clock = matchClock(world);
   const selected = world.players[selectedId ?? world.controlled[0]];
   const state = selected?.action === 'jockey' ? contain ? 'CONTAIN' : 'JOCKEY' : selected?.action === 'shield' ? 'SHIELD'
-    : selected?.slide ? 'SLIDE' : selected && Math.hypot(selected.vx, selected.vz) > 6.1 ? 'SPRINT' : null;
+    : selected?.slide ? 'SLIDE' : selected && Math.hypot(selected.vx, selected.vz) > 7.1 ? 'SPRINT' : null;
   return (
     <div className="g-soccer-hud">
       <div className="g-soccer-scoreboard">

@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createWorld, distance, FIELD, movePlayer, nearestCarrier, STEP, stepWorld, type Command } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, distance, FIELD, TEAM_SIZE, movePlayer, nearestCarrier, STEP, stepWorld, type Command } from '../src/os/arcade/games/soccer/logic.ts';
 import { cloneSnapshot, parsePacket } from '../src/os/arcade/games/soccer/net.ts';
 
 function fixture(seed = 71423) {
   const world = createWorld(seed);
-  world.phase = 'live'; world.restart = null;
+  world.phase = 'live'; world.restart = null; world.controlled = [1, TEAM_SIZE + 1];
   for (const p of world.players) { p.x = -15; p.z = 10; p.human = true; p.controlled = false; }
   const player = world.players[1]!;
   player.x = player.z = 0; player.controlled = true; player.facing = Math.PI / 2;
@@ -16,8 +16,8 @@ function fixture(seed = 71423) {
 test('jog responds in 0.2 seconds, neutral stops and clamps derive from FIELD', () => {
   const { player } = fixture();
   let frames = 0;
-  while (player.vx < 6 - 1e-9 && frames < 30) { movePlayer(player, { x: 1, z: 0 }, false, false, STEP); frames++; }
-  console.log(`time to jog: ${(frames * STEP).toFixed(3)} s`);
+  while (player.vx < 7 - 1e-9 && frames < 30) { movePlayer(player, { x: 1, z: 0 }, false, false, STEP); frames++; }
+  console.log(`time to run: ${(frames * STEP).toFixed(3)} s`);
   assert.ok(frames * STEP <= 0.2);
   for (let i = 0; i < 15; i++) movePlayer(player, { x: 0, z: 0 }, false, false, STEP);
   assert.equal(Math.hypot(player.vx, player.vz), 0);
@@ -28,7 +28,7 @@ test('jog responds in 0.2 seconds, neutral stops and clamps derive from FIELD', 
 });
 
 test('sprint reversal plants before turning, with bounded drift', () => {
-  const { player } = fixture(); player.vx = 8;
+  const { player } = fixture(); player.vx = 9;
   let frames = 0, drift = 0;
   while (player.vx >= 0 && frames < 60) {
     movePlayer(player, { x: -1, z: 0 }, true, false, STEP); frames++;
@@ -65,7 +65,7 @@ test('slow 90 degree dribble retains close control', () => {
 });
 
 test('sprint touches knock the ball loose beyond a metre and expire', () => {
-  const { world, player, tick } = fixture(); world.carrierId = player.id; player.vx = 7; world.ball.x = 0.6;
+  const { world, player, tick } = fixture(); world.carrierId = player.id; player.vx = 8; world.ball.x = 0.6;
   tick({ move: { x: 1, z: 0 }, sprint: true });
   assert.ok(player.touchCd! > 0); assert.equal(nearestCarrier(world), undefined);
   let max = 0;
@@ -93,7 +93,7 @@ test('sprint dribbler keeps close control rather than knocking into a nearby def
   for (const inFront of [true, false]) {
     const { world, player, tick } = fixture();
     world.carrierId = world.lastToucherId = player.id;
-    player.vx = 7; world.ball.x = 0.6;
+    player.vx = 8; world.ball.x = 0.6;
     const opponent = world.players.find((p) => p.team !== player.team)!;
     opponent.x = inFront ? 1.5 : -1.5; opponent.z = 0;
     tick({ move: { x: 1, z: 0 }, sprint: true });
@@ -107,7 +107,7 @@ test('fast pressured sprint reception is heavier than soft standing reception ac
     for (let i = 1; i <= 1000; i++) {
       const { world, player, tick } = fixture(Math.imul(i, 2654435761) >>> 0);
       if (hard) {
-        player.vx = 7;
+        player.vx = 8;
         const opponent = world.players.find((p) => p.team !== player.team)!;
         opponent.x = 1; opponent.z = 0;
       }
@@ -135,7 +135,7 @@ test('own knock-on recollections and trivial pressured pickups never roll a heav
     for (let i = 1; i <= 200; i++) {
       const { world, player, tick } = fixture(Math.imul(i, 2654435761) >>> 0);
       world.lastToucherId = ownTouch ? player.id : null;
-      player.vx = 7;
+      player.vx = 8;
       const opponent = world.players.find((p) => p.team !== player.team)!;
       opponent.x = 1; opponent.z = 0;
       world.ball.vx = ownTouch ? -23 : 7;

@@ -171,19 +171,20 @@ export function movePlayer(player: Player, input: Point, sprint: boolean, carryi
   let angle = speed > 0 ? Math.atan2(player.vx, player.vz) : player.facing;
   if (magnitude < 0.08) {
     player.planting = false;
-    speed = Math.max(0, speed - 28 * dt);
+    speed = Math.max(0, speed - 31.5 * dt);
   } else {
     const targetAngle = Math.atan2(input.x, input.z);
     const delta = Math.atan2(Math.sin(targetAngle - angle), Math.cos(targetAngle - angle));
-    if (!jockey && ((Math.abs(delta) > 2.2 && speed > 4) || (player.planting && speed > 2.5))) {
+    if (!jockey && ((Math.abs(delta) > 2.2 && speed > 4 * 7 / 6) || (player.planting && speed > 2.5 * 7 / 6))) {
       player.planting = true;
-      speed = Math.max(0, speed - 28 * dt);
+      speed = Math.max(0, speed - 31.5 * dt);
     } else {
       player.planting = false;
-      const turn = (16 + (3 - 16) * clamp((speed - 2.5) / 5.5, 0, 1)) * (carrying ? 0.85 : 1) * dt;
-      angle += jockey || speed <= 2.5 ? delta : clamp(delta, -turn, turn);
+      const slow = 2.5 * 7 / 6;
+      const turn = (16 + (3 - 16) * clamp((speed - slow) / (9 - slow), 0, 1)) * (carrying ? 0.85 : 1) * dt;
+      angle += jockey || speed <= slow ? delta : clamp(delta, -turn, turn);
       const target = top * Math.min(1, magnitude);
-      speed += clamp(target - speed, -28 * dt, (speed < 6 ? 40 : 8) * dt);
+      speed += clamp(target - speed, -31.5 * dt, (speed < 7 ? 40 * 7 / 6 : 9) * dt);
     }
   }
   if (jockey) speed = Math.min(speed, top);
@@ -269,33 +270,34 @@ function kick(world: World, player: Player, action: Action, command: Command) {
     target = { x: origin.x + run.x * lead, z: origin.z + run.z * lead };
     const range = distance(world.ball, target);
     const arrival = lead / 7.5 + 0.15;
-    let low = groundPassSpeed(range), high = 35;
+    let low = groundPassSpeed(range), high = 25;
     for (let i = 0; i < 12; i++) {
       const mid = (low + high) / 2;
       if (rollingFlight(mid, range).time > arrival) low = mid;
       else high = mid;
     }
-    speed = (low + high) / 2;
+    speed = Math.min(25, (low + high) / 2);
     world.passPoint = target;
   } else if (action === 'lob') {
     loft = cross ? 0.5 : 0.62;
     if (receiver) target = { x: receiver.x + receiver.vx * 0.7, z: receiver.z + receiver.vz * 0.7 };
     else target = { x: player.x + aim.x * (8 + charge * 42), z: player.z + aim.z * (8 + charge * 42) };
     const range = distance(world.ball, target) * (receiver ? 0.8 + charge * 0.4 : 1);
-    speed = lobSpeed(range, loft);
+    if (lobSpeed(range, loft) > 24) loft = 0.7;
+    speed = Math.min(24, lobSpeed(range, loft));
   } else {
     target = { x: d * FIELD.length / 2, z: stickLength > 0.2 ? aim.z * FIELD.goalWidth * 0.43 : -Math.sign(player.z || -1) * FIELD.goalWidth * 0.24 };
     const goalDistance = distance(player, { x: d * FIELD.length / 2, z: 0 });
     const threshold = 0.78 + clamp(goalDistance / 60, 0, 0.14) + (action === 'finesse' ? 0.06 : 0);
     loft = 0.07 + charge * 0.09 + Math.max(0, charge - threshold) * 3.2;
-    speed = action === 'finesse' ? 12 + charge * 9 : 13 + charge * 17;
+    speed = action === 'finesse' ? 12 + charge * 9 : 15 + charge * 17;
   }
   const dx = target.x - world.ball.x, dz = target.z - world.ball.z;
   const baseAngle = Math.atan2(dz, dx);
   const pressure = Math.min(...world.players.filter((p) => p.team !== player.team).map((p) => distance(p, player)));
   const bodyAngle = Math.abs(Math.atan2(Math.sin(Math.PI / 2 - baseAngle - player.facing), Math.cos(Math.PI / 2 - baseAngle - player.facing)));
   let error = shot ? 0.03 + distance(player, target) * 0.004 + Math.max(0, bodyAngle - 0.6) * 0.22
-    + (pressure < 1.5 ? 0.1 : 0) + (Math.hypot(player.vx, player.vz) > 6.5 ? 0.09 : 0) + (1 - player.stamina) * 0.08 + charge * 0.06 : 0.015 + (1 - player.stamina) * 0.06;
+    + (pressure < 1.5 ? 0.1 : 0) + (Math.hypot(player.vx, player.vz) > 6.5 * 9 / 8 ? 0.09 : 0) + (1 - player.stamina) * 0.08 + charge * 0.06 : 0.015 + (1 - player.stamina) * 0.06;
   if (action === 'finesse') error *= 0.6;
   const angle = baseAngle + (rng(world) - 0.5) * error;
   if (shot) loft += (rng(world) - 0.5) * error * 0.25;
@@ -771,7 +773,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
     } else if (nowCarrier.action === 'shield') nowCarrier.action = 'idle';
     const frontBlocked = world.players.some((p) => p.team !== nowCarrier.team && distance(p, nowCarrier) < 2
       && (p.x - nowCarrier.x) * Math.sin(nowCarrier.facing) + (p.z - nowCarrier.z) * Math.cos(nowCarrier.facing) > 0);
-    if (heavy || (speed >= 6.5 && stick >= 0.15 && !frontBlocked && distance(nowCarrier, world.ball) <= 0.7)) {
+    if (heavy || (speed >= 6.5 * 9 / 8 && stick >= 0.15 && !frontBlocked && distance(nowCarrier, world.ball) <= 0.7)) {
       const angle = nowCarrier.facing + (heavy ? (rng(world) - 0.5) * 0.9 : 0);
       const push = heavy ? 1.5 + rel * 0.22 : speed * 1.45;
       world.ball.vx = Math.sin(angle) * push;

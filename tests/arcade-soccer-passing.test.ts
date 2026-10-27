@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createWorld, distance, FIELD, findReceiver, groundPassSpeed, STEP, stepWorld, type Action, type Command } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, distance, FIELD, TEAM_SIZE, findReceiver, groundPassSpeed, STEP, stepWorld, type Action, type Command } from '../src/os/arcade/games/soccer/logic.ts';
 import { stepBall, type BallState } from '../src/os/arcade/games/soccer/physics.ts';
 import { cloneSnapshot, parsePacket } from '../src/os/arcade/games/soccer/net.ts';
 
 function setup(seed = 47) {
   const world = createWorld(seed);
-  world.phase = 'live'; world.restart = null;
+  world.phase = 'live'; world.restart = null; world.controlled = [1, TEAM_SIZE + 1];
   for (const p of world.players) { p.x = -18; p.z = -11; p.human = true; p.controlled = false; }
   const player = world.players[1]!;
   player.x = -10; player.z = 5; player.facing = Math.PI / 2; player.controlled = true;
@@ -85,6 +85,7 @@ test('40 metre lob lands near its target with range-calibrated drag', () => {
   player.x = -20; world.ball.x = -19.6;
   const receiver = world.players[2]!; receiver.x = 20; receiver.z = 5;
   fire('lob', 0.5);
+  assert.ok(Math.hypot(world.ball.vx, world.ball.vy, world.ball.vz) <= 24);
   const ball = { ...world.ball };
   for (let i = 0; i < 600; i++) {
     const falling = ball.vy < 0;
