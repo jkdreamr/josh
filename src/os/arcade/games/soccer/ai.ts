@@ -1,4 +1,4 @@
-import { createWorld, distance, FIELD, FORMATION, findReceiver, groundPassPower, isCross, movePlayer, nearestCarrier, restartTaker, shotAim, shotError, shotOverchargeThreshold, shotSpeed, STEP, stepWorld, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
+import { createWorld, distance, FIELD, FORMATION, findReceiver, groundPassPower, isCross, movePlayer, nearestCarrier, restartTaker, shotAim, shotError, shotOverchargeThreshold, shotSpeed, STEP, stepWorld, tackleWindow, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
 
 export const LEVEL_NAMES = ['easy', 'normal', 'hard'] as const;
 export type Level = (typeof LEVEL_NAMES)[number];
@@ -153,8 +153,8 @@ export function cpuShotChoice(world: World, player: Player, level: Level, tick: 
   const planeRange = Math.max(0.1, range - 1.5);
   const keeper = world.players.find((p) => p.team !== player.team && p.slot === 'GK');
   const uncertainty = Math.sin((tick + rosterIndex(world, player) * 31) * 0.37);
-  const estimate = level === 'hard' ? 1 : level === 'normal' ? 0.9 + uncertainty * 0.1 : 0.65 + uncertainty * 0.3;
-  const keeperZ = (keeper?.z ?? 0) + uncertainty * (level === 'hard' ? 0 : noise[level]);
+  const estimate = level === 'hard' ? 1 : level === 'normal' ? 0.9 + uncertainty * 0.1 : 0.25 + uncertainty * 0.2;
+  const keeperZ = (keeper?.z ?? 0) + uncertainty * (level === 'hard' ? 0 : noise[level] * (level === 'easy' ? 2 : 1));
   const half = FIELD.goalWidth / 2 - 0.11;
   const low = Math.atan2(-half - world.ball.z, range), high = Math.atan2(half - world.ball.z, range);
   const overlap = (a: number, b: number, c: number, d: number) => Math.max(0, Math.min(b, d) - Math.max(a, c));
@@ -342,7 +342,9 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
       if (state.possession !== side || !carrier && world.passTarget === null) {
         if (p.id === presser?.id) {
           const receiver = world.players.find((q) => q.id === world.passTarget && q.team !== side);
-          const opponent = carrier?.team !== side ? carrier ?? receiver : receiver;
+          const readsWindow = level === 'hard' || level === 'normal' && Math.sin((tick + rosterIndex(world, p) * 31) * 0.37) > noise[level];
+          const loose = readsWindow ? world.players.find((q) => q.id === world.lastToucherId && q.team !== side && distance(q, world.ball) < 4) : undefined;
+          const opponent = (carrier?.team !== side ? carrier ?? receiver : receiver) ?? loose;
           if (opponent) {
             const dx = ownGoal.x - opponent.x, dz = -opponent.z;
             const length = Math.hypot(dx, dz) || 1;
@@ -351,10 +353,12 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
             const gap = distance(p, world.ball);
             const facingAway = Math.sin(opponent.facing) * -dir < 0.2;
             const exposed = distance(opponent, world.ball) > 0.48;
+            const window = tackleWindow(world, p);
+            const goodWindow = readsWindow ? window.inReach && window.probability >= (level === 'hard' ? 0.5 : 0.3) : exposed || facingAway;
             const reacts = (tick + rosterIndex(world, p) * 2) % Math.round(reaction[level] * 60) === 0;
-            commands.set(p.id, { move: gap < 1.38 && reacts && (exposed || facingAway) ? targetMove(p, world.ball.x, world.ball.z) : distance(p, target) < 0.65
+            commands.set(p.id, { move: gap < 1.38 && reacts && goodWindow ? targetMove(p, world.ball.x, world.ball.z) : distance(p, target) < 0.65
               ? { x: opponent.vx / 6, z: opponent.vz / 6 } : move,
-              sprint: distance(p, target) > 4, action: carrier && gap < 1.38 && (exposed || facingAway) ? 'tackle' : null, pressed: reacts });
+              sprint: distance(p, target) > 4, action: (carrier || readsWindow && window.exposed) && gap < 1.38 && goodWindow ? 'tackle' : null, pressed: reacts });
           } else {
             const flight = clamp(distance(p, world.ball) / 8, 0, 0.7);
             commands.set(p.id, { move: targetMove(p, clamp(world.ball.x + world.ball.vx * flight, -FIELD.length / 2, FIELD.length / 2),
