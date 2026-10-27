@@ -324,7 +324,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = timeMode === 'golden' ? 1.1 : 1.25;
   renderer.shadowMap.enabled = true;
-  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
   const canvas = renderer.domElement;
   canvas.style.cssText = 'display:block;width:100%;height:100%;touch-action:none';
   host.appendChild(canvas);
