@@ -72,6 +72,16 @@ class Mesher {
     const pts = [a, b, c, d];
     for (const i of order) this.vertex(pts[i]!, [nx, ny, nz], uvs?.[i]);
   }
+  tri(a: V, b: V, c: V, facing?: V) {
+    const ux = b[0] - a[0], uy = b[1] - a[1], uz = b[2] - a[2], vx = c[0] - a[0], vy = c[1] - a[1], vz = c[2] - a[2];
+    let nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+    const len = Math.hypot(nx, ny, nz) || 1;
+    nx /= len; ny /= len; nz /= len;
+    let order = [0, 1, 2];
+    if (facing && nx * facing[0] + ny * facing[1] + nz * facing[2] < 0) { order = [0, 2, 1]; nx = -nx; ny = -ny; nz = -nz; }
+    const pts = [a, b, c];
+    for (const i of order) this.vertex(pts[i]!, [nx, ny, nz]);
+  }
   /** Axis-aligned-ish box from a transform: centre, size, yaw. Bottom face skipped. */
   box(center: V, size: V, yaw = 0) {
     const [cx, cy, cz] = center, [sx, sy, sz] = [size[0] / 2, size[1] / 2, size[2] / 2];
@@ -153,10 +163,6 @@ function standProfile() {
   step(0, 1.3, 'roofFront');
   step(back + 1.5, -1.2, 'roofTop');
   return { points, kinds, rows, glass, back };
-}
-
-function clubSide(side: Station['side']) {
-  return side === 'e' ? 1 : side === 'c' ? -1 : 0;
 }
 
 const vertexFog = /* glsl */`
@@ -589,18 +595,16 @@ void main() {
     const b = 0.38, t = 0.98, wb = 0.2, wt = 0.23, db = 0.12, dt2 = 0.12;
     const c: V[] = [[-wb, b, -db], [wb, b, -db], [wt, t, -dt2], [-wt, t, -dt2], [-wb, b, db], [wb, b, db], [wt, t, dt2], [-wt, t, dt2]];
     person.quad(c[4]!, c[5]!, c[6]!, c[7]!, [0, 0, 1]);
-    person.quad(c[0]!, c[1]!, c[2]!, c[3]!, [0, 0, -1]);
     person.quad(c[0]!, c[4]!, c[7]!, c[3]!, [-1, 0, 0]);
     person.quad(c[1]!, c[5]!, c[6]!, c[2]!, [1, 0, 0]);
     person.quad(c[3]!, c[2]!, c[6]!, c[7]!, [0, 1, 0]);
     person.part = 3;
     const hy = 1.12, r = 0.115;
-    const top: V = [0, hy + r * 1.1, 0], bottom: V = [0, hy - r, 0];
+    const top: V = [0, hy + r * 1.1, 0];
     const ring: V[] = [[r, hy, 0], [0, hy, r], [-r, hy, 0], [0, hy, -r]];
     for (let i = 0; i < 4; i++) {
       const a = ring[i]!, n = ring[(i + 1) % 4]!;
-      person.quad(a, n, top, top, [a[0] + n[0], 0.6, a[2] + n[2]]);
-      person.quad(n, a, bottom, bottom, [a[0] + n[0], -0.6, a[2] + n[2]]);
+      person.tri(a, n, top, [a[0] + n[0], 0.6, a[2] + n[2]]);
     }
     for (const side of [-1, 1]) {
       const x = side * 0.27;
@@ -611,8 +615,6 @@ void main() {
       // Shoulder vertices keep part 1, the hand end (part 2) lifts when fans cheer.
       const before = person.extra.length;
       person.quad(s0, s1, t1, t0, [0, 0, 1]);
-      const order = person.extra.length - before === 6 ? [s0, s1, t1, s0, t1, t0] : [];
-      void order;
       for (let i = before; i < person.extra.length; i++) person.extra[i] = person.pos[i * 3 + 1]! > 0.7 ? 1 : 2;
     }
   }
@@ -638,7 +640,7 @@ void main() {
     }
   }
   seats.sort((x, y) => y.key - x.key);
-  const crowdTotal = Math.min(seats.length, lite ? 1400 : 3800);
+  const crowdTotal = Math.min(seats.length, lite ? 1200 : 3000);
   const fanAttr = new Float32Array(crowdTotal * 2);
   const crowdUniforms = { uTime: time, uRoar: { value: new THREE.Vector2() }, uLight: { value: new THREE.Color('#ffffff') }, ...fogUniforms };
   const crowdMaterial = shaderMaterial(THREE, {
@@ -697,7 +699,6 @@ void main() {
       crowd.setColorAt(i, c);
       fanAttr[i * 2] = team; fanAttr[i * 2 + 1] = random();
     }
-    void clubSide;
   }
   personGeometry.setAttribute('aFan', new THREE.InstancedBufferAttribute(fanAttr, 2));
   crowd.instanceMatrix.needsUpdate = true;
