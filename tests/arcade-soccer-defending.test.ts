@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createWorld, distance, FIELD, nearestCarrier, STEP, stepWorld, switchPlayer, type Command } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, distance, FIELD, TEAM_SIZE, nearestCarrier, STEP, stepWorld, switchPlayer, type Command } from '../src/os/arcade/games/soccer/logic.ts';
 import { cloneSnapshot, parsePacket } from '../src/os/arcade/games/soccer/net.ts';
 
 function fixture(seed = 71423) {
   const world = createWorld(seed);
-  world.phase = 'live'; world.restart = null;
+  world.phase = 'live'; world.restart = null; world.controlled = [1, TEAM_SIZE + 1];
   for (const p of world.players) { p.x = -16; p.z = 11; p.human = true; p.controlled = false; }
-  const defender = world.players[1]!, carrier = world.players[6]!;
+  const defender = world.players[1]!, carrier = world.players[TEAM_SIZE + 1]!;
   defender.x = -3; defender.z = 0; defender.controlled = true;
   carrier.x = carrier.z = 0; carrier.facing = Math.PI / 2;
   world.ball.x = 0.4; world.ball.z = 0;

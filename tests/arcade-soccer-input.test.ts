@@ -84,12 +84,12 @@ test('P2 and touch default to auto jockey without changing P2 keys', () => {
 
 test('controller ownership follows switching without stealing another co-op human', () => {
   const world = createWorld(1, 120, 2);
-  world.players[2]!.controlled = true;
-  const assignments = new Map([[1, 1], [2, 2]]);
+  world.players[9]!.controlled = true;
+  const assignments = new Map([[1, 6], [2, 9]]);
   const nextId = switchPlayer(world, 0);
   const next = reconcileControllers(world, assignments);
-  assert.equal(next.get(1), nextId); assert.equal(next.get(2), 2);
-  assert.equal(assignments.get(1), 1);
+  assert.equal(next.get(1), nextId); assert.equal(next.get(2), 9);
+  assert.equal(assignments.get(1), 6);
   assert.equal(reconcileControllers(world, new Map()).size, 0);
 });
 test('identity view basis leaves input unchanged', () => {

@@ -5,7 +5,7 @@ import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
 import { chargePower, IDENTITY_BASIS, screenToWorld, gamepadInput, keyboardInput, reconcileControllers, type ControlCommand, type GamepadHistory } from './input.ts';
 import { cloneSnapshot, commandFromPacket, consumeCommand, mergeRemoteCommand, movePacket, parsePacket } from './net.ts';
-import { createWorld, distance, FIELD, teamOf, TEAM_SIZE, findReceiver, matchClock, nearestCarrier, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
+import { createWorld, distance, FIELD, teamOf, findReceiver, matchClock, nearestCarrier, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { goalRoar, kickThump, netSwish, startCrowd, whistle } from './audio.ts';
 import { createScene, type CameraMode, type SoccerView, type TimeMode } from './scene.ts';
@@ -235,7 +235,7 @@ function Play() {
   const [containing, setContaining] = useState(false);
   const [replayActive, setReplayActive] = useState(false);
   const [targetId, setTargetId] = useState<number | null>(null);
-  const [selectedId, setSelectedId] = useState(1);
+  const [selectedId, setSelectedId] = useState(6);
   const [hudWorld, setHudWorld] = useState<World>(() => createWorld());
   const movement = useRef({ x: 0, z: 0 });
   const worldRef = useRef<World | null>(null);
@@ -361,7 +361,7 @@ function Play() {
         if (packet.seq <= (lastRemoteSeq.current.get(from) ?? -1)) return;
         lastRemoteSeq.current.set(from, packet.seq);
         const current = worldRef.current;
-        const player = current?.players[playerForSeat(from, displayOnlyRoom.current, currentMode)];
+        const player = current?.players[controllerPlayers.current.get(from) ?? playerForSeat(from, displayOnlyRoom.current, currentMode)];
         if (!current || !player || !player.human) return;
         const command = commandFromPacket(packet);
         if (displayOnlyRoom.current) {
@@ -539,14 +539,14 @@ function Play() {
         if (!controllerPlayers.current.has(entry.seat)) {
           const preferred = playerForSeat(entry.seat, displayOnlyRoom.current, currentMode);
           const occupied = [...controllerPlayers.current.values()];
-          const id = occupied.includes(preferred) ? current.players.find((p) => p.team === teamForPlayer(preferred, current.players) && !occupied.includes(p.id))?.id : preferred;
+          const id = occupied.includes(preferred) ? current.players.find((p) => p.team === teamOf(preferred) && !occupied.includes(p.id))?.id : preferred;
           if (id !== undefined) controllerPlayers.current.set(entry.seat, id);
         }
         const player = current.players[controllerPlayers.current.get(entry.seat)!];
         if (player) { player.human = true; player.controlled = true; }
       }
     } else if (currentMode === 'coop' && controllerPlayers.current.size === 0) {
-      controllerPlayers.current.set(0, 1); controllerPlayers.current.set(1, 2);
+      controllerPlayers.current.set(0, 6); controllerPlayers.current.set(1, 9);
     }
 
     if (current.phase === 'goal' && !replaySkipped.current && keys.pressed(...commandKeys)) replaySkipped.current = true;
@@ -819,7 +819,7 @@ function PhoneController() {
   }, []);
   const phoneHasBall = () => {
     const snapshot = phoneWorld.current;
-    return !!snapshot && nearestCarrier(snapshot)?.team === teamForPlayer(playerForSeat(online?.seat ?? 0, displayOnly, mode), snapshot.players);
+    return !!snapshot && nearestCarrier(snapshot)?.team === teamOf(playerForSeat(online?.seat ?? 0, displayOnly, mode));
   };
   const send = (action: Command['action'] = null, pressed = false, power = chargePower(chargeStartedAt.current === null ? 0 : (performance.now() - chargeStartedAt.current) / 1000), switchNearest = false) => {
     if (!online) return;
