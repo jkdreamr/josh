@@ -43,6 +43,10 @@ import {
   teamOf,
   teamsLeft,
   mateColor,
+  mateInNeed,
+  mateMarks,
+  mateNumber,
+  edgeOf,
   DOWN_HP,
   type Cause,
   type Ev,
@@ -91,6 +95,8 @@ const quickNote = (mode: Mode) => (mode === 'solo' ? `Computer eggs fill the isl
 const TAGS = 12;
 /** How tall a name tag is on screen: one that would sit on a nearer one's waits till they part. */
 const TAG_H = 16;
+/** Markers pointing the way to teammates off the screen (or up or down a stairway): the rest of a squad. */
+const MATE_MARKS = 3;
 /** The host gives everyone a moment to get its first packet before the countdown. */
 const HOST_LEAD = 1.2;
 const STICK_R = 52;
@@ -400,6 +406,8 @@ type Hud = {
   prompt: string | null;
   jump: boolean;
   watching: string | null;
+  /** The egg watched is on our team. */
+  watchMate: boolean;
   out: string | null;
   mine: boolean;
   /**
@@ -408,19 +416,24 @@ type Hud = {
    */
   teams: number;
   mates: Mate[] | null;
+  /** In duos and squads: the number and color of the egg we see on its team, and the nearest teammate down that nobody is reviving. */
+  me: { n: number; color: string } | null;
+  help: { name: string; n: number; color: string; far: number } | null;
   /** The egg we see knocked down: what it has left before it bleeds out (0..1), how far along a revive is, and whose. */
   down: { left: number; revive: number; by: string | null } | null;
   /** Where the team's eggs and pings are, roughly, so the maps are drawn again as they move. */
   marks: string;
-  /** The prompt is to revive a teammate (the button is held down for it). */
+  /** The prompt is to revive a teammate (the button is held down for it), in that teammate's color. */
   reviving: boolean;
+  reviveColor: string | null;
   /** The basement the egg we see is down in (its building), or -1. */
   deep: number;
 };
-type Mate = { id: number; name: string; color: string; hp: number; shield: number; down: boolean; out: boolean; revive: number };
-const deep = new Set<keyof Hud>(['slots', 'toss', 'items', 'mats', 'leader', 'mates', 'down']);
+/** A teammate on the team panel, with its number and how far off it is (to 5 m). */
+type Mate = { id: number; name: string; color: string; n: number; far: number; hp: number; shield: number; down: boolean; out: boolean; revive: number };
+const deep = new Set<keyof Hud>(['slots', 'toss', 'items', 'mats', 'leader', 'mates', 'down', 'me', 'help']);
 const sameHud = (a: Hud, b: Hud) => (Object.keys(a) as (keyof Hud)[]).every((k) => (deep.has(k) ? JSON.stringify(a[k]) === JSON.stringify(b[k]) : a[k] === b[k]));
-const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, mats: null, mat: 0, piece: 'wall', edit: false, high: 0, items: null, scope: 0, scopes: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, hidden: false, ghillie: false, leader: null, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false, teams: 0, mates: null, down: null, marks: '', reviving: false, deep: -1 });
+const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, mats: null, mat: 0, piece: 'wall', edit: false, high: 0, items: null, scope: 0, scopes: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, hidden: false, ghillie: false, leader: null, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, watchMate: false, out: null, mine: false, teams: 0, mates: null, me: null, help: null, down: null, marks: '', reviving: false, reviveColor: null, deep: -1 });
 
 type Stick = { id: number; ox: number; oy: number; x: number; y: number };
 /** A kill feed line; it fades out at `until` on the game clock (so a paused game keeps it up). */
@@ -531,6 +544,7 @@ function Play({ mode }: { mode: StageMode }) {
   const pops = useRef<Pop[]>(Array.from({ length: 24 }, () => ({ el: null, x: 0, y: 0, z: 0, age: 9, live: false })));
   const popAt = useRef(0);
   const tags = useRef(new Map<number, HTMLDivElement>());
+  const mateEls = useRef<(HTMLDivElement | null)[]>([]);
   // hit marks where our shots land, the names of loot near us, and the wash of a stun grenade's flash
   const marks = useRef<Pop[]>(Array.from({ length: 6 }, () => ({ el: null, x: 0, y: 0, z: 0, age: 9, live: false })));
   const markAt = useRef(0);
@@ -1438,7 +1452,8 @@ function Play({ mode }: { mode: StageMode }) {
       if (shown.size >= TAGS) break;
       const at = v.project(f.x, f.y + 2.3, f.z);
       if (!at) continue;
-      const w = Math.min(120, f.name.length * 6.4 + 16);
+      // (a teammate's has its number in front)
+      const w = Math.min(120, f.name.length * 6.4 + 16) + (m.mode !== 'solo' && f.team === eye.team ? 20 : 0);
       if (put.some((p) => Math.abs(at.x - p.x) < (w + p.w) / 2 && Math.abs(at.y - p.y) < TAG_H)) continue;
       put.push({ x: at.x, y: at.y, w });
       shown.set(f.id, at);
@@ -1452,9 +1467,53 @@ function Play({ mode }: { mode: StageMode }) {
       } else {
         tag.style.opacity = '1';
         tag.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -100%)`;
-        tag.classList.toggle('is-mate', m.mode !== 'solo' && !!eye && f.team === eye.team);
+        // in duos and squads: a teammate's in its color with its number, everyone else's dark with a red edge
+        const teams = m.mode !== 'solo' && !!eye;
+        const mate = teams && f.team === eye.team;
+        tag.classList.toggle('is-mate', mate);
+        tag.classList.toggle('is-foe', teams && !mate);
         tag.classList.toggle('is-down', f.down);
+        const n = mate ? String(mateNumber(m, f)) : '';
+        if (tag.dataset.n !== n) {
+          tag.dataset.n = n;
+          tag.style.setProperty('--mate', mate ? mateColor(m, f) : '');
+        }
       }
+    }
+    // teammates off the screen: an arrow at the edge their way with their number and how far; one up or down a
+    // stairway from us shows over (or under) where it is on our level. Red and pulsing while one is down
+    const ks = mateMarks(m, eye);
+    const { w, h } = sizeRef.current;
+    const from = eye ? v.project(eye.x, eye.y + 1, eye.z) : null;
+    for (let i = 0; i < MATE_MARKS; i++) {
+      const el = mateEls.current[i];
+      if (!el) continue;
+      const k = ks[i];
+      const o = k ? m.fighters[k.id] : undefined;
+      const at = o && eye ? v.project(topX(o.x) + (isDeep(eye.x) ? DEEP : 0), (k.level ? eye.y : o.y) + 1.2, o.z) : null;
+      // (one whose tag is on the screen at all needs none)
+      const seen = !!at && k.level === 0 && at.x > 8 && at.x < w - 8 && at.y > 8 && at.y < h - 8;
+      // (kept in far enough for the distance under it)
+      const pad = 30;
+      const e = at && !seen ? edgeOf(at.x, at.y, from?.x ?? w / 2, from?.y ?? h / 2, pad, Math.max(pad + 14, h * 0.15), w - pad, h - Math.max(pad + 24, h * 0.22)) : null;
+      if (!k || !e) {
+        if (el.style.opacity !== '0') el.style.opacity = '0';
+        continue;
+      }
+      el.style.opacity = '1';
+      el.style.transform = `translate(${e.x.toFixed(1)}px, ${e.y.toFixed(1)}px) translate(-50%, -50%)`;
+      el.style.setProperty('--a', `${(e.off ? e.a : k.level > 0 ? -Math.PI / 2 : Math.PI / 2).toFixed(3)}rad`);
+      const far = `${Math.round(k.dist)}m`;
+      const text = `${k.n}|${k.level === 0 ? far : e.off ? `${far} ${k.level > 0 ? 'up' : 'down'}` : k.level > 0 ? 'above' : 'below'}|${k.color}`;
+      if (el.dataset.k !== text) {
+        el.dataset.k = text;
+        const [num, said] = text.split('|');
+        el.style.setProperty('--mate', k.color);
+        el.children[1].textContent = num;
+        el.children[2].textContent = said;
+      }
+      el.classList.toggle('is-down', k.down);
+      el.classList.toggle('is-help', k.help);
     }
     // hit marks: a quick X that grows a little and fades
     for (const p of marks.current) {
@@ -1627,9 +1686,11 @@ function Play({ mode }: { mode: StageMode }) {
     }
     let promptText: string | null = null;
     let reviving = false;
+    let reviveColor: string | null = null;
     if (me && me === focus && me.phase === 'ground') {
       const p = prompt(m, me);
       reviving = !!p && 'revive' in p;
+      if (p && 'revive' in p) reviveColor = mateColor(m, m.fighters[p.revive]);
       if (p && 'chest' in p) {
         const c = m.map.containers[p.chest];
         promptText = OPEN_TEXT[c.kind] ?? (c.gold ? 'open the golden chest' : 'open chest');
@@ -1647,14 +1708,22 @@ function Play({ mode }: { mode: StageMode }) {
     const total = teamsOn ? teamCount(m) : m.fighters.length;
     const out = me && me.phase === 'out' ? (me.outCause === 'bleed' ? 'bled out' : me.by >= 0 && me.by !== me.id && m.fighters[me.by] ? `cracked by ${m.fighters[me.by].name}` : me.outCause === 'storm' ? 'lost to the storm' : 'out') + (me.place ? ` · ${ordinal(me.place)} of ${total}` : ' · your team is still in') : null;
     // the rest of the team, and what's on the maps for it
+    const near = mateMarks(m, focus);
+    const farOf = (id: number) => {
+      const k = near.find((x) => x.id === id);
+      return k ? Math.round(k.dist / 5) * 5 : -1;
+    };
     const mates: Mate[] | null = teamsOn
       ? teamOf(m, focus.team)
           .filter((o) => o !== focus)
           .map((o) => {
             const r = revivedBy(m, o);
-            return { id: o.id, name: o.id === m.me ? 'you' : o.name, color: mateColor(m, o), hp: Math.max(0, Math.ceil(o.hp)), shield: o.down ? 0 : Math.ceil(o.shield), down: o.down && o.phase !== 'out', out: o.phase === 'out', revive: r ? Math.round(reviveShare(m, r) * 20) / 20 : -1 };
+            return { id: o.id, name: o.id === m.me ? 'you' : o.name, color: mateColor(m, o), n: mateNumber(m, o), far: farOf(o.id), hp: Math.max(0, Math.ceil(o.hp)), shield: o.down ? 0 : Math.ceil(o.shield), down: o.down && o.phase !== 'out', out: o.phase === 'out', revive: r ? Math.round(reviveShare(m, r) * 20) / 20 : -1 };
           })
       : null;
+    // a teammate down with nobody reviving it, while the egg we see could go
+    const needy = focus.phase === 'ground' && !focus.down ? mateInNeed(near) : null;
+    const help = needy ? { name: needy.id === m.me ? 'you' : m.fighters[needy.id].name, n: needy.n, color: needy.color, far: Math.round(needy.dist / 5) * 5 } : null;
     const reviver = focus.down ? revivedBy(m, focus) : undefined;
     const marks = teamsOn ? teamOf(m, focus.team).map((o) => `${Math.round(o.x / 2)},${Math.round(o.z / 2)},${o.down ? 1 : 0},${pingOf(m, o) ? `${o.pingX},${o.pingZ}` : ''}`).join(';') : '';
     const gw = g ? WEAPONS[g.w] : null;
@@ -1701,13 +1770,17 @@ function Play({ mode }: { mode: StageMode }) {
       prompt: promptText,
       jump: !!me && me === focus && me.phase === 'bus' && m.time >= m.map.bus.on,
       watching: watching ? watching.name : null,
+      watchMate: !!watching && teamsOn && !!me && watching.team === me.team,
       out,
       mine: focus === me,
       teams: teamsOn ? teamsLeft(m) : 0,
       mates,
+      me: teamsOn ? { n: mateNumber(m, focus), color: mateColor(m, focus) } : null,
+      help,
       down: focus.down && focus.phase === 'ground' ? { left: Math.round(Math.max(0, focus.hp / DOWN_HP) * 50) / 50, revive: reviver ? Math.round(reviveShare(m, reviver) * 30) / 30 : -1, by: reviver ? (reviver.id === m.me ? 'you' : reviver.name) : null } : null,
       marks,
       reviving,
+      reviveColor,
       deep: focus.phase === 'ground' ? basementAt(m.map, focus.x, focus.z) : -1,
     };
     setHud((prev) => (sameHud(prev, next) ? prev : next));
@@ -1936,17 +2009,37 @@ function Play({ mode }: { mode: StageMode }) {
       })}
       {team.map((o) =>
         o === focusFighter || o.phase === 'out' || o.phase === 'bus' ? null : (
-          <circle key={`m${o.id}`} cx={topX(o.x).toFixed(1)} cy={o.z.toFixed(1)} r={(big ? 4 : 7) * k} fill={o.down ? '#ff4d4d' : mateColor(m, o)} stroke="#fff" strokeWidth={(big ? 1.4 : 2.4) * k} className={o.down ? 'is-down' : undefined} />
+          // each teammate in its color (with its number on the big map, drawn bigger on a small touch screen), a red
+          // ring blinking round it while it's down
+          <g key={`m${o.id}`} transform={`translate(${topX(o.x).toFixed(1)} ${o.z.toFixed(1)}) scale(${big && touchMode ? 1.6 : k})`}>
+            {o.down && <circle r={big ? 8.5 : 12} fill="none" stroke="#ff4d4d" strokeWidth={big ? 2 : 3.4} className="is-down" />}
+            <circle r={big ? 6 : 8} fill={mateColor(m, o)} stroke="#fff" strokeWidth={big ? 1.4 : 2.4} />
+            {big && (
+              <text y="2.9" textAnchor="middle" fontSize="8" fontWeight="800" fill="#10141c">
+                {mateNumber(m, o)}
+              </text>
+            )}
+          </g>
         ),
       )}
       {focusFighter && focusFighter.phase !== 'out' && (
         <g transform={`translate(${topX(focusFighter.x).toFixed(2)} ${focusFighter.z.toFixed(2)}) rotate(${((-focusFighter.aim * 180) / Math.PI + 180).toFixed(0)}) scale(${k})`}>
-          <path d={big ? 'M0 -7L5 5L0 2.5L-5 5Z' : 'M0 -13L9.5 9.5L0 4.6L-9.5 9.5Z'} fill={focusFighter.color} stroke="#fff" strokeWidth={big ? 1.2 : 2.2} strokeLinejoin="round" />
+          <path d={big ? 'M0 -7L5 5L0 2.5L-5 5Z' : 'M0 -13L9.5 9.5L0 4.6L-9.5 9.5Z'} fill={team.length ? mateColor(m, focusFighter) : focusFighter.color} stroke="#fff" strokeWidth={big ? 1.2 : 2.2} strokeLinejoin="round" />
         </g>
       )}
     </>
   );
   const box = `${-HALF - 8} ${-HALF - 8} ${2 * HALF + 16} ${2 * HALF + 16}`;
+  // a teammate knocked down with nobody reviving it: who, and how far (its marker points the way). Up top in the
+  // middle, or on a touch screen under the team panel, clear of the buttons
+  const helpCall = hud.help && (
+    <div className="g-scramble-help" role="status" style={{ ['--mate' as string]: hud.help.color }}>
+      <em className="g-scramble-num">{hud.help.n}</em>
+      <span>
+        <b>{hud.help.name}</b> {hud.help.name === 'you' ? 'need' : 'needs'} help · {hud.help.far}m
+      </span>
+    </div>
+  );
   const slotLabel = (i: number) => (touchMode ? '' : String(i + 1));
   const heals = hud.items ? hud.items.bandage + hud.items.medkit + hud.items.tart : 0;
   const shields = hud.items ? hud.items.mini + hud.items.shield + hud.items.smoothie : 0;
@@ -1973,10 +2066,26 @@ function Play({ mode }: { mode: StageMode }) {
             className="g-scramble-tag"
             style={{ ['--tag' as string]: f.color, opacity: 0 }}
           >
-            {f.name}
+            <span>{f.name}</span>
           </div>
         ),
       )}
+      <div className="g-scramble-mates" aria-hidden="true">
+        {Array.from({ length: MATE_MARKS }, (_, i) => (
+          <div
+            key={i}
+            ref={(el) => {
+              mateEls.current[i] = el;
+            }}
+            className="g-scramble-matemark"
+            style={{ opacity: 0 }}
+          >
+            <i />
+            <b />
+            <small />
+          </div>
+        ))}
+      </div>
       <div ref={fadeEl} className="g-scramble-fade" aria-hidden="true" />
       <div className="g-scramble-pops" aria-hidden="true">
         <div ref={dazeEl} className="g-scramble-daze" style={{ opacity: 0 }} />
@@ -2023,7 +2132,13 @@ function Play({ mode }: { mode: StageMode }) {
               <b>{hud.alive}</b> left
             </span>
             {hud.teams > 0 && (
-              <span className="g-scramble-pill is-teams" aria-label={`${hud.teams} teams left`}>
+              <span className="g-scramble-pill is-teams" aria-label={`${hud.teams} teams left${hud.me ? `, ${hud.mine ? 'you are' : 'watching'} number ${hud.me.n} on the team` : ''}`}>
+                {hud.me && (
+                  // the number and color of the egg we see, as its teammates see them on their markers
+                  <em className="g-scramble-num" style={{ ['--mate' as string]: hud.me.color }}>
+                    {hud.me.n}
+                  </em>
+                )}
                 <b>{hud.teams}</b> {hud.teams === 1 ? 'team' : 'teams'}
               </span>
             )}
@@ -2123,8 +2238,10 @@ function Play({ mode }: { mode: StageMode }) {
             {hud.mates && hud.mates.length > 0 && hud.phase !== 'none' && (
               <ul className="g-scramble-team" aria-label="Your team">
                 {hud.mates.map((t) => (
-                  <li key={t.id} className={t.out ? 'is-out' : t.down ? 'is-down' : undefined} style={{ ['--mate' as string]: t.color }} aria-label={`${t.name}: ${t.out ? 'out' : t.down ? `knocked down${t.revive >= 0 ? ', being revived' : ''}` : `${t.hp} health, ${t.shield} shield`}`}>
+                  <li key={t.id} className={t.out ? 'is-out' : t.down ? 'is-down' : undefined} style={{ ['--mate' as string]: t.color }} aria-label={`${t.n}, ${t.name}: ${t.out ? 'out' : t.down ? `knocked down${t.revive >= 0 ? ', being revived' : ''}` : `${t.hp} health, ${t.shield} shield`}${t.far >= 0 ? `, ${t.far} meters off` : ''}`}>
+                    <em className="g-scramble-num">{t.n}</em>
                     <span>{t.name}</span>
+                    {t.far >= 0 && <small className="g-scramble-far">{t.far}m</small>}
                     {t.out ? (
                       <small>out</small>
                     ) : (
@@ -2138,8 +2255,10 @@ function Play({ mode }: { mode: StageMode }) {
                 ))}
               </ul>
             )}
+            {touchMode && helpCall}
           </div>
           {hud.storm && <div className={`g-scramble-storm${hud.shrinking ? ' is-moving' : ''}`}>{hud.storm}</div>}
+          {!touchMode && helpCall}
           {hud.arrive && (
             <div key={hud.arrive} className="g-scramble-arrive" role="status">
               <small>entering</small>
@@ -2195,7 +2314,14 @@ function Play({ mode }: { mode: StageMode }) {
                   ) : (
                     <kbd>←</kbd>
                   )}
-                  watching {hud.watching}
+                  watching
+                  {hud.watchMate && hud.me && (
+                    <em className="g-scramble-num" style={{ ['--mate' as string]: hud.me.color }}>
+                      {hud.me.n}
+                    </em>
+                  )}
+                  {hud.watching}
+                  {hud.teams > 0 && <small>{hud.watchMate ? 'your team' : 'other team'}</small>}
                   {touchMode ? (
                     <button type="button" className="g-scramble-watch" aria-label="Watch the next egg" onPointerDown={(e) => { e.preventDefault(); taps.current.watch = 1; }}>
                       ›
@@ -2245,7 +2371,7 @@ function Play({ mode }: { mode: StageMode }) {
             </div>
           )}
           {hud.prompt && hud.phase === 'ground' && (
-            <button type="button" className={`g-scramble-prompt${hud.reviving ? ' is-revive' : ''}`} {...(hud.reviving ? holdDown : tap((t) => (t.interact = true)))}>
+            <button type="button" className={`g-scramble-prompt${hud.reviving ? ' is-revive' : ''}`} style={hud.reviveColor ? { ['--mate' as string]: hud.reviveColor } : undefined} {...(hud.reviving ? holdDown : tap((t) => (t.interact = true)))}>
               {!touchMode && <kbd>E</kbd>}
               {hud.prompt}
             </button>

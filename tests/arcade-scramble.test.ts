@@ -6950,3 +6950,84 @@ test('loot that ends up down a stairway lands off the end you walk onto it from,
   assert.ok(isDeep(l.x) && along(l, DEEP) > run0, 'below: off its foot');
   assert.equal(basementAt(m.map, l.x, l.z), s.u);
 });
+
+import { FOE_COLOR, MATE_COLORS, edgeOf, mateColor, mateInNeed, mateMarks, mateNumber } from '../src/os/arcade/games/scramble/logic.ts';
+
+test('team markers: each teammate its own number and color (never the others’ red), how far, a stairway up or down, and who needs help', () => {
+  const m = teamQuiet('squads', [0, 0, 0, 0, 1]);
+  const [a, b, c, d, foe] = m.fighters;
+  land(a, 0, 0);
+  land(b, 3, 4);
+  land(c, 30, 0);
+  land(foe, 10, 0);
+  d.phase = 'bus';
+  assert.deepEqual([a, b, c, d].map((f) => mateNumber(m, f)), [1, 2, 3, 4]);
+  const colors = [a, b, c, d].map((f) => mateColor(m, f));
+  assert.equal(new Set(colors).size, 4, 'a color each');
+  assert.ok(!MATE_COLORS.includes(FOE_COLOR));
+  // the rest of the team off the bus, not the egg we see nor anyone else's
+  let ks = mateMarks(m, a);
+  assert.deepEqual(ks.map((k) => k.id), [b.id, c.id]);
+  assert.equal(ks[0].dist, 5);
+  assert.equal(ks[0].color, colors[1]);
+  assert.equal(ks[0].n, 2);
+  assert.ok(ks.every((k) => k.level === 0 && !k.down && !k.help));
+  assert.deepEqual(mateMarks(m, foe), [], 'nobody else on its team');
+  const solo = soloMatch(3, 'normal');
+  assert.deepEqual(mateMarks(solo, solo.fighters[0]), [], 'nobody in solo');
+  // one down a stairway: below us, as far as the ground above it
+  land(d, DEEP + 4, 3);
+  ks = mateMarks(m, a);
+  const kd = ks.find((k) => k.id === d.id)!;
+  assert.equal(kd.level, -1);
+  assert.equal(kd.dist, 5);
+  assert.equal(mateMarks(m, d).find((k) => k.id === a.id)!.level, 1, 'and from down there we are above');
+  land(d, 0, 8);
+  // knocked down: it needs help until a teammate revives it
+  hurt(m, c, 300, foe.id, 'smg', false);
+  assert.ok(c.down);
+  ks = mateMarks(m, a);
+  const kc = ks.find((k) => k.id === c.id)!;
+  assert.ok(kc.down && kc.help);
+  assert.equal(mateInNeed(ks)?.id, c.id);
+  land(b, 31.4, 0);
+  b.input.hold = true;
+  run(m, 0.3);
+  assert.equal(b.reviving, c.id);
+  ks = mateMarks(m, a);
+  assert.ok(ks.find((k) => k.id === c.id)!.down);
+  assert.equal(mateInNeed(ks), null, 'being revived: no call for help');
+});
+
+test('a guest sees a knocked teammate need help from the news of the knock, and not once a revive of it is under way', () => {
+  const g = teamQuiet('duos', [0, 0, 1, 1], 'guest', ['player', 'remote', 'remote', 'remote']);
+  for (const f of g.fighters) land(f, f.id * 6, 0);
+  const [me, mate] = g.fighters;
+  assert.equal(mateInNeed(mateMarks(g, me)), null);
+  assert.ok(applyNet(g, { y: 'kn', f: mate.id, by: 2, w: 'smg' }));
+  assert.equal(mateInNeed(mateMarks(g, me))?.id, mate.id);
+  assert.equal(mateInNeed(mateMarks(g, me))?.dist, 6);
+  // we go and revive it ourselves
+  land(me, mate.x - 1.2, 0);
+  me.input.hold = true;
+  run(g, 0.2);
+  assert.equal(me.reviving, mate.id);
+  assert.equal(mateInNeed(mateMarks(g, me)), null);
+});
+
+test('a marker for a teammate off the screen sits where the line to it leaves the box, pointing its way', () => {
+  assert.deepEqual(edgeOf(50, 60, 100, 100, 10, 10, 190, 190), { x: 50, y: 60, a: 0, off: false }, 'inside: right there');
+  const r = edgeOf(400, 100, 100, 100, 10, 10, 190, 190);
+  assert.deepEqual([r.x, r.y, r.a, r.off], [190, 100, 0, true]);
+  const u = edgeOf(100, -300, 100, 100, 10, 10, 190, 190);
+  assert.deepEqual([u.x, u.y, u.off], [100, 10, true]);
+  assert.ok(Math.abs(u.a + Math.PI / 2) < 1e-9, 'pointing up');
+  const d = edgeOf(400, 400, 100, 100, 10, 10, 190, 190);
+  assert.deepEqual([d.x, d.y], [190, 190]);
+  assert.ok(Math.abs(d.a - Math.PI / 4) < 1e-9);
+  const l = edgeOf(-200, 160, 100, 100, 10, 10, 190, 190);
+  assert.ok(Math.abs(l.x - 10) < 1e-9 && Math.abs(l.y - 118) < 1e-9, 'along the line to it');
+  // from a point outside the box, from the nearest point inside it
+  const o = edgeOf(500, 100, 300, 100, 10, 10, 190, 190);
+  assert.deepEqual([o.x, o.y], [190, 100]);
+});
