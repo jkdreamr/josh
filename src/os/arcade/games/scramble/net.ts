@@ -87,7 +87,7 @@ export const isBots = (v: unknown): v is Bots => v === 'fill' || v === 'none';
 
 /**
  * An egg as its owner reports it, down to the helmet and vest it wears and its scopes: the one it looks through
- * (`scope`) and the ones it carries (`scopes`, a bit each for 2x, 4x and 8x).
+ * (`scope`) and the ones it carries (`scopes`, a bit each for 2x, 4x, 8x and 15x).
  */
 export type State = { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: Held | null; r: number; flags: number; helmet: number; vest: number; scope: number; scopes: number };
 
@@ -169,7 +169,7 @@ export const MAX_KICK = r2(1.6 + Math.max(...Object.values(WEAPONS).map((w) => w
 const MAX_Y = MAX_LEVEL * LEVEL_H + 1;
 const height = (v: unknown) => v === undefined || (num(v) && v >= 0 && v <= MAX_Y);
 const tossH = (v: unknown) => (num(v) ? v : 0);
-/** Every scope bit set: 2x, 4x and 8x. */
+/** Every scope bit set: 2x, 4x, 8x and 15x. */
 const SCOPE_BITS = (1 << MAX_SCOPE) - 1;
 
 // -------------------------------------------------------------------------------------------------------------------
@@ -252,20 +252,20 @@ const packState = (s: State) => [
 function codeOf(s: State) {
   const fields = [s.r, s.helmet, s.vest, s.scope, s.scopes];
   if (!fields.every((v) => Number.isInteger(v) && v >= 0) || s.r > MAX_RARITY || s.helmet > MAX_ARMOR || s.vest > MAX_ARMOR || s.scope > MAX_SCOPE || s.scopes > SCOPE_BITS || !hasScope(s, s.scope)) return -1;
-  return PHASES.indexOf(s.phase) + 4 * HELD_CODES.indexOf(s.w) + 256 * s.r + 2048 * s.helmet + 16384 * s.vest + 65536 * (s.scope + 4 * s.scopes);
+  return PHASES.indexOf(s.phase) + 4 * HELD_CODES.indexOf(s.w) + 256 * s.r + 2048 * s.helmet + 16384 * s.vest + 65536 * (s.scope + 8 * s.scopes);
 }
 
 function unpackState(a: unknown): State | null {
   if (!Array.isArray(a) || a.length < 10 || !a.slice(0, 10).every(int)) return null;
   const [x, z, y, aim, vx, vz, code, hp, shield, flags] = a as number[];
-  if (code < 0 || code >= 65536 * 4 * (SCOPE_BITS + 1) || flags < 0 || flags > F_ALL) return null;
+  if (code < 0 || code >= 65536 * 8 * (SCOPE_BITS + 1) || flags < 0 || flags > F_ALL) return null;
   const phase = PHASES[code % 4];
   const w = Math.floor(code / 4) % 64;
   const r = Math.floor(code / 256) % 8;
   const helmet = Math.floor(code / 2048) % 8;
   const vest = Math.floor(code / 16384) % 4;
-  const scope = Math.floor(code / 65536) % 4;
-  const scopes = Math.floor(code / 262144);
+  const scope = Math.floor(code / 65536) % 8;
+  const scopes = Math.floor(code / 524288);
   if (w >= HELD_CODES.length || r > MAX_RARITY || helmet > MAX_ARMOR || vest > MAX_ARMOR || !hasScope({ scopes }, scope)) return null;
   if (Math.abs(topX(x / 20)) > 400 || Math.abs(z) > 8000 || y < -10 || y > 1000 || Math.abs(aim) > 10_000 || hp < 0 || hp > 1000 || shield < 0 || shield > 1000) return null;
   const clampV = (v: number) => Math.max(-40, Math.min(40, v / 10));

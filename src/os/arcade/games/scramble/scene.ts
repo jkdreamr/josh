@@ -3940,11 +3940,14 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
             break;
         }
         break;
-      case 'scope':
-        barrel(g, M.dark, 0, 0, 0, 0.12, 0.5);
-        barrel(g, rarity[Math.min(4, def.lv + 1)], 0, 0, 0.26, 0.14, 0.04);
-        barrel(g, rarity[Math.min(4, def.lv + 1)], 0, 0, -0.26, 0.14, 0.04);
+      case 'scope': {
+        // the 15x a longer tube, its glass ends wider
+        const k = def.lv > 3 ? 1.4 : 1;
+        barrel(g, M.dark, 0, 0, 0, 0.12, 0.5 * k);
+        barrel(g, rarity[Math.min(4, def.lv + 1)], 0, 0, 0.26 * k, 0.14 * k, 0.04);
+        barrel(g, rarity[Math.min(4, def.lv + 1)], 0, 0, -0.26 * k, 0.14 * k, 0.04);
         break;
+      }
       case 'pack':
         add(g, G.box, rarity[Math.min(4, def.lv + 1)], 0, 0, 0, 0.5, 0.5, 0.3);
         add(g, G.cap, rarity[Math.min(4, def.lv + 1)], 0, 0.25, 0, 0.25, 0.14, 0.15);

@@ -142,6 +142,7 @@ import {
   TOILET_HP,
   WALL_HP,
   aliveCount,
+  upright,
   applyEdit,
   applyState,
   armored,
@@ -1884,6 +1885,8 @@ test('a computer egg steadies its aim before a scoped shot, and again before the
 test('computer eggs miss more the farther off the target is, the easy ones far more than the hard ones', () => {
   const rate = (level: Level, dist: number) => {
     const t = range(level, dist, [{ w: 'scout', r: 0, mag: 10 }, null]);
+    // an 8x to see that far with (no gun does on its own)
+    t.a.scopes = 0b111;
     t.go(30, true);
     assert.ok(t.shots.length > 10, `${level} at ${dist}: ${t.shots.length} shots`);
     return t.hits() / t.shots.length;
@@ -2027,6 +2030,7 @@ test('a scoped shot at a dodging egg misses more the farther off it is: on easy 
         const m = arena(level, 2, 11 + k);
         const [a, b] = m.fighters;
         armBot(m, a, w, 0, 0, 0);
+        a.scopes = 0b111;
         land(b, 0, dist);
         const dodge = dodger(b, 0, dist, k + 1);
         for (let t = 0; t < 10; t += DT) {
@@ -2562,7 +2566,7 @@ test('scopes let you see farther, backpacks carry more, and whatever doesn’t f
   assert.ok(m.loot.has(2), 'a scope we already carry stays where it is');
   me.guns[0] = { w: 'sniper', r: 0, mag: 4 };
   me.slot = 0;
-  assert.equal(viewOf(me), WEAPONS.sniper.zoom, 'the better of the scope and the gun');
+  assert.equal(viewOf(me), 11, 'a sniper in hand sees no farther than the scope');
   m.loot.delete(2);
   me.ammo.light = ammoCap('light', 0) - 10;
   put(3, { kind: 'ammo', a: 'light', n: 30 });
@@ -3502,7 +3506,7 @@ function bare(m: Match) {
 
 test('a marksman rifle sits between a rifle and a scout; a heavy SMG and a minigun hit hard but never in one pull', () => {
   const [mk, rf, sc] = [WEAPONS.marksman, WEAPONS.rifle, WEAPONS.scout];
-  for (const k of ['dmg', 'range', 'zoom', 'speed'] as const) assert.ok(mk[k] > rf[k] && mk[k] < sc[k], k);
+  for (const k of ['dmg', 'range', 'speed'] as const) assert.ok(mk[k] > rf[k] && mk[k] < sc[k], k);
   assert.ok(mk.rate < rf.rate && mk.rate > sc.rate, 'one careful shot at a time');
   assert.ok(WEAPONS.hsmg.dmg > WEAPONS.smg.dmg && WEAPONS.hsmg.ammo === 'heavy' && WEAPONS.hsmg.kick, 'a heavy SMG climbs');
   assert.ok(WEAPONS.minigun.mag >= 100 && WEAPONS.minigun.move < WEAPONS.lmg.move && WEAPONS.minigun.spin, 'a minigun spins and slows you');
@@ -5793,6 +5797,24 @@ test('teammates can’t hurt each other: shots go past them, swings and blasts l
   assert.ok(hurt(s, s.fighters[1], 10, 0, 'smg', false) > 0);
 });
 
+test('the match over, a knocked egg of the losing team still bleeding is second and out, as every guest has it', () => {
+  const m = teamQuiet('duos', [0, 0, 1, 1]);
+  const [a, mate, foe, foe2] = m.fighters;
+  land(a, 0, 0);
+  land(mate, 20, 0);
+  land(foe, 0, 10);
+  land(foe2, -20, 0);
+  hurt(m, foe, 300, a.id, 'shotgun', false);
+  assert.ok(foe.down && foe.phase === 'ground');
+  hurt(m, foe2, 300, a.id, 'shotgun', false);
+  assert.equal(foe2.phase, 'out');
+  run(m, 0.05);
+  assert.ok(m.ended);
+  assert.deepEqual([a, mate, foe, foe2].map((f) => f.place), [1, 1, 2, 2]);
+  assert.equal(foe.phase, 'out', 'nobody bleeds on past the end');
+  assert.ok(upright(a) && upright(mate));
+});
+
 test('knocked down with a teammate standing: a crawl, no shooting, bleeding out to the knocker; a hit finishes it sooner', () => {
   const m = teamQuiet('duos', [0, 0, 1, 1]);
   const [a, mate, foe, foe2] = m.fighters;
@@ -6340,6 +6362,7 @@ test('cracked while the rest of the team is still in, the card says so rather th
 // Scopes.
 
 import { bestScope, hasScope, scopesOf } from '../src/os/arcade/games/scramble/logic.ts';
+import { MAX_SCOPE, SCOPES, SCOPE_VIEW } from '../src/os/arcade/games/scramble/items.ts';
 
 test('every scope picked up stays with the egg, the best yet goes up to the eye, and any one can be looked through', () => {
   const m = quiet();
@@ -6418,8 +6441,12 @@ test('the scopes an egg carries travel in its state, so a spectator sees what it
   assert.deepEqual(back, { k: 's', round: 2, state: s, watch: -1 });
   // looking through a scope it doesn't carry, or more scopes than there are
   assert.equal(parsePacket(guestState(2, { ...s, scope: 2 })), null);
-  assert.equal(parsePacket(guestState(2, { ...s, scopes: 8 })), null);
+  assert.equal(parsePacket(guestState(2, { ...s, scopes: 16 })), null);
   assert.equal(parsePacket(guestState(2, { ...s, scope: 4, scopes: 7 })), null);
+  assert.equal(parsePacket(guestState(2, { ...s, scope: 5, scopes: 15 })), null);
+  // the 15x travels too
+  const top = { ...s, scope: 4, scopes: 15 };
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(guestState(2, top)))), { k: 's', round: 2, state: top, watch: -1 });
   // a guest's match: the host's report of that egg zooms the view of anyone watching it
   const players = [
     { seat: 0, name: 'host' },
@@ -6462,6 +6489,199 @@ test('a computer egg looks through a small scope in a close fight and its bigges
   b.phase = 'out';
   run(m, 0.6);
   assert.equal(a.scope, 3, 'and nobody about, the biggest');
+});
+
+test('only the scope sets the view: no gun, melee weapon or throwable in hand changes it, nor switching, firing, reloading or throwing', () => {
+  const m = quiet(7, 2);
+  const me = m.fighters[0];
+  openSpot(m);
+  for (let lv = 0; lv <= MAX_SCOPE; lv++) {
+    land(me, 0, 0);
+    me.scopes = 0b1111;
+    me.scope = lv;
+    me.ammo = { light: 200, heavy: 200, shells: 60, rockets: 10 };
+    for (const w of WEAPON_IDS) {
+      me.guns = [{ w, r: 2, mag: WEAPONS[w].mag }, { w: w === 'sniper' ? 'smg' : 'sniper', r: 0, mag: 1 }];
+      me.input.slot = 0;
+      run(m, 0.05);
+      assert.equal(viewOf(me), SCOPE_VIEW[lv], `${w} at ${SCOPES[lv]}`);
+      // a shot or two, a reload, the other gun and back
+      me.input.aim = 0.3;
+      me.input.fire = !WEAPONS[w].call;
+      run(m, 0.3);
+      me.input.fire = false;
+      me.input.reload = true;
+      run(m, 0.1);
+      me.input.slot = 1;
+      run(m, 0.1);
+      me.input.slot = 0;
+      run(m, 0.05);
+      assert.equal(me.scope, lv, `${w}: the scope stays`);
+      assert.equal(viewOf(me), SCOPE_VIEW[lv], `${w}: and so does the view`);
+    }
+    me.guns = [null, null];
+    for (const k of MELEE_IDS) {
+      me.melee = k;
+      me.input.slot = SLOT_MELEE;
+      me.input.fire = true;
+      run(m, 0.2);
+      me.input.fire = false;
+      assert.equal(viewOf(me), SCOPE_VIEW[lv], `${k} at ${SCOPES[lv]}`);
+    }
+    for (const k of THROW_IDS) {
+      me.throws[k] = 2;
+      me.pick = k;
+      me.input.slot = SLOT_THROW;
+      run(m, 0.05);
+      assert.equal(viewOf(me), SCOPE_VIEW[lv], `${k} in hand at ${SCOPES[lv]}`);
+      me.input.reach = 8;
+      me.input.fire = true;
+      run(m, 0.1);
+      me.input.fire = false;
+      run(m, 0.1);
+      assert.equal(viewOf(me), SCOPE_VIEW[lv], `${k} thrown at ${SCOPES[lv]}`);
+      me.throws[k] = 0;
+    }
+    assert.equal(me.scope, lv);
+    m.zones = [];
+    m.loot.clear();
+    me.hp = 100;
+  }
+  for (const w of WEAPON_IDS) assert.ok(!('zoom' in WEAPONS[w]), `${w} has no zoom of its own`);
+});
+
+test('picking up a gun leaves the scope alone, and a scope better than any carried goes up to the eye once', () => {
+  const m = quiet();
+  const me = m.fighters[0];
+  openSpot(m);
+  land(me, 0, 0);
+  let id = 1;
+  const put = (def: LootDef) => m.loot.set(id, { id: id++, def, x: me.x, z: me.z, by: -1, at: 0 });
+  put({ kind: 'scope', lv: 2 });
+  run(m, 0.05);
+  assert.equal(me.scope, 2, 'the first scope goes up to the eye');
+  // our choice of 1x holds through a gun picked up (a sniper too), and a smaller scope than the best
+  me.input.scope = 10;
+  run(m, 0.02);
+  assert.equal(me.scope, 0);
+  put({ kind: 'gun', w: 'sniper', r: 3, mag: 4 });
+  run(m, 0.05);
+  assert.equal(me.guns[0]?.w, 'sniper');
+  me.input.slot = 0;
+  run(m, 0.05);
+  assert.equal(me.scope, 0, 'a sniper picked up and held');
+  assert.equal(viewOf(me), 0);
+  put({ kind: 'scope', lv: 1 });
+  run(m, 0.05);
+  assert.ok(hasScope(me, 1));
+  assert.equal(me.scope, 0, 'a scope no better than the best carried');
+  // the 15x beats them all: up to the eye, and back down by choice it stays down
+  put({ kind: 'scope', lv: 4 });
+  run(m, 0.05);
+  assert.equal(me.scope, 4);
+  assert.equal(viewOf(me), SCOPE_VIEW[4]);
+  assert.equal(bestScope(me), 4);
+  assert.deepEqual(scopesOf(me), [0, 1, 2, 4]);
+  me.input.scope = 12;
+  run(m, 0.02);
+  assert.equal(me.scope, 2);
+  put({ kind: 'scope', lv: 3 });
+  put({ kind: 'gun', w: 'rifle', r: 1, mag: 30 });
+  run(m, 0.1);
+  assert.ok(hasScope(me, 3) && me.guns[1]?.w === 'rifle');
+  assert.equal(me.scope, 2, 'an 8x under the 15x joins the rest without taking the eye');
+  // the scope key goes all the way round, 15x included
+  const seen: number[] = [];
+  for (let i = 0; i < 5; i++) {
+    me.input.scope = 1;
+    run(m, 0.02);
+    seen.push(me.scope);
+  }
+  assert.deepEqual(seen, [3, 4, 0, 1, 2]);
+  me.input.scope = -1;
+  run(m, 0.02);
+  assert.equal(me.scope, 1);
+  me.input.scope = 15;
+  run(m, 0.02);
+  assert.equal(me.scope, 1, 'no such scope');
+  // a cracked egg spills the 15x with the rest
+  me.hp = 1;
+  me.shield = 0;
+  hurt(m, me, 50, m.fighters[1].id, 'pistol', false);
+  const spilled = [...m.loot.values()].flatMap((l) => (l.def.kind === 'scope' ? [l.def.lv] : []));
+  assert.deepEqual(spilled.sort(), [1, 2, 3, 4]);
+});
+
+test('underground any scope sees no farther than 2x, and the one chosen is still at the eye back up top', () => {
+  const m = quiet();
+  const me = m.fighters[0];
+  openSpot(m);
+  land(me, 0, 0);
+  me.scopes = 0b1111;
+  me.scope = 4;
+  me.guns[0] = { w: 'sniper', r: 4, mag: 4 };
+  me.slot = 0;
+  assert.equal(viewOf(me), SCOPE_VIEW[4]);
+  me.x = DEEP;
+  assert.ok(isDeep(me.x));
+  for (let lv = 0; lv <= MAX_SCOPE; lv++) {
+    me.scope = lv;
+    assert.equal(viewOf(me), Math.min(DEEP_VIEW, SCOPE_VIEW[lv]), `${SCOPES[lv]} underground`);
+  }
+  assert.equal(DEEP_VIEW, SCOPE_VIEW[1]);
+  me.scope = 4;
+  run(m, 0.1);
+  assert.equal(me.scope, 4, 'still the 15x');
+  me.x = 0;
+  assert.equal(viewOf(me), SCOPE_VIEW[4]);
+});
+
+test('the 15x scope is rare: only supply drops and deposit boxes hold one', () => {
+  const tiers = ['floor', 'crate', 'chest', 'gold', 'supply', 'fridge', 'hay', 'drawer', 'books', 'locker', 'police', 'deposit', 'safe'] as const;
+  const found: Record<string, number> = {};
+  for (const tier of tiers) {
+    const rng = rng32(11);
+    let n = 0;
+    for (let i = 0; i < 4000; i++) for (const d of rollLoot(rng, tier)) if (d.kind === 'scope' && d.lv === 4) n++;
+    found[tier] = n;
+  }
+  for (const tier of tiers) if (tier !== 'supply' && tier !== 'deposit') assert.equal(found[tier], 0, tier);
+  assert.ok(found.supply > 100 && found.supply < 800, `supply ${found.supply}`);
+  assert.ok(found.deposit > 5 && found.deposit < 100, `deposit ${found.deposit}`);
+  assert.equal(lootName({ kind: 'scope', lv: 4 }), '15x scope');
+  assert.deepEqual(parseLoot({ kind: 'scope', lv: 4 }), { kind: 'scope', lv: 4 });
+});
+
+test('a computer egg with a sniper sees only as far as its scope, and goes out of its way for one', () => {
+  const m = quiet(7, 3);
+  const [a, b, c] = m.fighters;
+  openSpot(m);
+  land(a, 0, 0);
+  land(b, 0, 60);
+  land(c, 200, 200);
+  autopilot(m, a);
+  a.guns[0] = { w: 'sniper', r: 3, mag: 4 };
+  a.ammo.heavy = 40;
+  a.slot = 0;
+  b.hp = 1e6;
+  run(m, 0.6);
+  assert.notEqual(a.ai!.target, b.id, 'sixty meters off is too far without a scope');
+  // a scope farther off than a bandage it would take, and the scope it goes for
+  b.phase = 'out';
+  a.items.bandage = 0;
+  m.loot.set(1, { id: 1, def: { kind: 'use', w: 'bandage', n: 2 }, x: 12, z: 0, by: -1, at: 0 });
+  m.loot.set(2, { id: 2, def: { kind: 'scope', lv: 3 }, x: -26, z: 0, by: -1, at: 0 });
+  a.ai!.goal = 'roam';
+  a.ai!.until = 0;
+  run(m, 0.6);
+  assert.equal(a.ai!.item, 2);
+  run(m, 8);
+  assert.ok(hasScope(a, 3) && a.scope === 3, 'picked up and looked through');
+  // with the 8x it sees that far
+  b.phase = 'ground';
+  land(b, a.x, a.z + 52);
+  run(m, 0.6);
+  assert.equal(a.ai!.target, b.id);
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -7257,7 +7477,7 @@ test('computer eggs call for help when knocked down, now and then cheer a kill, 
   assert.ok(evs.some((e) => e.t === 'emote' && e.f === foe.id && e.k === 'gg'), 'GG');
 });
 
-test('a knocked egg of another team still bleeding when the host calls the match stays down on a guest, not out', () => {
+test('a knocked egg of another team still bleeding when the host calls the match is out on a guest too, as on the host', () => {
   const g = teamQuiet('duos', [0, 0, 1, 1], 'guest', ['player', 'remote', 'remote', 'remote']);
   for (const f of g.fighters) land(f, f.id * 3, 0);
   assert.equal(applyNet(g, { y: 'kn', f: 2, by: 0, w: 'smg' }), true);
@@ -7269,6 +7489,6 @@ test('a knocked egg of another team still bleeding when the host calls the match
     [3, 2, 0],
   ]);
   assert.equal(g.fighters[3].phase, 'out');
-  assert.ok(g.fighters[2].phase === 'ground' && g.fighters[2].down, 'as the host has it');
+  assert.equal(g.fighters[2].phase, 'out', 'as the host has it');
   assert.equal(g.fighters[2].place, 2);
 });

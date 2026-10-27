@@ -27,6 +27,7 @@ import {
   MAT_SPECS,
   MELEE,
   MELEE_IDS,
+  MAX_SCOPE,
   PAN_ARC,
   PIECE_COST,
   SCOPE_VIEW,
@@ -482,7 +483,7 @@ export type Fighter = {
   items: Record<UseId, number>;
   /** 0..100: health over time and a quicker step while it lasts. */
   boost: number;
-  /** The scope in use, level 0..3 (1x, 2x, 4x, 8x), and the ones it carries: a bit each for 2x, 4x and 8x (see hasScope). */
+  /** The scope in use, level 0..4 (1x, 2x, 4x, 8x, 15x), and the ones it carries: a bit each from 2x up (see hasScope). */
   scope: number;
   scopes: number;
   /** Backpack level 0..3. */
@@ -1360,24 +1361,32 @@ export function heldGun(f: Fighter): WeaponId | null {
   return isWeapon(w) ? w : null;
 }
 
-/** Underground, a scope or a gun's sights see no farther than this (the lamps only light so far). */
+/** Underground, a scope sees no farther than this (the lamps only light so far). */
 export const DEEP_VIEW = SCOPE_VIEW[1];
 
-/** Meters of view past the usual: the better of the scope and the gun in hand, and more up high (less underground). */
+/**
+ * Meters of view past the usual: the scope in use and nothing else (no gun, melee weapon or throwable in hand changes
+ * it), less underground, and more up high.
+ */
 export function viewOf(f: Fighter) {
-  const g = heldGun(f);
-  const far = Math.max(SCOPE_VIEW[clamp(f.scope, 0, 3)] ?? 0, g ? WEAPONS[g].zoom : 0);
+  const far = SCOPE_VIEW[clamp(f.scope, 0, MAX_SCOPE)] ?? 0;
   return (isDeep(f.x) ? Math.min(DEEP_VIEW, far) : far) + (f.phase === 'ground' ? levelOf(f.y) * HIGH_VIEW : 0);
 }
 
 /** Does an egg carry the scope of this level? 1x (level 0) it always has. */
-export const hasScope = (f: { scopes: number }, lv: number) => lv === 0 || (lv > 0 && lv <= 3 && (f.scopes & (1 << (lv - 1))) !== 0);
+export const hasScope = (f: { scopes: number }, lv: number) => lv === 0 || (lv > 0 && lv <= MAX_SCOPE && (f.scopes & (1 << (lv - 1))) !== 0);
 
-/** The best scope an egg carries (0 for none). */
-export const bestScope = (f: { scopes: number }) => (hasScope(f, 3) ? 3 : hasScope(f, 2) ? 2 : hasScope(f, 1) ? 1 : 0);
+/** Every scope level, from 1x up. */
+const SCOPE_LEVELS = SCOPE_VIEW.map((_, lv) => lv);
 
 /** The scopes an egg carries, from 1x up. */
-export const scopesOf = (f: { scopes: number }) => [0, 1, 2, 3].filter((lv) => hasScope(f, lv));
+export const scopesOf = (f: { scopes: number }) => SCOPE_LEVELS.filter((lv) => hasScope(f, lv));
+
+/** The best scope an egg carries (0 for none). */
+export const bestScope = (f: { scopes: number }) => {
+  const have = scopesOf(f);
+  return have[have.length - 1];
+};
 
 /** Looks through another scope we carry: the next (1) or the one before (-1) round and round, or a level plus 10. */
 function switchScope(f: Fighter, want: number) {
@@ -1487,7 +1496,7 @@ function clearOneShots(inp: Input) {
 
 /**
  * Ends the match once one team (or none) is left with anyone on their feet (in solo, one egg): the whole team wins, and
- * a knocked egg of any other team still bleeding out is second.
+ * a knocked egg of any other team still bleeding out is second (and out, the match being over).
  */
 function settle(m: Match) {
   if (m.ended || m.time <= 0 || m.fighters.length < 2) return;
@@ -1504,7 +1513,16 @@ function settle(m: Match) {
   for (const f of won) f.place = 1;
   // and a computer egg that won says so
   for (const f of won) if (f.ai && upright(f)) emote(m, f, 'gg', f.x, f.z);
-  for (let t = 0; t < m.teams.length; t++) if (t !== team && teamOf(m, t).some(alive)) for (const f of teamOf(m, t)) f.place = 2;
+  for (let t = 0; t < m.teams.length; t++)
+    if (t !== team && teamOf(m, t).some(alive))
+      for (const f of teamOf(m, t)) {
+        f.place = 2;
+        // and it's over for those still bleeding, as it is in every guest's match on the host's word (see endMatch)
+        if (f.phase !== 'out') {
+          f.phase = 'out';
+          f.outAt = m.time;
+        }
+      }
   emit(m, { t: 'end', winner: m.winner });
 }
 
@@ -1515,9 +1533,8 @@ export function endMatch(m: Match, winner: number, places: [number, number, numb
     if (!f) continue;
     f.place = place;
     f.kills = kills;
-    // the host's word is final, even if the news of how an egg went out is still on its way (the winners stand, and
-    // so does a knocked egg of another team, as the host has it: still bleeding when it ended, so second)
-    if (place !== 1 && f.phase !== 'out' && !f.down) {
+    // the host's word is final, even if the news of how an egg went out is still on its way (the winners stand)
+    if (place !== 1 && f.phase !== 'out') {
       f.phase = 'out';
       f.outAt = m.time;
     }
@@ -2615,7 +2632,7 @@ function crack(m: Match, f: Fighter, by: number, w: Cause) {
   for (const a of Object.keys(f.ammo) as Ammo[]) if (f.ammo[a] > 0) spill.push({ kind: 'ammo', a, n: f.ammo[a] });
   for (const u of Object.keys(f.items) as UseId[]) if (f.items[u] > 0) spill.push({ kind: 'use', w: u, n: f.items[u] });
   for (const k of THROW_IDS) if (f.throws[k] > 0) spill.push({ kind: 'throw', w: k, n: f.throws[k] });
-  for (let lv = 1; lv <= 3; lv++) if (hasScope(f, lv) || f.scope === lv) spill.push({ kind: 'scope', lv });
+  for (let lv = 1; lv <= MAX_SCOPE; lv++) if (hasScope(f, lv) || f.scope === lv) spill.push({ kind: 'scope', lv });
   if (f.pack > 0) spill.push({ kind: 'pack', lv: f.pack });
   if (f.helmet > 0) spill.push({ kind: 'helmet', lv: f.helmet });
   if (f.vest > 0) spill.push({ kind: 'vest', lv: f.vest });
@@ -4871,8 +4888,8 @@ function huntersOf(m: Match) {
 
 function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   // a target: the nearest egg we can see, sticking with the one we have, and turning on whoever just shot us
-  const far = f.guns.some((x) => x && WEAPONS[x.w].cls === 'sniper' && hasAmmo(f, x));
-  const sight = L.sight + (isDeep(f.x) ? 0 : (far ? 20 : 0) + SCOPE_VIEW[f.scope]) + levelOf(f.y) * HIGH_VIEW;
+  // as far as the scope in use lets it see (no gun sees farther on its own, a sniper neither), more up high
+  const sight = L.sight + (isDeep(f.x) ? 0 : SCOPE_VIEW[f.scope]) + levelOf(f.y) * HIGH_VIEW;
   let best: Fighter | null = null;
   let bestScore = Infinity;
   const hunted = huntersOf(m);
@@ -5004,8 +5021,10 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   let item = null as LootItem | null;
   let itemD = tethered ? 15 : 70;
   if (ai.goal === 'loot' && m.time > ai.until) ai.lost = ai.item;
+  // a sniper sees no farther than the scope it's looked through, so with one and no 4x yet a scope is worth the walk
+  const scopeless = bestScope(f) < 2 && f.guns.some((x) => scopedGun(x) && hasAmmo(f, x));
   lootNear(m, f.x, f.z, itemD, (l) => {
-    const d = Math.hypot(l.x - f.x, l.z - f.z);
+    const d = Math.hypot(l.x - f.x, l.z - f.z) - (scopeless && l.def.kind === 'scope' ? 20 : 0);
     if (d >= itemD || l.id === ai.lost || !inSafe(l.x, l.z)) return;
     const def = l.def;
     let useful: boolean;
