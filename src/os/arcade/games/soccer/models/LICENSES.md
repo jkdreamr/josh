@@ -32,3 +32,7 @@ Each used clothing and hair `.mhclo`/`.mhmat` asset includes this explicit metad
 > This asset was explicitly released as CC0 in september 2020. The license text for CC0 can be found in the root of this repository.
 
 The generated skeleton uses MPFB's `game_engine` rig definition; that definition has no license field. The associated weight data declares CC0. The GLBs contain the generated skeleton and weights, not MPFB source code.
+
+## Optimization
+
+The GLBs are size-optimized copies of the exported files: textures re-encoded to WebP (`EXT_texture_webp`) and geometry quantized and compressed with meshopt (`KHR_mesh_quantization`, `EXT_meshopt_compression`), using glTF-Transform 4.2.1 (`gltf-transform webp --quality 88`, then `gltf-transform meshopt --level medium`). Asset content, names, materials, and licenses are unchanged.

@@ -43,6 +43,18 @@ export const MISSING_ROUTE = {
  */
 export const MISS_HEADERS_ROUTE = { src: '^/_astro/', headers: { 'cache-control': 'no-store' }, continue: true };
 type Route = Record<string, unknown>;
+/**
+ * Files in /_astro are named by their contents, but the adapter's cache header only reaches misses (see above), so the
+ * soccer player models, the largest of them, would be revalidated on every visit. They are cached for good instead.
+ */
+export const MODEL_CACHE_ROUTE = { src: '^/_astro/[^/]+\\.glb$', headers: { 'cache-control': 'public, max-age=31536000, immutable' }, continue: true };
+
+/** The Vercel routes with the model cache header ahead of the filesystem check, so it applies to files that exist. */
+export function withModelCache(routes: Route[]): Route[] {
+  const rest = routes.filter((route) => route.src !== MODEL_CACHE_ROUTE.src);
+  const at = rest.findIndex((route) => route.handle === 'filesystem');
+  return at < 0 ? [MODEL_CACHE_ROUTE, ...rest] : [...rest.slice(0, at), MODEL_CACHE_ROUTE, ...rest.slice(at)];
+}
 
 /** The Vercel routes with ours right after the filesystem check, or null if there is no such check. */
 export function withMissingRoute(routes: Route[]): Route[] | null {
@@ -69,8 +81,8 @@ export async function gameIds(gamesDir: string): Promise<Record<string, string>>
   return ids;
 }
 
-const FILE = /^[\w-]+(?:\.[\w-]+)*\.(?:m?js|css|wasm)$/;
-const REF = /(?:\.\/|\/?_astro\/)([\w-]+(?:\.[\w-]+)*\.(?:m?js|css|wasm))\b/g;
+const FILE = /^[\w-]+(?:\.[\w-]+)*\.(?:m?js|css|wasm|glb)$/;
+const REF = /(?:\.\/|\/?_astro\/)([\w-]+(?:\.[\w-]+)*\.(?:m?js|css|wasm|glb))\b/g;
 // `import"./x.js"` and `from"./x.js"`: loaded with the importer. `import("./x.js")` is lazy and does not match.
 const STATIC_REF = /\b(?:from|import)\s*["'`]\.\/([\w-]+(?:\.[\w-]+)*\.m?js)["'`]/g;
 
@@ -137,7 +149,7 @@ export default function keepOldAssets({ from }: { from?: string }): AstroIntegra
         const config = join(root, '.vercel', 'output', 'config.json');
         if (existsSync(config)) {
           const vercel = JSON.parse(readFileSync(config, 'utf8')) as { routes?: Route[] };
-          const routes = withMissingRoute(vercel.routes ?? []);
+          const routes = withMissingRoute(withModelCache(vercel.routes ?? []));
           if (routes) writeFileSync(config, JSON.stringify({ ...vercel, routes }, null, '\t'));
           else logger.warn('no filesystem route in the Vercel config, so missing scripts will 404');
         }
@@ -161,7 +173,7 @@ export default function keepOldAssets({ from }: { from?: string }): AstroIntegra
               const name = queue.pop()!;
               if (live.has(name)) continue;
               live.add(name);
-              if (name.endsWith('.wasm')) continue;
+              if (/\.(?:wasm|glb)$/.test(name)) continue;
               const body = built.includes(name) ? readFileSync(join(assets, name)) : await get(`${site}/_astro/${name}`).catch(() => null);
               if (!body) continue;
               if (!built.includes(name)) fetched.set(name, body);
