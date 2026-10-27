@@ -1,3 +1,5 @@
+import { formatTally } from '../../kit/tally.ts';
+
 export const STEP = 1 / 60;
 export const TARGET = 3;
 export const CAR_RADIUS = 0.9;
@@ -52,6 +54,10 @@ export type World = {
   seed: number;
   random: () => number;
 };
+
+export function finalTally(wins: readonly number[], names: readonly string[], winner: number): string {
+  return formatTally(wins, { names, lead: winner, to: 'To' });
+}
 
 export const noInput = (): Input => ({ x: 0, y: 0, dash: false });
 

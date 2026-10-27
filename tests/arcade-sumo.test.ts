@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { think } from '../src/os/arcade/games/sumo/ai.ts';
-import { CAR_RADIUS, STEP, TARGET, createWorld, matchWinner, roundBanner, step, takeoverDeparted, type Car, type Input, type Level, type World } from '../src/os/arcade/games/sumo/logic.ts';
+import { CAR_RADIUS, STEP, TARGET, createWorld, finalTally, matchWinner, roundBanner, step, takeoverDeparted, type Car, type Input, type Level, type World } from '../src/os/arcade/games/sumo/logic.ts';
 import { configOf, endOf, hostState, inputOf, parsePacket } from '../src/os/arcade/games/sumo/net.ts';
 
 const entries = (count: number, level: Level | null = null) =>
@@ -19,6 +19,12 @@ const rng = (seed: number) => {
   };
 };
 const onPlatform = (car: Car, world: World) => !car.out && !car.falling && Math.hypot(car.x, car.z) <= world.radius + 0.15;
+
+test('final tally formats two and four cars with the winner first', () => {
+  assert.equal(finalTally([1, 3], ['You', 'Orange'], 1), '3 To 1');
+  assert.equal(finalTally([0, 1, 1, 0], ['Red', 'Green', 'Blue', 'Gold'], 1), 'Red 0 · Green 1 · Blue 1 · Gold 0');
+});
+
 const simulateEightBotMatch = (level: Level, seed: number) => {
   const world = createWorld(entries(8, level), seed);
   const random = rng(seed + 100);

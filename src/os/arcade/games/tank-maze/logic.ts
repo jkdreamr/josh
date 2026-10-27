@@ -382,6 +382,12 @@ export function createWorld(opts: { cols: number; rows: number; seed: number; co
   return w;
 }
 
+export function standings(w: World): number[] {
+  const scores = [...w.scores];
+  if (w.phase === 'settle' && w.winner >= 0) scores[w.winner]++;
+  return scores;
+}
+
 // -----------------------------------------------------------------------------------------------------------------
 // Shooting / rays
 

@@ -4,7 +4,7 @@ import type { GameProps } from '../../types';
 import { think } from './ai';
 import { CAR_COLORS, createScene, type View } from './scene';
 import { configOf, endOf, hostState, inputOf, parsePacket, type PackedCar } from './net';
-import { createWorld, matchWinner, roundBanner, step, takeoverDeparted, type CarConfig, type Input, type Level, type World } from './logic';
+import { createWorld, finalTally, matchWinner, roundBanner, step, takeoverDeparted, type CarConfig, type Input, type Level, type World } from './logic';
 import { meta } from './meta';
 import './sumo.css';
 
@@ -340,13 +340,13 @@ function Play({ mode }: { mode: StageMode }) {
       endPacket.current = endOf(o.round, winnerSeat, [...current.wins]);
       if (sendEnd) endSends.current = 0;
       const title = winnerSeat === o.seat ? 'You Win' : `${winner.name} Wins`;
-      shellRef.current.gameOver(undefined, { title, detail: `${current.wins.join(' To ')} In ${current.round} Rounds` });
+      shellRef.current.gameOver(undefined, { title, detail: `${finalTally(current.wins, current.cars.map((_, i) => carName(i)), winnerId)} In ${current.round} Rounds` });
       return;
     }
     reported.current = true;
     const twoPlayer = mode === 'solo' && playMode === '2p';
     const title = twoPlayer ? `P${winnerId + 1} Wins` : winnerId === 0 ? 'You Win' : 'Splashed Out';
-    shellRef.current.gameOver(undefined, { title, detail: `${current.wins.join(' To ')} In ${current.round} Rounds` });
+    shellRef.current.gameOver(undefined, { title, detail: `${finalTally(current.wins, current.cars.map((_, i) => carName(i)), winnerId)} In ${current.round} Rounds` });
   };
 
   const eventsFrom = (events: ReturnType<typeof step>) => {

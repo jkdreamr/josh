@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, levelIndex, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
+import { formatTally } from '../../kit/tally.ts';
 import type { GameProps } from '../../types';
-import { alive, cell, createArena, departedSeats, fitGrid, frameUnit, riderSeats, roundOver, steer, step, swipeDir, tapDir, think, DX, DY, type Arena, type Dir, type Level } from './cycles.ts';
+import { alive, cell, createArena, departedSeats, fitGrid, frameUnit, riderSeats, roundOver, roundTally, steer, step, swipeDir, tapDir, think, DX, DY, type Arena, type Dir, type Level } from './cycles.ts';
 import { meta } from './meta';
 import './lightcycles.css';
 
@@ -154,7 +155,8 @@ function Cycles() {
     if (seat === online.seat) return 'You';
     return online.players.find((p) => p.seat === seat)?.name ?? online.bots.find((b) => b.seat === seat)?.name ?? known.current.get(seat) ?? NAMES[id];
   };
-  const scoreLine = (match: Match) => match.wins.length === 2 ? match.wins.join(' to ') : match.wins.map((w, i) => `${nameOf(match, i)} ${w}`).join(', ');
+  const riderNames = (match: Match) => match.wins.map((_, i) => nameOf(match, i));
+  const scoreLine = (match: Match, lead?: number) => formatTally(match.wins, { names: riderNames(match), lead });
   /** Who is in the room, people only: bots are named in the score line. */
   const roster = () => {
     if (!online) return '';
@@ -513,7 +515,7 @@ function Cycles() {
           const cpuMode = cfg.current.mode !== '2p';
           const winnerSeat = match.seats[winner] ?? null;
           const title = online ? (winnerSeat === online.seat ? 'You Win' : `${nameOf(match, winner)} Wins`) : cpuMode ? (winner === 0 ? 'You Win' : `${CPU_NAMES[winner]} Wins`) : `${NAMES[winner]} Wins`;
-          const detail = `${scoreLine(match)} after ${match.round} rounds. Longest ride: ${match.longest} cells.${roster()}`;
+          const detail = `${scoreLine(match, winner)} after ${match.round} rounds. Longest ride: ${match.longest} cells.${roster()}`;
           if (online) online.reportResult(online.round, winnerSeat);
           shell.gameOver(online ? undefined : cpuMode ? match.longest : undefined, { title, detail });
           return;
@@ -570,7 +572,7 @@ function Cycles() {
         match.ff = false;
         const name = winner === null ? '' : nameOf(match, winner);
         match.banner = winner === null ? 'Draw' : name === 'You' ? 'You take the round' : `${name} takes the round`;
-        match.sub = match.wins.some((w) => w >= TARGET) ? '' : scoreLine(match);
+        match.sub = roundTally(match.wins, riderNames(match), winner ?? mine(), TARGET);
         setBanner({ text: match.banner, sub: match.sub });
         note = true;
         const mineWon = winner !== null && (online ? match.seats[winner] === online.seat : winner === 0 || cfg.current.mode === '2p');

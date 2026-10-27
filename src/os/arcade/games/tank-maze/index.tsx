@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, LEVEL_NAMES, Segmented, defineSetting, levelIndex, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
+import { GameShell, LEVEL_NAMES, Segmented, defineSetting, formatTally, levelIndex, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
-import { aimAligned, aimAt, canvasToWorld, createWorld, fitBoard, keyHeading, mulberry32, noInput, spawnRound, stickInput, step, toCanvas, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
+import { aimAligned, aimAt, canvasToWorld, createWorld, fitBoard, keyHeading, mulberry32, noInput, spawnRound, standings, stickInput, step, toCanvas, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
 import { makeMemory, think, type BotMemory } from './bots.ts';
 import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacket, type NetEvent, type RoundPacket } from './net.ts';
 import { meta } from './meta';
@@ -98,11 +98,13 @@ type Match = {
   guestScores: number[];
   guestPhase: 'ready' | 'play' | 'settle';
   guestPhaseT: number;
+  guestSettleWinner: number | undefined;
   guestBeams: { owner: number; pts: number[]; t: number }[];
   guestMines: { x: number; y: number; armed: boolean }[];
   guestPickups: { kind: Special; x: number; y: number }[];
   lastEvSeen: number;
   prevPhase: string;
+  settleWinner: number | undefined;
   lastNetAt: number;
   /** Local match built before the canvas had a real size; rebuild round 1 once it does. */
   fixDims: boolean;
@@ -222,11 +224,13 @@ function TankMaze() {
       guestScores: new Array(count).fill(0),
       guestPhase: 'ready',
       guestPhaseT: 1.2,
+      guestSettleWinner: undefined,
       guestBeams: [],
       guestMines: [],
       guestPickups: [],
       lastEvSeen: 0,
       prevPhase: 'ready',
+      settleWinner: undefined,
       lastNetAt: 0,
       fixDims: false,
     };
@@ -498,10 +502,18 @@ function TankMaze() {
             if (pkt.phase === 'play') setBanner(null);
           }
           match.guestPhaseT = pkt.phaseT;
+          if (pkt.phase !== 'settle') match.guestSettleWinner = undefined;
           if (pkt.phase === 'settle') {
             const left = snap.tanks.filter((t) => t.alive).length;
-            if (left <= 1 && !match.ended) {
-              setBanner({ text: left === 1 ? `${nameOf(match, snap.tanks.findIndex((t) => t.alive))} Scores` : 'Draw', sub: pkt.scores.join(' to ') });
+            const winner = left === 1 ? snap.tanks.findIndex((t) => t.alive) : -1;
+            if (left <= 1 && !match.ended && match.guestSettleWinner !== winner) {
+              match.guestSettleWinner = winner;
+              const names = match.world.tanks.map((_, i) => nameOf(match, i));
+              const myTank = match.seats.indexOf(online.seat);
+              setBanner({
+                text: winner >= 0 ? `${nameOf(match, winner)} Scores` : 'Draw',
+                sub: formatTally(pkt.scores, { names, lead: winner >= 0 ? winner : myTank >= 0 ? myTank : undefined }),
+              });
             }
           }
           return;
@@ -514,7 +526,12 @@ function TankMaze() {
           // winner stays null for them because nobody scores the room win.
           const champ = pkt.champ;
           const title = champ === null ? 'Draw' : champ === online.seat ? 'You Win' : `${seatName(match, champ)} Wins`;
-          shell.gameOver(undefined, { title, detail: `${pkt.scores.join(' to ')} in ${pkt.rounds} rounds.` });
+          const names = match.world.tanks.map((_, i) => nameOf(match, i));
+          const winnerTankId = champ === null ? -1 : match.seats.indexOf(champ);
+          shell.gameOver(undefined, {
+            title,
+            detail: `${formatTally(pkt.scores, { names, lead: winnerTankId >= 0 ? winnerTankId : undefined })} in ${pkt.rounds} rounds.`,
+          });
         }
       }),
     [online?.onMessage, online?.seat, online?.round],
@@ -575,7 +592,8 @@ function TankMaze() {
       const cpuMode = cfg.current.mode === 'cpu';
       title = winner < 0 ? 'Draw' : cpuMode ? (winner === 0 ? 'You Win' : `${NAMES[winner]} Wins`) : `${NAMES[winner]} Wins`;
     }
-    const detail = `${w.scores.join(' to ')} in ${w.round} rounds.`;
+    const names = w.tanks.map((_, i) => nameOf(match, i));
+    const detail = `${formatTally(w.scores, { names, lead: winner >= 0 ? winner : undefined })} in ${w.round} rounds.`;
     shell.gameOver(undefined, { title, detail });
     if (winner === 0) sfx.play('win');
     else sfx.play('lose');
@@ -690,10 +708,14 @@ function TankMaze() {
       }
       // banners on phase change
       if (w.phase === 'play' && match.prevPhase !== 'play') setBanner(null);
-      if (w.phase === 'settle' && match.prevPhase !== 'settle') {
+      if (w.phase !== 'settle') match.settleWinner = undefined;
+      if (w.phase === 'settle' && (match.prevPhase !== 'settle' || match.settleWinner !== w.winner)) {
+        match.settleWinner = w.winner;
+        const myTank = online ? match.seats.indexOf(online.seat) : 0;
+        const names = w.tanks.map((_, i) => nameOf(match, i));
         setBanner({
           text: w.winner >= 0 ? (online ? `${nameOf(match, w.winner)} Scores` : cfg.current.mode === 'cpu' && w.winner === 0 ? 'You Score' : `${NAMES[w.winner] ?? '???'} Scores`) : 'Draw',
-          sub: w.scores.join(' to '),
+          sub: formatTally(standings(w), { names, lead: w.winner >= 0 ? w.winner : myTank >= 0 ? myTank : undefined }),
         });
         if (w.winner === 0) sfx.play('coin');
       }
@@ -729,7 +751,7 @@ function TankMaze() {
             pickups: w.pickups.map((p) => ({ kind: p.kind, x: p.x, y: p.y })),
             mines: w.mines.map((mn) => ({ x: mn.x, y: mn.y, armed: mn.age >= 1 })),
             beams: w.beams.map((b) => ({ owner: b.owner, pts: b.pts })),
-            scores: w.scores,
+            scores: standings(w),
             events: match.pending,
           }),
           { fast: true },
@@ -1048,7 +1070,7 @@ function TankMaze() {
     // HUD chips
     const hudH = lay.hud;
     const compactHud = hudH < 30;
-    const scores = isGuest ? match.guestScores : world.scores;
+    const scores = isGuest ? match.guestScores : standings(world);
     const chips = viewTanks.map((_, i) => i);
     // chips live in [12, w-176] so they never sit under the shell's top-right controls;
     // online they split into two groups around the centered transport badge (~112px at w/2)
