@@ -177,10 +177,23 @@ export type Session = {
   sent: Map<number, (string | undefined)[]>;
   /** Seats the host has just heard from for the first time: they hear what has been built so far. */
   fresh: Set<number>;
+  /**
+   * When each egg's last report was made, by egg: on the host a guest's count of its ticks, on a guest the host's
+   * match time. Reports go on a channel that keeps no order, so one older than this has been overtaken and is let go
+   * (it would put the egg back where it was, back up in the air or back on the other level for a moment). `newest` is
+   * the host's time in the newest report a guest has had.
+   */
+  stamps: Map<number, number>;
+  newest: number;
 };
 
+/** How far back (ticks on the host, seconds on a guest) a report counts as overtaken; anything older is a fresh start. */
+const OVERTAKEN = { ticks: 60, time: 4 };
+/** Whether a report stamped `at` is older than the last one (`last`) from the same place. */
+const overtaken = (at: number, last: number | undefined, window: number) => last !== undefined && at < last && last - at < window;
+
 export function newSession(synced: boolean, roster: number[] = []): Session {
-  return { synced, roster, states: new Map(), queue: [], flushT: 0, ticks: 0, end: null, endAt: -1, endSends: 0, reported: false, over: false, early: false, left: new Set(), heard: new Map(), firstTick: -1, lastTick: -1, watch: -1, watching: new Map(), sent: new Map(), fresh: new Set() };
+  return { synced, roster, states: new Map(), queue: [], flushT: 0, ticks: 0, end: null, endAt: -1, endSends: 0, reported: false, over: false, early: false, left: new Set(), heard: new Map(), firstTick: -1, lastTick: -1, watch: -1, watching: new Map(), sent: new Map(), fresh: new Set(), stamps: new Map(), newest: -Infinity };
 }
 
 /** Builds a guest's match from the host's first state. */
@@ -198,6 +211,10 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
     const fid = s.roster.indexOf(from);
     const f = m.fighters[fid];
     if (!f || f.seat !== from || f.kind !== 'remote') return m;
+    if (p.seq !== undefined) {
+      if (p.seq === s.stamps.get(fid) || overtaken(p.seq, s.stamps.get(fid), OVERTAKEN.ticks)) return m;
+      s.stamps.set(fid, p.seq);
+    }
     if (!s.heard.has(fid)) s.fresh.add(from);
     s.states.set(fid, p.state);
     s.heard.set(fid, clock);
@@ -211,19 +228,25 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
       s.roster = p.roster;
       s.synced = true;
     }
-    // keep our clock on the host's: the storm and the bus run on it
-    const diff = p.time - m.time;
-    if (Math.abs(diff) > 1) m.time = p.time;
-    else m.time += diff * 0.1;
+    // keep our clock on the host's: the storm and the bus run on it (by the newest report, not one overtaken)
+    const late = overtaken(p.time, s.newest, OVERTAKEN.time);
+    if (!late) {
+      s.newest = p.time;
+      const diff = p.time - m.time;
+      if (Math.abs(diff) > 1) m.time = p.time;
+      else m.time += diff * 0.1;
+    }
     for (const [fid, st] of p.states) {
       const f = m.fighters[fid];
-      if (f && f.kind === 'remote') applyState(m, f, st);
+      if (!f || f.kind !== 'remote' || overtaken(p.time, s.stamps.get(fid), OVERTAKEN.time)) continue;
+      s.stamps.set(fid, p.time);
+      applyState(m, f, st);
     }
     // the windows the host has broken: quietly, since any news of them has come and gone
     for (const i of p.glass ?? []) if (i < m.broken.length) m.broken[i] = true;
     // and its doors, all of them (shut past the end of the list), but not one whose news came in just now: this
     // report may have set out before it
-    if (p.doors)
+    if (p.doors && !late)
       for (let i = 0; i < m.doors.length; i++) {
         const st = p.doors[i] ?? 0;
         if (m.doors[i] !== st && m.clock - m.doorAt[i] > 1) m.doors[i] = st;
@@ -269,7 +292,7 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
   const fast = s.ticks % 5 !== 0;
   if (!me.isHost) {
     const f = m.fighters[m.me];
-    return f ? [{ d: guestState(me.round, stateOf(f), f.phase === 'out' ? s.watch : -1), fast }] : [];
+    return f ? [{ d: guestState(me.round, stateOf(f), f.phase === 'out' ? s.watch : -1, s.ticks), fast }] : [];
   }
   if (s.firstTick < 0) s.firstTick = clock;
   // the host itself was frozen a while: what it hadn't read of the guests' reports while it was counts as heard
