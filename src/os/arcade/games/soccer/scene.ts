@@ -631,7 +631,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     }
     frustumMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     frustum.setFromProjectionMatrix(frustumMatrix);
-    const scoringTeam = world.event.startsWith('bay city') ? 0 : 1;
+    const homeCall = clubById(world.clubs?.[0] ?? DEFAULT_CLUBS[0]).call.toLowerCase();
+    const scoringTeam = world.event.toLowerCase().startsWith(homeCall) ? 0 : 1;
     for (const player of world.players) {
       const actor = ensureActor(player);
       actor.root.position.set(player.x, 0, player.z);

@@ -1,16 +1,24 @@
 // Stadium sound for soccer, synthesized live with Web Audio: no samples and no downloads, so there is nothing to
 // license. The crowd is a bed of filtered noise that swells as an attack nears the box, plus a "choir" of detuned
-// voices through vowel formants for the oohs on near misses, the roar and chant on goals and the boos on fouls. Bay
-// City are at home, so their fans are louder. The referee's pea whistle, the ball (kicks, volleys, the woodwork, the
+// voices through vowel formants for the oohs on near misses, the roar and chant on goals and the boos on fouls. The
+// home side's fans are louder. The referee's pea whistle, the ball (kicks, volleys, the woodwork, the
 // net) and a short line of commentary, spoken through the Web Speech API when there is one and always captioned, sit
 // on top. Nothing here writes to the world: the sim stays deterministic and these modules only read it.
 import { FIELD } from './field.ts';
 import { BALL_RADIUS } from './physics.ts';
 import { teamDir, teamOf, type Action, type Team, type World } from './logic.ts';
+import { clubById, DEFAULT_CLUBS } from './teams.ts';
 
 /** The home side: their attacks swell louder, their goals get the chant, and fouls on them get the loudest boos. */
 export const HOME: Team = 0;
-export const CLUB_NAMES: readonly [string, string] = ['bay city', 'northshore'];
+export const CLUB_NAMES: readonly [string, string] = [
+  clubById(DEFAULT_CLUBS[0]).call,
+  clubById(DEFAULT_CLUBS[1]).call,
+];
+const clubNamesFor = (world: World): readonly [string, string] => [
+  clubById(world.clubs?.[0] ?? DEFAULT_CLUBS[0]).call,
+  clubById(world.clubs?.[1] ?? DEFAULT_CLUBS[1]).call,
+];
 
 const HALF_X = FIELD.length / 2;
 const GOAL_HALF = FIELD.goalWidth / 2;
@@ -156,11 +164,11 @@ export function crowdMood(world: World): { level: number; attacker: Team } {
 export type LineKind = Cue['kind'] | 'attack';
 export type Line = { text: string; priority: number; kind: LineKind };
 
-const scoreLine = (score: readonly [number, number]) => {
+const scoreLine = (score: readonly [number, number], names: readonly [string, string] = CLUB_NAMES) => {
   const [a, b] = score;
   if (a === b) return `all square at ${a} ${b}`;
   const lead: Team = a > b ? 0 : 1;
-  return `${CLUB_NAMES[lead]} lead ${Math.max(a, b)} ${Math.min(a, b)}`;
+  return `${names[lead]} lead ${Math.max(a, b)} ${Math.min(a, b)}`;
 };
 
 /** Seconds before a kind of line can come again. */
@@ -168,8 +176,8 @@ const COOLDOWN: Partial<Record<LineKind, number>> = { attack: 18, corner: 10, fo
 const PRIORITY: Partial<Record<LineKind, number>> = { goal: 3, 'half-time': 3, 'full-time': 3, post: 2, bar: 2, save: 2, kickoff: 1, 'near-miss': 1, foul: 1 };
 
 /** Candidate lines for a cue, or none for cues the booth stays quiet on. */
-function linesFor(cue: Cue | { kind: 'attack'; team: Team }): string[] {
-  const name = (t: Team) => CLUB_NAMES[t];
+function linesFor(cue: Cue | { kind: 'attack'; team: Team }, names: readonly [string, string] = CLUB_NAMES): string[] {
+  const name = (t: Team) => names[t];
   switch (cue.kind) {
     case 'kickoff':
       if (cue.first) return ["and we're under way", 'here we go', 'kick off, enjoy this one'];
@@ -177,7 +185,7 @@ function linesFor(cue: Cue | { kind: 'attack'; team: Team }): string[] {
       return [];
     case 'goal': {
       const opener = cue.team === HOME ? ['goal!', "it's in!", 'what a finish!', 'get in!'] : [`${name(cue.team)} score.`, 'goal for the visitors.', `${name(cue.team)} find the net.`];
-      return opener.map((o) => `${o} ${scoreLine(cue.score)}`);
+      return opener.map((o) => `${o} ${scoreLine(cue.score, names)}`);
     }
     case 'near-miss':
       return cue.team === HOME ? ['ooh, just wide', `so close for ${name(cue.team)}`, 'inches away'] : [`wide from ${name(cue.team)}`, `${name(cue.team)} go close`, `a let off for ${name(HOME)}`];
@@ -189,10 +197,10 @@ function linesFor(cue: Cue | { kind: 'attack'; team: Team }): string[] {
     case 'corner': return [`corner to ${name(cue.team)}`, `${name(cue.team)} win a corner`];
     case 'attack':
       return cue.team === HOME ? [`${name(cue.team)} on the attack`, 'the home crowd rises', `${name(cue.team)} pushing forward`] : [`${name(cue.team)} break forward`, `${name(cue.team)} threaten here`, `danger for ${name(HOME)}`];
-    case 'half-time': return [`half time, ${scoreLine(cue.score)}`];
+    case 'half-time': return [`half time, ${scoreLine(cue.score, names)}`];
     case 'full-time': {
       const [a, b] = cue.score;
-      return [a === b ? `full time, it ends ${a} ${b}` : `full time, ${CLUB_NAMES[a > b ? 0 : 1]} win ${Math.max(a, b)} ${Math.min(a, b)}`];
+      return [a === b ? `full time, it ends ${a} ${b}` : `full time, ${names[a > b ? 0 : 1]} win ${Math.max(a, b)} ${Math.min(a, b)}`];
     }
     default: return [];
   }
@@ -211,8 +219,8 @@ export class Commentary {
   private gap: number;
   constructor(gap = 3.5) { this.gap = gap; }
 
-  next(cue: Cue | { kind: 'attack'; team: Team }, time: number): Line | null {
-    const pool = linesFor(cue);
+  next(cue: Cue | { kind: 'attack'; team: Team }, time: number, names: readonly [string, string] = CLUB_NAMES): Line | null {
+    const pool = linesFor(cue, names);
     if (!pool.length) return null;
     const priority = PRIORITY[cue.kind] ?? 0;
     const since = time - this.last;
@@ -916,9 +924,10 @@ export class SoccerSound {
   observe(world: World, time: number): Cue[] {
     const { cues, memory } = detectCues(this.memory, world, time);
     this.memory = memory;
+    const names = clubNamesFor(world);
     for (const cue of cues) {
       this.synth.play(cue);
-      const line = this.commentary.next(cue, time);
+      const line = this.commentary.next(cue, time, names);
       if (line) this.announcer.say(line);
     }
     return cues;
@@ -927,11 +936,12 @@ export class SoccerSound {
   /** Call every frame: the crowd follows the attack, and a big one gets a line. */
   frame(world: World, time: number) {
     const mood = crowdMood(world);
+    const names = clubNamesFor(world);
     this.synth.setMood(world.phase === 'goal' ? 0.2 : mood.level);
     if (mood.level < 0.3) this.attackArmed = true;
     else if (this.attackArmed && mood.level > (mood.attacker === HOME ? 0.7 : 0.45)) {
       this.attackArmed = false;
-      const line = this.commentary.next({ kind: 'attack', team: mood.attacker }, time);
+      const line = this.commentary.next({ kind: 'attack', team: mood.attacker }, time, names);
       if (line) this.announcer.say(line);
     }
   }

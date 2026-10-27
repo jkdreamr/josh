@@ -270,11 +270,11 @@ export function stepShootout(w: World,t: number) {
 export function setPieceLabels(w: World,team: Team,playerId?: number): {title:string;hint:string;a:string;b:string;x:string;y:string;lb:string;rb:string}|null {
   const s=w.setPiece; if(w.phase!=='restart'||!s) return null;
   const title=(w.shootout?'PENS '+shootoutScore(w).join('-')+' · ':'')+s.kind.toUpperCase()+' · '+s.option.toUpperCase();
-  const base={title,hint:'Stick: aim delivery · hold to power',a:'Short pass',b:'Driven',x:'Lofted',y:'Option',lb:'Curl',rb:'—'};
-  if(team!==w.restartTeam) return s.kind==='penalty'?{...base,title:title+" · YOU'RE IN GOAL",hint:'Stick: pick a side',a:'Dive',b:'Dive',x:'Dive',y:'Dive',lb:'—'}:{...base,hint:'Hold your mark',a:'Switch',b:'Tackle',x:'Slide',y:'Switch',lb:'—'};
+  const base={title,hint:'Stick: aim delivery · hold to power',a:'Short pass',b:'Driven',x:'Lofted',y:'Option',lb:'Curl',rb:'-'};
+  if(team!==w.restartTeam) return s.kind==='penalty'?{...base,title:title+" · YOU'RE IN GOAL",hint:'Stick: pick a side',a:'Dive',b:'Dive',x:'Dive',y:'Dive',lb:'-'}:{...base,hint:'Hold your mark',a:'Switch',b:'Tackle',x:'Slide',y:'Switch',lb:'-'};
   if(playerId!==undefined && playerId!==s.takerId) return {...base,hint:'Find space · hold your run'};
-  if(s.kind==='penalty') return {...base,hint:'Stick: aim',b:'Shoot (hold · >85% skies)',a:'Shoot',x:'Shoot',y:'—',lb:'—'};
+  if(s.kind==='penalty') return {...base,hint:'Stick: aim',b:'Shoot (hold · >85% skies)',a:'Shoot',x:'Shoot',y:'-',lb:'-'};
   if(s.kind==='corner') return {...base,a:'Short',b:'Driven cross',x:'Lofted cross',y:'Target: '+options(s)[(options(s).indexOf(s.option)+1)%4],lb:'Curl: '+(s.curl<0?'out-swing':s.curl>0?'in-swing':'none')};
   if(s.kind==='free-kick') return {...base,b:s.option==='direct'?'Shoot (hold)':'Driven cross',x:'Cross'};
-  return {...base,b:s.kind==='throw-in'?'Long throw':'Driven long',x:s.kind==='throw-in'?'Long throw':'Long kick',y:'Target: '+(s.option==='short'?'long':'short'),lb:'—'};
+  return {...base,b:s.kind==='throw-in'?'Long throw':'Driven long',x:s.kind==='throw-in'?'Long throw':'Long kick',y:'Target: '+(s.option==='short'?'long':'short'),lb:'-'};
 }

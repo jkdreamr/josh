@@ -383,7 +383,7 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
             const window = tackleWindow(world, p);
             const goodWindow = readsWindow ? window.inReach && window.probability >= (level === 'hard' ? 0.5 : 0.3) : exposed || facingAway;
             const reacts = (tick + rosterIndex(world, p) * 2) % Math.round(reaction[level] * 60) === 0;
-            const mayTackle = cpuMayTackle(world, p, opponent);
+            const mayTackle = level === 'easy' || level === 'hard' && window.exposed || cpuMayTackle(world, p, opponent);
             commands.set(p.id, { move: gap < 1.38 && reacts && goodWindow ? targetMove(p, world.ball.x, world.ball.z) : distance(p, target) < 0.65
               ? { x: opponent.vx / 6, z: opponent.vz / 6 } : move,
               sprint: distance(p, target) > 4, action: (carrier || readsWindow && window.exposed) && mayTackle && gap < 1.38 && goodWindow ? 'tackle' : null, pressed: reacts });

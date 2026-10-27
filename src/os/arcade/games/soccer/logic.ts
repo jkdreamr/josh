@@ -55,6 +55,7 @@ export type Player = Point & {
 export type Command = { move: Point; sprint?: boolean; jockey?: boolean; autoJockey?: boolean; contain?: boolean; switchDir?: Point | null; switchNearest?: boolean; action?: Action | null; heldAction?: Action | null; aim?: Point; power?: number; pressed?: boolean; press?: boolean; allowOffside?: boolean };
 export type Restart = 'kickoff' | 'kick-in' | 'corner' | 'goal-kick' | 'free-kick' | 'penalty' | null;
 export type World = {
+  practice?: boolean;
   setPiece?: SetPiece | null;
   setPieceRun?: SetPieceRun | null;
   shootout?: Shootout | null;
@@ -1051,7 +1052,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
       kick(world, p, p.buffer.action, { move: command?.move ?? { x: 0, z: 0 }, ...p.buffer });
     }
   }
-  separatePlayers(world.players, t, carrier, world.endsSwapped);
+  if (!world.practice) separatePlayers(world.players, t, carrier, world.endsSwapped);
   const nowCarrier = nearestCarrier(world);
   checkOffside(world, nowCarrier);
   if (world.phase !== 'live') return;

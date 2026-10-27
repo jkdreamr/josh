@@ -4,11 +4,11 @@ import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
 import { chargePower, IDENTITY_BASIS, screenToWorld, gamepadInput, keyboardInput, reconcileControllers, type ControlCommand, type GamepadHistory } from './input.ts';
 import { acceptMovePacket, cloneSnapshot, consumeCommand, movePacket, parsePacket, type RemoteSeat, type LobbyMember } from './net.ts';
-import { createWorld, distance, FIELD, teamOf, findReceiver, matchClock, nearestCarrier, setRestart, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
+import { createWorld, distance, teamOf, findReceiver, matchClock, nearestCarrier, setRestart, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
 import { setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { SoccerSound, type CommentaryMode } from './audio.ts';
-import { type CameraMode, type SoccerView, type TimeMode } from './scene.ts';
+import type { CameraMode, SoccerView, TimeMode } from './scene.ts';
 import { markShadersReady, parkSoccerView, takeSoccerView, useSoccerStadium } from './load.ts';
 import { LoadProgress } from './loading.tsx';
 import { Hud, type HudState, type RadarHandle } from './hud.tsx';
@@ -26,7 +26,6 @@ import { COMPETITIONS, type CompetitionId } from './modes.ts';
 import { CLUBS, clubById, DEFAULT_CLUBS } from './teams.ts';
 import { PhoneLobby as SoccerPhoneLobby, PhoneTeamPicker, publishLobby, sideForRoom, useLobbyState } from './lobby.tsx';
 import { createCup, loadCup, matchOutcome, recordUserResult, saveCup } from './cup.ts';
-import { simulateShootout } from './shootout.ts';
 import { Referee } from './referee.tsx';
 import { createFxDirector, haptic as fxHaptic, phoneFx, type FxDirector } from './fx.ts';
 import './soccer.css';
@@ -755,7 +754,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       : winner === localTeam ? 'you win' : 'match lost';
     if (currentCompetition === 'cup') {
       const cup = loadCup() ?? createCup(home.id, current.seed);
-      penalties = draw ? outcome.pens ?? (pensWinner !== null ? shootoutScore(current) : simulateShootout(current.seed, home, away).score) : undefined;
+      penalties = draw ? outcome.pens ?? (pensWinner !== null ? shootoutScore(current) : undefined) : undefined;
       if (penalties) {
         winner = penalties[0] > penalties[1] ? 0 : 1;
         detail += ` (${penalties[0]}-${penalties[1]} pens)`;
@@ -1129,7 +1128,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       <Hud state={hud} watching={!!online?.watching} radarRef={radarRef} world={world} />
       {hud.presentation === 'intro' && <IntroCard />}
       {(hud.presentation === 'half-time' || hud.presentation === 'full-time') && <StatsScreen presentation={hud.presentation} statsVersion={hud.statsVersion} />}
-      {phoneGone && <div className="g-soccer-phone-gone" role="status">Phone disconnected — reopen the link</div>}
+      {phoneGone && <div className="g-soccer-phone-gone" role="status">Phone disconnected - reopen the link</div>}
       {audioEnabled && caption && <div key={caption.id} className="g-soccer-caption" aria-live="polite">{caption.text}</div>}
       {audioEnabled && shell.status === 'playing' && !muted && volumeChoice !== 'off' && soundLocked && (
         <div className="g-soccer-sound-lock">Click or press any key for sound</div>
@@ -1568,7 +1567,7 @@ export function PhoneController() {
     <div className={`g-soccer-phone-controller g-soccer-pad ${attacking ? 'is-attack' : 'is-defend'}`}>
       {phoneFlash && <div key={phoneFlash.id} className={`g-soccer-phone-flash is-${phoneFlash.kind}`} aria-hidden="true" onAnimationEnd={() => setPhoneFlash(null)} />}
       <div className="g-soccer-pad-body" aria-hidden="true"><i className="is-left" /><i className="is-right" /></div>
-      {showConnectedToast && <div className="g-soccer-phone-connected" role="status">Connected — look at your Mac</div>}
+      {showConnectedToast && <div className="g-soccer-phone-connected" role="status">Connected - look at your Mac</div>}
       <PadStick movement={movement} onChange={sendStickChange} />
       <div
         className="g-soccer-pad-face"

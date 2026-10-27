@@ -121,6 +121,7 @@ export function createPracticeState(drill: DrillId = 'free', best = readBest(dri
 
 export function createPracticeWorld(seed: number, state: PracticeState) {
   const world = createWorld(seed, 360, 1);
+  world.practice = true;
   setupDrill(state, world);
   return world;
 }
@@ -244,6 +245,7 @@ function respawn(state: PracticeState, world: World) {
 }
 
 export function setupDrill(state: PracticeState, world: World) {
+  world.practice = true;
   Object.assign(state, createPracticeState(state.drill, state.best), { events: [] });
   world.phase = 'live'; world.restart = null; world.event = ''; world.eventTime = 0;
   world.halfLength = 360; world.clock = 360; world.half = 1; world.endsSwapped = false; world.score = [0, 0];
@@ -360,7 +362,12 @@ export function practiceAI(world: World, state: PracticeState, level: Level, dt:
   const commands = new Map<number, Command>();
   if (state.phase === 'done') return commands;
   const keeper = computeAI(world, level, dt, tick, 1, scratch).get(AWAY_GK);
-  if (keeper) commands.set(AWAY_GK, { ...keeper });
+  if (keeper) {
+    if (state.drill === 'finishing' && level === 'easy') {
+      world.players[AWAY_GK]!.action = 'ready';
+      commands.set(AWAY_GK, { move: { x: 0, z: 0 } });
+    } else commands.set(AWAY_GK, { ...keeper });
+  }
   if (state.drill === 'free') {
     if (tick - state.supportAt >= 30 || state.supportAt < 0) { assignSupport(state, world); state.supportAt = tick; }
     for (const id of state.active) {

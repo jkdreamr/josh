@@ -1,4 +1,5 @@
 import { FIELD, TEAM_SIZE, distance, teamDir, teamOf, type Point, type Team, type World } from './logic.ts';
+import { clubById, DEFAULT_CLUBS, rosterName } from './teams.ts';
 
 export type Club = {
   name: string;
@@ -9,23 +10,26 @@ export type Club = {
   roster: readonly string[];
 };
 
+const DEFAULT_ROSTERS = [
+  ['A. MORGAN', 'T. BENNETT', 'D. PARK', 'L. WILLIAMS', 'R. CHEN', 'S. PATEL', 'J. KIM', 'E. BROOKS', 'C. REYES', 'M. RIVERA', 'N. FOSTER'],
+  ['I. CARTER', 'O. FOSTER', 'D. SINGH', 'T. WALKER', 'B. NGUYEN', 'H. PRICE', 'M. JONES', 'P. CLARKE', 'R. DIAZ', 'K. ALVAREZ', 'S. WARD'],
+] as const;
+
+const broadcastClub = (id: string, roster: readonly string[]): Club => {
+  const club = clubById(id);
+  return {
+    name: club.name,
+    short: club.short,
+    abbr: club.short,
+    primary: club.home.shirt,
+    secondary: club.home.shorts,
+    roster,
+  };
+};
+
 export const CLUBS = [
-  {
-    name: 'Bay City',
-    short: 'Bay City',
-    abbr: 'BAY',
-    primary: '#d53549',
-    secondary: '#f4f1ea',
-    roster: ['A. MORGAN', 'T. BENNETT', 'D. PARK', 'L. WILLIAMS', 'R. CHEN', 'S. PATEL', 'J. KIM', 'E. BROOKS', 'C. REYES', 'M. RIVERA', 'N. FOSTER'],
-  },
-  {
-    name: 'Northshore United',
-    short: 'Northshore',
-    abbr: 'NSU',
-    primary: '#6bbfe7',
-    secondary: '#0d2a44',
-    roster: ['I. CARTER', 'O. FOSTER', 'D. SINGH', 'T. WALKER', 'B. NGUYEN', 'H. PRICE', 'M. JONES', 'P. CLARKE', 'R. DIAZ', 'K. ALVAREZ', 'S. WARD'],
-  },
+  broadcastClub(DEFAULT_CLUBS[0], DEFAULT_ROSTERS[0]),
+  broadcastClub(DEFAULT_CLUBS[1], DEFAULT_ROSTERS[1]),
 ] as const satisfies readonly [Club, Club];
 
 export type TeamStats = {
@@ -49,8 +53,10 @@ export type MatchStats = { teams: [TeamStats, TeamStats]; ticker: TickerItem[]; 
 export const REGULAR = 45 / 48;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-export function playerName(id: number): string {
-  return CLUBS[teamOf(id)].roster[id % TEAM_SIZE]!;
+export function playerName(id: number, world?: Pick<World, 'clubs'>): string {
+  const team = teamOf(id);
+  if (!world?.clubs || world.clubs[team] === DEFAULT_CLUBS[team]) return CLUBS[team].roster[id % TEAM_SIZE]!;
+  return rosterName(clubById(world?.clubs?.[team] ?? DEFAULT_CLUBS[team]), id % TEAM_SIZE);
 }
 
 export function xgFor(world: World, shooter: Point, team: Team): number {
@@ -211,7 +217,7 @@ export function createStatsObserver() {
       const keeperTeam = (1 - pendingShot.team) as Team;
       stats.teams[keeperTeam].saves++;
       const keeperId = world.lastToucherId ?? world.players.find((player) => player.team === keeperTeam && player.slot === 'GK')?.id;
-      addTicker(world, 'save', keeperTeam, `save by ${keeperId === undefined ? 'keeper' : playerName(keeperId)}`);
+      addTicker(world, 'save', keeperTeam, `save by ${keeperId === undefined ? 'keeper' : playerName(keeperId, world)}`);
       pendingShot = null;
       savedThisStep = true;
     }
@@ -229,7 +235,7 @@ export function createStatsObserver() {
         const assist = isGoal && scorer !== undefined && lastCompletedPass?.receiver === scorer && now - lastCompletedPass.at < 12
           ? lastCompletedPass.passer
           : null;
-        const text = `${isGoal ? 'goal' : 'own goal'}, ${scorer === undefined ? 'unknown player' : playerName(scorer)}`;
+        const text = `${isGoal ? 'goal' : 'own goal'}, ${scorer === undefined ? 'unknown player' : playerName(scorer, world)}`;
         addTicker(world, kind, team, text, scorer, assist, true);
         goalsThisHalf++;
         scored = true;
@@ -250,7 +256,7 @@ export function createStatsObserver() {
         stats.teams[team].shots++;
         stats.teams[team].xg += xg;
         pendingShot = { team, shooter: kick.playerId, xg };
-        if (xg >= 0.35) addTicker(world, 'chance', team, `big chance, ${playerName(kick.playerId)}`);
+        if (xg >= 0.35) addTicker(world, 'chance', team, `big chance, ${playerName(kick.playerId, world)}`);
       } else if (kick.action === 'pass' || kick.action === 'through' || kick.action === 'lob') {
         stats.teams[team].passes++;
         pendingPass = { team, passer: kick.playerId };
@@ -275,22 +281,22 @@ export function createStatsObserver() {
         stoppagesThisHalf++;
         if (world.restart === 'corner') {
           stats.teams[world.restartTeam].corners++;
-          addTicker(world, 'corner', world.restartTeam, `corner, ${CLUBS[world.restartTeam].short.toLowerCase()}`);
+          addTicker(world, 'corner', world.restartTeam, `corner, ${clubById(world.clubs?.[world.restartTeam] ?? DEFAULT_CLUBS[world.restartTeam]).short.toLowerCase()}`);
         } else if (world.restart === 'free-kick') {
           stats.teams[1 - world.restartTeam].fouls++;
-          addTicker(world, 'foul', world.restartTeam, `foul, ${CLUBS[world.restartTeam].short.toLowerCase()}`);
+          addTicker(world, 'foul', world.restartTeam, `foul, ${clubById(world.clubs?.[world.restartTeam] ?? DEFAULT_CLUBS[world.restartTeam]).short.toLowerCase()}`);
         } else if (world.restart === 'penalty') {
           stats.teams[1 - world.restartTeam].fouls++;
-          addTicker(world, 'penalty', world.restartTeam, `penalty, ${CLUBS[world.restartTeam].short.toLowerCase()}`);
+          addTicker(world, 'penalty', world.restartTeam, `penalty, ${clubById(world.clubs?.[world.restartTeam] ?? DEFAULT_CLUBS[world.restartTeam]).short.toLowerCase()}`);
         }
       }
     }
 
     if (previousPhase !== 'half-time' && world.phase === 'half-time') {
-      addTicker(world, 'half-time', null, `half time, ${CLUBS[0].abbr} ${world.score[0]}-${world.score[1]} ${CLUBS[1].abbr}`);
+      addTicker(world, 'half-time', null, `half time, ${clubById(world.clubs?.[0] ?? DEFAULT_CLUBS[0]).short} ${world.score[0]}-${world.score[1]} ${clubById(world.clubs?.[1] ?? DEFAULT_CLUBS[1]).short}`);
     }
     if (previousPhase !== 'full-time' && world.phase === 'full-time') {
-      addTicker(world, 'full-time', null, `full time, ${CLUBS[0].abbr} ${world.score[0]}-${world.score[1]} ${CLUBS[1].abbr}`);
+      addTicker(world, 'full-time', null, `full time, ${clubById(world.clubs?.[0] ?? DEFAULT_CLUBS[0]).short} ${world.score[0]}-${world.score[1]} ${clubById(world.clubs?.[1] ?? DEFAULT_CLUBS[1]).short}`);
     }
 
     const frac = world.halfLength === 0 ? 1 : clamp((world.halfLength - world.clock) / world.halfLength, 0, 1);

@@ -893,6 +893,7 @@
   padding: 0;
   background: radial-gradient(120% 90% at 50% 0%, #2a3442 0%, #151b24 55%, #0b0f15 100%);
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
 @media (orientation: landscape) {
   .g-soccer-phone-controller header {
     top: max(10px, env(safe-area-inset-top, 0px));
@@ -912,6 +913,7 @@
     width: var(--g-soccer-diamond);
   }
   .g-soccer-phone-action { min-height: 38px; }
+}
 @media (orientation: landscape) {
   .g-soccer-phone-controller header {
     top: max(10px, env(safe-area-inset-top, 0px));
