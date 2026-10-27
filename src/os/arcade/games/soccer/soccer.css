@@ -1,3 +1,11 @@
+.g-soccer-setpiece-status { position: absolute; top: calc(86px * var(--g-soccer-u)); left: calc(16px * var(--g-soccer-u)); max-width: calc(100% - 32px); padding: 6px 12px; border-radius: 6px; background: #102a25e8; color: #ffe887; text-align: center; font: 600 12px/1.5 system-ui; }
+.g-soccer-setpiece-status small { display: block; }
+.g-soccer-pen-dots { display: inline-flex; gap: 10px; margin-left: 8px; }
+.g-soccer-pen-dots > span { display: inline-flex; gap: 3px; }
+.g-soccer-pen-dots i { width: 7px; height: 7px; border-radius: 50%; background: #ed7c76; }
+.g-soccer-pen-dots i.is-scored { background: #8ae6af; }
+.g-soccer-setpiece-hint { display: block; grid-column: 1 / -1; color: #ffe887; font: 600 11px/1.4 system-ui; }
+.g-soccer-phone-charge > .g-soccer-power { grid-column: 2; grid-row: 1; }
 .g-soccer {
   --g-soccer-u: 1;
   overflow: hidden;

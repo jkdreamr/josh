@@ -5,7 +5,8 @@ import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
 import { chargePower, IDENTITY_BASIS, screenToWorld, gamepadInput, keyboardInput, reconcileControllers, type ControlCommand, type GamepadHistory } from './input.ts';
 import { cloneSnapshot, commandFromPacket, consumeCommand, mergeRemoteCommand, movePacket, parsePacket } from './net.ts';
-import { createWorld, distance, FIELD, teamOf, findReceiver, matchClock, nearestCarrier, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
+import { createWorld, distance, FIELD, teamOf, findReceiver, matchClock, nearestCarrier, setRestart, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
+import { setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { goalRoar, kickThump, netSwish, startCrowd, whistle } from './audio.ts';
 import { createScene, type CameraMode, type SoccerView, type TimeMode } from './scene.ts';
@@ -250,11 +251,12 @@ function Play() {
   const lastFrameTime = useRef<number | null>(null);
   const debugTimer = useRef(0);
   const debugConfig = useMemo(() => {
-    if (typeof location === 'undefined') return { enabled: false, clockScale: 1 };
+    if (typeof location === 'undefined') return { enabled: false, clockScale: 1, setpiece: null };
     const params = new URLSearchParams(location.search);
     const value = Number(params.get('soccerdebug'));
     return {
       enabled: params.has('soccerdebug'),
+      setpiece: import.meta.env.DEV && params.has('soccerdebug') ? params.get('setpiece') : null,
       clockScale: params.has('soccerdebug') && Number.isFinite(value) ? Math.max(1, Math.min(20, value)) : 1,
     };
   }, []);
@@ -310,6 +312,12 @@ function Play() {
     const fresh = createWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
     controllerPlayers.current.clear();
     setupHumans(fresh, currentMode, online);
+    const forced = debugConfig.setpiece;
+    if (forced === 'shootout') startShootout(fresh);
+    else if (forced && ['corner', 'free-kick', 'penalty', 'goal-kick', 'throw-in'].includes(forced)) {
+      const kind = forced === 'throw-in' ? 'kick-in' : forced as 'corner' | 'free-kick' | 'penalty' | 'goal-kick';
+      setRestart(fresh, 0, kind, { x: kind === 'corner' ? 52.35 : kind === 'penalty' ? 41.5 : kind === 'goal-kick' ? -47 : 28, z: kind === 'corner' || kind === 'kick-in' ? 33.85 : 0 });
+    }
     worldRef.current = fresh;
     setHudWorld(fresh);
   }, [shell.status, modeChoice, halfMinutes, online?.round, online?.seat, online?.players]);
@@ -426,7 +434,7 @@ function Play() {
       replayStartedAt.current = simulationTime.current;
       replaySkipped.current = false;
     }
-    if (current.event !== lastEvent.current && /kick off|kickoff|foul|half time|full time|kick-in|corner|goal kick|free kick|penalty|second half/i.test(current.event)) {
+    if (current.event !== lastEvent.current && /kick off|kickoff|foul|half time|full time|kick-in|throw-in|corner|goal kick|free.kick|penalty|penalties|saved|second half/i.test(current.event)) {
       whistle();
     }
     lastEvent.current = current.event;
@@ -502,7 +510,8 @@ function Play() {
     reported.current = true;
     const room = onlineRef.current;
     const draw = current.score[0] === current.score[1];
-    const winner: Team | null = draw ? null : current.score[0] > current.score[1] ? 0 : 1;
+    const pensWinner = shootoutWinner(current);
+    const winner: Team | null = pensWinner ?? (draw ? null : current.score[0] > current.score[1] ? 0 : 1);
     if (room?.isHost) {
       const seats = winner === null ? undefined : winner === 0 ? [0, 2] : [1, 3];
       room.reportResult(room.round, seats?.[0] ?? null, seats);
@@ -510,8 +519,8 @@ function Play() {
     const title = winner === null ? 'full time · draw' : online
       ? (teamOf(room?.seat === undefined ? 0 : playerForSeat(room.seat, displayOnlyRoom.current, currentMode)) === winner ? 'you win' : 'match over')
       : winner === localTeam ? 'you win' : 'match lost';
-    const detail = `bay city ${current.score[0]} - ${current.score[1]} northshore · ${matchClock(current)}'`;
-    shellRef.current.gameOver(undefined, { title, detail });
+    const detail = `bay city ${current.score[0]} - ${current.score[1]} northshore · ${matchClock(current)}'${pensWinner !== null ? ' · pens ' + shootoutScore(current).join(' - ') : ''}`;
+    shellRef.current.gameOver(undefined, { title: title + (pensWinner !== null ? ' · on pens' : ''), detail });
   };
 
   const update = (loopDt: number) => {
@@ -659,6 +668,7 @@ function Play() {
 
     let renderWorld = isOnlineGuest ? onlineRenderState(guestSnapshots.current, performance.now() / 1000, current) : current;
     let camera: CameraMode = cameraRef.current;
+    if (renderWorld.phase === 'restart' && renderWorld.setPiece && ['corner', 'free-kick', 'penalty'].includes(renderWorld.setPiece.kind)) camera = 'setpiece';
     const replayClock = isOnlineGuest ? performance.now() / 1000 : simulationTime.current;
     if (!replaySkipped.current && replayStartedAt.current !== null && current.phase === 'goal') {
       if (!replaySkipped.current) {
@@ -730,7 +740,7 @@ function Play() {
   );
 }
 
-function PhoneController() {
+export function PhoneController() {
   const online = useOnline();
   const movement = useRef({ x: 0, z: 0 });
   const held = useRef<Command['action']>(null);
@@ -821,6 +831,11 @@ function PhoneController() {
     const snapshot = phoneWorld.current;
     return !!snapshot && nearestCarrier(snapshot)?.team === teamOf(playerForSeat(online?.seat ?? 0, displayOnly, mode));
   };
+  const phonePlayerId = () => {
+    const assigned = playerForSeat(online?.seat ?? 0, displayOnly, mode);
+    const snapshot = phoneWorld.current;
+    return snapshot && !snapshot.players[assigned]?.human ? snapshot.controlled[teamOf(assigned)] : assigned;
+  };
   const send = (action: Command['action'] = null, pressed = false, power = chargePower(chargeStartedAt.current === null ? 0 : (performance.now() - chargeStartedAt.current) / 1000), switchNearest = false) => {
     if (!online) return;
     online.send(movePacket(online.round || 1, sequence.current++, online.seat, {
@@ -839,7 +854,8 @@ function PhoneController() {
     }), { fast: true });
   };
   const beginCharge = (action: Command['action']) => {
-    if (!phoneHasBall() && phoneWorld.current && nearestCarrier(phoneWorld.current) && action !== 'pass') {
+    const taker = phoneWorld.current?.phase === 'restart' && phoneWorld.current.setPiece?.takerId === phonePlayerId();
+    if (!taker && !phoneHasBall() && phoneWorld.current && nearestCarrier(phoneWorld.current) && action !== 'pass') {
       send(action, true);
       return;
     }
@@ -881,8 +897,10 @@ function PhoneController() {
     return () => { off(); window.clearInterval(timer); };
   }, [online, mode, displayOnly]);
   if (!online) return null;
-  const phonePlayer = playerForSeat(online.seat, displayOnly, mode);
+  const phonePlayer = phonePlayerId();
   const attacking = phoneHasBall();
+  const labels = phoneWorld.current ? setPieceLabels(phoneWorld.current, teamOf(phonePlayer), phonePlayer) : null;
+  const taking = phoneWorld.current?.phase === 'restart' && phoneWorld.current.setPiece?.takerId === phonePlayer;
   if (showGame) return <><Play key={`phone-game-${online.round ?? 0}`} /><button className="g-soccer-phone-show" type="button" onClick={() => setShowGame(false)}>Controller</button></>;
   const button = (action: Command['action'], key: string, label: string, className: string) => (
     <button
@@ -905,22 +923,23 @@ function PhoneController() {
       </header>
       <div className="g-soccer-phone-charge" role="progressbar" aria-label={`${chargeName} power`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(chargeProgress * 100)}>
         <span>{chargingAction ? `${chargeName} · ${Math.round(chargeProgress * 100)}%` : 'HOLD AN ACTION TO CHARGE'}</span>
+        {labels && <small className="g-soccer-setpiece-hint">{labels.title} · {labels.hint}</small>}
         <PowerMeter power={chargeProgress} />
       </div>
       <Stick movement={movement} />
       <div className="g-soccer-phone-buttons">
         <div className="g-soccer-phone-utilities">
           <button type="button" className="g-soccer-phone-action" onPointerDown={(event) => {
-            event.preventDefault(); send(attacking ? 'skill' : null, attacking, 0.1, !attacking);
-          }}>LB · {attacking ? 'Skill' : 'Switch'}</button>
-          <button type="button" className="g-soccer-phone-action" onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); shoulder.current = true; send(); }} onPointerUp={() => { shoulder.current = false; send(); }} onPointerCancel={() => { shoulder.current = false; send(); }}>RB · {attacking ? 'Finesse' : 'Press'}</button>
+            event.preventDefault(); send(taking || attacking ? 'skill' : null, !!taking || attacking, 0.1, !taking && !attacking);
+          }}>LB · {labels?.lb ?? (attacking ? 'Skill' : 'Switch')}</button>
+          <button type="button" className="g-soccer-phone-action" onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); shoulder.current = true; send(); }} onPointerUp={() => { shoulder.current = false; send(); }} onPointerCancel={() => { shoulder.current = false; send(); }}>RB · {labels?.rb ?? (attacking ? 'Finesse' : 'Press')}</button>
           <button type="button" className="g-soccer-phone-action is-sprint" onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); sprint.current = true; send(); }} onPointerUp={(event) => { event.preventDefault(); sprint.current = false; send(); }} onPointerCancel={() => { sprint.current = false; send(); }}>Sprint (hold)</button>
         </div>
         <div className="g-soccer-phone-diamond">
-          {button('lob', 'X', attacking ? 'Lob·Cross' : 'Slide', 'is-x')}
-          {button('through', 'Y', 'Through', 'is-y')}
-          {button('pass', 'A', attacking ? 'Pass' : 'Switch · hold Contain', 'is-a')}
-          {button('shoot', 'B', attacking ? 'Shoot' : 'Tackle', 'is-b')}
+          {button('lob', 'X', labels?.x ?? (attacking ? 'Lob·Cross' : 'Slide'), 'is-x')}
+          {button('through', 'Y', labels?.y ?? 'Through', 'is-y')}
+          {button('pass', 'A', labels?.a ?? (attacking ? 'Pass' : 'Switch · hold Contain'), 'is-a')}
+          {button('shoot', 'B', labels?.b ?? (attacking ? 'Shoot' : 'Tackle'), 'is-b')}
         </div>
       </div>
     </div>

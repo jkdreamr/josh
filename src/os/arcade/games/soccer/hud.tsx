@@ -1,8 +1,11 @@
 import { FIELD, jerseyNumber, matchClock, type World } from './logic.ts';
+import { setPieceLabels, shootoutScore } from './setpieces.ts';
 
 export function Hud({ world, targetId, selectedId, watching, replaying, power, contain }: { world: World; targetId: number | null; selectedId?: number; watching: boolean; replaying: boolean; power?: number | null; contain?: boolean }) {
   const clock = matchClock(world);
   const selected = world.players[selectedId ?? world.controlled[0]];
+  const labels = setPieceLabels(world, selected?.team ?? 0, selected?.id);
+  const pens = shootoutScore(world);
   const state = selected?.action === 'jockey' ? contain ? 'CONTAIN' : 'JOCKEY' : selected?.action === 'shield' ? 'SHIELD'
     : selected?.slide ? 'SLIDE' : selected && Math.hypot(selected.vx, selected.vz) > 7.1 ? 'SPRINT' : null;
   return (
@@ -13,6 +16,10 @@ export function Hud({ world, targetId, selectedId, watching, replaying, power, c
         <div className="g-soccer-club g-soccer-away">NSU<i /></div>
         <div className="g-soccer-clock"><b>{clock}'</b><span>{world.half === 1 ? '1ST HALF' : '2ND HALF'}</span></div>
       </div>
+      {(labels || world.shootout) && <div className="g-soccer-setpiece-status">
+        {world.shootout && <div>PENS {pens.join(' - ')} <span className="g-soccer-pen-dots">{world.shootout.kicks.map((kicks, team) => <span key={team} aria-label={team === 0 ? 'Bay City penalties' : 'Northshore penalties'}>{kicks.map((scored, i) => <i key={i} className={scored ? 'is-scored' : 'is-missed'} aria-label={scored ? 'scored' : 'missed'} />)}</span>)}</span></div>}
+        {labels && <small>{labels.title}</small>}
+      </div>}
       {world.eventTime > 0 && world.event && (
         <div
           key={world.event}
