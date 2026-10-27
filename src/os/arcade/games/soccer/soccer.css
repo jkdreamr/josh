@@ -280,6 +280,42 @@
 .g-soccer-pause-panel li time { color: #d7ff70; font-weight: 900; }
 
 .g-soccer .arcade-ov .arcade-card { border-color: #d7ff7055; background: linear-gradient(145deg, #0a1b29f5, #06121df5); box-shadow: 0 1em 3em #000a, inset 0 1px #ffffff16; }
+.g-soccer-caption {
+  position: absolute;
+  z-index: 5;
+  left: 50%;
+  bottom: calc(104px * var(--g-soccer-u));
+  max-width: min(88vw, 600px);
+  padding: 7px 13px;
+  transform: translateX(-50%);
+  border: 1px solid #ffffff42;
+  border-radius: 999px;
+  background: #071722ed;
+  box-shadow: 0 4px 18px #0008;
+  color: #fff7d4;
+  font-size: calc(12px * var(--g-soccer-u));
+  font-weight: 800;
+  line-height: 1.25;
+  text-align: center;
+  text-shadow: 0 1px 3px #000;
+  pointer-events: none;
+}
+.g-soccer-sound-lock {
+  position: absolute;
+  z-index: 5;
+  top: calc(58px * var(--g-soccer-u));
+  right: calc(16px * var(--g-soccer-u));
+  max-width: min(58vw, 230px);
+  padding: 6px 10px;
+  border: 1px solid #ffffff4a;
+  border-radius: 999px;
+  background: #071722dd;
+  color: #f5e6a9;
+  font-size: calc(10px * var(--g-soccer-u));
+  font-weight: 750;
+  text-align: center;
+  pointer-events: none;
+}
 
 .g-soccer .g-soccer-world-indicator {
   position: absolute;
@@ -396,6 +432,7 @@
   .g-soccer-player-tag { bottom: 9.5em; }
   .g-soccer-scoreboard { top: .5em; }
   .g-soccer-banner { bottom: 15em; }
+  .g-soccer-caption { bottom: 226px; }
 }
 
 @media (max-width: 540px) {
@@ -413,6 +450,7 @@
   .g-soccer-intro-rosters li { font-size: .52em; }
   .g-soccer-stats-panel { width: min(36em, 96vw); padding: .8em .72em; }
   .g-soccer-banner { bottom: 14.5em; }
+  .g-soccer-caption { bottom: 204px; }
   .g-soccer-stick { left: 13px; bottom: 24px; width: 106px; height: 106px; }
   .g-soccer .arcade-touch { right: 6px; bottom: 12px; }
   .g-soccer .arcade-btns { grid-template-columns: repeat(3, 48px); gap: 6px; }
@@ -432,6 +470,7 @@
   .g-soccer-stats-panel { max-height: 100%; padding: .5em .8em; }
   .g-soccer-stats-panel h2 { margin-bottom: .2em; }
   .g-soccer-stats-panel > footer { margin-top: .35em; }
+  .g-soccer-caption { bottom: 96px; }
   .g-soccer-stick { bottom: 9px; width: 84px; height: 84px; }
   .g-soccer .arcade-touch { bottom: 7px; }
   .g-soccer .arcade-btns { grid-template-columns: repeat(6, 48px); gap: 3px; }

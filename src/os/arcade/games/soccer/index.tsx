@@ -1,13 +1,13 @@
-import { useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
-import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useOnline, useSetting, getSetting, Segmented, defineSetting, levelOptions, levelIndex, TouchControls, sfx } from '../../kit';
+import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent } from 'react';
+import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useOnline, useSetting, useMuted, getSetting, Segmented, defineSetting, levelOptions, levelIndex, TouchControls, sfx } from '../../kit';
 import type { LevelName } from '../../kit/controls';
 import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
 import { chargePower, IDENTITY_BASIS, screenToWorld, gamepadInput, keyboardInput, reconcileControllers, type ControlCommand, type GamepadHistory } from './input.ts';
 import { acceptMovePacket, cloneSnapshot, consumeCommand, movePacket, parsePacket, type RemoteSeat } from './net.ts';
-import { createWorld, distance, FIELD, teamOf, findReceiver, matchClock, nearestCarrier, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
+import { createWorld, distance, teamOf, findReceiver, matchClock, nearestCarrier, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
-import { goalRoar, kickThump, netSwish, startCrowd, whistle } from './audio.ts';
+import { SoccerSound, type CommentaryMode } from './audio.ts';
 import type { CameraMode, SoccerView, TimeMode } from './scene.ts';
 import { markShadersReady, parkSoccerView, preloadSoccer, takeSoccerView, useSoccerStadium } from './load.ts';
 import { LoadProgress } from './loading.tsx';
@@ -24,6 +24,7 @@ import QRCode from 'qrcode';
 
 type Minutes = '2' | '4' | '6';
 type Camera = 'broadcast' | 'end';
+type Volume = 'off' | 'low' | 'mid' | 'full';
 
 const MODE = defineSetting<Mode>('soccer:mode', ['cpu', 'versus', 'coop'], 'cpu');
 const HALF = defineSetting<Minutes>('soccer:half', ['2', '4', '6'], '4');
@@ -32,20 +33,21 @@ const CAMERA = defineSetting<Camera>('soccer:camera', ['broadcast', 'end'], 'bro
 const TIME = defineSetting<TimeMode>('soccer:time', ['night', 'golden', 'overcast', 'rain'], 'night', { live: true });
 const PITCH = defineSetting<PitchPattern>('soccer:pitch', ['stripes', 'checker'], 'stripes', { live: true });
 const DISPLAY_ONLY = defineSetting<'on' | 'off'>('soccer:display-only', ['on', 'off'], 'on');
+const VOLUME = defineSetting<Volume>('soccer:volume', ['off', 'low', 'mid', 'full'], 'mid', { live: true });
+const COMMENTARY = defineSetting<CommentaryMode>('soccer:commentary', ['voice', 'captions', 'off'], 'voice', { live: true });
 
 const modeOptions = [['cpu', 'vs CPU'], ['versus', '2P versus'], ['coop', '2P co-op']] as const;
 const halfOptions = [['2', '2 min'], ['4', '4 min'], ['6', '6 min']] as const;
 const cameraOptions = [['broadcast', 'Broadcast'], ['end', 'End to end']] as const;
 const timeOptions = [['night', 'Night'], ['golden', 'Golden hour'], ['overcast', 'Overcast'], ['rain', 'Rain']] as const;
 const pitchOptions = [['stripes', 'Stripes'], ['checker', 'Checkerboard']] as const;
+const volumeOptions = [['off', 'Off'], ['low', 'Low'], ['mid', 'Mid'], ['full', 'Full']] as const;
+const commentaryOptions = [['voice', 'Voice'], ['captions', 'Captions'], ['off', 'Off']] as const;
+const volumeLevels: Record<Volume, number> = { off: 0, low: 0.35, mid: 0.7, full: 1 };
 const commandKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyJ', 'KeyK', 'KeyL', 'KeyI', 'KeyU', 'KeyQ', 'KeyE', 'Space', 'Period', 'Slash', 'Semicolon', 'Quote', 'Comma', 'ShiftLeft', 'ShiftRight'];
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 const shallowHudEqual = (left: HudState, right: HudState) =>
   (Object.keys(left) as (keyof HudState)[]).every((key) => left[key] === right[key]);
-const cue = (name: 'kickoff') => {
-  if (name === 'kickoff') whistle();
-};
-
 function Settings({ online = false }: { online?: boolean }) {
   const shell = useShell();
   const match = useContext(MatchContext);
@@ -55,6 +57,8 @@ function Settings({ online = false }: { online?: boolean }) {
   const [camera, setCamera] = useSetting(CAMERA);
   const [time, setTime] = useSetting(TIME);
   const [pitch, setPitch] = useSetting(PITCH);
+  const [volume, setVolume] = useSetting(VOLUME);
+  const [commentary, setCommentary] = useSetting(COMMENTARY);
   return (
     <div className="g-soccer-settings">
       {!online && <Segmented label="Match" value={mode} options={modeOptions} onChange={setMode} />}
@@ -64,6 +68,8 @@ function Settings({ online = false }: { online?: boolean }) {
       <Segmented label="Time of day" value={time} options={timeOptions} onChange={setTime} />
       <Segmented label="Pitch" value={pitch} options={pitchOptions} onChange={setPitch} />
       {shell.status === 'paused' && match?.current && <PausePanel match={match.current} />}
+      <Segmented label="Sound" value={volume} options={volumeOptions} onChange={setVolume} />
+      <Segmented label="Commentary" value={commentary} options={commentaryOptions} onChange={setCommentary} />
     </div>
   );
 }
@@ -256,12 +262,20 @@ function onlineRenderState(frames: NetworkFrame[], now: number, fallback: World)
   return before.world;
 }
 
-function Play() {
+function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const shell = useShell();
   const keys = useKeys();
   const stadium = useSoccerStadium();
   const online = useOnline();
   const matchContext = useContext(MatchContext);
+  const [volumeChoice] = useSetting(VOLUME);
+  const [commentaryChoice] = useSetting(COMMENTARY);
+  const [muted] = useMuted();
+  const soundRef = useRef<SoccerSound | null>(null);
+  if (!soundRef.current) soundRef.current = new SoccerSound();
+  const sound = soundRef.current;
+  const soundLocked = useSyncExternalStore(sound.synth.subscribe, sound.synth.isLocked, () => true);
+  const caption = useSyncExternalStore(sound.announcer.subscribe, sound.announcer.getCaption, () => null);
   const { ref, size } = useCanvas<HTMLDivElement>();
   const [modeChoice, setModeChoice] = useSetting(MODE);
   const [halfChoice, setHalfChoice] = useSetting(HALF);
@@ -331,9 +345,7 @@ function Play() {
   const charging = useRef(new Map<number, { holding: boolean; action: Command['action']; seconds: number }>());
   const lastScore = useRef<[number, number]>([0, 0]);
   const reported = useRef(false);
-  const lastEvent = useRef('');
   const soundTime = useRef(0);
-  const crowdIntensity = useRef(0.12);
   const renderDirty = useRef(true);
   const guestRenderTimer = useRef(0);
   const gamepadPrevious = useRef<Record<number, GamepadHistory>>({});
@@ -349,9 +361,30 @@ function Play() {
 
   const halfMinutes = online?.quick ? 3 : Number(halfChoice);
   const currentMode: Mode = modeChoice;
+  useEffect(() => {
+    sound.configure({ volume: volumeLevels[volumeChoice], crowd: 1, muted, commentary: commentaryChoice });
+  }, [sound, volumeChoice, muted, commentaryChoice]);
+
+  useEffect(() => () => sound.dispose(), [sound]);
+
+  useEffect(() => {
+    if (!audioEnabled) return;
+    const unlock = () => { sound.unlock(); sfx.unlock(); };
+    window.addEventListener('pointerdown', unlock, { capture: true, passive: true });
+    window.addEventListener('keydown', unlock, { capture: true, passive: true });
+    window.addEventListener('touchend', unlock, { capture: true, passive: true });
+    return () => {
+      window.removeEventListener('pointerdown', unlock, true);
+      window.removeEventListener('keydown', unlock, true);
+      window.removeEventListener('touchend', unlock, true);
+    };
+  }, [audioEnabled, sound]);
+
   if (!worldRef.current) {
     worldRef.current = createWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
     setupHumans(worldRef.current, currentMode, online);
+    sound.reset(worldRef.current);
+    lastScore.current = [...worldRef.current.score];
   }
   if (!replayWorld.current) replayWorld.current = createReplayWorld(worldRef.current);
   const world = worldRef.current!;
@@ -390,7 +423,6 @@ function Play() {
     reported.current = false;
     simulationTime.current = 0;
     accumulator.current = 0;
-    lastEvent.current = fresh.event;
     lastScore.current = [...fresh.score];
     previousHudEvent.current = fresh.event;
     previousHudEventTime.current = fresh.eventTime;
@@ -402,14 +434,20 @@ function Play() {
       selectedId: 6, stamina: 1, state: null, targetId: null, power: null,
       replaying: false, statsVersion: 0, presentation: 'live',
     });
+    sound.reset(fresh);
   }, [shell.status, modeChoice, halfMinutes, online?.round, online?.seat, online?.players]);
 
   useEffect(() => {
     const release = sfx.retain();
-    if (shell.status !== 'playing') return release;
-    const stopCrowd = startCrowd(() => crowdIntensity.current);
-    return () => { stopCrowd(); release(); };
-  }, [shell.status]);
+    const updateRunning = () => sound.setRunning(audioEnabled && shell.status === 'playing' && document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', updateRunning);
+    updateRunning();
+    return () => {
+      document.removeEventListener('visibilitychange', updateRunning);
+      sound.setRunning(false);
+      release();
+    };
+  }, [audioEnabled, shell.status, sound]);
 
   useEffect(() => {
     const host = ref.current;
@@ -511,6 +549,7 @@ function Play() {
         guestSnapshots.current = guestSnapshots.current.slice(-12);
         worldRef.current = packet.state;
         matchContext && (matchContext.current = { world: packet.state, stats: statsObserver.current.stats });
+        if (audioEnabled) sound.observe(packet.state, now);
         renderDirty.current = true;
         return;
       }
@@ -523,7 +562,7 @@ function Play() {
       }
     });
     return off;
-  }, [online, online?.round, online?.isHost, setHalfChoice, setLevelChoice, setModeChoice]);
+  }, [audioEnabled, online, online?.round, online?.isHost, setHalfChoice, setLevelChoice, setModeChoice, sound]);
 
   useEffect(() => {
     if (!online?.isHost) return;
@@ -540,19 +579,10 @@ function Play() {
   }, [online?.isHost, online?.round, online?.quick, halfChoice, levelChoice, modeChoice]);
 
   const soundForWorld = (current: World) => {
-    if (current.kickEvent) {
-      kickThump(current.kickEvent.power);
-    }
     if (current.phase === 'goal' && lastScore.current.some((score, i) => score !== current.score[i])) {
-      goalRoar();
-      netSwish();
       replayStartedAt.current = simulationTime.current;
       replaySkipped.current = false;
     }
-    if (current.event !== lastEvent.current && /kick off|kickoff|foul|half time|full time|kick-in|corner|goal kick|free kick|penalty|second half/i.test(current.event)) {
-      whistle();
-    }
-    lastEvent.current = current.event;
     lastScore.current = [...current.score];
   };
 
@@ -692,16 +722,13 @@ function Play() {
           }
         } else {
           showPresentation('live');
-          cue('kickoff');
+          if (audioEnabled) sound.synth.play({ kind: 'whistle', pattern: 'short' });
         }
       }
       if (room?.isHost) {
         for (const command of remoteCommands.current.values()) Object.assign(command, consumeCommand(command));
       }
     }
-    crowdIntensity.current = current.phase === 'goal'
-      ? 1
-      : 0.08 + Math.min(0.82, Math.max(0, (Math.abs(current.ball.x) - FIELD.penaltyDepth * 0.42) / (FIELD.length / 2 - FIELD.penaltyDepth * 0.42)) * 0.75);
     const isOnlineGuest = !!room && !room.isHost;
     controllerPlayers.current = reconcileControllers(current, controllerPlayers.current);
     if (room) {
@@ -777,9 +804,6 @@ function Play() {
           }
         }
         const previousPhase = current.phase;
-        const previousScore0 = current.score[0];
-        const previousScore1 = current.score[1];
-        const previousEvent = current.event;
         if (stepIndex === steps - 1 && previousRenderSnapshot.current) captureSnapshot(current, previousRenderSnapshot.current);
         stepWorld(current, STEP, commands, debugConfig.clockScale);
         statsObserver.current.observe(current, STEP);
@@ -794,7 +818,8 @@ function Play() {
         }
         controllerPlayers.current = assignments;
         accumulator.current -= STEP;
-        if (current.kickEvent || current.phase !== previousPhase || current.score[0] !== previousScore0 || current.score[1] !== previousScore1 || current.event !== previousEvent) soundForWorld(current);
+        if (audioEnabled) sound.observe(current, simulationTime.current);
+        soundForWorld(current);
         if (current.phase === 'goal' && replayStartedAt.current === null) replayStartedAt.current = simulationTime.current;
         if (simulationTime.current - soundTime.current > 0.075) {
           appendReplayFrame(replayFrames.current, current, simulationTime.current);
@@ -832,6 +857,8 @@ function Play() {
         room.send({ t: 'soccer', k: 's', r: room.round || 1, seq: snapshotSequence.current++, state: cloneSnapshot(current) });
       }
     }
+
+    if (audioEnabled) sound.frame(current, isOnlineGuest ? now / 1000 : simulationTime.current);
 
     if (debugConfig.enabled) {
       debugTimer.current += dt;
@@ -942,6 +969,10 @@ function Play() {
       {hud.presentation === 'intro' && <IntroCard />}
       {(hud.presentation === 'half-time' || hud.presentation === 'full-time') && <StatsScreen presentation={hud.presentation} statsVersion={hud.statsVersion} />}
       {phoneGone && <div className="g-soccer-phone-gone" role="status">Phone disconnected — reopen the link</div>}
+      {audioEnabled && caption && <div key={caption.id} className="g-soccer-caption" aria-live="polite">{caption.text}</div>}
+      {audioEnabled && shell.status === 'playing' && !muted && volumeChoice !== 'off' && soundLocked && (
+        <div className="g-soccer-sound-lock">Click or press any key for sound</div>
+      )}
       {shell.touch && shell.status === 'playing' && !online?.watching && <Stick movement={movement} />}
       {shell.touch && shell.status === 'playing' && !online?.watching && <TouchControls buttons={[
         { key: 'KeyJ', label: 'pass / contain' },
@@ -1261,7 +1292,7 @@ function PhoneController() {
   if (!online) return null;
   const phonePlayer = playerForSeat(online.seat, displayOnly, mode);
   const myTeam = teamOf(phonePlayer);
-  if (showGame) return <><Play key={`phone-game-${online.round ?? 0}`} /><button className="g-soccer-phone-show" type="button" onClick={() => setShowGame(false)}>Controller</button></>;
+  if (showGame) return <><Play key={`phone-game-${online.round ?? 0}`} audioEnabled={false} /><button className="g-soccer-phone-show" type="button" onClick={() => setShowGame(false)}>Controller</button></>;
   const chargeName = chargingAction === 'pass' ? 'Pass' : chargingAction === 'shoot' ? 'Shoot' : chargingAction === 'through' ? 'Through' : chargingAction === 'lob' ? 'Lob' : chargingAction === 'skill' ? 'Skill' : 'Hold to charge';
   const chargingKey = FACE_KEYS.find((key) => FACE[key] === chargingAction) ?? null;
   const faceLabel: Record<FaceKey, string> = attacking
@@ -1392,7 +1423,7 @@ function Stage({ joining }: { joining: boolean }) {
   // never loads three.js or the player models (shell.touch is only known after the first render).
   if (joining && !online && shell.status === 'ready') return null;
   if (shell.touch && online && !online.isHost && !online.watching) return <PhoneController />;
-  return <Play key={`${shell.round}-${online?.round ?? 0}-${online?.handoffs ?? 0}`} />;
+  return <Play key={`${shell.round}-${online?.round ?? 0}-${online?.handoffs ?? 0}`} audioEnabled={!shell.touch || !online || online.isHost} />;
 }
 
 export default function Soccer({ onExit, roomCode }: { onExit?: () => void; roomCode?: string }) {
