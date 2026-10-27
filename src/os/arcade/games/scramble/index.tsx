@@ -105,6 +105,8 @@ const TAGS = 12;
 const TAG_H = 16;
 /** Markers pointing the way to teammates off the screen (or up or down a stairway): the rest of a squad. */
 const MATE_MARKS = 3;
+/** How far in from the side of the screen a teammate is for its name tag to show rather than its marker. */
+const EDGE_IN = 30;
 /** The host gives everyone a moment to get its first packet before the countdown. */
 const HOST_LEAD = 1.2;
 const STICK_R = 52;
@@ -680,7 +682,8 @@ function Play({ mode }: { mode: StageMode }) {
         stepped = false;
       }
       last = now;
-      if (stepped || e.ctrlKey || e.metaKey || (!e.shiftKey && Math.abs(e.deltaX) > Math.abs(e.deltaY))) return;
+      // (and nothing while the emote wheel is up)
+      if (stepped || wheelRef.current || e.ctrlKey || e.metaKey || (!e.shiftKey && Math.abs(e.deltaX) > Math.abs(e.deltaY))) return;
       // Firefox counts in lines (or pages), the rest in pixels
       const unit = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1;
       acc += (e.shiftKey ? e.deltaY || e.deltaX : e.deltaY) * unit;
@@ -1660,6 +1663,7 @@ function Play({ mode }: { mode: StageMode }) {
     // teammates off the screen: an arrow at the edge their way with their number and how far; one up or down a
     // stairway from us shows over (or under) where it is on our level. Red and pulsing while one is down
     const ks = mateMarks(m, eye);
+    const marked = new Map<number, { x: number; y: number }>();
     const { w, h } = sizeRef.current;
     const from = eye ? v.project(eye.x, eye.y + 1, eye.z) : null;
     for (let i = 0; i < MATE_MARKS; i++) {
@@ -1668,8 +1672,8 @@ function Play({ mode }: { mode: StageMode }) {
       const k = ks[i];
       const o = k ? m.fighters[k.id] : undefined;
       const at = o && eye ? v.project(topX(o.x) + (isDeep(eye.x) ? DEEP : 0), (k.level ? eye.y : o.y) + 1.2, o.z) : null;
-      // (one whose tag is on the screen at all needs none)
-      const seen = !!at && k.level === 0 && at.x > 8 && at.x < w - 8 && at.y > 8 && at.y < h - 8;
+      // (one whose tag is on the screen needs none)
+      const seen = !!at && k.level === 0 && at.x > EDGE_IN && at.x < w - EDGE_IN && at.y > EDGE_IN && at.y < h - 8;
       // (kept in far enough for the distance under it)
       const pad = 30;
       const e = at && !seen ? edgeOf(at.x, at.y, from?.x ?? w / 2, from?.y ?? h / 2, pad, Math.max(pad + 14, h * 0.15), w - pad, h - Math.max(pad + 24, h * 0.22)) : null;
@@ -1679,6 +1683,10 @@ function Play({ mode }: { mode: StageMode }) {
       }
       el.style.opacity = '1';
       el.style.transform = `translate(${e.x.toFixed(1)}px, ${e.y.toFixed(1)}px) translate(-50%, -50%)`;
+      // (its marker, not half a name tag at the edge, and what it says goes up by the marker)
+      marked.set(k.id, e);
+      const tag = tags.current.get(k.id);
+      if (tag && tag.style.opacity !== '0') tag.style.opacity = '0';
       el.style.setProperty('--a', `${(e.off ? e.a : k.level > 0 ? -Math.PI / 2 : Math.PI / 2).toFixed(3)}rad`);
       const far = `${Math.round(k.dist)}m`;
       const text = `${k.n}|${k.level === 0 ? far : e.off ? `${far} ${k.level > 0 ? 'up' : 'down'}` : k.level > 0 ? 'above' : 'below'}|${k.color}`;
@@ -1699,7 +1707,8 @@ function Play({ mode }: { mode: StageMode }) {
         continue;
       }
       const f = m.fighters[id];
-      const at = f && (f.phase === 'ground' || f.phase === 'drop') ? v.project(f.x, f.y + 2.3, f.z) : null;
+      const mark = marked.get(id);
+      const at = mark ? { x: mark.x, y: mark.y - 12 } : f && (f.phase === 'ground' || f.phase === 'drop') ? v.project(f.x, f.y + 2.3, f.z) : null;
       if (!at) {
         if (el.style.visibility !== 'hidden') el.style.visibility = 'hidden';
         continue;
@@ -1709,7 +1718,10 @@ function Play({ mode }: { mode: StageMode }) {
       el.style.visibility = '';
       const age = m.clock - f.emoteAt;
       el.style.opacity = calm ? '1' : Math.max(0, Math.min(1, age / 0.18, (EMOTE_T - age) / 0.5)).toFixed(2);
-      el.style.transform = `translate(${at.x.toFixed(1)}px, ${(at.y - (shown.has(id) ? TAG_H + 12 : 4)).toFixed(1)}px) translate(-50%, -100%)`;
+      // (kept on the screen, sideways)
+      const half = el.offsetWidth / 2 + 4;
+      const x = Math.max(half, Math.min(w - half, at.x));
+      el.style.transform = `translate(${x.toFixed(1)}px, ${(at.y - (shown.has(id) && !mark ? TAG_H + 12 : 4)).toFixed(1)}px) translate(-50%, -100%)`;
     }
     // hit marks: a quick X that grows a little and fades
     for (const p of marks.current) {
