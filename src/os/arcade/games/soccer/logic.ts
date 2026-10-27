@@ -257,8 +257,6 @@ export function nearestCarrier(world: World) {
     && Math.hypot(world.ball.vx - p.vx, world.ball.vz - p.vz) > CONTROL_SPEED;
   const eligible = (p: Player) => !p.slide && !(p.touchCd! > 0) && !(p.cooldown > 0 && (p.action === 'kick' || p.action === 'pass'))
     && !p.sentOff && !tooFast(p) && distance(p, world.ball) < 0.64;
-  const eligible = (p: Player) => !p.slide && !(p.touchCd! > 0) && !(p.cooldown > 0 && (p.action === 'kick' || p.action === 'pass'))
-    && !p.sentOff && !tooFast(p) && distance(p, world.ball) < 0.64;
   return world.players.find((p) => p.id === world.carrierId && eligible(p)) ?? world.players.find(eligible);
 }
 
@@ -580,11 +578,6 @@ export function tackleWindow(world: World, player: Player) {
   const exposed = !enemy || distance(enemy, world.ball) > 0.55;
   const chance = (angle < 1.3 ? 0.55 : angle > 1.9 ? 0.15 : 0.3) * (enemy?.action === 'shield' ? 0.4 : 1);
   return { enemy, ballDistance, angle, exposed, chance, probability: exposed ? 1 : chance * (angle > 1.9 ? 0.65 : 1), inReach: ballDistance < 1.5 && world.ball.y < 0.75 };
-}
-
-function approachAngle(player: Player, enemy: Player) {
-  const from = Math.atan2(player.x - enemy.x, player.z - enemy.z);
-  return Math.abs(Math.atan2(Math.sin(enemy.facing - from), Math.cos(enemy.facing - from)));
 }
 
 function foul(world: World, player: Player, enemy: Player, kind: 'tackle' | 'slide', ballContact: boolean) {
