@@ -431,7 +431,7 @@
   background: radial-gradient(circle at center, #ffe17b99 0%, #ffbd4c55 45%, #ffb84a00 100%);
 }
 .g-soccer-phone-flash.is-shot {
-  --g-soccer-phone-flash-peak: .22;
+  --g-soccer-phone-flash-peak: .3;
   background: radial-gradient(circle at center, #b9efff99 0%, #83d8ff44 42%, #72ccff00 100%);
 }
 @keyframes g-soccer-phone-flash {

@@ -112,7 +112,7 @@ export function createFxDirector(opts: { reducedMotion?: boolean } = {}): FxDire
       if (reducedMotion) return;
       armHitStop(0.09);
       shake = Math.max(shake, 0.16);
-      armPunch(-2.2);
+      armPunch(-3.4);
       return;
     }
     if (reducedMotion) {
@@ -142,7 +142,7 @@ export function createFxDirector(opts: { reducedMotion?: boolean } = {}): FxDire
     }
     if (kind === 'through') {
       nudgeFrom = nudgeX;
-      nudgeTarget = 2.5 * teamDir(team, swapped);
+      nudgeTarget = 3.5 * teamDir(team, swapped);
       nudgeTime = 0;
     }
   };
@@ -481,6 +481,13 @@ export function createFxDirector(opts: { reducedMotion?: boolean } = {}): FxDire
                 : kind as FxKind;
     const power = kind === 'power-shot' ? 0.95 : kind === 'save-weak' ? 0.5 : kind === 'save-strong' ? 1 : 0.9;
     const playerId = world.controlled[0];
+    let slidePlayer: World['players'][number] | undefined;
+    if (actualKind === 'slide') {
+      for (const player of world.players) {
+        if (!slidePlayer || Math.hypot(world.ball.x - player.x, world.ball.z - player.z) < Math.hypot(world.ball.x - slidePlayer.x, world.ball.z - slidePlayer.z)) slidePlayer = player;
+      }
+    }
+    const effectPlayerId = slidePlayer?.id ?? playerId;
     if (actualKind === 'goal') {
       goalPending = true;
       queueEvent('goal', world, simTime, 1, world.lastTouch);
@@ -488,12 +495,15 @@ export function createFxDirector(opts: { reducedMotion?: boolean } = {}): FxDire
       return;
     }
     if (!['shot', 'finesse', 'volley', 'through', 'touch', 'slide', 'slide-dust', 'tackle', 'save', 'post', 'goal-impact'].includes(actualKind)) return;
-    const synthetic = kind === 'power-shot' || kind === 'curl';
+    const synthetic = kind === 'power-shot' || kind === 'curl' || kind === 'volley';
     const speed = Math.hypot(world.ball.vx, world.ball.vy, world.ball.vz);
     const vx = synthetic && speed < 9 ? 18 : world.ball.vx;
     const vz = synthetic && speed < 9 ? 3 : world.ball.vz;
-    queueEvent(actualKind, world, simTime, power, teamOf(playerId), playerId, actualKind === 'finesse',
-      world.ball.x, world.ball.y, world.ball.z, vx, world.ball.vy, vz, world.ball.spin,
+    const x = slidePlayer?.x ?? world.ball.x;
+    const y = actualKind === 'slide' ? 0.04 : world.ball.y;
+    const z = slidePlayer?.z ?? world.ball.z;
+    queueEvent(actualKind, world, simTime, power, teamOf(effectPlayerId), effectPlayerId, actualKind === 'finesse',
+      x, y, z, vx, world.ball.vy, vz, world.ball.spin,
       world.ball.grounded, world.ball.inNet, world.endsSwapped, true);
   };
 
@@ -599,7 +609,7 @@ export function createFxLayer(THREE: typeof import('three'), scene: T.Scene): Fx
   trailGeometry.setAttribute('color', trailColors);
   trailGeometry.setIndex(new THREE.BufferAttribute(trailIndices, 1));
   const trailMaterial = new THREE.ShaderMaterial({
-    uniforms: { uOpacity: { value: 0.35 } },
+    uniforms: { uOpacity: { value: 0.5 } },
     vertexShader: 'attribute float alpha; attribute vec3 color; varying float vAlpha; varying vec3 vColor; void main(){ vAlpha=alpha; vColor=color; gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0); }',
     fragmentShader: 'uniform float uOpacity; varying float vAlpha; varying vec3 vColor; void main(){ gl_FragColor=vec4(vColor,vAlpha*uOpacity); }',
     transparent: true,
@@ -662,23 +672,26 @@ export function createFxLayer(THREE: typeof import('three'), scene: T.Scene): Fx
   puffContext.fillStyle = puffGradient;
   puffContext.fillRect(0, 0, 64, 64);
   const puffTexture = new THREE.CanvasTexture(puffTextureCanvas);
-  const puffs: T.Sprite[] = [];
-  const puffMaterials: T.SpriteMaterial[] = [];
+  const puffGeometry = new THREE.PlaneGeometry(1, 1);
+  const puffGroundQuaternion = new THREE.Quaternion().setFromEuler(new THREE.Euler(-Math.PI / 2, 0, 0));
+  const puffs: T.Mesh[] = [];
+  const puffMaterials: T.MeshBasicMaterial[] = [];
   const puffLife = new Float32Array(32);
   const puffAgeAt = new Float32Array(32);
   const puffStart = new Float32Array(32 * 3);
   const puffVelocity = new Float32Array(32 * 2);
+  const puffDust = new Uint8Array(32);
   let layerElapsed = 0;
   for (let i = 0; i < 32; i++) {
-    const material = new THREE.SpriteMaterial({ map: puffTexture, color: '#9fbf7e', transparent: true, opacity: 0, depthWrite: false });
-    const sprite = new THREE.Sprite(material);
+    const material = new THREE.MeshBasicMaterial({ map: puffTexture, color: '#9fbf7e', transparent: true, opacity: 0, depthWrite: false });
+    const sprite = new THREE.Mesh(puffGeometry, material);
     sprite.visible = false;
     scene.add(sprite);
     puffs.push(sprite);
     puffMaterials.push(material);
   }
 
-  const ringGeometry = new THREE.RingGeometry(0.9, 1, 48);
+  const ringGeometry = new THREE.RingGeometry(0.78, 1, 48);
   const rings: T.Mesh[] = [];
   const ringMaterials: T.MeshBasicMaterial[] = [];
   const ringStarted = new Float32Array(3);
@@ -732,16 +745,20 @@ export function createFxLayer(THREE: typeof import('three'), scene: T.Scene): Fx
     const velocity = index * 2;
     puffAgeAt[index] = layerElapsed;
     puffLife[index] = 0.5 + (index % 4) * 0.1;
-    puffStart[base] = event.x;
-    puffStart[base + 1] = event.y;
-    puffStart[base + 2] = event.z;
+    puffDust[index] = dust ? 1 : 0;
     const angle = index * 2.399963229728653;
-    puffVelocity[velocity] = Math.cos(angle) * (dust ? 0.28 : 0.42);
-    puffVelocity[velocity + 1] = Math.sin(angle) * (dust ? 0.28 : 0.42);
+    puffStart[base] = event.x + Math.cos(angle) * (dust ? 0.25 : 0);
+    puffStart[base + 1] = event.y + (dust ? 0.04 : 0);
+    puffStart[base + 2] = event.z + Math.sin(angle) * (dust ? 0.25 : 0);
+    puffVelocity[velocity] = Math.cos(angle) * (dust ? 0.7 : 0.42);
+    puffVelocity[velocity + 1] = Math.sin(angle) * (dust ? 0.7 : 0.42);
     material.color.set(dust ? '#c8b28a' : '#9fbf7e');
-    material.opacity = 0.35;
+    material.opacity = dust ? 0.72 : 0.45;
+    material.map = puffTexture;
+    material.depthTest = true;
     sprite.position.set(event.x, event.y, event.z);
-    sprite.scale.setScalar(0.25);
+    sprite.scale.setScalar(dust ? 0.95 : 0.35);
+    sprite.renderOrder = 0;
     sprite.visible = true;
   };
 
@@ -842,7 +859,7 @@ export function createFxLayer(THREE: typeof import('three'), scene: T.Scene): Fx
         const length = Math.hypot(dx, dz) || 1;
         const sideX = -dz / length;
         const sideZ = dx / length;
-        const taper = 0.045 * (1 - i / Math.max(1, trailPoints - 1));
+        const taper = 0.08 * (1 - i / Math.max(1, trailPoints - 1));
         const vertex = i * 2;
         positionArray[vertex * 3] = trailPositions[point]! + sideX * taper;
         positionArray[vertex * 3 + 1] = trailPositions[point + 1]!;
@@ -879,13 +896,14 @@ export function createFxLayer(THREE: typeof import('three'), scene: T.Scene): Fx
       const base = i * 3;
       const velocity = i * 2;
       const sprite = puffs[i]!;
+      sprite.quaternion.copy(puffDust[i] ? puffGroundQuaternion : camera.quaternion);
       sprite.position.set(
         puffStart[base]! + puffVelocity[velocity]! * age,
-        puffStart[base + 1]! + 0.3 * progress,
+        puffStart[base + 1]! + (puffDust[i] ? 0.12 : 0.3) * progress,
         puffStart[base + 2]! + puffVelocity[velocity + 1]! * age,
       );
-      sprite.scale.setScalar(0.25 + 0.65 * progress);
-      puffMaterials[i]!.opacity = 0.35 * (1 - progress);
+      sprite.scale.setScalar(puffDust[i] ? 0.95 + progress : 0.35 + 0.85 * progress);
+      puffMaterials[i]!.opacity = (puffDust[i] ? 0.72 : 0.45) * (1 - progress);
       if (age >= life) {
         puffLife[i] = 0;
         sprite.visible = false;
@@ -897,7 +915,7 @@ export function createFxLayer(THREE: typeof import('three'), scene: T.Scene): Fx
       const age = layerElapsed - ringStarted[i]!;
       const progress = Math.min(1, age / life);
       rings[i]!.scale.setScalar(0.3 + 1.9 * progress);
-      ringMaterials[i]!.opacity = 0.45 * (1 - progress);
+      ringMaterials[i]!.opacity = 0.5 * (1 - progress);
       if (age >= life) {
         ringLife[i] = 0;
         rings[i]!.visible = false;

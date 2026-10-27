@@ -271,6 +271,7 @@ function Play() {
   const replaySkipped = useRef(false);
   const hudTimer = useRef(0);
   const snapshotTimer = useRef(0);
+  const pendingSnapshotKick = useRef<NonNullable<World['kickEvent']> | null>(null);
   const snapshotSequence = useRef(0);
   const inputSequence = useRef(0);
   const inputTimer = useRef(0);
@@ -361,15 +362,26 @@ function Play() {
 
   useEffect(() => {
     if (!debugConfig.enabled) return;
-    const target = window as Window & { __soccerFx?: { trigger: (kind: string) => void } };
+    const target = window as Window & { __soccerFx?: { trigger: (kind: string, advance?: number) => void } };
     const debugFx = {
-      trigger(kind: string) {
+      trigger(kind: string, advance = 0) {
         const current = worldRef.current;
         if (!current) return;
-        fxDirectorRef.current?.trigger(kind, current, simulationTime.current);
+        const director = fxDirectorRef.current;
+        director?.trigger(kind, current, simulationTime.current);
+        const view = viewRef.current;
+        const steps = Math.max(0, Math.round(advance * 60));
+        const time = performance.now() / 1000;
+        if (steps === 0) {
+          view?.update(current, 0, time, localTeam, cameraRef.current);
+        } else {
+          for (let i = 0; i < steps; i++) {
+            director?.tick(1 / 60);
+            view?.update(current, 1 / 60, time + (i + 1) / 60, localTeam, cameraRef.current);
+          }
+        }
         renderDirty.current = true;
-        viewRef.current?.update(current, 0, performance.now() / 1000, localTeam, cameraRef.current);
-        viewRef.current?.render();
+        view?.render();
         shell.invalidate();
       },
     };
@@ -646,6 +658,7 @@ function Play() {
         const previousScore1 = current.score[1];
         const previousEvent = current.event;
         stepWorld(current, STEP, commands, debugConfig.clockScale);
+        if (current.kickEvent) pendingSnapshotKick.current = current.kickEvent;
         fxDirector.observe(current, simulationTime.current);
         const assignments = reconcileControllers(current, controllerPlayers.current);
         for (const [seat, id] of assignments) {
@@ -680,7 +693,10 @@ function Play() {
       snapshotTimer.current += dt;
       if (snapshotTimer.current >= 0.05) {
         snapshotTimer.current %= 0.05;
-        room.send({ t: 'soccer', k: 's', r: room.round || 1, seq: snapshotSequence.current++, state: cloneSnapshot(current) });
+        const state = cloneSnapshot(current);
+        if (!state.kickEvent && pendingSnapshotKick.current) state.kickEvent = { ...pendingSnapshotKick.current };
+        pendingSnapshotKick.current = null;
+        room.send({ t: 'soccer', k: 's', r: room.round || 1, seq: snapshotSequence.current++, state });
       }
     }
 
@@ -878,12 +894,12 @@ function PhoneController() {
     const updatePreference = () => { reducedMotion.current = preference.matches; };
     updatePreference();
     preference.addEventListener('change', updatePreference);
-    const target = window as Window & { __soccerFx?: { trigger: (kind: string) => void } };
+    const target = window as Window & { __soccerFx?: { trigger: (kind: string, advance?: number) => void } };
     if (!new URLSearchParams(location.search).has('soccerdebug')) {
       return () => preference.removeEventListener('change', updatePreference);
     }
     const debugFx = {
-      trigger(kind: string) {
+      trigger(kind: string, _advance = 0) {
         if (reducedMotion.current) return;
         setPhoneFlash({ id: ++phoneFlashId.current, kind: kind.includes('shot') || kind === 'power-shot' ? 'shot' : 'goal' });
       },

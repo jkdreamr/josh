@@ -269,6 +269,17 @@ test('phone feedback reports score changes and deduplicates shot kick events', (
   assert.equal(phoneFx([0, 0], key, world, 0), 'goal-against');
 });
 
+test('phone feedback reports a shot delivered in a later snapshot only once', () => {
+  const initialSnapshot = freshWorld();
+  const laterSnapshot = freshWorld();
+  laterSnapshot.kickEvent = { playerId: 7, action: 'shoot', power: 0.8, time: STEP };
+  const key = `${laterSnapshot.kickEvent.playerId}:${laterSnapshot.kickEvent.time}:${laterSnapshot.kickEvent.action}`;
+
+  assert.equal(phoneFx([0, 0], null, initialSnapshot, 0), null);
+  assert.equal(phoneFx([0, 0], null, laterSnapshot, 0), 'shot');
+  assert.equal(phoneFx([0, 0], key, laterSnapshot, 0), null);
+});
+
 test('FX observation never mutates world snapshots', () => {
   const world: World = freshWorld();
   const before = JSON.parse(JSON.stringify(world));
