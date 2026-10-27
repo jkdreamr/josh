@@ -682,10 +682,10 @@ function goalCrossing(world: World, previousX: number) {
   const b = world.ball;
   const halfGoal = FIELD.goalWidth / 2 - 0.11;
   if (Math.abs(b.z) > halfGoal || b.y > FIELD.goalHeight - 0.11) return false;
-  if (previousX <= FIELD.length / 2 - 0.11 && b.x > FIELD.length / 2 + 0.11) {
+  if (previousX <= FIELD.length / 2 + 0.11 && b.x > FIELD.length / 2 + 0.11) {
     scoreGoal(world, world.endsSwapped ? 1 : 0); return true;
   }
-  if (previousX >= -FIELD.length / 2 + 0.11 && b.x < -FIELD.length / 2 - 0.11) {
+  if (previousX >= -FIELD.length / 2 - 0.11 && b.x < -FIELD.length / 2 - 0.11) {
     scoreGoal(world, world.endsSwapped ? 0 : 1); return true;
   }
   return false;
