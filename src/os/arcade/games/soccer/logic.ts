@@ -183,7 +183,7 @@ export function movePlayer(player: Player, input: Point, sprint: boolean, carryi
       const slow = 2.5 * 7 / 6;
       const turn = (16 + (3 - 16) * clamp((speed - slow) / (9 - slow), 0, 1)) * (carrying ? 0.85 : 1) * dt;
       angle += jockey || speed <= slow ? delta : clamp(delta, -turn, turn);
-      const target = top * Math.min(1, magnitude);
+      const target = top * Math.min(1, magnitude) * (jockey ? 1 : Math.max(0.25, Math.cos(targetAngle - angle)));
       speed += clamp(target - speed, -31.5 * dt, (speed < 7 ? 40 * 7 / 6 : 9) * dt);
     }
   }
@@ -726,12 +726,13 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
     if (p.human && !receiving && !p.buffer && (!p.controlled || !command)) continue;
     if (receiving && world.passPoint && distance(p, world.passPoint) < 0.7) world.passPoint = null;
     const receiveTarget = world.passPoint ?? world.ball;
-    const receiveMove = receiving ? { x: receiveTarget.x - p.x, z: receiveTarget.z - p.z } : command?.move ?? { x: 0, z: 0 };
+    const receiveGap = distance(p, receiveTarget);
+    const receiveMove = receiving ? { x: (receiveTarget.x - p.x) / Math.max(2, receiveGap), z: (receiveTarget.z - p.z) / Math.max(2, receiveGap) } : command?.move ?? { x: 0, z: 0 };
     const enemy = carrier && carrier.team !== p.team ? carrier : undefined;
     const contain = enemy && (command?.contain || command?.heldAction === 'pass');
     const jockey = !!command?.jockey || !!(command?.autoJockey && enemy && distance(p, enemy) < 4 && !command.sprint && Math.hypot(command.move.x, command.move.z) > 0.1);
     const target = contain ? goalSide(world, enemy!, p.team, 1.4) : undefined;
-    movePlayer(p, target ? { x: target.x - p.x, z: target.z - p.z } : receiveMove, !contain && (receiving || !!command?.sprint), carrier?.id === p.id, t, jockey || !!contain);
+    movePlayer(p, target ? { x: target.x - p.x, z: target.z - p.z } : receiveMove, !contain && (receiving ? receiveGap > 3 : !!command?.sprint), carrier?.id === p.id, t, jockey || !!contain);
     if ((jockey || contain) && enemy) {
       p.facing = Math.atan2(enemy.x - p.x, enemy.z - p.z);
       if (p.cooldown <= 0) p.action = 'jockey';

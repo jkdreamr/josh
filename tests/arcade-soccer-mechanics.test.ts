@@ -64,6 +64,24 @@ test('slow 90 degree dribble retains close control', () => {
   assert.ok(max <= 0.7);
 });
 
+test('a sprinting receiver brakes into a nearby stationary ball instead of orbiting it', () => {
+  for (const receiving of [false, true]) {
+    const { world, player, tick } = fixture();
+    player.x = 3; player.z = 0; player.vx = 0; player.vz = 9; player.facing = 0;
+    world.ball.x = world.ball.z = 0;
+    world.passTarget = receiving ? player.id : null;
+    let collected = false;
+    for (let i = 0; i < 90; i++) {
+      const gap = distance(player, world.ball);
+      tick(receiving ? { move: { x: 0, z: 0 } } : {
+        move: { x: (world.ball.x - player.x) / Math.max(1.4, gap), z: (world.ball.z - player.z) / Math.max(1.4, gap) }, sprint: true,
+      });
+      if (nearestCarrier(world)?.id === player.id) { collected = true; break; }
+    }
+    assert.ok(collected, `receiving=${receiving}, remaining distance=${distance(player, world.ball)}`);
+  }
+});
+
 test('sprint touches knock the ball loose beyond a metre and expire', () => {
   const { world, player, tick } = fixture(); world.carrierId = player.id; player.vx = 8; world.ball.x = 0.6;
   tick({ move: { x: 1, z: 0 }, sprint: true });
