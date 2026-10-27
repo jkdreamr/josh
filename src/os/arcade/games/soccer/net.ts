@@ -1,10 +1,11 @@
 import { FIELD, PLAYER_COUNT, teamOf, type World } from './logic.ts';
 import type { ControlCommand } from './input.ts';
 
-export type MovePacket = { t: 'soccer'; k: 'mv'; r: number; seq: number; seat: number; x: number; z: number; ax: number; az: number; power: number; buttons: number; held: number; sx?: number; sz?: number };
+export type MovePacket = { t: 'soccer'; k: 'mv'; r: number; seq: number; seat: number; x: number; z: number; ax: number; az: number; power: number; buttons: number; held: number; e?: number; sx?: number; sz?: number };
 export type SnapshotPacket = { t: 'soccer'; k: 's'; r: number; seq: number; state: World };
 export type ConfigPacket = { t: 'soccer'; k: 'cfg'; r: number; seq: number; half: 2 | 3 | 4 | 6; level: 0 | 1 | 2; displayOnly: boolean; mode?: 'cpu' | 'versus' | 'coop' };
 export type SoccerPacket = MovePacket | SnapshotPacket | ConfigPacket;
+export type RemoteSeat = { seq: number; edge: number; held: ControlCommand['heldAction'] | null; pressUsed: boolean };
 const finite = (v: unknown, abs: number) => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= abs;
 const quantized = (v: unknown) => finite(v, 1) && Math.abs((v as number) * 100 - Math.round((v as number) * 100)) < 1e-6;
 const inRange = (v: unknown, min: number, max: number) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
@@ -34,7 +35,10 @@ function validWorld(value: unknown): value is World {
     || !inRange(w.restartClock, 0, 360) || typeof w.event !== 'string' || w.event.length > 80
     || !Array.isArray(w.controlled) || w.controlled.length !== 2 || !w.controlled.every((id) => Number.isInteger(id) && id >= 0 && id < PLAYER_COUNT)
     || (w.passTarget !== null && w.passTarget !== undefined && (!Number.isInteger(w.passTarget) || w.passTarget < 0 || w.passTarget >= PLAYER_COUNT))
-    || typeof w.passControl !== 'boolean') return false;
+    || typeof w.passControl !== 'boolean'
+    || (w.stealProtect !== undefined && !inRange(w.stealProtect, 0, 0.9))
+    || (w.stealWinnerId !== undefined && w.stealWinnerId !== null
+      && (!Number.isInteger(w.stealWinnerId) || w.stealWinnerId < 0 || w.stealWinnerId >= PLAYER_COUNT))) return false;
   const kickEvent = w.kickEvent;
   if (w.carrierId !== undefined && w.carrierId !== null && !w.players.some((p) => p.id === w.carrierId)) return false;
   if (w.lastToucherId !== undefined && w.lastToucherId !== null && !w.players.some((p) => p.id === w.lastToucherId)) return false;
@@ -52,7 +56,7 @@ function validWorld(value: unknown): value is World {
   return true;
 }
 
-export function movePacket(round: number, seq: number, seat: number, command: ControlCommand): MovePacket {
+export function movePacket(round: number, seq: number, seat: number, command: ControlCommand, edge?: number): MovePacket {
   const aimLength = Math.hypot(command.aim?.x ?? 1, command.aim?.z ?? 0) || 1;
   const buttons = (command.action === 'pass' ? 1 : 0)
     | (command.action === 'shoot' ? 2 : 0)
@@ -72,6 +76,7 @@ export function movePacket(round: number, seq: number, seat: number, command: Co
     az: Math.round((command.aim?.z ?? 0) / aimLength * 100) / 100,
     power: Math.round(Math.max(0, Math.min(1, command.power ?? 0.72)) * 100) / 100,
     buttons: buttons | (command.sprint ? 64 : 0),
+    ...(edge === undefined ? {} : { e: edge }),
     ...(command.switchDir ? { sx: Math.round(command.switchDir.x * 100) / 100, sz: Math.round(command.switchDir.z * 100) / 100 } : {}),
     held: (command.heldAction === 'pass' ? 1 : 0)
       | (command.heldAction === 'shoot' ? 2 : 0)
@@ -98,10 +103,11 @@ export function parsePacket(value: unknown): SoccerPacket | null {
   if (p.k === 'mv') {
     if (!Number.isInteger(p.seat) || (p.seat as number) < 0 || (p.seat as number) > 3 || !quantized(p.x) || !quantized(p.z)
       || !quantized(p.ax) || !quantized(p.az) || !inRange(p.power, 0, 1)
+      || (p.e !== undefined && (!Number.isSafeInteger(p.e) || (p.e as number) < 0))
       || !Number.isInteger(p.buttons) || (p.buttons as number) < 0 || (p.buttons as number) > 32767 || ((p.buttons as number) & ~32767) !== 0
       || ((p.sx !== undefined || p.sz !== undefined) && (!quantized(p.sx) || !quantized(p.sz)))
       || !Number.isInteger(p.held) || (p.held as number) < 0 || (p.held as number) > 527 || ((p.held as number) & ~527) !== 0) return null;
-    return { t: 'soccer', k: 'mv', r: p.r as number, seq: p.seq as number, seat: p.seat as number, x: p.x as number, z: p.z as number, ax: p.ax as number, az: p.az as number, power: p.power as number, buttons: p.buttons as number, held: p.held as number, ...(p.sx === undefined ? {} : { sx: p.sx as number, sz: p.sz as number }) };
+    return { t: 'soccer', k: 'mv', r: p.r as number, seq: p.seq as number, seat: p.seat as number, x: p.x as number, z: p.z as number, ax: p.ax as number, az: p.az as number, power: p.power as number, buttons: p.buttons as number, held: p.held as number, ...(p.e === undefined ? {} : { e: p.e as number }), ...(p.sx === undefined ? {} : { sx: p.sx as number, sz: p.sz as number }) };
   }
   if (p.k === 's' && validWorld(p.state)) {
     return { t: 'soccer', k: 's', r: p.r as number, seq: p.seq as number, state: structuredClone(p.state) };
@@ -125,6 +131,56 @@ export function mergeRemoteCommand(previous: ControlCommand | undefined, current
     switchNearest: current.switchNearest || previous?.switchNearest,
     switchDir: current.switchDir ?? previous?.switchDir,
   };
+}
+
+export function acceptMovePacket(seat: RemoteSeat, previous: ControlCommand | undefined, packet: MovePacket, defending: boolean): { seat: RemoteSeat; command: ControlCommand | null } {
+  const incoming = commandFromPacket(packet);
+  const hasEdge = packet.e !== undefined;
+  const freshSequence = packet.seq > seat.seq;
+  const freshEdge = hasEdge && packet.e! > seat.edge;
+  if (!freshSequence && !freshEdge) return { seat, command: null };
+  if (!hasEdge) {
+    const nextSeat = { ...seat, seq: packet.seq, held: incoming.heldAction ?? null, pressUsed: incoming.heldAction == null ? false : seat.pressUsed };
+    return { seat: nextSeat, command: mergeRemoteCommand(previous, incoming) };
+  }
+
+  const held = incoming.heldAction ?? null;
+  const defensiveRise = freshEdge && seat.held == null && held !== null && defending
+    && (held === 'shoot' || held === 'lob' || held === 'through');
+  const droppedRelease = seat.pressUsed && held === null && incoming.pressed
+    && (incoming.action === 'shoot' || incoming.action === 'finesse' || incoming.action === 'lob' || incoming.action === 'through');
+  const base = previous ?? { move: { x: 0, z: 0 } };
+  const current: ControlCommand = freshSequence ? incoming : {
+    ...base,
+    action: incoming.action,
+    pressed: incoming.pressed,
+    power: incoming.power,
+    aim: incoming.aim,
+    switchNearest: incoming.switchNearest,
+    switchDir: incoming.switchDir,
+    ...(freshEdge ? { heldAction: incoming.heldAction } : {}),
+  };
+  if (!freshEdge || droppedRelease) {
+    current.action = null;
+    current.pressed = false;
+    current.switchNearest = false;
+    current.switchDir = null;
+  }
+  if (defensiveRise && !droppedRelease) {
+    current.action = held;
+    current.pressed = true;
+    current.power = incoming.power;
+    current.aim = incoming.aim;
+  }
+  const nextSeat: RemoteSeat = {
+    seq: freshSequence ? packet.seq : seat.seq,
+    edge: freshEdge ? packet.e! : seat.edge,
+    held: freshSequence || freshEdge ? held : seat.held,
+    pressUsed: held === null ? false : defensiveRise || seat.pressUsed,
+  };
+  const hasAction = current.action != null || current.pressed || current.switchNearest || current.switchDir != null
+    || freshSequence || freshEdge && (defensiveRise || incoming.heldAction !== undefined);
+  return { seat: nextSeat, command: hasAction ? mergeRemoteCommand(previous, current) : null };
 }
 
 export function consumeCommand(command: ControlCommand): ControlCommand {

@@ -5,6 +5,7 @@ import { disposeTree, damp } from './gl.ts';
 import { adTexture, ballNumberTexture, ballTexture, markingsTexture, pitchTextures } from './textures.ts';
 import { IDENTITY_BASIS, type ViewBasis } from './input.ts';
 import { approachAngle, bindSoccerRig, bodyFrameVelocity, createSoccerAnimationInput, createSoccerAnimator, kickingFoot, playSoccerClip, preferredFoot, soccerClipActive, soccerDribbleOffset, updateSoccerAnimator, type SoccerAnimator, type SoccerClip } from './player.ts';
+import type { SoccerRenderStats } from './perf.ts';
 
 type Three = typeof import('three');
 export type CameraMode = 'broadcast' | 'end' | 'replay';
@@ -23,6 +24,7 @@ export type SoccerView = {
   resize(width: number, height: number): void;
   viewBasis(): ViewBasis;
   getCameraNdc(): SoccerCameraNdc;
+  perfStats(): SoccerRenderStats;
   update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId?: number | null, power?: number | null): void;
   render(): void;
   setTime(mode: TimeMode): void;
@@ -1000,6 +1002,17 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     },
     getCameraNdc() {
       return cameraNdc;
+    },
+    perfStats() {
+      return {
+        rendererCalls: renderer.info.render.calls,
+        triangles: renderer.info.render.triangles,
+        shadowsEnabled: renderer.shadowMap.enabled,
+        shadowType: renderer.shadowMap.type,
+        shadowWidth: key.shadow.mapSize.width,
+        shadowHeight: key.shadow.mapSize.height,
+        crowdMeshCount: crowd.mesh.count,
+      };
     },
     update,
     render,

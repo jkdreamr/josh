@@ -1,10 +1,84 @@
+import { useEffect, useState } from 'react';
 import { FIELD, jerseyNumber, matchClock, type World } from './logic.ts';
+import { recordSoccerHudCommit, soccerPerfEnabled } from './perf.ts';
 
-export function Hud({ world, targetId, selectedId, watching, replaying, power, contain }: { world: World; targetId: number | null; selectedId?: number; watching: boolean; replaying: boolean; power?: number | null; contain?: boolean }) {
-  const clock = matchClock(world);
-  const selected = world.players[selectedId ?? world.controlled[0]];
+type HudPlayer = Pick<World['players'][number], 'id' | 'team' | 'x' | 'z' | 'controlled' | 'action' | 'stamina' | 'vx' | 'vz' | 'slot'> & { slide: boolean };
+type HudWorld = Pick<World, 'clock' | 'halfLength' | 'half' | 'score' | 'event' | 'eventTime' | 'phase'> & {
+  players: HudPlayer[];
+  ball: Pick<World['ball'], 'x' | 'z'>;
+};
+export type HudModel = {
+  world: HudWorld;
+  targetId: number | null;
+  selectedId: number;
+  watching: boolean;
+  replaying: boolean;
+  power: number | null;
+  contain: boolean;
+  state: string | null;
+};
+
+export function createHudModel(world: World, targetId: number | null, selectedId: number, power: number | null, contain: boolean, watching: boolean, replaying: boolean): HudModel {
+  const round = (value: number, step: number) => Math.round(value / step) * step;
+  const selected = world.players[selectedId];
   const state = selected?.action === 'jockey' ? contain ? 'CONTAIN' : 'JOCKEY' : selected?.action === 'shield' ? 'SHIELD'
     : selected?.slide ? 'SLIDE' : selected && Math.hypot(selected.vx, selected.vz) > 7.1 ? 'SPRINT' : null;
+  return {
+    world: {
+      clock: world.clock,
+      halfLength: world.halfLength,
+      half: world.half,
+      score: [world.score[0], world.score[1]],
+      event: world.event,
+      eventTime: round(world.eventTime, 0.1),
+      phase: world.phase,
+      players: world.players.map((player) => ({
+        id: player.id, team: player.team, x: round(player.x, 0.05), z: round(player.z, 0.05),
+        controlled: player.controlled, action: player.action, slide: !!player.slide,
+        stamina: round(player.stamina, 0.02), vx: player.vx, vz: player.vz, slot: player.slot,
+      })),
+      ball: { x: round(world.ball.x, 0.05), z: round(world.ball.z, 0.05) },
+    },
+    targetId,
+    selectedId,
+    power: power === null ? null : round(power, 0.02),
+    contain,
+    watching,
+    replaying,
+    state,
+  };
+}
+
+function sameHudModel(a: HudModel, b: HudModel) {
+  const aw = a.world, bw = b.world;
+  if (matchClock(aw) !== matchClock(bw) || aw.halfLength !== bw.halfLength || aw.half !== bw.half
+    || aw.score[0] !== bw.score[0] || aw.score[1] !== bw.score[1] || aw.event !== bw.event
+    || aw.eventTime !== bw.eventTime || aw.phase !== bw.phase || a.targetId !== b.targetId
+    || a.selectedId !== b.selectedId || a.power !== b.power || a.contain !== b.contain
+    || a.watching !== b.watching || a.replaying !== b.replaying || a.state !== b.state
+    || aw.ball.x !== bw.ball.x || aw.ball.z !== bw.ball.z || aw.players.length !== bw.players.length) return false;
+  for (let i = 0; i < aw.players.length; i++) {
+    const ap = aw.players[i]!, bp = bw.players[i]!;
+    if (ap.x !== bp.x || ap.z !== bp.z || ap.controlled !== bp.controlled
+      || ap.stamina !== bp.stamina || ap.action !== bp.action || ap.slide !== bp.slide) return false;
+  }
+  return true;
+}
+
+export function Hud({ source }: { source: { current: (model: HudModel) => void } }) {
+  const [model, setModel] = useState<HudModel | null>(null);
+  useEffect(() => {
+    const publish = (next: HudModel) => setModel((previous) => !previous || !sameHudModel(previous, next) ? next : previous);
+    source.current = publish;
+    return () => { if (source.current === publish) source.current = () => {}; };
+  }, [source]);
+  useEffect(() => {
+    if (soccerPerfEnabled) recordSoccerHudCommit();
+  }, [model]);
+  if (!model) return null;
+  const { world, targetId, selectedId, watching, replaying, power, state } = model;
+  const clock = matchClock(world);
+  const selected = world.players[selectedId];
   return (
     <div className="g-soccer-hud">
       <div className="g-soccer-scoreboard">
@@ -42,7 +116,7 @@ export function PowerMeter({ power }: { power: number }) {
   </div>;
 }
 
-function Radar({ world, targetId }: { world: World; targetId: number | null }) {
+function Radar({ world, targetId }: { world: HudWorld; targetId: number | null }) {
   const x = (value: number) => `${((value + FIELD.length / 2) / FIELD.length) * 100}%`;
   const z = (value: number) => `${((value + FIELD.width / 2) / FIELD.width) * 100}%`;
   return (
