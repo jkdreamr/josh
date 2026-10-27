@@ -48,7 +48,7 @@ function Settings({ online = false }: { online?: boolean }) {
   const changeCompetition = (value: CompetitionId) => {
     const next = COMPETITIONS.find((entry) => entry.id === value) ?? COMPETITIONS[0]!;
     setCompetition(next.id);
-    if (!next.arrangements.includes(mode)) setMode(next.arrangements[0]!);
+    if (!next.arrangements.some((arrangement) => arrangement === mode)) setMode(next.arrangements[0]!);
   };
   const availableModes = definition.arrangements.map((arrangement) => [
     arrangement, arrangement === 'cpu' ? 'vs CPU' : arrangement === 'versus' ? '2P versus' : '2P co-op',

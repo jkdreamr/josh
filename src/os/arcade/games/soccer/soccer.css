@@ -919,7 +919,7 @@
 
 .g-soccer-phone-picker {
   width: 100%;
-  height: 100dvh;
+  height: 100%;
   min-height: 0;
   box-sizing: border-box;
   overflow: hidden;
@@ -963,4 +963,65 @@
   .g-soccer-picker-identity > svg { width: clamp(52px, 17vh, 76px); height: clamp(52px, 17vh, 76px); }
   .g-soccer-picker-identity h2 { font-size: clamp(18px, 4vw, 25px); }
   .g-soccer-picker-controls { margin-bottom: 4px; }
+}
+
+/* lobby sizing: fits the small arcade window (about 550x265) up to full screen */
+.g-soccer .arcade-phone-first-card:not(.is-phone-join) { padding: clamp(10px, 2.4vh, 26px); gap: 8px; overflow-y: auto; }
+.g-soccer-phone-lobby { grid-template-columns: clamp(96px, 30%, 240px) minmax(0, 1fr); align-items: start; gap: clamp(10px, 2vw, 24px); overflow: visible; max-height: none; }
+.g-soccer-phone-lobby .g-soccer-phone-qr { display: grid; justify-items: center; gap: 6px; width: auto; height: auto; padding: 0; }
+.g-soccer-phone-lobby .g-soccer-phone-qr img { width: 100%; height: auto; aspect-ratio: 1; max-width: 240px; }
+.g-soccer-phone-lobby.is-connected { grid-template-columns: clamp(72px, 18%, 132px) minmax(0, 1fr); }
+.g-soccer-phone-lobby.is-connected .g-soccer-phone-qr { width: auto; height: auto; padding: 0; }
+.g-soccer-phone-lobby.is-connected .g-soccer-phone-qr img { width: 100%; height: auto; }
+.g-soccer-phone-lobby .g-soccer-phone-qr strong { font-size: 11px; }
+.g-soccer-phone-lobby-content { gap: 8px; }
+.g-soccer-phone-lobby .g-soccer-phone-connections { font-size: 11px; }
+.g-soccer-phone-lobby .arcade-segmented button { font-size: 11px; min-height: 30px; }
+.g-soccer-lobby-clubs { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 6px; }
+.g-soccer-lobby-clubs.is-single { grid-template-columns: 1fr; }
+.g-soccer-lobby-club-label { font-size: 10px; }
+.g-soccer-club-picker-copy strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.g-soccer-club-picker-copy span { font-size: 10px; }
+.g-soccer-cup-bracket, .g-soccer-cup-bracket section > div { font-size: 10px; }
+.g-soccer-cup-bracket section > b, .g-soccer-cup-bracket small { font-size: 9px; }
+.g-soccer-cup-next { font-size: 11px; }
+.g-soccer-lobby-ready { font-size: 11px; }
+@media (min-height: 600px) {
+  .g-soccer-club-picker-copy strong { font-size: 15px; }
+  .g-soccer-club-picker-copy span, .g-soccer-phone-lobby .g-soccer-phone-connections { font-size: 13px; }
+  .g-soccer-phone-lobby .arcade-segmented button { font-size: 13px; min-height: 36px; }
+  .g-soccer-cup-bracket, .g-soccer-cup-bracket section > div { font-size: 12px; }
+}
+
+.g-soccer-lobby-ready {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  padding: 8px;
+  background: #0b1a26;
+  box-shadow: 0 -6px 12px #0b1a26cc;
+}
+
+.g-soccer-guest-kickoff {
+  position: sticky;
+  bottom: 0;
+  z-index: 5;
+  padding: 8px;
+  background: #0b1a26;
+  box-shadow: 0 -6px 12px #0b1a26cc;
+}
+
+@media (max-width: 540px) {
+  .g-soccer-phone-picker { height: 100%; padding: max(8px, env(safe-area-inset-top)) 10px max(8px, env(safe-area-inset-bottom)); }
+  .g-soccer-picker-mode { margin-top: 4px; }
+  .g-soccer-picker-club { margin: 0 auto; }
+  .g-soccer-picker-identity { gap: 4px; }
+  .g-soccer-picker-identity > svg { width: clamp(52px, 11vh, 86px); height: clamp(52px, 11vh, 86px); }
+  .g-soccer-picker-identity h2 { font-size: clamp(18px, 5vw, 25px); }
+  .g-soccer-picker-controls { grid-template-columns: 84px minmax(0, 1fr); gap: 8px; margin-bottom: 0; }
+  .g-soccer-phone-picker .g-soccer-stick { width: 84px; height: 84px; }
+  .g-soccer-picker-controls > div { grid-template-columns: minmax(68px, .8fr) minmax(104px, 1.2fr); gap: 6px; }
+  .g-soccer-picker-controls button { min-height: 44px; padding: 6px; font-size: 11px; }
+  .g-soccer-picker-controls .is-ready { min-height: 52px; font-size: 14px; }
+  .g-soccer-picker-help { font-size: 9px; }
 }

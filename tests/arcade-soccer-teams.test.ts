@@ -7,6 +7,33 @@ import { clearCup, createCup, cupSummary, loadCup, matchOutcome, recordUserResul
 import { simulateShootout } from '../src/os/arcade/games/soccer/shootout.ts';
 import { assignControllers, playerForSeat } from '../src/os/arcade/games/soccer/seats.ts';
 import { parsePacket } from '../src/os/arcade/games/soccer/net.ts';
+import { COMPETITIONS, COMPETITION_IDS, competitionFromOption } from '../src/os/arcade/games/soccer/modes.ts';
+
+test('competition helper and network validation follow the registry', () => {
+  const practice = competitionFromOption(['practice', 'Practice'], {
+    hint: 'drills and free play',
+    arrangements: ['cpu'],
+    opponentPick: false,
+  });
+  assert.equal(practice.id, 'practice');
+  assert.equal(practice.label, 'practice');
+  assert.deepEqual(COMPETITION_IDS, COMPETITIONS.map(({ id }) => id));
+  for (const competition of COMPETITIONS) {
+    assert.ok(parsePacket({
+      t: 'soccer',
+      k: 'lobby',
+      r: 1,
+      seq: 1,
+      comp: competition.id,
+      mode: competition.arrangements[0],
+      clubs: [...DEFAULT_CLUBS],
+      focus: [0, 0],
+      ready: [false, false],
+      countdown: null,
+      members: [],
+    }));
+  }
+});
 
 test('club rosters are deterministic and player ratings stay in range', () => {
   assert.equal(CLUBS.length, 16);
