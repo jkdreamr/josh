@@ -33,10 +33,10 @@ const roleOf = (p: Player): Role => ROLES[p.slot] ?? { line: 'mid', lateral: 0, 
 const longitudinal = (fraction: number) => FIELD.length * fraction;
 const lateral = (fraction: number) => FIELD.width * fraction;
 const rosterIndex = (world: World, p: Player) => world.players.filter((q) => q.team === p.team).indexOf(p);
-const targetMove = (player: Player, x: number, z: number) => {
+const targetMove = (player: Player, x: number, z: number, arrivalRadius = 0.35) => {
   const dx = x - player.x, dz = z - player.z;
   const gap = Math.hypot(dx, dz);
-  return gap < 0.35 ? { x: 0, z: 0 } : { x: dx / Math.max(1.4, gap), z: dz / Math.max(1.4, gap) };
+  return gap < arrivalRadius ? { x: 0, z: 0 } : { x: dx / Math.max(1.4, gap), z: dz / Math.max(1.4, gap) };
 };
 
 type TeamState = { possession: boolean; changedAt: number };
@@ -370,11 +370,13 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
         }
       }
       let target = shapeTarget(world, p, state);
+      let marking: Player | undefined;
       if (state.possession !== side) {
         const line = roleOf(p).line;
         const threat = threats.find((q) => !marked.has(q.id) && distance(q, target) < longitudinal(0.14)
           && roleOf(q).line === (line === 'def' ? 'att' : line === 'att' ? 'def' : 'mid'));
         if (threat) {
+          marking = threat;
           marked.add(threat.id);
           const dx = ownGoal.x - threat.x, dz = -threat.z;
           const length = Math.hypot(dx, dz) || 1;
@@ -383,7 +385,11 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
       }
       if (roleOf(p).line === 'def' && distance(p, world.ball) > 12) {
         const time = tick * dt;
-        target = {
+        if (marking) {
+          const angle = Math.sin(time * 1.35 + p.id * 1.7) * 0.22;
+          const dx = target.x - marking.x, dz = target.z - marking.z;
+          target = { x: marking.x + dx * Math.cos(angle) - dz * Math.sin(angle), z: marking.z + dx * Math.sin(angle) + dz * Math.cos(angle) };
+        } else target = {
           x: clamp(target.x + Math.sin(time * 1.35 + p.id * 1.7) * 0.45, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3),
           z: clamp(target.z + Math.cos(time * 1.05 + p.id * 0.9) * 0.65, -FIELD.width / 2 + 0.3, FIELD.width / 2 - 0.3),
         };
@@ -411,7 +417,8 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
     const dir = teamDir(p.team, world.endsSwapped);
     const keeper = world.players.find((q) => q.team === p.team && q.slot === 'GK')!;
     const progress = Math.max(target.x * dir, keeper.x * dir + 0.75);
-    commands.set(p.id, { move: targetMove(p, dir * clamp(progress, -longitudinal(0.44), longitudinal(0.44)), clamp(target.z, -lateral(0.4), lateral(0.4))),
+    commands.set(p.id, { move: targetMove(p, dir * clamp(progress, -longitudinal(0.44), longitudinal(0.44)), clamp(target.z, -lateral(0.4), lateral(0.4)),
+      roleOf(p).line === 'def' && distance(p, world.ball) > 12 ? 0.08 : 0.35),
       sprint: state.possession !== p.team && tick - state.teams[p.team].changedAt < 90 });
   }
   for (const p of world.phase === 'live' ? world.players : []) {
