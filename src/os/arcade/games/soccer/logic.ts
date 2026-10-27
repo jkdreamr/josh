@@ -71,6 +71,10 @@ export type World = {
 };
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
+const clampPlayerToField = (player: Point) => {
+  player.x = clamp(player.x, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3);
+  player.z = clamp(player.z, -FIELD.width / 2 + 0.3, FIELD.width / 2 - 0.3);
+};
 export const teamOf = (id: number): Team => id < TEAM_SIZE ? 0 : 1;
 export const jerseyNumber = (id: number) => id % TEAM_SIZE + 1;
 export const teamDir = (team: Team, swapped = false) => (team === 0 ? 1 : -1) * (swapped ? -1 : 1);
@@ -192,8 +196,9 @@ export function movePlayer(player: Player, input: Point, sprint: boolean, carryi
   player.vx = Math.sin(angle) * speed;
   player.vz = Math.cos(angle) * speed;
   if (speed > 0.04) player.facing = Math.atan2(player.vx, player.vz);
-  player.x = clamp(player.x + player.vx * dt, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3);
-  player.z = clamp(player.z + player.vz * dt, -FIELD.width / 2 + 0.3, FIELD.width / 2 - 0.3);
+  player.x += player.vx * dt;
+  player.z += player.vz * dt;
+  clampPlayerToField(player);
   player.stamina = clamp(player.stamina + (sprint && magnitude > 0.2 ? -0.11 : 0.06) * dt, 0, 1);
   player.cooldown = Math.max(0, player.cooldown - dt);
 }
@@ -668,10 +673,10 @@ function goalCrossing(world: World, previousX: number) {
   const b = world.ball;
   const halfGoal = FIELD.goalWidth / 2 - 0.11;
   if (Math.abs(b.z) > halfGoal || b.y > FIELD.goalHeight - 0.11) return false;
-  if (previousX <= FIELD.length / 2 - 0.11 && b.x > FIELD.length / 2 + 0.11) {
+  if (previousX <= FIELD.length / 2 + 0.11 && b.x > FIELD.length / 2 + 0.11) {
     scoreGoal(world, world.endsSwapped ? 1 : 0); return true;
   }
-  if (previousX >= -FIELD.length / 2 + 0.11 && b.x < -FIELD.length / 2 - 0.11) {
+  if (previousX >= -FIELD.length / 2 - 0.11 && b.x < -FIELD.length / 2 - 0.11) {
     scoreGoal(world, world.endsSwapped ? 0 : 1); return true;
   }
   return false;
@@ -692,7 +697,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
         placeKickoffPositions(world, 1);
       } else {
         world.phase = 'restart';
-        world.ball.x = 0; world.ball.z = 0; world.ball.y = 0.11;
+        world.ball = { x: 0, y: 0.11, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false };
         world.restartAt = { x: 0, z: 0 };
         world.eventTime = 2;
         world.restartClock = 0;
@@ -720,6 +725,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
         const d = Math.hypot(dx, dz) || 1;
         p.x = world.restartAt.x + dx / d * FIELD.centerRadius;
         p.z = world.restartAt.z + dz / d * FIELD.centerRadius;
+        clampPlayerToField(p);
       }
     }
     const action = commands.get(taker.id);

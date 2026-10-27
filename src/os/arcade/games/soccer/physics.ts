@@ -75,8 +75,8 @@ export function stepBall(ball: BallState, dt: number) {
 export function countsAsGoal(ball: BallState, previousX: number) {
   return Math.abs(ball.z) <= GOAL_HALF - BALL_RADIUS
     && ball.y <= GOAL_HEIGHT - BALL_RADIUS
-    && ((previousX <= FIELD_X - BALL_RADIUS && ball.x > FIELD_X + BALL_RADIUS)
-      || (previousX >= -FIELD_X + BALL_RADIUS && ball.x < -FIELD_X - BALL_RADIUS));
+    && ((previousX <= FIELD_X + BALL_RADIUS && ball.x > FIELD_X + BALL_RADIUS)
+      || (previousX >= -FIELD_X - BALL_RADIUS && ball.x < -FIELD_X - BALL_RADIUS));
 }
 
 export function resolvePostCollision(ball: BallState, x: number, z: number, y: number) {
