@@ -1,281 +1,328 @@
-import { createWorld, distance, FIELD, FORMATION, restartTaker, stepWorld, teamDir, TEAM_SIZE, type Command, type Player, type Team, type World } from './logic.ts';
+import { createWorld, distance, FIELD, findReceiver, stepWorld, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
 
 export const LEVEL_NAMES = ['easy', 'normal', 'hard'] as const;
 export type Level = (typeof LEVEL_NAMES)[number];
-const reaction = { easy: 0.45, normal: 0.3, hard: 0.18 } as const;
-const keeperReaction = { easy: 0.3, normal: 0.22, hard: 0.15 } as const;
-const decisionInterval = { easy: 0.55, normal: 0.3, hard: 0.24 } as const;
-const noise = { easy: 0.28, normal: 0.1, hard: 0.02 } as const;
-const keeperTargetScratch = { x: 0, z: 0 };
+const reaction = { easy: 0.6, normal: 0.3, hard: 0.18 } as const;
+const keeperReaction = { easy: 0.6, normal: 0.42, hard: 0.2 } as const;
+const decisionInterval = { easy: 0.7, normal: 0.3, hard: 0.24 } as const;
+const noise = { easy: 0.65, normal: 0.2, hard: 0.03 } as const;
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 const outfield = (player: Player) => player.slot !== 'GK';
-const targetMove = (player: Player, x: number, z: number) => {
-  const dx = x - player.x;
-  const dz = z - player.z;
-  return Math.hypot(dx, dz) <= 0.6 ? { x: 0, z: 0 } : { x: dx, z: dz };
+type Role = { line: 'gk' | 'def' | 'mid' | 'att'; lateral: number; freedom: number; overlap?: boolean };
+const ROLES: Record<string, Role> = {
+  GK: { line: 'gk', lateral: 0, freedom: 0 },
+  DEF: { line: 'def', lateral: 0, freedom: 0.04 },
+  LM: { line: 'mid', lateral: -0.36, freedom: 0.12, overlap: true },
+  RM: { line: 'mid', lateral: 0.36, freedom: 0.12, overlap: true },
+  FWD: { line: 'att', lateral: 0, freedom: 0.2 },
+  LB: { line: 'def', lateral: -0.38, freedom: 0.1, overlap: true },
+  CB: { line: 'def', lateral: 0, freedom: 0.03 },
+  RB: { line: 'def', lateral: 0.38, freedom: 0.1, overlap: true },
+  CM: { line: 'mid', lateral: 0, freedom: 0.1 },
+  LW: { line: 'att', lateral: -0.36, freedom: 0.19 },
+  ST: { line: 'att', lateral: 0, freedom: 0.2 },
+  RW: { line: 'att', lateral: 0.36, freedom: 0.19 },
 };
+const roleOf = (p: Player): Role => ROLES[p.slot] ?? { line: 'mid', lateral: 0, freedom: 0.1 };
+const longitudinal = (fraction: number) => FIELD.length * fraction;
+const lateral = (fraction: number) => FIELD.width * fraction;
+const rosterIndex = (world: World, p: Player) => world.players.filter((q) => q.team === p.team).indexOf(p);
+const targetMove = (player: Player, x: number, z: number) => {
+  const dx = x - player.x, dz = z - player.z;
+  const gap = Math.hypot(dx, dz);
+  return gap < 0.35 ? { x: 0, z: 0 } : { x: dx / Math.max(1.4, gap), z: dz / Math.max(1.4, gap) };
+};
+const canCarry = (world: World, p: Player) => world.ball.y <= 0.75
+  && !(p.cooldown > 0 && (p.action === 'kick' || p.action === 'pass')) && distance(p, world.ball) < 0.64;
 
-function laneScore(world: World, from: Player, to: Player) {
-  let danger = 0;
-  for (const opponent of world.players) {
-    if (opponent.team === from.team) continue;
-    const dx = to.x - from.x, dz = to.z - from.z;
-    const n = Math.hypot(dx, dz) || 1;
-    const t = clamp(((opponent.x - from.x) * dx + (opponent.z - from.z) * dz) / (n * n), 0, 1);
-    const d = Math.hypot(opponent.x - from.x - dx * t, opponent.z - from.z - dz * t);
-    if (d < 1.5) danger += (1.5 - d) * (1 - t * 0.25);
+type TeamState = { possession: boolean; changedAt: number };
+type MatchState = {
+  tick: number;
+  carrier: Player | null;
+  possession: Team;
+  teams: [TeamState, TeamState];
+  runs: Map<number, { until: number; x: number; z: number }>;
+};
+const matches = new WeakMap<World, MatchState>();
+
+function matchState(world: World, tick: number) {
+  let state = matches.get(world);
+  if (!state || tick < state.tick) {
+    state = { tick: -1, carrier: null, possession: world.lastTouch,
+      teams: [{ possession: world.lastTouch === 0, changedAt: tick }, { possession: world.lastTouch === 1, changedAt: tick }], runs: new Map() };
+    matches.set(world, state);
   }
-  return danger;
+  if (state.tick === tick) return state;
+  state.tick = tick;
+  state.carrier = world.players.find((p) => canCarry(world, p)) ?? null;
+  const possession = state.carrier?.team ?? world.lastTouch;
+  if (possession !== state.possession) {
+    state.possession = possession;
+    for (const team of [0, 1] as const) {
+      state.teams[team] = { possession: possession === team, changedAt: tick };
+    }
+    state.runs.clear();
+  }
+  const kick = world.kickEvent;
+  if (kick && (kick.action === 'pass' || kick.action === 'through')) {
+    const passer = world.players.find((p) => p.id === kick.playerId)!;
+    state.runs.set(passer.id, { until: tick + 78,
+      x: clamp(passer.x + teamDir(passer.team, world.endsSwapped) * longitudinal(0.14), -longitudinal(0.44), longitudinal(0.44)),
+      z: clamp(passer.z + (passer.z > 0 ? -1 : 1) * lateral(0.1), -lateral(0.4), lateral(0.4)) });
+  }
+  if (world.phase !== 'live') state.runs.clear();
+  for (const [id, run] of state.runs) if (run.until < tick) state.runs.delete(id);
+  return state;
+}
+
+function laneClearance(world: World, from: Point, to: Point, team: Team, shot = false) {
+  const dx = to.x - from.x, dz = to.z - from.z;
+  const length2 = dx * dx + dz * dz || 1;
+  let clearance = 10;
+  for (const p of world.players) {
+    if (p.team === team || shot && !outfield(p)) continue;
+    const t = ((p.x - from.x) * dx + (p.z - from.z) * dz) / length2;
+    if (t <= 0.04 || t >= 1.05) continue;
+    clearance = Math.min(clearance, Math.hypot(p.x - from.x - dx * t, p.z - from.z - dz * t));
+  }
+  return clearance;
 }
 
 export function keeperTarget(world: World, keeper: Player, target = { x: 0, z: 0 }) {
-  const direction = teamDir(keeper.team, world.endsSwapped);
-  const goalX = -direction * (FIELD.length / 2 - 0.35);
-  const oneOnOne = Math.abs(world.ball.x - goalX) < FIELD.penaltyDepth * 0.6 && Math.abs(world.ball.z) < FIELD.penaltyWidth * 0.15;
-  const plane = goalX + direction * 1.4;
-  const towardGoal = world.ball.vx * -direction > 0.4;
-  const flight = towardGoal ? clamp((plane - world.ball.x) / world.ball.vx, 0, 2.5) : 0;
-  const interceptZ = world.ball.z + world.ball.vz * flight;
-  target.x = goalX + (world.ball.x - goalX) * (oneOnOne ? 0.22 : 0.08);
-  target.z = clamp(interceptZ * (oneOnOne ? 0.72 : 0.55), -FIELD.goalWidth / 2 - 0.8, FIELD.goalWidth / 2 + 0.8);
+  const dir = teamDir(keeper.team, world.endsSwapped);
+  const goalX = -dir * FIELD.length / 2;
+  const near = clamp(1 - Math.abs(world.ball.x - goalX) / longitudinal(0.38), 0, 1);
+  const ballDepth = Math.max(0.5, (world.ball.x - goalX) * dir);
+  const leftAngle = Math.atan2(world.ball.z + FIELD.goalWidth / 2, ballDepth);
+  const rightAngle = Math.atan2(world.ball.z - FIELD.goalWidth / 2, ballDepth);
+  const bisector = (leftAngle + rightAngle) / 2;
+  const offLine = 0.65 + near * 2;
+  target.x = goalX + dir * offLine;
+  const postLimit = FIELD.goalWidth / 2 - FIELD.goalWidth * 0.04;
+  target.z = clamp(Math.tan(bisector) * offLine, -postLimit, postLimit);
+  const plane = goalX + dir * 1.5;
+  const towardGoal = world.ball.vx * -dir > 3;
+  const flight = towardGoal ? (plane - world.ball.x) / world.ball.vx : -1;
+  if (flight >= 0 && flight < 1.4) {
+    const prediction = flight * 0.13;
+    target.z = clamp(target.z * (1 - prediction) + (world.ball.z + world.ball.vz * flight) * prediction, -FIELD.goalWidth / 2, FIELD.goalWidth / 2);
+  }
   return target;
 }
 
 function carrierCommand(world: World, player: Player, level: Level, tick: number): Command {
   const dir = teamDir(player.team, world.endsSwapped);
-  const decisionTick = tick % Math.round(decisionInterval[level] * 60) === 0;
-  const goalX = dir * (FIELD.length / 2);
+  const goalX = dir * FIELD.length / 2;
   const goalDistance = Math.hypot(goalX - player.x, player.z);
-  let pressure = Infinity;
-  let nearestOpponent: Player | null = null;
-  for (const opponent of world.players) {
-    if (opponent.team === player.team) continue;
-    const d = distance(opponent, player);
-    if (d < pressure) { pressure = d; nearestOpponent = opponent; }
+  const opponents = world.players.filter((p) => p.team !== player.team);
+  const pressure = Math.min(...opponents.map((p) => distance(p, player)));
+  const facingForward = Math.sin(player.facing) * dir > 0.4;
+  const nearest = [...opponents].sort((a, b) => distance(a, player) - distance(b, player))[0]!;
+  const evade = opponents.reduce((z, p) => {
+    const gap = distance(p, player);
+    return gap < 3 ? z + (player.z - p.z) / Math.max(0.5, gap) : z;
+  }, 0);
+  const blocked = (nearest.x - player.x) * dir > 0 && pressure < 3;
+  const escape = Math.sign(player.z - nearest.z || (roleOf(player).lateral || 1));
+  const movement = { x: dir * (blocked ? 0.45 : 1), z: clamp(-player.z * (goalDistance < longitudinal(0.38) ? 0.22 : 0.06) + evade * 0.6 + (blocked ? escape : 0), -1, 1) };
+  const wait: Command = { move: movement, aim: { x: dir, z: -player.z * 0.05 }, sprint: false };
+  const interval = Math.round(decisionInterval[level] * 60);
+  if ((tick + rosterIndex(world, player) * 3) % interval !== 0 || player.cooldown > 0) return wait;
+  const qualityNoise = Math.sin((tick + rosterIndex(world, player) * 31) * 0.37) * noise[level];
+  const shotLane = laneClearance(world, player, { x: goalX, z: -Math.sign(player.z) * FIELD.goalWidth * 0.32 }, player.team, true);
+  const goodAngle = Math.abs(player.z) < lateral(level === 'easy' ? 0.21 : 0.18) && Math.abs(player.z) / Math.max(3, Math.abs(goalX - player.x)) < 0.8;
+  const shootRange = level === 'easy' ? 18 : 12;
+  if (goalDistance < shootRange && goodAngle && pressure > 1.5 + qualityNoise && shotLane > 0.18 + Math.abs(qualityNoise) * 0.3) {
+    const corner = -Math.sign(player.z || 1) * FIELD.goalWidth * 0.35;
+    // Invert kick()'s lateral shot-aim mapping.
+    const aimZ = Math.sign(corner - player.z) * Math.max(0.001, (Math.min(3.7, Math.abs(corner - player.z)) - 1.1) / 2.5);
+    return { move: { x: 0, z: 0 }, action: 'shoot', pressed: true,
+      power: 0.75, aim: { x: dir, z: aimZ } };
   }
-  const evade = nearestOpponent
-    ? clamp((player.z - nearestOpponent.z) * 0.12 + (player.x - nearestOpponent.x) * -dir * 0.08, -0.5, 0.5)
-    : 0;
-  const lane = clamp(player.z * -0.08 + evade, -0.8, 0.8);
-  if (!decisionTick) return { move: { x: dir, z: lane }, sprint: goalDistance > 9, aim: { x: dir, z: lane * 0.45 } };
-  const angle = Math.max(0, 1 - Math.abs(player.z) / (FIELD.penaltyWidth / 4));
-  const xg = clamp((FIELD.penaltyDepth - goalDistance) / FIELD.penaltyDepth, 0, 1) * angle;
-  if (pressure < 0.9 && player.x * dir < -7) {
-    return { move: { x: -dir, z: player.z > 0 ? -0.7 : 0.7 }, action: 'lob', pressed: true, power: 0.78, aim: { x: dir, z: player.z > 0 ? -0.7 : 0.7 } };
+  const lastDefender = Math.max(...opponents.filter(outfield).map((p) => p.x * dir));
+  let best: { receiver: Player; action: 'pass' | 'through' | 'lob'; score: number } | null = null;
+  for (const receiver of world.players) {
+    if (receiver.team !== player.team || receiver.id === player.id) continue;
+    const gap = distance(player, receiver);
+    if (gap < 3 || gap > longitudinal(0.4)) continue;
+    const forward = (receiver.x - player.x) * dir;
+    const space = Math.min(...opponents.map((p) => distance(p, receiver)));
+    const lane = laneClearance(world, player, receiver, player.team);
+    const optionNoise = Math.sin((tick + rosterIndex(world, receiver) * 17) * 0.19) * noise[level];
+    if (lane < 0.8 - optionNoise * 0.5 || space < 1.2 - optionNoise * 0.5) continue;
+    let action: 'pass' | 'through' | 'lob' = 'pass';
+    if (facingForward && pressure > 3 && forward > longitudinal(0.12) && gap < longitudinal(0.31)
+      && receiver.x * dir > lastDefender - 1 && receiver.vx * dir > 2 && space > 4) action = 'through';
+    if (Math.abs(player.z) > lateral(0.3) && player.x * dir > longitudinal(0.22) && roleOf(receiver).line === 'att'
+      && Math.abs(receiver.z) < lateral(0.2) && space > 3) action = 'lob';
+    const aim = { x: receiver.x - player.x, z: receiver.z - player.z };
+    if (findReceiver(world, player, aim, action === 'through')?.id !== receiver.id) continue;
+    const score = forward * 0.16 + Math.min(space, 6) * 0.12 + Math.min(lane, 4) * 0.08
+      - gap * 0.025 + (action === 'through' ? 0.5 : 0) + optionNoise
+      + (receiver.slot === 'GK' ? -0.8 : 0);
+    if (!best || score > best.score) best = { receiver, action, score };
   }
-  if (xg > 0.35 && goalDistance < FIELD.penaltyDepth * 1.2 && Math.abs(player.z) < FIELD.penaltyWidth / 4 && pressure > 1.4) {
-    const targetZ = -Math.sign(player.z) * FIELD.goalWidth * 0.29;
-    const corner = (targetZ - player.z) / Math.max(8, goalDistance);
-    return { move: { x: 0, z: 0 }, action: 'shoot', pressed: true, power: clamp(0.7 + (17 - goalDistance) * 0.012, 0.64, 0.88), aim: { x: dir, z: corner } };
+  if (best && ((pressure < 2.5 && (best.receiver.x - player.x) * dir > -1) || pressure < 1.4
+    || (best.score > 1.5 && (best.receiver.x - player.x) * dir > 4) || player.slot === 'GK')) {
+    return { move: { x: 0, z: 0 }, action: best.action, pressed: true,
+      power: best.action === 'pass' ? clamp(0.28 + distance(player, best.receiver) * 0.012, 0.32, 0.48) : 0.5,
+      aim: { x: best.receiver.x - player.x, z: best.receiver.z - player.z } };
   }
-  let candidate: { target: Player; through: boolean; score: number; lane: number } | null = null;
-  for (const target of world.players) {
-    if (target.team !== player.team || target.id === player.id) continue;
-    const forward = (target.x - player.x) * dir;
-    const danger = laneScore(world, player, target);
-    let space = Infinity;
-    for (const opponent of world.players) {
-      if (opponent.team === player.team) continue;
-      space = Math.min(space, distance(opponent, target));
-    }
-    const through = (target.slot === 'ST' || target.slot === 'LW' || target.slot === 'RW')
-      && Math.abs(target.x - player.x) > FIELD.goalWidth * 0.6 && space > FIELD.goalWidth * 0.3;
-    const optionNoise = Math.sin((tick + target.id * 13 + player.id * 7) * 0.37) * noise[level];
-    const score = forward * 0.11 + Math.min(FIELD.goalWidth, space) * 0.13 - danger * 0.5 + optionNoise;
-    if (!candidate || score > candidate.score) candidate = { target, through, score, lane: danger };
-  }
-  if (candidate && candidate.score > 0.08 && (pressure < FIELD.goalWidth * 0.6 || candidate.score > 0.7)) {
-    const target = candidate.target;
-    const lead = candidate.through ? 1.5 : 0;
-    return {
-      move: { x: 0, z: 0 },
-      action: candidate.through ? 'through' : 'pass',
-      pressed: true,
-      power: candidate.through ? 0.66 : clamp(0.44 + distance(player, target) * 0.022, 0.45, 0.72),
-      aim: { x: target.x + target.vx * lead - player.x + (candidate.through ? dir * 2 : 0), z: target.z + target.vz * lead - player.z },
-    };
-  }
-  return { move: { x: dir, z: lane }, sprint: goalDistance > 9, aim: { x: dir, z: lane * 0.45 } };
+  if (player.slot === 'GK') return { move: { x: 0, z: 0 } };
+  return wait;
 }
+
+function shapeTarget(world: World, p: Player, state: MatchState) {
+  const dir = teamDir(p.team, world.endsSwapped);
+  const ballProgress = world.ball.x * dir;
+  const hasBall = state.possession === p.team;
+  const role = roleOf(p);
+  const anchor = hasBall ? clamp(ballProgress - longitudinal(0.07), -longitudinal(0.24), longitudinal(0.19))
+    : clamp(ballProgress - longitudinal(0.1), -longitudinal(0.31), longitudinal(0.1));
+  const siblings = world.players.filter((q) => q.team === p.team && q.slot === p.slot);
+  const homeSide = role.lateral + (siblings.indexOf(p) - (siblings.length - 1) / 2) * 0.24;
+  const side = world.ball.z * (hasBall ? 0.15 : 0.5);
+  let progress = anchor + longitudinal(role.line === 'def' ? (hasBall ? -0.17 : -0.12) : role.line === 'att' ? (hasBall ? 0.21 : 0.14) : 0.02);
+  let z = lateral(homeSide) * (hasBall ? 1 : 0.48) + side;
+  if (hasBall && role.line === 'def' && ballProgress > 0) progress = clamp(ballProgress - longitudinal(0.29), -longitudinal(0.05), longitudinal(0.12));
+  const carrier = state.carrier;
+  if (hasBall && carrier?.team === p.team) {
+    const dirFacing = Math.sin(carrier.facing) * dir;
+    if (role.line === 'att') {
+      const line = Math.max(...world.players.filter((q) => q.team !== p.team && outfield(q)).map((q) => q.x * dir));
+      const pressure = Math.min(...world.players.filter((q) => q.team !== p.team).map((q) => distance(q, carrier)));
+      progress = carrier.x * dir + longitudinal(0.13);
+      if (dirFacing > 0.4 && pressure > 3.5 && tickWindow(state.tick)) progress = Math.max(progress, line + 1);
+      z = lateral(homeSide) + (carrier.z > 0 ? -1 : 1) * lateral(0.1);
+    }
+    if (role.overlap && Math.sign(carrier.z) === Math.sign(z) && Math.abs(carrier.z) > lateral(0.2)) progress += longitudinal(role.freedom);
+  }
+  const run = state.runs.get(p.id);
+  if (hasBall && run) return { x: run.x, z: run.z };
+  const keeper = world.players.find((q) => q.team === p.team && q.slot === 'GK')!;
+  progress = Math.max(progress, keeper.x * dir + 0.75);
+  return { x: dir * clamp(progress, -longitudinal(0.44), longitudinal(0.44)), z: clamp(z, -lateral(0.4), lateral(0.4)) };
+}
+
+const tickWindow = (tick: number) => tick % 180 < 75;
 
 export function computeAI(world: World, level: Level, dt: number, tick: number, team?: Team, commands = new Map<number, Command>()) {
   commands.clear();
-  let carrier: Player | null = null;
-  for (const player of world.players) {
-    if (distance(player, world.ball) < 0.64) { carrier = player; break; }
-  }
-  const pressers = new Map<Team, Player>();
-  const secondPressers = new Map<Team, Player>();
+  const state = matchState(world, tick);
+  const carrier = state.carrier;
+  const targets = new Map<number, Point>();
   for (const side of [0, 1] as const) {
-    const candidates = world.players
-      .filter((player) => player.team === side && outfield(player) && !player.human && !player.controlled)
-      .sort((a, b) => distance(a, world.ball) - distance(b, world.ball));
-    if (candidates[0]) pressers.set(side, candidates[0]);
-    if (candidates[1]) secondPressers.set(side, candidates[1]);
-  }
-  const targets = new Map<number, { x: number; z: number }>();
-  for (const p of world.players) {
-    if (team !== undefined && p.team !== team) continue;
-    if (p.human || p.controlled) continue;
-    if (world.phase !== 'live') {
-      if (world.phase === 'restart' && p.team === world.restartTeam) {
-        const taker = restartTaker(world);
-        if (p.id === taker.id) commands.set(p.id, { move: { x: 0, z: 0 }, action: 'pass', pressed: true, aim: { x: teamDir(p.team, world.endsSwapped), z: 0 } });
+    if (team !== undefined && team !== side) continue;
+    const players = world.players.filter((p) => p.team === side);
+    const dir = teamDir(side, world.endsSwapped);
+    const ownGoal = { x: -dir * FIELD.length / 2, z: 0 };
+    const defenders = players.filter(outfield).sort((a, b) => distance(a, world.ball) - distance(b, world.ball));
+    const presser = defenders[0];
+    const cover = defenders[1];
+    const threats = world.players.filter((p) => p.team !== side && outfield(p) && p.id !== carrier?.id)
+      .sort((a, b) => distance(a, ownGoal) - distance(b, ownGoal));
+    const marked = new Set<number>();
+    for (const p of players) {
+      if (p.human || p.controlled) continue;
+      if (world.phase !== 'live') {
+        if (world.phase === 'restart' && side === world.restartTeam) {
+          const taker = (world.restart === 'goal-kick' ? players.find((q) => q.slot === 'GK') : undefined)
+            ?? players.find((q) => q.controlled)
+            ?? [...players].sort((a, b) => distance(a, world.restartAt) - distance(b, world.restartAt))[0]!;
+          if (p.id === taker.id) {
+            const receiver = players.filter((q) => q.id !== p.id && outfield(q))
+              .sort((a, b) => distance(a, world.restartAt) - distance(b, world.restartAt))[0]!;
+            commands.set(p.id, { move: { x: 0, z: 0 }, action: 'pass', pressed: true, power: 0.4,
+              aim: { x: receiver.x - world.restartAt.x, z: receiver.z - world.restartAt.z } });
+          }
+        }
+        continue;
       }
-      continue;
-    }
-    if (p.slot === 'GK') {
-      const target = keeperTarget(world, p, keeperTargetScratch);
-      const oneOnOne = Math.abs(world.ball.x - target.x) < FIELD.penaltyDepth * 0.6 && Math.abs(world.ball.z) < FIELD.penaltyWidth * 0.15;
-      if (carrier?.id === p.id) {
-        if (world.event === 'keeper claims it' && world.eventTime > 0.05) {
-          commands.set(p.id, { move: { x: 0, z: 0 } });
+      if (p.slot === 'GK') {
+        if (carrier?.id === p.id) {
+          commands.set(p.id, world.event === 'keeper claims it' && world.eventTime > 0.25
+            ? { move: { x: 0, z: 0 } } : carrierCommand(world, p, level, tick));
           continue;
         }
-        let receiver: Player | null = null;
-        let safestLane = Infinity;
-        for (const candidate of world.players) {
-          if (candidate.team !== p.team || candidate.id === p.id) continue;
-          const lane = laneScore(world, p, candidate);
-          if (lane < safestLane) { safestLane = lane; receiver = candidate; }
+        const target = keeperTarget(world, p);
+        const reacts = tick % Math.round(keeperReaction[level] * 60) === 0;
+        if (reacts) {
+          const flight = (-dir * (FIELD.length / 2 - 1.5) - world.ball.x) / world.ball.vx;
+          const incoming = world.ball.vx * -dir > 5 && flight > 0 && flight < 0.04;
+          p.action = incoming && Math.abs(world.ball.z + world.ball.vz * flight - p.z) > 1.1 ? 'dive' : 'ready';
         }
-        commands.set(p.id, receiver
-          ? { move: { x: 0, z: 0 }, action: 'pass', pressed: true, power: 0.55, aim: { x: receiver.x - p.x, z: receiver.z - p.z } }
-          : { move: { x: 0, z: 0 } });
+        commands.set(p.id, { move: reacts ? targetMove(p, target.x, target.z) : { x: p.vx / 6, z: p.vz / 6 }, sprint: false });
         continue;
       }
-      if (world.event === 'keeper claims it' && world.lastTouch === p.team && distance(p, world.ball) < 1.4) {
-        commands.set(p.id, { move: { x: world.ball.x - p.x, z: world.ball.z - p.z }, sprint: false });
+      if (carrier?.id === p.id) {
+        commands.set(p.id, carrierCommand(world, p, level, tick));
         continue;
       }
-      const reacts = tick % Math.max(1, Math.round(keeperReaction[level] * 60)) === 0;
-      if (reacts && Math.hypot(world.ball.vx, world.ball.vy, world.ball.vz) > 16) {
-        p.action = Math.abs(target.z - p.z) <= 2.4 ? 'dive' : 'ready';
-      }
-      commands.set(p.id, { move: reacts ? { x: target.x - p.x, z: target.z - p.z } : { x: p.vx, z: p.vz }, sprint: oneOnOne || distance(p, target) > FIELD.goalWidth * 0.35 });
-      continue;
-    }
-    if (carrier?.id === p.id) {
-      commands.set(p.id, carrierCommand(world, p, level, tick));
-      continue;
-    }
-    const ownCarrier = carrier?.team === p.team ? carrier : null;
-    const opponent = carrier?.team !== p.team ? carrier : null;
-    const presser = pressers.get(p.team);
-    if (!ownCarrier && presser?.id === p.id) {
-      const gap = distance(p, world.ball);
-      const movement = opponent && gap <= 1.35
-        ? { x: 0, z: 0 }
-        : targetMove(p, world.ball.x, world.ball.z);
-      commands.set(p.id, {
-        move: movement,
-        sprint: gap > 3,
-        action: gap < 1.4 ? 'tackle' : null,
-        pressed: tick % Math.round(reaction[level] * 60) === 0,
-      });
-      continue;
-    }
-    const attackDir = teamDir(p.team, world.endsSwapped);
-    const home = FORMATION[p.id % TEAM_SIZE]!;
-    const defender = p.slot === 'LB' || p.slot === 'CB' || p.slot === 'RB';
-    const wide = p.slot === 'LW' || p.slot === 'RW';
-    let targetX: number;
-    let targetZ: number;
-    if (ownCarrier) {
-      if (p.slot === 'ST') {
-        let lastDefenderProgress = -Infinity;
-        for (const candidate of world.players) {
-          if (candidate.team === p.team || !outfield(candidate)) continue;
-          lastDefenderProgress = Math.max(lastDefenderProgress, candidate.x * attackDir);
+      if (state.possession !== side || !carrier && world.passTarget === null) {
+        if (p.id === presser?.id) {
+          const receiver = world.players.find((q) => q.id === world.passTarget && q.team !== side);
+          const opponent = carrier?.team !== side ? carrier ?? receiver : receiver;
+          if (opponent) {
+            const dx = ownGoal.x - opponent.x, dz = -opponent.z;
+            const length = Math.hypot(dx, dz) || 1;
+            const target = { x: opponent.x + dx / length * 2, z: opponent.z + dz / length * 2 };
+            const move = targetMove(p, target.x, target.z);
+            const gap = distance(p, world.ball);
+            const facingAway = Math.sin(opponent.facing) * -dir < 0.2;
+            const exposed = distance(opponent, world.ball) > 0.48;
+            const reacts = (tick + rosterIndex(world, p) * 2) % Math.round(reaction[level] * 60) === 0;
+            commands.set(p.id, { move: gap < 1.38 && reacts && (exposed || facingAway) ? targetMove(p, world.ball.x, world.ball.z) : distance(p, target) < 0.65
+              ? { x: opponent.vx / 6, z: opponent.vz / 6 } : move,
+              sprint: distance(p, target) > 4, action: carrier && gap < 1.38 && (exposed || facingAway) ? 'tackle' : null, pressed: reacts });
+          } else {
+            const flight = clamp(distance(p, world.ball) / 8, 0, 0.7);
+            commands.set(p.id, { move: targetMove(p, clamp(world.ball.x + world.ball.vx * flight, -longitudinal(0.48), longitudinal(0.48)),
+              clamp(world.ball.z + world.ball.vz * flight, -lateral(0.46), lateral(0.46))), sprint: true });
+          }
+          continue;
         }
-        targetX = attackDir * Math.max(ownCarrier.x * attackDir + FIELD.goalWidth * 0.8, lastDefenderProgress - FIELD.goalWidth * 0.25);
-        targetZ = -Math.sign(ownCarrier.z) * FIELD.goalWidth * 0.4;
-      } else if (wide) {
-        targetX = ownCarrier.x + attackDir * FIELD.goalWidth * 0.4;
-        targetZ = home.z;
-      } else if (p.slot === 'CM') {
-        targetX = ownCarrier.x - attackDir * FIELD.goalWidth;
-        targetZ = home.z * 0.35;
-      } else {
-        targetX = ownCarrier.x - attackDir * FIELD.penaltyDepth * 0.42;
-        targetZ = ownCarrier.z * 0.3;
-      }
-    } else {
-      const secondPresser = secondPressers.get(p.team);
-      if (opponent && secondPresser?.id === p.id) {
-        let runner: Player | null = null;
-        let runnerScore = -Infinity;
-        const opponentDir = -attackDir;
-        for (const candidate of world.players) {
-          if (candidate.team !== opponent.team || candidate.id === opponent.id || !outfield(candidate)) continue;
-          const score = (candidate.x - opponent.x) * opponentDir - distance(opponent, candidate) * 0.2;
-          if (score > runnerScore) { runner = candidate; runnerScore = score; }
+        if (p.id === cover?.id && carrier?.team !== side && carrier) {
+          const dx = ownGoal.x - carrier.x, dz = -carrier.z;
+          const length = Math.hypot(dx, dz) || 1;
+          targets.set(p.id, { x: carrier.x + dx / length * longitudinal(0.135), z: carrier.z + dz / length * longitudinal(0.135) });
+          continue;
         }
-        if (runner) {
-          targetX = opponent.x + (runner.x - opponent.x) * 0.4;
-          targetZ = opponent.z + (runner.z - opponent.z) * 0.4;
-        } else {
-          targetX = world.ball.x;
-          targetZ = world.ball.z;
-        }
-      } else if (defender) {
-        const ownGoalX = -attackDir * (FIELD.length / 2);
-        const dx = ownGoalX - world.ball.x;
-        const dz = -world.ball.z;
-        const length = Math.hypot(dx, dz) || 1;
-        const keeper = world.players.find((candidate) => candidate.team === p.team && candidate.slot === 'GK')!;
-        const goalSideX = world.ball.x + dx / length * FIELD.goalWidth * 0.96;
-        targetX = attackDir * Math.max(goalSideX * attackDir, keeper.x * attackDir + 0.75);
-        targetZ = world.ball.z + dz / length * FIELD.goalWidth * 0.96;
-      } else if (wide) {
-        targetX = world.ball.x - attackDir * FIELD.goalWidth * 0.48;
-        targetZ = home.z + 0.35 * world.ball.z;
-      } else if (p.slot === 'CM') {
-        targetX = world.ball.x - attackDir * FIELD.goalWidth * 0.48;
-        targetZ = home.z + 0.2 * world.ball.z;
-      } else {
-        targetX = world.ball.x + attackDir * FIELD.goalWidth * 0.28;
-        targetZ = -0.4 * world.ball.z;
       }
+      let target = shapeTarget(world, p, state);
+      if (state.possession !== side) {
+        const threat = threats.find((q) => !marked.has(q.id) && distance(q, target) < longitudinal(1 / 6));
+        if (threat) {
+          marked.add(threat.id);
+          const dx = ownGoal.x - threat.x, dz = -threat.z;
+          const length = Math.hypot(dx, dz) || 1;
+          target = { x: threat.x + dx / length * 1.5, z: threat.z + dz / length * 1.5 };
+        }
+      }
+      targets.set(p.id, target);
     }
-    targetX = clamp(targetX, -FIELD.length / 2 + 1, FIELD.length / 2 - 1);
-    targetZ = clamp(targetZ, -FIELD.width / 2 + 1, FIELD.width / 2 - 1);
-    targets.set(p.id, { x: targetX, z: targetZ });
   }
-  const separated = world.players.filter((player) => outfield(player)
-    && !player.human && !player.controlled && player.id !== carrier?.id && player.id !== pressers.get(player.team)?.id
-    && targets.has(player.id));
-  for (let i = 0; i < separated.length; i++) {
-    const a = separated[i]!;
-    const targetA = targets.get(a.id)!;
-    for (let j = i + 1; j < separated.length; j++) {
-      const b = separated[j]!;
+  const shaped = world.players.filter((p) => targets.has(p.id));
+  for (let i = 0; i < shaped.length; i++) {
+    const a = shaped[i]!, ta = targets.get(a.id)!;
+    for (let j = i + 1; j < shaped.length; j++) {
+      const b = shaped[j]!, tb = targets.get(b.id)!;
       if (a.team !== b.team) continue;
-      const targetB = targets.get(b.id)!;
-      let dx = targetB.x - targetA.x;
-      let dz = targetB.z - targetA.z;
-      let gap = Math.hypot(dx, dz);
-      if (gap >= 4) continue;
-      if (gap < 0.001) {
-        dx = b.x - a.x;
-        dz = b.z - a.z;
-        gap = Math.hypot(dx, dz);
-      }
-      if (gap < 0.001) {
-        dx = a.id < b.id ? 1 : -1;
-        dz = 0;
-        gap = 1;
-      }
-      const push = (4 - gap) / 2;
-      targetA.x = clamp(targetA.x - dx / gap * push, -FIELD.length / 2 + 1, FIELD.length / 2 - 1);
-      targetA.z = clamp(targetA.z - dz / gap * push, -FIELD.width / 2 + 1, FIELD.width / 2 - 1);
-      targetB.x = clamp(targetB.x + dx / gap * push, -FIELD.length / 2 + 1, FIELD.length / 2 - 1);
-      targetB.z = clamp(targetB.z + dz / gap * push, -FIELD.width / 2 + 1, FIELD.width / 2 - 1);
+      let dx = tb.x - ta.x, dz = tb.z - ta.z;
+      const gap = Math.hypot(dx, dz);
+      if (gap >= 4.5) continue;
+      if (gap < 0.01) { dx = 0; dz = roleOf(a).lateral < 0 ? 1 : -1; }
+      const scale = (4.5 - gap) / (Math.hypot(dx, dz) || 1) / 2;
+      ta.x -= dx * scale; ta.z -= dz * scale;
+      tb.x += dx * scale; tb.z += dz * scale;
     }
   }
-  for (const p of separated) {
+  for (const p of shaped) {
     const target = targets.get(p.id)!;
-    commands.set(p.id, { move: targetMove(p, target.x, target.z), sprint: false });
+    const dir = teamDir(p.team, world.endsSwapped);
+    const keeper = world.players.find((q) => q.team === p.team && q.slot === 'GK')!;
+    const progress = Math.max(target.x * dir, keeper.x * dir + 0.75);
+    commands.set(p.id, { move: targetMove(p, dir * clamp(progress, -longitudinal(0.44), longitudinal(0.44)), clamp(target.z, -lateral(0.4), lateral(0.4))),
+      sprint: state.possession !== p.team && tick - state.teams[p.team].changedAt < 90 });
   }
   void dt;
   return commands;
@@ -290,11 +337,90 @@ export function simulateCpuMatch(seed: number, levelHome: Level, levelAway: Leve
     const commands = new Map<number, Command>();
     for (const team of [0, 1] as const) {
       const generated = computeAI(world, team === 0 ? levelHome : levelAway, 1 / 60, tick, team);
-      for (const [id, command] of generated) if (world.players[id]?.team === team) commands.set(id, command);
+      for (const [id, command] of generated) commands.set(id, command);
     }
     stepWorld(world, 1 / 60, commands);
     observe?.(world);
     tick++;
   }
   return world;
+}
+
+export type CpuTeamStats = {
+  goals: number;
+  shots: number;
+  shotsOnTarget: number;
+  passesAttempted: number;
+  passesCompleted: number;
+  possessionTicks: number;
+  possessionShare: number;
+  tacklesWon: number;
+};
+
+export function createMatchStatsObserver() {
+  const empty = (): CpuTeamStats => ({ goals: 0, shots: 0, shotsOnTarget: 0, passesAttempted: 0, passesCompleted: 0, possessionTicks: 0, possessionShare: 0, tacklesWon: 0 });
+  const stats = { teams: [empty(), empty()] as [CpuTeamStats, CpuTeamStats], liveTicks: 0 };
+  let previousPhase: World['phase'] = 'restart';
+  let previousTouch: Team = 0;
+  let shot: Team | null = null;
+  let pass: { team: Team; playerId: number; departed: boolean } | null = null;
+  const cooldowns = new Map<number, number>();
+  const observe = (world: World) => {
+    const carrier = world.players.find((p) => distance(p, world.ball) < 0.64);
+    const event = world.kickEvent;
+    // Resolve the previous flight before registering a new kick by its receiver.
+    if (pass && carrier) {
+      if (carrier.id !== pass.playerId || pass.departed) {
+        if (carrier.team === pass.team && carrier.id !== pass.playerId) stats.teams[pass.team].passesCompleted++;
+        pass = null;
+      }
+    } else if (pass) pass.departed = true;
+    const keeperContact = world.eventTime === 1.1 && (world.event === 'keeper claims it' || world.event === 'keeper parries');
+    if (shot !== null && (world.score[shot] > stats.teams[shot].goals || (keeperContact && world.lastTouch !== shot))) {
+      stats.teams[shot].shotsOnTarget++;
+      shot = null;
+    }
+    if (event) {
+      pass = null;
+      shot = null;
+      const player = world.players.find((p) => p.id === event.playerId)!;
+      if (event.action === 'shoot' || event.action === 'finesse') {
+        stats.teams[player.team].shots++;
+        shot = player.team;
+      } else if (previousPhase === 'live' && (event.action === 'pass' || event.action === 'through' || event.action === 'lob')) {
+        stats.teams[player.team].passesAttempted++;
+        pass = { team: player.team, playerId: player.id, departed: !carrier || carrier.id !== player.id };
+      }
+    }
+    if (world.phase === 'live') {
+      stats.liveTicks++;
+      if (carrier) stats.teams[carrier.team].possessionTicks++;
+      // Successful tackles have no event; infer wins from a new tackle and a change of last touch.
+      if (world.lastTouch !== previousTouch) {
+        const tackler = world.players.find((p) => p.team === world.lastTouch
+          && (p.action === 'tackle' || p.action === 'slide')
+          && p.cooldown > (cooldowns.get(p.id) ?? 0) && distance(p, world.ball) < 0.64);
+        if (tackler) stats.teams[tackler.team].tacklesWon++;
+      }
+    } else {
+      pass = null;
+      shot = null;
+    }
+    if (shot !== null && ((carrier && carrier.team !== shot) || keeperContact)) shot = null;
+    for (const team of [0, 1] as const) {
+      stats.teams[team].goals = world.score[team];
+      stats.teams[team].possessionShare = stats.liveTicks ? stats.teams[team].possessionTicks / stats.liveTicks : 0;
+    }
+    for (const player of world.players) cooldowns.set(player.id, player.cooldown);
+    previousPhase = world.phase;
+    previousTouch = world.lastTouch;
+  };
+  return { stats, observe };
+}
+
+export function simulateCpuMatchStats(seed: number, levelHome: Level, levelAway: Level, seconds = 240) {
+  if (!Number.isFinite(seconds) || seconds < 0) throw new RangeError('seconds must be finite and non-negative');
+  const { stats, observe } = createMatchStatsObserver();
+  const world = seconds === 0 ? createWorld(seed, 0) : simulateCpuMatch(seed, levelHome, levelAway, seconds, observe);
+  return { ...stats, world };
 }
