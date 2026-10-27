@@ -1,5 +1,3 @@
-import { PRACTICE_MODE_OPTION } from './practice-mode.tsx';
-
 export type Mode = 'cpu' | 'versus' | 'coop' | 'practice';
 export type CompetitionDef<Id extends string = string> = {
   id: Id;
@@ -18,6 +16,6 @@ export const COMPETITIONS = [
 
 export type CompetitionId = (typeof COMPETITIONS)[number]['id'];
 export const COMPETITION_IDS = COMPETITIONS.map(({ id }) => id) as CompetitionId[];
-export const MODE_OPTIONS = [...new Set([...COMPETITIONS.flatMap(({ arrangements }) => arrangements), PRACTICE_MODE_OPTION[0]])] as Mode[];
+export const MODE_OPTIONS = [...new Set([...COMPETITIONS.flatMap(({ arrangements }) => arrangements), 'practice'])] as Mode[];
 export const competitionById = (id: string | undefined): CompetitionDef =>
   COMPETITIONS.find((competition) => competition.id === id) ?? COMPETITIONS[0]!;
