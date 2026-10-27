@@ -89,6 +89,7 @@ for (const [home, away] of [['hard', 'easy'], ['hard', 'normal'], ['normal', 'ea
     if (game.score[0] < game.score[1]) losses++;
   }
   assert.ok(wins > losses + 2, `${home} wins ${wins}, loses ${losses}`);
+  if (home === 'hard' && away === 'easy') assert.ok(wins >= 7 && losses <= 1, `hard/easy W/L: ${wins}/${losses}`);
 });
 
 test('CPU teams hold shape without sustained teammate clumping', () => {
@@ -129,8 +130,8 @@ test('CPU teams hold shape without sustained teammate clumping', () => {
   assert.ok(samples > 0, 'expected live-phase samples');
   const meanNearestDistance = nearestDistanceTotal / playerSamples;
   const clumpFraction = clumpedSamples / (samples * 2);
-  assert.ok(meanNearestDistance >= 4, `mean nearest teammate distance: ${meanNearestDistance.toFixed(2)}m`);
-  assert.ok(clumpFraction < 0.1, `three-player clump fraction: ${(clumpFraction * 100).toFixed(1)}%`);
+  assert.ok(meanNearestDistance >= 4.5, `mean nearest teammate distance: ${meanNearestDistance.toFixed(2)}m`);
+  assert.ok(clumpFraction < 0.05, `three-player clump fraction: ${(clumpFraction * 100).toFixed(1)}%`);
 });
 
 test('CPU carrier completes a progressive pass to a teammate', () => {
@@ -245,4 +246,52 @@ test('role-based commands support 4-3-3 rosters and non-contiguous ids', () => {
   const commands = computeAI(world, 'normal', 1 / 60, 1);
   assert.equal(commands.size, 22);
   assert.ok([...commands.values()].every((command) => Number.isFinite(command.move.x) && Number.isFinite(command.move.z)));
+});
+
+test('keepers commit after elapsed reaction time regardless of the shot tick modulo', () => {
+  for (const start of [17, 23]) {
+    const world = tacticalWorld();
+    const keeper = world.players.find((p) => p.team === 1 && p.slot === 'GK')!;
+    keeper.z = 0;
+    world.ball.x = 8; world.ball.z = 1.8; world.ball.vx = 20; world.ball.vz = 0;
+    world.kickEvent = { playerId: 1, action: 'shoot', power: 0.75, time: world.clock };
+    computeAI(world, 'hard', 1 / 60, start, 1);
+    world.kickEvent = null;
+    computeAI(world, 'hard', 1 / 60, start + 9, 1);
+    assert.equal(keeper.action, 'ready');
+    computeAI(world, 'hard', 1 / 60, start + 10, 1);
+    assert.equal(keeper.action, 'dive');
+    world.ball.z = 0.4;
+    computeAI(world, 'hard', 1 / 60, start + 11, 1);
+    assert.equal(keeper.action, 'dive', 'a read remains committed for the incoming flight');
+    world.ball.vx = -20;
+    computeAI(world, 'hard', 1 / 60, start + 12, 1);
+    assert.equal(keeper.action, 'ready', 'a rebound releases the commitment');
+  }
+});
+
+test('keeper reads recognize fast shots without an event, delay by level, and ignore wide balls', () => {
+  for (const level of ['easy', 'normal', 'hard'] as const) {
+    const world = tacticalWorld();
+    const keeper = world.players.find((p) => p.team === 1 && p.slot === 'GK')!;
+    keeper.z = 0;
+    world.ball.x = 8; world.ball.z = 1.8; world.ball.vx = 20; world.ball.vz = 0;
+    computeAI(world, level, 1 / 60, 17, 1);
+    computeAI(world, level, 1 / 60, 27, 1);
+    assert.equal(keeper.action, level === 'hard' ? 'dive' : 'ready');
+    world.ball.z = 8;
+    computeAI(world, level, 1 / 60, 57, 1);
+    assert.equal(keeper.action, 'ready');
+  }
+});
+
+test('a human keeper is not given a dive decision', () => {
+  const world = tacticalWorld();
+  const keeper = world.players.find((p) => p.team === 1 && p.slot === 'GK')!;
+  keeper.human = true; keeper.action = 'human';
+  world.ball.x = 8; world.ball.z = 1.8; world.ball.vx = 20;
+  computeAI(world, 'hard', 1 / 60, 17, 1);
+  const commands = computeAI(world, 'hard', 1 / 60, 40, 1);
+  assert.equal(commands.has(keeper.id), false);
+  assert.equal(keeper.action, 'human');
 });

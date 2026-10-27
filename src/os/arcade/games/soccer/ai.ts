@@ -4,6 +4,8 @@ export const LEVEL_NAMES = ['easy', 'normal', 'hard'] as const;
 export type Level = (typeof LEVEL_NAMES)[number];
 const reaction = { easy: 0.6, normal: 0.3, hard: 0.18 } as const;
 const keeperReaction = { easy: 0.6, normal: 0.42, hard: 0.2 } as const;
+const keeperReadDelay = { easy: 0.7, normal: 0.5, hard: 0.16 } as const;
+const keeperReadNoise = { easy: 0.28, normal: 0.08, hard: 0.01 } as const;
 const decisionInterval = { easy: 0.7, normal: 0.3, hard: 0.24 } as const;
 const noise = { easy: 0.65, normal: 0.2, hard: 0.03 } as const;
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
@@ -36,12 +38,14 @@ const canCarry = (world: World, p: Player) => world.ball.y <= 0.75
   && !(p.cooldown > 0 && (p.action === 'kick' || p.action === 'pass')) && distance(p, world.ball) < 0.64;
 
 type TeamState = { possession: boolean; changedAt: number };
+type KeeperRead = { startedAt: number; decided: boolean; dive: boolean; kick: World['kickEvent'] };
 type MatchState = {
   tick: number;
   carrier: Player | null;
   possession: Team;
   teams: [TeamState, TeamState];
   runs: Map<number, { until: number; x: number; z: number }>;
+  keeperReads: Map<number, KeeperRead>;
 };
 const matches = new WeakMap<World, MatchState>();
 
@@ -49,7 +53,7 @@ function matchState(world: World, tick: number) {
   let state = matches.get(world);
   if (!state || tick < state.tick) {
     state = { tick: -1, carrier: null, possession: world.lastTouch,
-      teams: [{ possession: world.lastTouch === 0, changedAt: tick }, { possession: world.lastTouch === 1, changedAt: tick }], runs: new Map() };
+      teams: [{ possession: world.lastTouch === 0, changedAt: tick }, { possession: world.lastTouch === 1, changedAt: tick }], runs: new Map(), keeperReads: new Map() };
     matches.set(world, state);
   }
   if (state.tick === tick) return state;
@@ -70,7 +74,7 @@ function matchState(world: World, tick: number) {
       x: clamp(passer.x + teamDir(passer.team, world.endsSwapped) * longitudinal(0.14), -longitudinal(0.44), longitudinal(0.44)),
       z: clamp(passer.z + (passer.z > 0 ? -1 : 1) * lateral(0.1), -lateral(0.4), lateral(0.4)) });
   }
-  if (world.phase !== 'live') state.runs.clear();
+  if (world.phase !== 'live') { state.runs.clear(); state.keeperReads.clear(); }
   for (const [id, run] of state.runs) if (run.until < tick) state.runs.delete(id);
   return state;
 }
@@ -108,6 +112,33 @@ export function keeperTarget(world: World, keeper: Player, target = { x: 0, z: 0
     target.z = clamp(target.z * (1 - prediction) + (world.ball.z + world.ball.vz * flight) * prediction, -FIELD.goalWidth / 2, FIELD.goalWidth / 2);
   }
   return target;
+}
+
+function readKeeperShot(world: World, keeper: Player, level: Level, tick: number, state: MatchState) {
+  const dir = teamDir(keeper.team, world.endsSwapped);
+  const flight = (-dir * (FIELD.length / 2 - 1.5) - world.ball.x) / world.ball.vx;
+  const crossing = world.ball.z + world.ball.vz * flight;
+  const kick = world.kickEvent;
+  const struck = kick && (kick.action === 'shoot' || kick.action === 'finesse');
+  const incoming = world.ball.vx * -dir > (struck ? 3 : 8) && flight > 0 && flight < 1.6
+    && Math.abs(crossing) < FIELD.goalWidth / 2 + 1.5;
+  if (!incoming) {
+    state.keeperReads.delete(keeper.id);
+    if (keeper.action === 'dive') keeper.action = 'ready';
+    return;
+  }
+  let read = state.keeperReads.get(keeper.id);
+  if (!read || struck && read.kick !== kick) {
+    read = { startedAt: tick, decided: false, dive: false, kick };
+    state.keeperReads.set(keeper.id, read);
+  }
+  if (!read.decided && tick - read.startedAt >= Math.round(keeperReadDelay[level] * 60)) {
+    const error = Math.sin((read.startedAt + rosterIndex(world, keeper) * 17) * 0.73) * FIELD.goalWidth * keeperReadNoise[level];
+    const predicted = crossing + error;
+    read.dive = Math.abs(predicted - keeper.z) > 1.1 && Math.abs(predicted) < FIELD.goalWidth / 2 + 0.5;
+    read.decided = true;
+  }
+  keeper.action = read.decided && read.dive ? 'dive' : 'ready';
 }
 
 function carrierCommand(world: World, player: Player, level: Level, tick: number): Command {
@@ -245,12 +276,8 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
           continue;
         }
         const target = keeperTarget(world, p);
+        readKeeperShot(world, p, level, tick, state);
         const reacts = tick % Math.round(keeperReaction[level] * 60) === 0;
-        if (reacts) {
-          const flight = (-dir * (FIELD.length / 2 - 1.5) - world.ball.x) / world.ball.vx;
-          const incoming = world.ball.vx * -dir > 5 && flight > 0 && flight < 0.04;
-          p.action = incoming && Math.abs(world.ball.z + world.ball.vz * flight - p.z) > 1.1 ? 'dive' : 'ready';
-        }
         commands.set(p.id, { move: reacts ? targetMove(p, target.x, target.z) : { x: p.vx / 6, z: p.vz / 6 }, sprint: false });
         continue;
       }
@@ -302,16 +329,16 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
     }
   }
   const shaped = world.players.filter((p) => targets.has(p.id));
-  for (let i = 0; i < shaped.length; i++) {
+  for (let pass = 0; pass < 3; pass++) for (let i = 0; i < shaped.length; i++) {
     const a = shaped[i]!, ta = targets.get(a.id)!;
     for (let j = i + 1; j < shaped.length; j++) {
       const b = shaped[j]!, tb = targets.get(b.id)!;
       if (a.team !== b.team) continue;
       let dx = tb.x - ta.x, dz = tb.z - ta.z;
       const gap = Math.hypot(dx, dz);
-      if (gap >= 4.5) continue;
+      if (gap >= 5.5) continue;
       if (gap < 0.01) { dx = 0; dz = roleOf(a).lateral < 0 ? 1 : -1; }
-      const scale = (4.5 - gap) / (Math.hypot(dx, dz) || 1) / 2;
+      const scale = (5.5 - gap) / (Math.hypot(dx, dz) || 1) / 2;
       ta.x -= dx * scale; ta.z -= dz * scale;
       tb.x += dx * scale; tb.z += dz * scale;
     }
@@ -323,6 +350,20 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
     const progress = Math.max(target.x * dir, keeper.x * dir + 0.75);
     commands.set(p.id, { move: targetMove(p, dir * clamp(progress, -longitudinal(0.44), longitudinal(0.44)), clamp(target.z, -lateral(0.4), lateral(0.4))),
       sprint: state.possession !== p.team && tick - state.teams[p.team].changedAt < 90 });
+  }
+  for (const p of world.phase === 'live' ? world.players : []) {
+    const command = commands.get(p.id);
+    if (!command || !outfield(p) || p.id === carrier?.id) continue;
+    let x = 0, z = 0;
+    for (const mate of world.players) {
+      if (mate.team !== p.team || mate.id === p.id || !outfield(mate)) continue;
+      const gap = distance(p, mate);
+      if (gap >= 5) continue;
+      const strength = (5 - gap) / 5;
+      x += (p.x - mate.x) / Math.max(0.5, gap) * strength;
+      z += (p.z - mate.z) / Math.max(0.5, gap) * strength;
+    }
+    command.move = { x: command.move.x + x * 1.2, z: command.move.z + z * 1.2 };
   }
   void dt;
   return commands;
