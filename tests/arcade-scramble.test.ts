@@ -193,6 +193,7 @@ import {
   type Wall,
 } from '../src/os/arcade/games/scramble/logic.ts';
 import { BLEED_T, CRAWL, DOWN_HP, F_DOWN, F_REVIVE, PING_T, REVIVE_HP, REVIVE_T, dropOut, forfeit, isMode, pingOf, reviveEgg, reviveShare, teamCount, type Mode } from '../src/os/arcade/games/scramble/logic.ts';
+import { ASK_T, EMOTE_GAP, EMOTE_IDS, EMOTE_SPAN, EMOTE_T, FACE_EMOTES, TEAM_EMOTES, ammoAsk, emoteOf, emoteReady, endMatch, isTeamEmote, type EmoteId, type LootItem } from '../src/os/arcade/games/scramble/logic.ts';
 import { actorOf, parseTeams, teamAsk } from '../src/os/arcade/games/scramble/net.ts';
 import { nextTeam, pinTeam, teamsFor, winnersOf } from '../src/os/arcade/games/scramble/session.ts';
 import { MAX_KICK, applyNet, configOf, endOf, guestState, hitCap, hostState, packDoors, packEvents, packGlass, packPiece, parsePacket, pieceEv, placesOf, stateOf, toNet, unpackDoors, unpackGlass, unpackPiece, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
@@ -7030,4 +7031,244 @@ test('a marker for a teammate off the screen sits where the line to it leaves th
   // from a point outside the box, from the nearest point inside it
   const o = edgeOf(500, 100, 300, 100, 10, 10, 190, 190);
   assert.deepEqual([o.x, o.y], [190, 100]);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Emotes and the team's calls.
+
+test('an emote shows over an egg a few seconds, a few at a time; calls are for teams only, an ask for ammo names the kind it is lowest on, and an enemy is pinged', () => {
+  const m = teamQuiet('duos', [0, 0, 1]);
+  const a = m.fighters[0];
+  land(a, 0, 0);
+  const say = (k: EmoteId, x = 0, z = 0) => {
+    a.input.emote = { k, x, z };
+    return run(m, 0.05).filter((e) => e.t === 'emote');
+  };
+  let evs = say('happy');
+  assert.equal(evs.length, 1);
+  assert.deepEqual(toNet(evs[0]), { y: 'em', f: 0, k: EMOTE_IDS.indexOf('happy') });
+  assert.equal(emoteOf(m, a)?.k, 'happy');
+  assert.equal(say('sad').length, 0, 'not again so soon');
+  run(m, EMOTE_GAP);
+  // asking for ammo: the kind its guns take that it has least of for what it carries
+  a.guns = [{ w: 'rifle', r: 0, mag: 30 }, { w: 'shotgun', r: 0, mag: 6 }];
+  a.ammo.heavy = 120;
+  a.ammo.shells = 3;
+  assert.equal(ammoAsk(a), 'shells');
+  evs = say('ammo');
+  assert.ok(evs[0]?.t === 'emote' && evs[0].a === 'shells');
+  assert.deepEqual(toNet(evs[0]), { y: 'em', f: 0, k: EMOTE_IDS.indexOf('ammo'), a: AMMO_TYPES.indexOf('shells') });
+  assert.equal(ammoAsk({ ...a, guns: [null, null] }), null, 'no gun, no kind to ask for');
+  run(m, EMOTE_GAP);
+  // an enemy where it points, pinged there for the team too
+  evs = say('enemy', 20.04, -10.06);
+  assert.ok(evs[0]?.t === 'emote' && evs[0].x === 20 && evs[0].z === -10.1);
+  assert.deepEqual(pingOf(m, a) && { x: pingOf(m, a)!.x, z: pingOf(m, a)!.z }, { x: 20, z: -10.1 });
+  run(m, EMOTE_GAP);
+  // three in a few seconds is all
+  assert.equal(emoteReady(a, m.clock), false);
+  assert.equal(say('gg').length, 0, 'a fourth waits');
+  run(m, EMOTE_SPAN);
+  assert.equal(say('gg').length, 1);
+  run(m, EMOTE_T);
+  assert.equal(emoteOf(m, a), null, 'gone after a while');
+  // knocked down, it can still call for help; out, nothing
+  a.down = true;
+  assert.equal(say('help').length, 1);
+  a.down = false;
+  a.phase = 'out';
+  run(m, EMOTE_SPAN);
+  assert.equal(say('thumbs').length, 0);
+  // in solo, faces only
+  const s = quiet();
+  const b = s.fighters[0];
+  land(b, 0, 0);
+  b.input.emote = { k: 'meds', x: 0, z: 0 };
+  assert.ok(!run(s, 0.05).some((e) => e.t === 'emote'), 'no calls in solo');
+  b.input.emote = { k: 'thumbs', x: 0, z: 0 };
+  assert.ok(run(s, 0.05).some((e) => e.t === 'emote' && e.k === 'thumbs'));
+  assert.ok(FACE_EMOTES.every((k) => !isTeamEmote(k)) && TEAM_EMOTES.every(isTeamEmote));
+  assert.equal(FACE_EMOTES.length + TEAM_EMOTES.length, EMOTE_IDS.length);
+});
+
+test('emote packets: every field checked, there and back; the host turns away ones that come too quickly and passes on no more of them', () => {
+  const evs: Ev[] = [
+    { t: 'emote', f: 3, k: 'thumbs', a: null, x: 0, z: 0 },
+    { t: 'emote', f: 3, k: 'ammo', a: 'heavy', x: 0, z: 0 },
+    { t: 'emote', f: 3, k: 'ammo', a: null, x: 0, z: 0 },
+    { t: 'emote', f: 3, k: 'enemy', a: null, x: 12.5, z: -40 },
+  ];
+  const nets = evs.map(toNet);
+  assert.deepEqual(nets, [
+    { y: 'em', f: 3, k: EMOTE_IDS.indexOf('thumbs') },
+    { y: 'em', f: 3, k: EMOTE_IDS.indexOf('ammo'), a: AMMO_TYPES.indexOf('heavy') },
+    { y: 'em', f: 3, k: EMOTE_IDS.indexOf('ammo') },
+    { y: 'em', f: 3, k: EMOTE_IDS.indexOf('enemy'), x: 12.5, z: -40 },
+  ]);
+  assert.ok(nets.every((e) => JSON.stringify(e).length < 50), 'a few bytes each');
+  const back = parsePacket(JSON.parse(JSON.stringify({ t: 'pk', r: 1, k: 'e', g: [[1, nets]] })));
+  assert.ok(back && back.k === 'e');
+  assert.deepEqual(back.groups[0][1], nets);
+  const enemy = EMOTE_IDS.indexOf('enemy');
+  const bad = [
+    { y: 'em', f: 3, k: EMOTE_IDS.length },
+    { y: 'em', f: 3, k: -1 },
+    { y: 'em', f: 3, k: 1.5 },
+    { y: 'em', f: 3, k: 'happy' },
+    { y: 'em', f: MAX_FIGHTERS, k: 0 },
+    { y: 'em', f: 3, k: 0, a: 1 },
+    { y: 'em', f: 3, k: EMOTE_IDS.indexOf('ammo'), a: AMMO_TYPES.length },
+    { y: 'em', f: 3, k: EMOTE_IDS.indexOf('ammo'), a: 'heavy' },
+    { y: 'em', f: 3, k: 0, x: 1, z: 2 },
+    { y: 'em', f: 3, k: enemy },
+    { y: 'em', f: 3, k: enemy, x: 9999, z: 0 },
+    { y: 'em', f: 3, k: enemy, x: 'a', z: 0 },
+  ];
+  const none = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[1, bad]] });
+  assert.ok(none && none.k === 'e' && none.groups.length === 0, JSON.stringify(none));
+  assert.equal(actorOf({ y: 'em', f: 2, k: 0 }), 2, 'a seat speaks only for its own egg');
+
+  // the host: one too soon after the last, or a fourth in a few seconds, goes no further
+  const h = teamQuiet('duos', [0, 0, 1, 1], 'host', ['player', 'remote', 'remote', 'remote']);
+  for (const f of h.fighters) land(f, f.id * 3, 0);
+  const em = (k: EmoteId): NetEv => ({ y: 'em', f: 1, k: EMOTE_IDS.indexOf(k) });
+  assert.equal(applyNet(h, em('happy')), true);
+  assert.equal(emoteOf(h, h.fighters[1])?.k, 'happy');
+  assert.equal(applyNet(h, em('sad')), false, 'too soon');
+  h.clock += EMOTE_GAP;
+  assert.equal(applyNet(h, em('sad')), true);
+  h.clock += EMOTE_GAP;
+  assert.equal(applyNet(h, em('gg')), true);
+  h.clock += EMOTE_GAP;
+  assert.equal(applyNet(h, em('angry')), false, 'three in a few seconds is all');
+  h.clock += EMOTE_SPAN;
+  assert.equal(applyNet(h, { y: 'em', f: 1, k: enemy, x: 30, z: 5 }), true);
+  assert.deepEqual([h.fighters[1].pingX, h.fighters[1].pingZ], [30, 5], 'an enemy call pings there');
+  // our own egg's news never comes back to us, and the bus is no place for it
+  assert.equal(applyNet(h, { y: 'em', f: 0, k: 0 }), false);
+  h.fighters[2].phase = 'bus';
+  assert.equal(applyNet(h, { y: 'em', f: 2, k: 0 }), false);
+  // a guest takes what the host passes on, however close together it arrives
+  const g = teamQuiet('duos', [0, 0, 1, 1], 'guest', ['remote', 'player', 'remote', 'remote']);
+  for (const f of g.fighters) land(f, f.id * 3, 0);
+  assert.equal(applyNet(g, { y: 'em', f: 0, k: EMOTE_IDS.indexOf('ammo'), a: AMMO_TYPES.indexOf('rockets') }), true);
+  assert.equal(emoteOf(g, g.fighters[0])?.a, 'rockets');
+  assert.equal(applyNet(g, { y: 'em', f: 0, k: 1 }), true);
+  // in solo, a call is turned away (faces are fine)
+  const so = createMatch({ seed: 7, role: 'guest', level: 'normal', entrants: [0, 1].map((i) => ({ name: `p${i}`, color: '#fff', kind: i ? ('player' as const) : ('remote' as const), seat: i })), me: 1, countdown: 0 });
+  land(so.fighters[0], 0, 0);
+  assert.equal(applyNet(so, { y: 'em', f: 0, k: EMOTE_IDS.indexOf('meds') }), false);
+  assert.equal(applyNet(so, { y: 'em', f: 0, k: 0 }), true);
+});
+
+test('computer teammates answer a call: the nearest with some to spare brings what was asked for and puts it down, the others follow, come to help and look where an enemy was seen', () => {
+  const m = teamQuiet('squads', [0, 0, 0, 1], 'solo', ['player', 'bot', 'bot', 'player']);
+  const [a, near, far, foe] = m.fighters;
+  land(a, 0, 0);
+  land(near, 10, 0);
+  land(far, 20, 0);
+  land(foe, 130, 130);
+  for (const b of [near, far]) b.items = { ...b.items, medkit: 0, bandage: 0, mini: 0, shield: 0 };
+  far.items.medkit = 3;
+  const call = (k: EmoteId, x = 0, z = 0) => {
+    m.clock += EMOTE_SPAN;
+    a.input.emote = { k, x, z };
+    return run(m, 0.1);
+  };
+  // meds: only the far one has any to spare, so it comes, says so, and puts two medkits down by us
+  let evs = call('meds');
+  assert.equal(far.ai!.askK, 'meds');
+  assert.equal(near.ai!.askK, null);
+  assert.ok(evs.some((e) => e.t === 'emote' && e.f === far.id && e.k === 'omw'), 'on my way');
+  const drops: LootItem[] = [];
+  evs = run(m, 12, (es) => es.forEach((e) => e.t === 'drop' && e.item.by === far.id && drops.push(e.item)));
+  assert.equal(drops.filter((l) => l.def.kind === 'use' && l.def.w === 'medkit').length, 2, 'two medkits');
+  assert.equal(far.items.medkit, 1, 'keeping one');
+  assert.ok(drops.every((l) => Math.hypot(l.x - a.x, l.z - a.z) < 4.5), 'put down by us');
+  assert.equal(far.ai!.askK, null, 'done');
+  // a shield nobody has: the nearest says sorry
+  evs = call('shield');
+  assert.ok(evs.some((e) => e.t === 'emote' && e.k === 'sad'));
+  assert.ok(near.ai!.askK === null && far.ai!.askK === null);
+  // ammo of the kind we're lowest on, from the one with plenty of it
+  a.guns = [{ w: 'rifle', r: 0, mag: 0 }, null];
+  a.ammo.heavy = 0;
+  near.guns = [{ w: 'smg', r: 0, mag: 30 }, null];
+  near.ammo.heavy = 0;
+  far.guns = [{ w: 'rifle', r: 0, mag: 30 }, null];
+  far.ammo.heavy = AMMO_BOX.heavy * 4;
+  evs = call('ammo');
+  assert.equal(far.ai!.askA, 'heavy');
+  const before = far.ammo.heavy;
+  run(m, 12);
+  assert.ok(far.ammo.heavy <= before - AMMO_BOX.heavy * 2 || a.ammo.heavy > 0, 'boxes of heavy ammo for us');
+  assert.ok(far.ammo.heavy >= AMMO_BOX.heavy, 'a box kept for its own rifle');
+  // a gun: the weaker of two, never with a flare gun for the other
+  near.guns = [{ w: 'pistol', r: 0, mag: 14 }, { w: 'flare', r: 0, mag: 1 }];
+  far.guns = [{ w: 'pistol', r: 0, mag: 14 }, { w: 'rifle', r: 3, mag: 30 }];
+  call('gun');
+  assert.equal(far.ai!.askK, 'gun');
+  run(m, 12);
+  assert.equal(far.guns[0], null, 'the pistol, put down for us');
+  assert.equal(far.guns[1]?.w, 'rifle');
+  // follow me: both keep close as we go
+  call('follow');
+  assert.ok(near.ai!.followUntil > m.time && far.ai!.followUntil > m.time);
+  a.input.mx = 1;
+  run(m, 6);
+  a.input.mx = 0;
+  run(m, 10);
+  for (const b of [near, far]) assert.ok(Math.hypot(b.x - a.x, b.z - a.z) < 10, `followed (${Math.hypot(b.x - a.x, b.z - a.z).toFixed(1)} m)`);
+  // enemy here: they turn to look
+  call('enemy', a.x, a.z + 40);
+  assert.ok(near.ai!.lookUntil > m.clock);
+  run(m, 0.5);
+  for (const b of [near, far]) {
+    const want = Math.atan2(a.x - b.x, a.z + 40 - b.z);
+    assert.ok(Math.abs(Math.atan2(Math.sin(b.aim - want), Math.cos(b.aim - want))) < 0.3, 'looking that way');
+  }  // help: they come (a while, not for good), the nearest saying it's on its way
+  evs = call('help');
+  assert.ok(evs.some((e) => e.t === 'emote' && e.k === 'omw' && (e.f === near.id || e.f === far.id)));
+  assert.ok(near.ai!.followUntil > m.time && near.ai!.followUntil <= m.time + ASK_T);
+});
+
+test('computer eggs call for help when knocked down, now and then cheer a kill, and say GG when they win', () => {
+  const m = teamQuiet('duos', [0, 0, 1, 1], 'solo', ['player', 'bot', 'bot', 'player']);
+  const [a, mate, foe, foe2] = m.fighters;
+  land(a, 0, 0);
+  land(mate, 3, 0);
+  land(foe, 60, 60);
+  land(foe2, -60, 60);
+  hurt(m, mate, 300, foe2.id, 'smg', false);
+  assert.ok(mate.down);
+  let evs = run(m, 0.2);
+  assert.ok(evs.some((e) => e.t === 'emote' && e.f === mate.id && e.k === 'help'), 'help!');
+  evs = run(m, 2);
+  assert.ok(!evs.some((e) => e.t === 'emote' && e.f === mate.id && e.k === 'help'), 'once a knock');
+  // a first kill
+  foe.kills = 1;
+  evs = run(m, 0.2);
+  assert.ok(evs.some((e) => e.t === 'emote' && e.f === foe.id && e.k === 'happy'));
+  // the computer egg's team wins
+  m.clock += EMOTE_SPAN;
+  hurt(m, a, 300, foe.id, 'smg', false);
+  evs = run(m, 0.2);
+  assert.ok(m.ended);
+  assert.ok(evs.some((e) => e.t === 'emote' && e.f === foe.id && e.k === 'gg'), 'GG');
+});
+
+test('a knocked egg of another team still bleeding when the host calls the match stays down on a guest, not out', () => {
+  const g = teamQuiet('duos', [0, 0, 1, 1], 'guest', ['player', 'remote', 'remote', 'remote']);
+  for (const f of g.fighters) land(f, f.id * 3, 0);
+  assert.equal(applyNet(g, { y: 'kn', f: 2, by: 0, w: 'smg' }), true);
+  assert.equal(applyNet(g, { y: 'o', f: 3, by: 0, w: 'smg' }), true);
+  endMatch(g, 0, [
+    [0, 1, 1],
+    [1, 1, 0],
+    [2, 2, 0],
+    [3, 2, 0],
+  ]);
+  assert.equal(g.fighters[3].phase, 'out');
+  assert.ok(g.fighters[2].phase === 'ground' && g.fighters[2].down, 'as the host has it');
+  assert.equal(g.fighters[2].place, 2);
 });

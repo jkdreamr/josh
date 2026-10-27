@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { AMMO_BOX, ARMOR_CUT, ARMOR_NAMES, BOOST, FLARE_WAIT, MELEE, MELEE_IDS, RARITY_COLORS, RARITY_NAMES, SCOPES, SIP, THROWS, THROW_IDS, USES, USE_IDS, MAT_SPECS, PIECE_COST, WEAPONS, WEAPON_IDS, type Ammo, type ArmorKind, type GunClass, type Mat, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
-import { BLEED_T, LEADER_MIN, MAT_DROP, REVIVE_HP, REVIVE_T, VAULT_TIME } from './logic';
+import { BLEED_T, EMOTE_T, LEADER_MIN, MAT_DROP, REVIVE_HP, REVIVE_T, VAULT_TIME, type EmoteId } from './logic';
 import { CAMP, DEEP, HALF, PAD, RIVER_HALF, ROAD_HALF, containerHalf, furnitureSolid, isDeep, type Building, type Door, type GameMap } from './map';
 import type { Held, Plan } from './logic';
 
@@ -595,6 +595,112 @@ export function PingIcon({ size = 16, color = '#2ee6c9' }: { size?: number; colo
   );
 }
 
+/** An egg's face for an emote: happy, sad or angry. */
+function EggFace({ size, mood }: { size?: number; mood: 'happy' | 'sad' | 'angry' }) {
+  return (
+    <Svg size={size}>
+      <path d="M16 2.5c-5.6 0-9.8 8.6-9.8 15.2a9.8 9.8 0 0 0 19.6 0C25.8 11.1 21.6 2.5 16 2.5z" fill={mood === 'angry' ? '#ffb4a2' : '#fff6e8'} stroke="rgba(0, 0, 0, 0.35)" strokeWidth="1.2" />
+      {mood === 'happy' && (
+        <>
+          <path d="M10.5 16.2q1.6-2.2 3.2 0M18.3 16.2q1.6-2.2 3.2 0" fill="none" stroke="#3a2a1a" strokeWidth="1.8" strokeLinecap="round" />
+          <path d="M11 20.5q5 5.2 10 0z" fill="#c2412d" stroke="#3a2a1a" strokeWidth="1.4" strokeLinejoin="round" />
+          <circle cx="10" cy="20" r="1.4" fill="#ff8f8f" opacity="0.7" />
+          <circle cx="22" cy="20" r="1.4" fill="#ff8f8f" opacity="0.7" />
+        </>
+      )}
+      {mood === 'sad' && (
+        <>
+          <circle cx="12.3" cy="16.5" r="1.4" fill="#3a2a1a" />
+          <circle cx="19.7" cy="16.5" r="1.4" fill="#3a2a1a" />
+          <path d="M10.5 13.8l3.4-1.2M21.5 13.8l-3.4-1.2" stroke="#3a2a1a" strokeWidth="1.4" strokeLinecap="round" />
+          <path d="M12.5 23.6q3.5-3.2 7 0" fill="none" stroke="#3a2a1a" strokeWidth="1.7" strokeLinecap="round" />
+          <path d="M21 18.6q1.4 2.4 0 3.2q-1.4-.8 0-3.2z" fill="#5fb8ff" />
+        </>
+      )}
+      {mood === 'angry' && (
+        <>
+          <path d="M9.8 13l4.4 2M22.2 13l-4.4 2" stroke="#3a2a1a" strokeWidth="2" strokeLinecap="round" />
+          <circle cx="12.6" cy="17.4" r="1.4" fill="#3a2a1a" />
+          <circle cx="19.4" cy="17.4" r="1.4" fill="#3a2a1a" />
+          <path d="M12.5 23.4q3.5-2.4 7 0" fill="none" stroke="#3a2a1a" strokeWidth="1.8" strokeLinecap="round" />
+          <path d="M22.5 5.5l1 2.4M26 8l-2.2 1.2M25.4 4.6l-1.2 2.2" stroke="#e53935" strokeWidth="1.6" strokeLinecap="round" />
+        </>
+      )}
+    </Svg>
+  );
+}
+
+/** The picture for an emote or a team call (an ask for ammo shows the kind asked for). */
+export function EmoteIcon({ k, a, size }: { k: EmoteId; a?: Ammo | null; size?: number }) {
+  switch (k) {
+    case 'happy':
+    case 'sad':
+    case 'angry':
+      return <EggFace size={size} mood={k} />;
+    case 'thumbs':
+      return (
+        <Svg size={size}>
+          <path d="M10.5 14.5h-4v12h4zM10.5 15l4.3-7.6c.7-1.3 2.9-.9 2.9.9v4.7h6.6a2.3 2.3 0 0 1 2.2 2.8l-1.9 8.6a2.3 2.3 0 0 1-2.2 1.8H10.5z" fill="#ffc83d" stroke="#8a5a00" strokeWidth="1.4" strokeLinejoin="round" />
+        </Svg>
+      );
+    case 'gg':
+      return (
+        <Svg size={size}>
+          <rect x="3" y="7" width="26" height="18" rx="5" fill="#7b3fd1" stroke="#e7d8ff" strokeWidth="1.4" />
+          <text x="16" y="21" textAnchor="middle" fontSize="12.5" fontWeight="900" fontFamily="system-ui, sans-serif" fill="#fff">
+            GG
+          </text>
+        </Svg>
+      );
+    case 'meds':
+      return <UseIcon w="medkit" size={size} />;
+    case 'shield':
+      return <ShieldIcon size={size} />;
+    case 'ammo':
+      return <AmmoIcon a={a ?? 'light'} size={size} />;
+    case 'gun':
+      return <WeaponIcon w="rifle" size={size} />;
+    case 'help':
+      return (
+        <Svg size={size}>
+          <circle cx="16" cy="16" r="12" fill="#e53935" stroke="#ffd0cc" strokeWidth="1.6" />
+          <path d="M16 8.5v9" stroke="#fff" strokeWidth="3.4" strokeLinecap="round" />
+          <circle cx="16" cy="22.6" r="2" fill="#fff" />
+        </Svg>
+      );
+    case 'follow':
+      return (
+        <Svg size={size}>
+          <path d="M6 9l7 7-7 7M15 9l7 7-7 7" fill="none" stroke="#2ee6c9" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
+          <circle cx="26" cy="16" r="2.4" fill="#2ee6c9" />
+        </Svg>
+      );
+    case 'enemy':
+      return (
+        <Svg size={size}>
+          <circle cx="16" cy="16" r="9" fill="none" stroke="#ff4d4d" strokeWidth="2.6" />
+          <path d="M16 3.5v7M16 21.5v7M3.5 16h7M21.5 16h7" stroke="#ff4d4d" strokeWidth="2.6" strokeLinecap="round" />
+          <circle cx="16" cy="16" r="2.2" fill="#ff4d4d" />
+        </Svg>
+      );
+    case 'omw':
+      return (
+        <Svg size={size}>
+          <path d="M4 16h17" stroke="#6fcf97" strokeWidth="3.4" strokeLinecap="round" />
+          <path d="M16 8.5l8 7.5-8 7.5" fill="none" stroke="#6fcf97" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M4 10h6M4 22h6" stroke="#6fcf97" strokeWidth="2" strokeLinecap="round" opacity="0.6" />
+        </Svg>
+      );
+  }
+}
+
+/** What an emote or a call says: "Need heavy ammo" for an ask for ammo the asker's guns take. */
+export function emoteText(k: EmoteId, a?: Ammo | null) {
+  if (k === 'ammo') return a ? `Need ${a === 'rockets' ? 'launcher eggs' : a === 'shells' ? 'shells' : `${a} ammo`}` : 'Need ammo';
+  return EMOTE_TEXT[k];
+}
+const EMOTE_TEXT: Record<EmoteId, string> = { happy: 'Happy', sad: 'Sad', thumbs: 'Thumbs up', angry: 'Angry', gg: 'GG', meds: 'Need meds', shield: 'Need shield', ammo: 'Need ammo', gun: 'Need a gun', help: 'Help!', follow: 'Follow me', enemy: 'Enemy here', omw: 'On my way' };
+
 export function EggIcon({ size = 16 }: { size?: number }) {
   return (
     <svg viewBox="0 0 24 24" width={size} height={size} aria-hidden="true">
@@ -918,6 +1024,8 @@ export const PING_KEY = 'Y';
 export const DROP_KEY = 'U';
 /** The key that looks through the next scope carried (so does the wheel with Shift held). */
 export const SCOPE_KEY = 'O';
+/** Held down, the key that opens the emote wheel (as the right mouse button does). */
+export const EMOTE_KEY = 'J';
 export const PIECE_NAMES: Record<Plan, string> = { wall: 'wall', ramp: 'ramp', floor: 'floor', roof: 'roof', box: 'box up' };
 const [WOOD_SPEC, STONE_SPEC, METAL_SPEC] = [MAT_SPECS.wood, MAT_SPECS.stone, MAT_SPECS.metal];
 
@@ -950,6 +1058,8 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dd>In duos and squads, the pin by the little map marks where you aim for your team, and so does a tap on the big map</dd>
               <dt>scopes</dt>
               <dd>Every scope you pick up stays with you: tap one in the scope badge at the top to look through it</dd>
+              <dt>emotes</dt>
+              <dd>The smiling egg by the little map opens the emote wheel: tap a face, or in duos and squads a call for your team round the outside (or slide your thumb onto one and lift it). Tap anywhere else to put it away</dd>
               <dt>hold a slot</dt>
               <dd>Hold a weapon, an item, the scope you look through or a material in the build menu a moment to put one down for a teammate</dd>
             </>
@@ -960,7 +1070,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dt>mouse</dt>
               <dd>Aim; click to shoot, hold for automatic fire. Throwables land where you point</dd>
               <dt>Space</dt>
-              <dd>Jump from the bus, then build the piece you picked where you aim. Twice quickly boxes you in. Right click builds too</dd>
+              <dd>Jump from the bus, then build the piece you picked where you aim. Twice quickly boxes you in</dd>
               <dt>Z X C V B</dt>
               <dd>Build a wall, a ramp, a floor, a roof or a box at once (and pick it for Space). The build bar at the bottom left shows them</dd>
               <dt>{MAT_KEY}</dt>
@@ -971,8 +1081,10 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dd>Pick up, swap, open chests, fridges, lockers and supply drops, and open and shut doors. Hold it by a knocked teammate to revive them</dd>
               <dt>{PING_KEY}, middle click</dt>
               <dd>In duos and squads, ping where the mouse points for your team (a click on the big map pings there too)</dd>
-              <dt>{DROP_KEY}, right click</dt>
+              <dt>{DROP_KEY}</dt>
               <dd>Put down what's in your hand for a teammate, or right click a weapon, an item, the ammo, the scope you look through or a material to put one down</dd>
+              <dt>right click, {EMOTE_KEY}</dt>
+              <dd>Hold for the emote wheel, move the mouse onto a slice and let go to say it: a face round the middle, and in duos and squads a call for your team round the outside</dd>
               <dt>R</dt>
               <dd>Reload</dd>
               <dt>1 2 3 4</dt>
@@ -1017,6 +1129,9 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           </li>
           <li>
             <b>The kill leader.</b> The egg with the most eliminations ({LEADER_MIN} at least) wears a gold crown everyone can see, and shows on the big map. Everyone hears when it changes hands.
+          </li>
+          <li>
+            <b>Emotes.</b> {touch ? 'The smiling egg button' : `Hold right click (or ${EMOTE_KEY})`} for the emote wheel: a happy, sad or angry egg, a thumbs up or a GG goes up in a bubble over your egg for {EMOTE_T} seconds, for anyone close by to see. A few at a time, then wait a moment.
           </li>
           <li>
             <b>Listen.</b> You hear the footsteps of eggs walking nearby, even ones you can't see. When your shots land you hear a soft tick and see a hit mark, red when it cracks the egg. Hover over loot (or stand by it) to see what it is.
@@ -1247,7 +1362,10 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Pings and sharing.</b> Ping a spot to mark it for your team on the island and both maps for a few seconds. Put a weapon, one throwable or item, a box of ammo or {MAT_DROP} of a material down at your feet for a teammate: you never pick back up what you put down unless you ask for it.
           </li>
           <li>
-            <b>Computer teammates.</b> In Play with Bots your teammates are computer eggs. They jump with you, stay near you, ping eggs they spot, revive you when it's safe, share what you're short of and finish knocked eggs only when nothing else is shooting at them. Only solo matches go on the boards.
+            <b>Calls.</b> The outside of the emote wheel speaks to your team only: need meds, need shield, need ammo (it asks for the kind your guns take that you're lowest on), need a gun, help, follow me, enemy here (with a ping where you point) and on my way. Each goes up over your egg and in your team's feed.
+          </li>
+          <li>
+            <b>Computer teammates.</b> In Play with Bots your teammates are computer eggs. They jump with you, stay near you, ping eggs they spot, revive you when it's safe, share what you're short of and finish knocked eggs only when nothing else is shooting at them. They answer your calls too: ask for meds, a shield, ammo or a gun and the nearest one with some to spare comes over and puts it down for you (or looks sad if nobody has any), say follow me and they keep close for a minute, help and they come running, enemy here and they look that way. They call for help when knocked down and say GG when they win. Only solo matches go on the boards.
           </li>
         </ul>
       </section>

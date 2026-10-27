@@ -2011,3 +2011,186 @@
 .g-scramble .g-scramble-loot.is-stairs {
   --loot: #f2c230;
 }
+
+/* emotes: a bubble over the egg (a face on its own, a team's call with what it says), popping up and fading away */
+.g-scramble .g-scramble-bubble {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.94);
+  box-shadow: 0 3px 10px rgba(8, 10, 24, 0.3);
+  pointer-events: none;
+  will-change: transform;
+  animation: g-scramble-bubble var(--life, 3.5s) linear both;
+}
+.g-scramble .g-scramble-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: -5px;
+  left: 50%;
+  border: 5px solid transparent;
+  border-bottom: 0;
+  border-top-color: rgba(255, 255, 255, 0.94);
+  transform: translateX(-50%);
+}
+.g-scramble .g-scramble-bubble > * {
+  display: block;
+  animation: g-scramble-bubble-pop 0.35s cubic-bezier(0.3, 1.6, 0.5, 1) both;
+}
+.g-scramble .g-scramble-bubble.is-call {
+  padding: 3px 10px 3px 4px;
+  font-size: 12px;
+  font-weight: 800;
+  white-space: nowrap;
+  color: #fff;
+  background: rgba(18, 19, 28, 0.88);
+  box-shadow:
+    inset 0 0 0 2px var(--mate, #2ee6c9),
+    0 3px 10px rgba(8, 10, 24, 0.3);
+}
+.g-scramble .g-scramble-bubble.is-call::after {
+  border-top-color: var(--mate, #2ee6c9);
+}
+@keyframes g-scramble-bubble {
+  0% {
+    opacity: 0;
+  }
+  5%,
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@keyframes g-scramble-bubble-pop {
+  0% {
+    transform: scale(0.3);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* the emote wheel: faces round the middle, the team's calls round them, the slice picked lit, and what it says under it */
+.g-scramble .g-scramble-wheelbg {
+  position: absolute;
+  inset: 0;
+  z-index: 7;
+  pointer-events: none;
+}
+.g-scramble .g-scramble-wheelbg.is-touch {
+  background: rgba(8, 10, 24, 0.22);
+  pointer-events: auto;
+  touch-action: none;
+}
+.g-scramble .g-scramble-wheel {
+  position: absolute;
+  pointer-events: none;
+  animation: g-scramble-wheel 0.12s ease-out both;
+}
+.g-scramble .g-scramble-wheel svg {
+  display: block;
+  overflow: visible;
+  filter: drop-shadow(0 6px 16px rgba(8, 10, 24, 0.35));
+}
+.g-scramble .g-scramble-wheel path.is-slice {
+  fill: rgba(18, 19, 28, 0.76);
+  stroke: rgba(255, 255, 255, 0.24);
+  stroke-width: 1.5;
+}
+.g-scramble .g-scramble-wheel g.is-on > path.is-slice {
+  fill: rgba(123, 63, 209, 0.94);
+  stroke: #fff;
+}
+.g-scramble .g-scramble-wheel text {
+  font: 800 9.5px/1 system-ui, sans-serif;
+  fill: #fff;
+  text-anchor: middle;
+}
+.g-scramble .g-scramble-wheel .is-middle {
+  fill: rgba(18, 19, 28, 0.6);
+  stroke: rgba(255, 255, 255, 0.3);
+  stroke-width: 1.5;
+}
+.g-scramble .g-scramble-wheel path.is-cancel {
+  fill: none;
+  stroke: rgba(255, 255, 255, 0.6);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.g-scramble .g-scramble-wheel > b {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 50%;
+  padding: 4px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+  font-weight: 800;
+  white-space: nowrap;
+  color: #fff;
+  background: rgba(18, 19, 28, 0.86);
+  transform: translateX(-50%);
+}
+.g-scramble .g-scramble-wheel > b.is-wait {
+  color: #ffb020;
+}
+@keyframes g-scramble-wheel {
+  0% {
+    opacity: 0;
+    transform: scale(0.85);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+/* the touch button for it, by the little map (under the ping button in duos and squads) */
+.g-scramble .g-scramble-emotebtn {
+  position: absolute;
+  top: 50px;
+  right: 112px;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: linear-gradient(180deg, rgba(44, 46, 60, 0.72), rgba(18, 19, 28, 0.72));
+  box-shadow:
+    inset 0 0 0 1.5px rgba(255, 255, 255, 0.28),
+    0 3px 10px rgba(8, 10, 24, 0.25);
+  touch-action: none;
+}
+.g-scramble .g-scramble-emotebtn.is-low {
+  top: 100px;
+}
+.g-scramble .g-scramble-emotebtn.is-on {
+  box-shadow:
+    inset 0 0 0 2px #fff,
+    0 0 14px rgba(123, 63, 209, 0.7);
+}
+@container (max-height: 460px) {
+  .g-scramble .g-scramble-emotebtn {
+    right: 92px;
+    width: 36px;
+    height: 36px;
+  }
+  .g-scramble .g-scramble-emotebtn.is-low {
+    top: 92px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-scramble .g-scramble-bubble > *,
+  .g-scramble .g-scramble-wheel {
+    animation: none;
+  }
+}
