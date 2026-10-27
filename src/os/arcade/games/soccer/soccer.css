@@ -1025,3 +1025,42 @@
   .g-soccer-picker-controls .is-ready { min-height: 52px; font-size: 14px; }
   .g-soccer-picker-help { font-size: 9px; }
 }
+
+.g-soccer .arcade-phone-first-overlay:has(.arcade-phone-first-card.is-phone-join) {
+  place-items: start center;
+  padding: 6px;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.g-soccer .arcade-phone-first-card.is-phone-join { gap: 4px; padding: 6px 10px; }
+
+@media (max-width: 540px) {
+  .g-soccer-phone-picker { position: relative; }
+  .g-soccer-picker-controls {
+    position: absolute;
+    left: 16px;
+    right: auto;
+    bottom: 20px;
+    width: auto;
+    margin: 0;
+    grid-template-columns: 84px auto;
+    gap: 8px;
+  }
+  .g-soccer-picker-controls > div:not(.g-soccer-stick) { grid-column: 2; }
+}
+
+@media (orientation: landscape) and (max-height: 600px) {
+  .g-soccer-phone-picker { position: relative; }
+  .g-soccer-picker-controls {
+    position: absolute;
+    left: 18px;
+    right: auto;
+    bottom: 26px;
+    width: auto;
+    margin: 0;
+    grid-template-columns: 114px auto;
+    gap: 12px;
+  }
+  .g-soccer-picker-controls > div:not(.g-soccer-stick) { grid-column: 2; }
+}
