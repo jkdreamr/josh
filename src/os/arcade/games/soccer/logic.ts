@@ -36,9 +36,10 @@ export type Player = Point & {
   touchCd?: number;
   planting?: boolean;
   buffer?: { action: Action; power: number; aim: Point; t: number } | null;
+  slide?: { x: number; z: number; t: number; won: boolean } | null;
   action: string;
 };
-export type Command = { move: Point; sprint?: boolean; jockey?: boolean; action?: Action | null; heldAction?: Action | null; aim?: Point; power?: number; pressed?: boolean; press?: boolean };
+export type Command = { move: Point; sprint?: boolean; jockey?: boolean; autoJockey?: boolean; contain?: boolean; switchDir?: Point | null; switchNearest?: boolean; action?: Action | null; heldAction?: Action | null; aim?: Point; power?: number; pressed?: boolean; press?: boolean };
 export type Restart = 'kickoff' | 'kick-in' | 'corner' | 'goal-kick' | 'free-kick' | 'penalty' | null;
 export type World = {
   players: Player[];
@@ -64,6 +65,9 @@ export type World = {
   carrierId?: number | null;
   lastToucherId?: number | null;
   passPoint?: Point | null;
+  switchAt?: [number, number];
+  switchWait?: [number, number];
+  dribbleAt?: [number, number];
 };
 
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
@@ -102,7 +106,7 @@ export function createWorld(seed = 71423, halfLength = 120, humans: 1 | 2 = 1): 
       players.push({
         id: team * TEAM_SIZE + i, team, slot: p.slot, x: p.x * dir, z: p.z, vx: 0, vz: 0,
         facing: dir * Math.PI / 2, stamina: 1, human: homeHuman, controlled: homeHuman,
-        cooldown: 0, touchCd: 0, planting: false, buffer: null, action: 'idle',
+        cooldown: 0, touchCd: 0, planting: false, buffer: null, slide: null, action: 'idle',
       });
     }
   }
@@ -111,6 +115,7 @@ export function createWorld(seed = 71423, halfLength = 120, humans: 1 | 2 = 1): 
     score: [0, 0], clock: halfLength, halfLength, half: 1, endsSwapped: false,
     phase: 'restart', restart: 'kickoff', restartTeam: 0, restartAt: { x: 0, z: 0 },
     lastTouch: 0, seed: seed >>> 0 || 1, event: 'kick off', eventTime: 1.35, restartClock: 0, controlled: [6, TEAM_SIZE + 6], kickEvent: null, passTarget: null, passControl: false, carrierId: null, lastToucherId: null, passPoint: null,
+    switchAt: [-1, -1], switchWait: [0, 0], dribbleAt: [-1, -1],
   };
   placeKickoffPositions(world, 0);
   return world;
@@ -133,23 +138,30 @@ export function rng(world: World) {
 
 export function switchPlayer(world: World, team: Team, direction: Point = { x: 0, z: 0 }) {
   const currentId = world.controlled[team];
-  const candidates = world.players.filter((p) => p.team === team && !(p.human && p.id !== currentId));
+  const current = world.players.find((p) => p.id === currentId);
+  const candidates = world.players.filter((p) => p.team === team && p.id !== currentId && !p.human);
   if (!candidates.length) return currentId;
-  const ball = { x: world.ball.x, z: world.ball.z };
   const norm = Math.hypot(direction.x, direction.z);
-  const chosen = [...candidates].sort((a, b) => {
-    const score = (p: Player) => norm > 0.2
-      ? distance(p, ball) - (0.8 * ((p.x - ball.x) * direction.x + (p.z - ball.z) * direction.z) / norm)
-      : distance(p, ball);
-    return score(a) - score(b);
-  })[0]!;
+  const angle = (p: Player) => current ? Math.acos(clamp(((p.x - current.x) * direction.x + (p.z - current.z) * direction.z) / ((distance(p, current) || 1) * norm), -1, 1)) : Math.PI;
+  const eligible = norm > 0.2 ? candidates.filter((p) => angle(p) <= Math.PI / 3) : candidates;
+  const chosen = eligible.sort((a, b) => norm > 0.2 ? angle(a) - angle(b) : switchScore(world, a) - switchScore(world, b))[0];
+  if (!chosen) return currentId;
+  transferControl(world, team, chosen.id);
+  return chosen.id;
+}
+
+function switchScore(world: World, p: Player) {
+  return distance(p, world.ball) + ((p.x - world.ball.x) * teamDir(p.team, world.endsSwapped) > 0 ? 2.5 : 0);
+}
+
+function transferControl(world: World, team: Team, id: number) {
+  const currentId = world.controlled[team];
   for (const p of world.players) {
     if (p.team !== team || p.human && p.id !== currentId) continue;
-    p.human = p.id === chosen.id;
-    p.controlled = p.id === chosen.id;
+    p.human = p.id === id;
+    p.controlled = p.id === id;
   }
-  world.controlled[team] = chosen.id;
-  return chosen.id;
+  world.controlled[team] = id;
 }
 
 export function movePlayer(player: Player, input: Point, sprint: boolean, carrying: boolean, dt: number, jockey = false) {
@@ -174,6 +186,8 @@ export function movePlayer(player: Player, input: Point, sprint: boolean, carryi
       speed += clamp(target - speed, -28 * dt, (speed < 6 ? 40 : 8) * dt);
     }
   }
+  if (jockey) speed = Math.min(speed, top);
+  if (player.action === 'tackle-miss' && player.cooldown > 0) speed = Math.min(speed, 2);
   player.vx = Math.sin(angle) * speed;
   player.vz = Math.cos(angle) * speed;
   if (speed > 0.04) player.facing = Math.atan2(player.vx, player.vz);
@@ -185,7 +199,8 @@ export function movePlayer(player: Player, input: Point, sprint: boolean, carryi
 
 export function nearestCarrier(world: World) {
   if (world.ball.y > 0.75) return undefined;
-  return world.players.find((p) => !(p.touchCd! > 0) && !(p.cooldown > 0 && (p.action === 'kick' || p.action === 'pass')) && distance(p, world.ball) < 0.64);
+  const eligible = (p: Player) => !p.slide && !(p.touchCd! > 0) && !(p.cooldown > 0 && (p.action === 'kick' || p.action === 'pass')) && distance(p, world.ball) < 0.64;
+  return world.players.find((p) => p.id === world.carrierId && eligible(p)) ?? world.players.find(eligible);
 }
 
 function rollingFlight(speed: number, range: number) {
@@ -346,6 +361,51 @@ function pointLineDistance(point: Point, start: Point, end: Point) {
   return Math.hypot(point.x - (start.x + dx * t), point.z - (start.z + dz * t));
 }
 
+function approachAngle(player: Player, enemy: Player) {
+  const from = Math.atan2(player.x - enemy.x, player.z - enemy.z);
+  return Math.abs(Math.atan2(Math.sin(enemy.facing - from), Math.cos(enemy.facing - from)));
+}
+
+function foul(world: World, player: Player, enemy: Player) {
+  const ownGoal = -teamDir(player.team, world.endsSwapped) * FIELD.length / 2;
+  const penalty = Math.abs(enemy.x - ownGoal) <= FIELD.penaltyDepth && Math.abs(enemy.z) <= FIELD.penaltyWidth / 2;
+  setRestart(world, enemy.team, penalty ? 'penalty' : 'free-kick', enemy);
+}
+
+function slideStep(world: World, player: Player, dt: number) {
+  const slide = player.slide!;
+  const active = Math.min(dt, Math.max(0, 0.5 - slide.t));
+  const speed = 9 * Math.max(0, 1 - slide.t / 0.65);
+  player.vx = active > 0 ? slide.x * speed : 0;
+  player.vz = active > 0 ? slide.z * speed : 0;
+  player.x = clamp(player.x + player.vx * active, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3);
+  player.z = clamp(player.z + player.vz * active, -FIELD.width / 2 + 0.3, FIELD.width / 2 - 0.3);
+  player.facing = Math.atan2(slide.x, slide.z);
+  if (active > 0 && !slide.won) {
+    const enemy = world.players.filter((p) => p.team !== player.team && distance(p, world.ball) < 2.5)
+      .sort((a, b) => distance(a, world.ball) - distance(b, world.ball))[0];
+    const ballContact = world.ball.y < 0.75 && distance(player, world.ball) < 0.85;
+    const bodyContact = enemy && distance(player, enemy) < 0.7;
+    if (enemy && (bodyContact && (!ballContact || distance(player, enemy) < distance(player, world.ball)) || ballContact && distance(player, enemy) < 1.5 && approachAngle(player, enemy) > 1.9)) {
+      foul(world, player, enemy);
+      return;
+    }
+    if (ballContact) {
+      const pokeSpeed = 6 + rng(world) * 3;
+      world.ball.vx = slide.x * pokeSpeed;
+      world.ball.vz = slide.z * pokeSpeed;
+      world.ball.vy = 0;
+      world.lastTouch = player.team; world.lastToucherId = player.id;
+      if (enemy) enemy.touchCd = 0.3;
+      slide.won = true;
+    }
+  }
+  slide.t += dt;
+  player.cooldown = Math.max(0, 0.95 - slide.t);
+  player.action = slide.t < 0.5 ? 'slide' : 'get-up';
+  if (slide.t >= 0.95) { player.slide = null; player.action = 'idle'; }
+}
+
 function applyAction(world: World, player: Player, command: Command) {
   if (!command.action || !command.pressed || player.cooldown > 0) return;
   const capSpeed = () => {
@@ -356,19 +416,27 @@ function applyAction(world: World, player: Player, command: Command) {
     }
   };
   if (command.action === 'tackle' || command.action === 'slide') {
+    player.buffer = null;
+    if (command.action === 'slide') {
+      player.slide = { x: Math.sin(player.facing), z: Math.cos(player.facing), t: 0, won: false };
+      player.cooldown = 0.95; player.action = 'slide';
+      return;
+    }
     const enemy = world.players.filter((p) => p.team !== player.team).sort((a, b) => distance(a, world.ball) - distance(b, world.ball))[0];
     const ballDistance = distance(player, world.ball);
-    if (enemy && ballDistance < (command.action === 'slide' ? 3 : 1.4)) {
-      const from = Math.atan2(player.x - enemy.x, player.z - enemy.z);
-      const behind = Math.abs(Math.atan2(Math.sin(enemy.facing - from), Math.cos(enemy.facing - from))) > 2.1;
-      const towardBall = Math.atan2(world.ball.x - player.x, world.ball.z - player.z);
-      const facingError = Math.abs(Math.atan2(Math.sin(towardBall - player.facing), Math.cos(towardBall - player.facing)));
-      if (behind && command.action === 'slide') {
-        world.event = 'foul'; world.eventTime = 1.5;
-        setRestart(world, enemy.team, 'free-kick', { x: world.ball.x, z: world.ball.z });
-        if (Math.abs(world.ball.x) > FIELD.length / 2 - FIELD.penaltyDepth) world.restart = 'penalty';
-      } else if ((command.action === 'slide' || facingError < 1.3) && !(behind && enemy.action === 'shield' && rng(world) >= 0.4)) {
-        const touch = command.action === 'slide' ? 0.58 : 0.42;
+    if (ballDistance < 1.5 && world.ball.y < 0.75) {
+      const angle = enemy ? approachAngle(player, enemy) : 0;
+      const exposed = !enemy || distance(enemy, world.ball) > 0.55;
+      const behind = angle > 1.9;
+      const chance = (angle < 1.3 ? 0.55 : behind ? 0.15 : 0.3) * (enemy?.action === 'shield' ? 0.4 : 1);
+      if (!exposed && behind && rng(world) < 0.35) {
+        foul(world, player, enemy!);
+        player.cooldown = 0.6; player.action = 'tackle-miss';
+        return;
+      }
+      if (exposed || rng(world) < chance) {
+        const loose = rng(world) >= 0.5;
+        const touch = loose ? 1 : 0.42;
         world.ball.x = player.x + Math.sin(player.facing) * touch;
         world.ball.z = player.z + Math.cos(player.facing) * touch;
         world.ball.y = 0.11;
@@ -378,11 +446,21 @@ function applyAction(world: World, player: Player, command: Command) {
         world.ball.vz = player.vz * 0.35;
         world.lastTouch = player.team;
         world.lastToucherId = player.id;
+        if (enemy) enemy.touchCd = 0.25;
+        player.cooldown = 0.35; player.action = 'tackle';
+        capSpeed();
+        return;
       }
     }
-    player.cooldown = command.action === 'slide' ? 0.7 : 0.35;
-    player.action = command.action;
-    capSpeed();
+    player.cooldown = ballDistance < 1.5 ? 0.6 : 0.35;
+    player.touchCd = player.cooldown;
+    player.action = 'tackle-miss';
+    if (ballDistance >= 1.5) {
+      player.vx = Math.sin(player.facing) * 2;
+      player.vz = Math.cos(player.facing) * 2;
+    }
+    const speed = Math.hypot(player.vx, player.vz);
+    if (speed > 2) { player.vx *= 2 / speed; player.vz *= 2 / speed; }
     return;
   }
   if (command.action === 'skill') {
@@ -423,7 +501,65 @@ function setRestart(world: World, team: Team, restart: Exclude<Restart, null>, a
   world.carrierId = null;
   world.passPoint = null;
   world.passTarget = null;
-  for (const p of world.players) p.buffer = null;
+  for (const p of world.players) { p.buffer = null; p.slide = null; }
+  world.switchWait = [0, 0];
+}
+
+function goalSide(world: World, carrier: Player, team: Team, gap: number): Point {
+  const dx = -teamDir(team, world.endsSwapped) * FIELD.length / 2 - carrier.x;
+  const dz = -carrier.z;
+  const length = Math.hypot(dx, dz) || 1;
+  return { x: carrier.x + dx / length * gap, z: carrier.z + dz / length * gap };
+}
+
+function prepareDefense(world: World, commands: Map<number, Command>, carrier: Player | undefined, dt: number) {
+  const now = world.halfLength * world.half - world.clock;
+  world.switchAt ??= [-1, -1]; world.switchWait ??= [0, 0]; world.dribbleAt ??= [-1, -1];
+  for (const p of world.players) {
+    const original = commands.get(p.id);
+    if (!original) continue;
+    const command = { ...original };
+    commands.set(p.id, command);
+    if (carrier?.id !== p.id) {
+      if (command.switchNearest || command.switchDir || command.action === 'pass' && command.pressed && (command.power ?? 0.1) < 0.3) {
+        if (p.human && p.controlled) {
+          const id = switchPlayer(world, p.team, command.switchDir ?? undefined);
+          world.switchAt[p.team] = now;
+          if (id !== p.id) { commands.delete(p.id); commands.set(id, { ...command, action: null, pressed: false, switchNearest: false, switchDir: null }); }
+        }
+        command.action = null; command.pressed = false;
+      }
+      if (carrier?.team !== p.team) command.contain ||= command.heldAction === 'pass';
+      if (carrier || distance(p, world.ball) > 3) {
+        if (command.action === 'shoot') command.action = 'tackle';
+        else if (command.action === 'lob') command.action = 'slide';
+        else if (command.action === 'through') command.action = null;
+      }
+    }
+    if (!command.press || !carrier || carrier.team === p.team) continue;
+    const presser = world.players.filter((mate) => mate.team === p.team && !mate.human && !mate.slide)
+      .sort((a, b) => distance(a, carrier) - distance(b, carrier))[0];
+    if (presser) {
+      const target = goalSide(world, carrier, p.team, 1.6);
+      commands.set(presser.id, { ...commands.get(presser.id), move: { x: target.x - presser.x, z: target.z - presser.z }, sprint: true });
+    }
+  }
+  for (const team of [0, 1] as const) {
+    const current = world.players.find((p) => p.id === world.controlled[team]);
+    if (!current?.human) continue;
+    if (carrier?.id === current.id || (current.touchCd ?? 0) > 0) world.dribbleAt[team] = now;
+    const ownPass = world.passTarget != null && world.players.some((p) => p.id === world.passTarget && p.team === team);
+    const eligible = !carrier && Math.hypot(world.ball.vx, world.ball.vz) > 3 && !ownPass
+      && now - world.dribbleAt[team] >= 0.3;
+    if (!eligible) { world.switchWait[team] = 0; continue; }
+    world.switchWait[team] += dt;
+    if (world.switchWait[team] + 1e-9 < 0.25 || now - world.switchAt[team] < 0.6) continue;
+    const best = world.players.filter((p) => p.team === team && !p.human)
+      .sort((a, b) => distance(a, world.ball) - distance(b, world.ball))[0];
+    if (best && distance(best, world.ball) + 2.5 <= distance(current, world.ball)) {
+      transferControl(world, team, best.id); world.switchAt[team] = now; world.switchWait[team] = 0;
+    }
+  }
 }
 
 export function resolveBoundary(world: World) {
@@ -574,48 +710,40 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
     if (p.buffer) { p.buffer.t -= t; if (p.buffer.t <= 0) p.buffer = null; }
   }
   const carrier = nearestCarrier(world);
+  commands = new Map(commands);
+  prepareDefense(world, commands, carrier, t);
   for (const p of world.players) {
     const command = commands.get(p.id);
+    if (p.slide) {
+      slideStep(world, p, t);
+      if (world.phase !== 'live') return;
+      continue;
+    }
     const neutral = Math.hypot(command?.move.x ?? 0, command?.move.z ?? 0) < 0.15;
     const receiving = world.passTarget === p.id && !carrier && (!p.human || neutral);
     if (p.human && !receiving && !p.buffer && (!p.controlled || !command)) continue;
     if (receiving && world.passPoint && distance(p, world.passPoint) < 0.7) world.passPoint = null;
     const receiveTarget = world.passPoint ?? world.ball;
     const receiveMove = receiving ? { x: receiveTarget.x - p.x, z: receiveTarget.z - p.z } : command?.move ?? { x: 0, z: 0 };
-    movePlayer(p, receiveMove, receiving || !!command?.sprint, carrier?.id === p.id, t, !!command?.jockey);
-    if (command?.jockey && carrier && carrier.team !== p.team) p.facing = Math.atan2(carrier.x - p.x, carrier.z - p.z);
+    const enemy = carrier && carrier.team !== p.team ? carrier : undefined;
+    const contain = enemy && (command?.contain || command?.heldAction === 'pass');
+    const jockey = !!command?.jockey || !!(command?.autoJockey && enemy && distance(p, enemy) < 4 && !command.sprint && Math.hypot(command.move.x, command.move.z) > 0.1);
+    const target = contain ? goalSide(world, enemy!, p.team, 1.4) : undefined;
+    movePlayer(p, target ? { x: target.x - p.x, z: target.z - p.z } : receiveMove, !contain && (receiving || !!command?.sprint), carrier?.id === p.id, t, jockey || !!contain);
+    if ((jockey || contain) && enemy) {
+      p.facing = Math.atan2(enemy.x - p.x, enemy.z - p.z);
+      if (p.cooldown <= 0) p.action = 'jockey';
+    } else if (p.action === 'jockey' || p.action === 'tackle-miss' && p.cooldown <= 0) p.action = 'idle';
     if (command) applyAction(world, p, command);
+    if (world.phase !== 'live') return;
     if (p.buffer && p.cooldown <= 0 && nearestCarrier(world)?.id === p.id) {
       kick(world, p, p.buffer.action, { move: command?.move ?? { x: 0, z: 0 }, ...p.buffer });
     }
   }
-  for (const command of commands.values()) {
-    if (!command.press) continue;
-    const player = world.players.find((p) => commands.get(p.id) === command);
-    const team = player?.team;
-    if (!player || team === undefined) continue;
-    const carrier = world.players.find((p) => p.team !== team && distance(p, world.ball) < 1.2);
-    if (!carrier) continue;
-    const presser = world.players.filter((p) => p.team === team && !p.human).sort((a, b) => distance(a, world.ball) - distance(b, world.ball))[0];
-    if (presser) {
-      const command = commands.get(presser.id) ?? { move: { x: 0, z: 0 } };
-      command.move = { x: world.ball.x - presser.x, z: world.ball.z - presser.z };
-      command.sprint = true;
-      commands.set(presser.id, command);
-    }
-  }
   const nowCarrier = nearestCarrier(world);
-  if (carrier?.human && !(carrier.touchCd! > 0) && (!nowCarrier || nowCarrier.id !== carrier.id)) {
-    switchPlayer(world, carrier.team);
-  }
   if (nowCarrier && world.passTarget === nowCarrier.id) {
     if (world.passControl) {
-      for (const teammate of world.players) {
-        if (teammate.team !== nowCarrier.team) continue;
-        teammate.human = teammate.id === nowCarrier.id;
-        teammate.controlled = teammate.id === nowCarrier.id;
-      }
-      world.controlled[nowCarrier.team] = nowCarrier.id;
+      if (!nowCarrier.human || nowCarrier.controlled) transferControl(world, nowCarrier.team, nowCarrier.id);
     }
     world.passTarget = null;
     world.passControl = false;

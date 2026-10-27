@@ -38,6 +38,11 @@ function validWorld(value: unknown): value is World {
   if (w.carrierId !== undefined && w.carrierId !== null && !w.players.some((p) => p.id === w.carrierId)) return false;
   if (w.lastToucherId !== undefined && w.lastToucherId !== null && !w.players.some((p) => p.id === w.lastToucherId)) return false;
   if (w.passPoint != null && (!finite(w.passPoint.x, 150) || !finite(w.passPoint.z, 100))) return false;
+  for (const times of [w.switchAt, w.switchWait, w.dribbleAt]) {
+    if (times !== undefined && (!Array.isArray(times) || times.length !== 2 || !times.every((n) => finite(n, 10000)))) return false;
+  }
+  if (w.players.some((p) => p.slide != null && (!finite(p.slide.x, 1) || !finite(p.slide.z, 1)
+    || !inRange(p.slide.t, 0, 1) || typeof p.slide.won !== 'boolean'))) return false;
   if (w.players.some((p) => p.buffer != null && (!['pass', 'through', 'lob', 'shoot', 'finesse'].includes(p.buffer.action)
     || !inRange(p.buffer.power, 0, 1) || !finite(p.buffer.aim?.x, 150) || !finite(p.buffer.aim?.z, 150) || !inRange(p.buffer.t, 0, 1)))) return false;
   if (kickEvent !== null && (!kickEvent || !Number.isInteger(kickEvent.playerId) || kickEvent.playerId < 0 || kickEvent.playerId >= PLAYER_COUNT
