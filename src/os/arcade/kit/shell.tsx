@@ -48,6 +48,8 @@ export type GameShellProps = {
   quickNote?: string;
   /** Quick play: the Start card's button for playing on this device with the game's own settings (default Play Offline). */
   soloLabel?: string;
+  /** Make phone-room creation the primary Start-card action for games that use a phone as their main controller. */
+  phoneFirst?: boolean;
   /**
    * Quick play: a picker shown with the Start card's Play (a mode, say), and the pool it picks (`useOnline().pool`):
    * quick play only puts people in the same pool together.
@@ -104,7 +106,7 @@ const isTouchDevice = () =>
  * (pause, restart, mute, back to arcade), live score, key capture and auto-pause.
  * Put the game's logic in a child component and read the shell with useShell().
  */
-export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, setup, hostSetup, botNames, defaultBots = 0, quickNote, soloLabel = 'Play Offline', quickSetup, quickPool, roomCode, className, style }: GameShellProps) {
+export function GameShell({ meta, compact = false, onExit, children, autoStart, lowerIsBetter, formatScore, remount = true, setup, hostSetup, botNames, defaultBots = 0, quickNote, soloLabel = 'Play Offline', phoneFirst = false, quickSetup, quickPool, roomCode, className, style }: GameShellProps) {
   const host = useContext(ArcadeHost);
   const invite = useContext(ArcadeInvite);
   const joinCode = roomCode ?? invite;
@@ -177,7 +179,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const [watchable, setWatchable] = useState<boolean | null>(null);
   const [roomStarted, setRoomStarted] = useState(false);
   const [, setWatchSetting] = useSetting(ROOM_WATCHERS);
-  const connectRef = useRef<(code: string, quickPlay?: boolean, watch?: boolean) => RoomLink>(null!);
+  const connectRef = useRef<(code: string, quickPlay?: boolean, watch?: boolean, nameOverride?: string) => RoomLink>(null!);
   // The Lounge shows what you're playing, and your room while it's public, so people there can join you.
   usePlayingReport(compact ? null : meta.id, onlineLink && onlineListed && onlineCode ? onlineCode : null);
   const loungeUnread = useBadge('lounge');
@@ -189,7 +191,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   onlineModeRef.current = onlineMode;
   const race = !!meta.online?.race;
   /** The Start card's Play is quick play, and Play with Bots plays alone. */
-  const quickOn = !compact && !!meta.online?.quick && !!ARCADE_API;
+  const phoneFirstOn = !compact && phoneFirst && !!ARCADE_API;
+  const quickOn = !phoneFirstOn && !compact && !!meta.online?.quick && !!ARCADE_API;
   const [raceScores, setRaceScores] = useState<RaceScores>({});
   const [raceSettled, setRaceSettled] = useState<SettledRace | null>(null);
   const raceRef = useRef<{ link: RoomLink | null; seat: number | null; round: number; scores: RaceScores }>({ link: null, seat: null, round: 0, scores: {} });
@@ -357,7 +360,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   }
 
   /** `quick`: a room quick play found. A room that says it is a quick-play room plays as one however it was joined. */
-  const connectRoom = useCallback((code: string, quickPlay = false, watch = false) => {
+  const connectRoom = useCallback((code: string, quickPlay = false, watch = false, nameOverride?: string) => {
     setOnlineError('');
     setWatching(watch);
     setQuick(quickPlay);
@@ -367,7 +370,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setOnlineMode(false);
     setOnlineRound(0);
     setOnlineTransport('relay');
-    const link = new RoomLink(code, onlineName, ARCADE_API, { watch });
+    const link = new RoomLink(code, nameOverride ?? onlineName, ARCADE_API, { watch });
     raceRef.current = { link, seat: null, round: 0, scores: {} };
     setRaceScores({});
     setRaceSettled(null);
@@ -408,6 +411,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setOnlineSeat(message.seat);
       setOnlineSeats(message.seats);
       setOnlinePlayers(message.players);
+      if (phoneFirst && isTouchDevice() && message.seat > 0 && !message.watching) setOnlineOpen(false);
       setOnlineInProgress(message.started);
       setRoomStarted(message.started);
       setOnlineBots(message.bots);
@@ -546,7 +550,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       clearBots();
     });
     return link;
-  }, [applyRaceScores, botsSetting, clearBots, gameOver, meta.online?.seats, onlineName, race, restart, router, start]);
+  }, [applyRaceScores, botsSetting, clearBots, gameOver, meta.online?.seats, onlineName, phoneFirst, race, restart, router, start]);
   connectRef.current = connectRoom;
   /** A spectator takes a seat: out of the room as a spectator and straight back in to play the next round. */
   const takeSeat = useCallback(() => {
@@ -575,18 +579,32 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     onlineLink?.setWatchable(on);
   }, [onlineLink, setWatchSetting]);
 
-  const makeRoom = useCallback(async () => {
+  const makeRoom = useCallback(async (options?: { listed?: boolean; name?: string }) => {
     setOnlineBusy(true);
     setOnlineError('');
     try {
-      const code = await createRoom(meta.id, { listed: visibility === 'public' });
-      connectRoom(code);
+      const code = await createRoom(meta.id, { listed: options?.listed ?? visibility === 'public' });
+      connectRoom(code, false, false, options?.name);
     } catch (error) {
       setOnlineError(error instanceof Error ? error.message : 'Could Not Create Room');
     } finally {
       setOnlineBusy(false);
     }
   }, [connectRoom, meta.id, visibility]);
+
+  const connectPhone = useCallback(() => {
+    const hostName = onlineName.trim() ? cleanName(onlineName) : 'Screen';
+    if (!onlineName.trim()) {
+      setOnlineName(hostName);
+      saveName(hostName);
+    }
+    setVisibility('private');
+    setQuick(false);
+    quickRef.current = false;
+    setOnlineError('');
+    setOnlineOpen(true);
+    void makeRoom({ listed: false, name: hostName });
+  }, [makeRoom, onlineName, setVisibility]);
 
   /** Quick play: into a match that is gathering people, or a new one for others to find. */
   const findMatch = useCallback(async () => {
@@ -623,13 +641,14 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setOnlineBusy(true);
     setOnlineError('');
     try {
-      connectRoom(code.toUpperCase());
+      const phoneName = phoneFirst && isTouchDevice() && !onlineName.trim() ? 'Phone 1' : undefined;
+      connectRoom(code.toUpperCase(), false, false, phoneName);
     } catch (error) {
       setOnlineError(error instanceof Error ? error.message : 'Could Not Join Room');
     } finally {
       setOnlineBusy(false);
     }
-  }, [connectRoom]);
+  }, [connectRoom, onlineName, phoneFirst]);
 
   useEffect(() => {
     if (!joinCode || !meta.online || compact || consumedRoom.current === joinCode) return;
@@ -811,6 +830,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     </span>
   );
   const canPlayOnline = !compact && !!meta.online && !!ARCADE_API;
+  const phoneGuest = phoneFirst && touch && onlineSeat !== null && onlineSeat > 0 && !watching;
   const gameOnline = onlineMode && onlineLink !== null && onlineSeat !== null;
   // Games see this round's bots while it is under way and the lobby's between rounds. Names are keyed by their text,
   // so a list written inline in the game's JSX does not count as a change every render.
@@ -1011,12 +1031,13 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             onWatchRound={watchRound}
             note={race ? 'A score race: everyone plays their own round at the same time and the best score wins.' : undefined}
             setup={hostSetup}
+            setupFirst={phoneFirstOn}
           />
         )}
 
         {(status === 'ready' || status === 'paused') && !onlineOpen && !compact && howOpen && meta.howTo && <HowToCard meta={meta} onClose={() => setHowOpen(false)} />}
 
-        {status === 'ready' && !onlineOpen && !howOpen &&
+        {status === 'ready' && !phoneGuest && !onlineOpen && !howOpen &&
           (compact ? (
             <button type="button" className="arcade-ov arcade-ov-compact" onClick={start}>
               {glyph}
@@ -1033,9 +1054,10 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                 <p>{meta.controls}</p>
                 {setup && !quickOn && <div className="arcade-setup">{setup}</div>}
                 {quickOn && quickSetup && <div className="arcade-setup">{quickSetup}</div>}
-                <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={quickOn ? () => play() : start} ref={autoFocus}>
-                  Play
+                <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={phoneFirstOn ? connectPhone : quickOn ? () => play() : start} ref={autoFocus}>
+                  {phoneFirstOn ? 'Connect Phone' : 'Play'}
                 </button>
+                {phoneFirstOn && <button type="button" className="arcade-btn" onClick={start}>{soloLabel}</button>}
                 {/* with quick play, the game's settings are for playing on this device, so they go with that button */}
                 {quickOn && (
                   <>
@@ -1046,7 +1068,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                     </button>
                   </>
                 )}
-                {canPlayOnline && (
+                {canPlayOnline && !phoneFirstOn && (
                   <button type="button" className={quickOn ? 'arcade-btn' : 'arcade-btn arcade-btn-lg'} onClick={() => { setOnlineError(''); setOnlineOpen(true); }}>
                     {quickOn ? 'Play with Friends' : 'Play Online'}
                   </button>

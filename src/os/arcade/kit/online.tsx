@@ -9,6 +9,7 @@ import { sfx } from './sfx';
 type OnlineValue = {
   link: RoomLink;
   code: string;
+  start: () => void;
   /** Game messages, each handed to the round it was sent for. */
   router: RoundRouter;
   seat: number;
@@ -51,9 +52,9 @@ export function OnlineProvider({
   watching,
   watchers,
   children,
-}: Omit<OnlineValue, 'seat' | 'link' | 'isHost' | 'code'> & { link: RoomLink | null; seat: number | null; children: ReactNode }) {
+}: Omit<OnlineValue, 'seat' | 'link' | 'isHost' | 'code' | 'start'> & { link: RoomLink | null; seat: number | null; children: ReactNode }) {
   const value = useMemo(
-    () => link && seat !== null ? { link, code: link.code, router, seat, seats, round, players, bots, isHost: seat === 0, transport, handoffs, quick, pool, watching, watchers } : null,
+    () => link && seat !== null ? { link, code: link.code, start: () => link.start(), router, seat, seats, round, players, bots, isHost: seat === 0, transport, handoffs, quick, pool, watching, watchers } : null,
     [link, router, seat, seats, round, players, bots, transport, handoffs, quick, pool, watching, watchers],
   );
   return <OnlineContext.Provider value={value}>{children}</OnlineContext.Provider>;
@@ -66,6 +67,7 @@ export function useOnline() {
     return {
       seat: room.seat,
       code: room.code,
+      start: () => room.link.start(),
       seats: room.seats,
       round: room.round,
       players: room.players,
@@ -409,6 +411,7 @@ export function OnlinePanel({
   onWatchable,
   onTakeSeat,
   onWatchRound,
+  setupFirst = false,
 }: {
   game: string;
   code: string;
@@ -443,6 +446,8 @@ export function OnlinePanel({
   note?: string;
   /** Settings for the round, shown once in a room (the game decides what guests may change). */
   setup?: ReactNode;
+  /** Put the host's setup at the top of the room card, before room settings. */
+  setupFirst?: boolean;
   /** The room this player just lost touch with, filled in so they can join it again. */
   lastCode?: string;
   /** In as a spectator: the room's people and what happens next, with nothing to start. */
@@ -545,12 +550,13 @@ export function OnlinePanel({
               {players.length + botCount < 2 && <p>{stepper ? 'Waiting For Another Player, Or Add A Bot' : 'Waiting For Another Player'}</p>}
               {!host && !watching && listed && <p>A Public Room: Anyone Can Join From Open Rooms.</p>}
             </div>
+            {setupFirst && host && !watching && setup && <div className="arcade-setup">{setup}</div>}
             {(publicity || spectators || stepper || (setup && !watching)) && (
               <div className="arcade-setup">
                 {publicity}
                 {spectators}
                 {stepper}
-                {!watching && setup}
+                {!watching && !setupFirst && setup}
               </div>
             )}
             {watching ? (
