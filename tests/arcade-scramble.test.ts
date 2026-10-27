@@ -7446,10 +7446,35 @@ test('computer teammates answer a call: the nearest with some to spare brings wh
   for (const b of [near, far]) {
     const want = Math.atan2(a.x - b.x, a.z + 40 - b.z);
     assert.ok(Math.abs(Math.atan2(Math.sin(b.aim - want), Math.cos(b.aim - want))) < 0.3, 'looking that way');
-  }  // help: they come (a while, not for good), the nearest saying it's on its way
+  }
+  // help: they come (a while, not for good), the nearest saying it's on its way
   evs = call('help');
   assert.ok(evs.some((e) => e.t === 'emote' && e.k === 'omw' && (e.f === near.id || e.f === far.id)));
   assert.ok(near.ai!.followUntil > m.time && near.ai!.followUntil <= m.time + ASK_T);
+});
+
+test('a knocked egg asking its computer teammates for meds (or anything) gets them coming to pick it up, not a medkit it could not take', () => {
+  const m = teamQuiet('duos', [0, 0, 1, 1], 'solo', ['player', 'bot', 'player', 'player']);
+  const [a, mate, foe, foe2] = m.fighters;
+  land(a, 0, 0);
+  land(mate, 25, 0);
+  land(foe, 130, 130);
+  land(foe2, -130, 130);
+  mate.items = { ...mate.items, medkit: 3 };
+  hurt(m, a, 300, foe.id, 'smg', false);
+  assert.ok(a.down);
+  m.clock += EMOTE_SPAN;
+  a.input.emote = { k: 'meds', x: 0, z: 0 };
+  const evs = run(m, 0.1);
+  assert.ok(evs.some((e) => e.t === 'emote' && e.f === a.id && e.k === 'meds'), 'it can still call');
+  assert.equal(mate.ai!.askK, null, 'nothing to bring');
+  assert.ok(mate.ai!.followTo === a.id && mate.ai!.followUntil > m.time, 'it comes');
+  assert.ok(evs.some((e) => e.t === 'emote' && e.f === mate.id && e.k === 'omw'));
+  // nothing put down for us while we're down, and then it picks us up
+  let gave = false;
+  for (let i = 0; i < 200 && a.down; i++) run(m, 0.1, (es) => es.forEach((e) => (gave ||= e.t === 'drop' && e.item.by === mate.id)));
+  assert.ok(!a.down && a.phase === 'ground', 'picked up');
+  assert.ok(!gave);
 });
 
 test('computer eggs call for help when knocked down, now and then cheer a kill, and say GG when they win', () => {

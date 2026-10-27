@@ -4721,7 +4721,9 @@ function heard(m: Match, from: Fighter, k: EmoteId) {
   const dist = (o: Fighter) => Math.hypot(topX(o.x) - topX(from.x), o.z - from.z);
   bots.sort((a, b) => dist(a) - dist(b));
   const say = (o: Fighter, e: EmoteId) => (o.input.emote = { k: e, x: o.x, z: o.z });
-  switch (k) {
+  // a knocked egg asking for anything needs picking up first (it can't take a thing), so they come to it
+  const ask = from.down && (k === 'meds' || k === 'shield' || k === 'ammo' || k === 'gun') ? 'help' : k;
+  switch (ask) {
     case 'meds':
     case 'shield':
     case 'ammo':
@@ -4742,9 +4744,9 @@ function heard(m: Match, from: Fighter, k: EmoteId) {
     case 'help':
       for (const o of bots) {
         o.ai!.followTo = from.id;
-        o.ai!.followUntil = m.time + (k === 'help' ? ASK_T : FOLLOW_T);
+        o.ai!.followUntil = m.time + (ask === 'help' ? ASK_T : FOLLOW_T);
       }
-      say(bots[0], k === 'help' ? 'omw' : 'thumbs');
+      say(bots[0], ask === 'help' ? 'omw' : 'thumbs');
       return;
     case 'enemy':
       for (const o of bots) {

@@ -1704,9 +1704,9 @@ function Play({ mode }: { mode: StageMode }) {
         if (el.style.visibility !== 'hidden') el.style.visibility = 'hidden';
         continue;
       }
-      // over its name tag, when that's up
+      // over its name tag, when that's up (clear of a teammate's ring round it)
       el.style.visibility = '';
-      el.style.transform = `translate(${at.x.toFixed(1)}px, ${(at.y - (shown.has(id) ? TAG_H + 8 : 4)).toFixed(1)}px) translate(-50%, -100%)`;
+      el.style.transform = `translate(${at.x.toFixed(1)}px, ${(at.y - (shown.has(id) ? TAG_H + 12 : 4)).toFixed(1)}px) translate(-50%, -100%)`;
     }
     // hit marks: a quick X that grows a little and fades
     for (const p of marks.current) {
@@ -2303,6 +2303,9 @@ function Play({ mode }: { mode: StageMode }) {
           const fid = Number(id);
           const em = k as EmoteId;
           const call = isTeamEmote(em);
+          // in duos and squads, ringed as its name tag is: in a teammate's color, red for anyone else's
+          const o = m.fighters[fid];
+          const side = !o || !focusFighter || m.mode === 'solo' ? '' : o.team === focusFighter.team ? ' is-mate' : ' is-foe';
           return (
             <div
               key={`${id}@${at}`}
@@ -2310,8 +2313,8 @@ function Play({ mode }: { mode: StageMode }) {
                 // (one gone from the page is let go of as the bubbles move, see placeOverlays)
                 if (el) bubbles.current.set(fid, el);
               }}
-              className={`g-scramble-bubble${call ? ' is-call' : ''}`}
-              style={{ visibility: 'hidden', ['--life' as string]: `${EMOTE_T}s`, ['--mate' as string]: m.fighters[fid] && m.mode !== 'solo' ? mateColor(m, m.fighters[fid]) : undefined }}
+              className={`g-scramble-bubble${call ? ' is-call' : ''}${side}`}
+              style={{ visibility: 'hidden', ['--life' as string]: `${EMOTE_T}s`, ['--mate' as string]: side === ' is-mate' ? mateColor(m, o) : undefined }}
               role="status"
               aria-label={`${fid === m.me ? 'you' : (m.fighters[fid]?.name ?? '')}: ${emoteText(em, (a || null) as Ammo | null)}`}
             >
