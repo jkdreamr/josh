@@ -290,7 +290,7 @@ roughnessFactor = mix(roughnessFactor, 0.6, pitchLine * 0.5);`);
   const glowPoints: { p: V; size: [number, number]; color: string }[] = [];
   const [home, away] = opts.kits;
   const seatColor = (side: Station['side']) => side === 'e' ? away.shirt : side === 'c' ? '#3a4654' : home.shirt;
-  const colors: Record<Exclude<Kind, 'tread'>, string> = { wall: '#18232d', riser: '#232a31', aisle: '#545d66', glass: '#0b1722', back: '#20272f', roofUnder: '#2c343d', roofFront: '#141a21', roofTop: '#56606a' };
+  const colors: Record<Exclude<Kind, 'tread'>, string> = { wall: '#18232d', riser: '#232a31', aisle: '#545d66', glass: '#0b1722', back: '#20272f', roofUnder: '#2c343d', roofFront: '#141a21', roofTop: '#363e47' };
   for (let k = 0; k < stations.length; k++) {
     const s0 = stations[k]!, s1 = stations[(k + 1) % stations.length]!;
     const gangway = s0.side !== 'c' && k % 6 === 3;

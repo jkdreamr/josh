@@ -132,12 +132,7 @@ export function skyTexture(THREE: Three) {
     ctx.fillStyle = g; ctx.fillRect(0, 0, 256, 128);
     let seed = 4021;
     const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
-    if (look === 'night') {
-      for (let i = 0; i < 260; i++) {
-        ctx.fillStyle = `rgba(255,255,255,${0.25 + random() * 0.6})`;
-        ctx.fillRect(random() * 256, random() * 70, 1, 1);
-      }
-    } else if (look === 'golden') {
+    if (look === 'golden') {
       const sun = ctx.createRadialGradient(64, 92, 0, 64, 92, 34);
       sun.addColorStop(0, 'rgba(255,246,214,1)'); sun.addColorStop(0.18, 'rgba(255,214,150,.85)'); sun.addColorStop(1, 'rgba(255,170,100,0)');
       ctx.fillStyle = sun; ctx.fillRect(0, 40, 160, 88);
