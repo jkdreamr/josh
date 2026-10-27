@@ -770,5 +770,197 @@
     bottom: max(20px, env(safe-area-inset-bottom, 0px));
     width: var(--g-soccer-diamond);
   }
-  .g-soccer-phone-action { min-height: 38px; }
+.g-soccer-phone-action { min-height: 38px; }
+}
+
+.g-soccer-phone-lobby {
+  width: 100%;
+  max-width: 720px;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+  grid-template-columns: minmax(104px, 150px) minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+.g-soccer-phone-lobby.is-connected {
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 10px;
+}
+.g-soccer-phone-lobby.is-connected .g-soccer-phone-qr {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 96px;
+  height: 96px;
+  box-sizing: border-box;
+  padding: 4px;
+  gap: 0;
+}
+.g-soccer-phone-lobby.is-connected .g-soccer-phone-qr img {
+  width: 88px;
+  height: 88px;
+}
+.g-soccer-phone-lobby.is-connected .g-soccer-phone-qr strong { display: none; }
+.g-soccer-phone-lobby-content {
+  align-content: start;
+  gap: 6px;
+}
+.g-soccer-phone-lobby .g-soccer-phone-connections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  font-size: 11px;
+}
+.g-soccer-phone-lobby .g-soccer-phone-connections span { padding: 4px 6px; }
+.g-soccer-phone-lobby .arcade-segmented { min-width: 0; flex-wrap: wrap; gap: 4px; }
+.g-soccer-phone-lobby .arcade-segmented button { min-height: 26px; padding: 4px 7px; font-size: 10px; }
+.g-soccer-lobby-clubs {
+  grid-template-columns: 1fr;
+  gap: 5px;
+}
+.g-soccer-lobby-club {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+.g-soccer-lobby-club-label {
+  color: #aebdb8;
+  font-size: 9px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+}
+.g-soccer-club-picker-card {
+  display: grid;
+  grid-template-columns: 40px 34px minmax(0, 1fr) 40px;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 4px 6px;
+  border: 1px solid #31463a;
+  border-radius: 9px;
+  background: #121a16;
+}
+.g-soccer-club-picker-card.is-locked { grid-template-columns: 34px minmax(0, 1fr); }
+.g-soccer-club-picker-card > button {
+  min-width: 40px;
+  min-height: 40px;
+  border: 1px solid #415648;
+  border-radius: 9px;
+  color: #f0f5ee;
+  background: #1c2921;
+  font: inherit;
+  font-size: 14px;
+}
+.g-soccer-club-picker-card > svg { width: 34px; height: 34px; }
+.g-soccer-club-picker-copy { display: grid; gap: 2px; min-width: 0; }
+.g-soccer-club-picker-copy strong {
+  color: #f2f7ee;
+  font-size: 11px;
+  line-height: 1.15;
+}
+.g-soccer-club-picker-copy span {
+  color: #b9c9bb;
+  font-size: 8px;
+  line-height: 1.2;
+}
+.g-soccer-cup-card { padding: 6px; overflow: hidden; }
+.g-soccer-cup-bracket { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; font-size: 8px; }
+.g-soccer-cup-bracket section { gap: 3px; min-width: 0; }
+.g-soccer-cup-bracket section > b { font-size: 7px; }
+.g-soccer-cup-bracket section > div { padding: 3px; font-size: 8px; }
+.g-soccer-cup-bracket section > div > span { white-space: nowrap; }
+.g-soccer-cup-bracket small { font-size: 7px; }
+.g-soccer-cup-next { margin-top: 5px; font-size: 10px; }
+.g-soccer-cup-next button { padding: 4px 6px; font-size: 9px; }
+.g-soccer-lobby-ready { gap: 6px; font-size: 10px; }
+.g-soccer-lobby-ready .arcade-btn { min-height: 34px; padding: 6px 12px; }
+.g-soccer-phone-settings { padding-top: 4px; }
+.g-soccer-phone-settings summary { font-size: 10px; }
+
+.g-soccer-guest-lobby {
+  width: 100%;
+  max-width: 520px;
+  max-height: 100%;
+  min-width: 0;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow: auto;
+}
+.g-soccer-guest-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  align-items: center;
+  gap: 10px;
+  padding: 10px;
+  text-align: left;
+}
+.g-soccer-guest-main { display: grid; gap: 6px; min-width: 0; }
+.g-soccer-guest-card h2 { font-size: 15px; }
+.g-soccer-guest-club { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.g-soccer-guest-club strong { font-size: 12px; }
+.g-soccer-guest-club-actions { gap: 6px; }
+.g-soccer-guest-club-actions button { min-width: 40px; min-height: 40px; }
+.g-soccer-guest-qr {
+  grid-column: 2;
+  grid-row: 1;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  color: #aebbb0;
+  font-size: 9px;
+  text-align: center;
+}
+.g-soccer-guest-qr img { width: 92px; max-width: 100%; border-radius: 7px; }
+.g-soccer-guest-kickoff { min-height: 38px; grid-column: 1 / -1; }
+
+.g-soccer-phone-picker {
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  box-sizing: border-box;
+  overflow: hidden;
+  padding: max(12px, env(safe-area-inset-top)) 16px max(12px, env(safe-area-inset-bottom));
+}
+.g-soccer-picker-mode { margin-top: 12px; }
+.g-soccer-picker-club { flex: 1 1 auto; min-height: 0; margin: 8px auto; }
+.g-soccer-picker-identity { min-width: 0; gap: 7px; }
+.g-soccer-picker-identity > svg {
+  width: clamp(72px, 16vh, 112px);
+  height: clamp(72px, 16vh, 112px);
+}
+.g-soccer-picker-controls {
+  display: grid;
+  grid-template-columns: 114px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  flex: 0 0 auto;
+  width: min(420px, 100%);
+  margin: 0 auto 8px;
+}
+.g-soccer-picker-controls > div {
+  display: grid;
+  grid-template-columns: minmax(74px, .8fr) minmax(112px, 1.2fr);
+  gap: 8px;
+  min-width: 0;
+}
+.g-soccer-picker-controls button {
+  min-width: 0;
+  min-height: 56px;
+  padding: 8px;
+}
+.g-soccer-picker-controls .is-ready { min-height: 64px; font-size: 16px; font-weight: 850; }
+.g-soccer-picker-help { margin: 0 auto; line-height: 1.3; }
+
+@media (orientation: landscape) and (max-height: 600px) {
+  .g-soccer-phone-picker { padding: max(8px, env(safe-area-inset-top)) 14px max(8px, env(safe-area-inset-bottom)); }
+  .g-soccer-picker-mode { margin-top: 6px; }
+  .g-soccer-picker-club { margin: 4px auto; }
+  .g-soccer-picker-identity { gap: 4px; }
+  .g-soccer-picker-identity > svg { width: clamp(52px, 17vh, 76px); height: clamp(52px, 17vh, 76px); }
+  .g-soccer-picker-identity h2 { font-size: clamp(18px, 4vw, 25px); }
+  .g-soccer-picker-controls { margin-bottom: 4px; }
 }

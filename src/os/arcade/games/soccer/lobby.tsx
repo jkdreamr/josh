@@ -33,7 +33,6 @@ export function sideForRoom(roomCode: string | undefined): 0 | 1 {
 
 const modeLabels: Record<Mode, string> = { cpu: 'vs cpu', versus: '2 player versus', coop: '2 player co-op' };
 const competitionOptions = COMPETITIONS.map(({ id, label }) => [id, label] as const);
-const clubOptions = CLUBS.map(({ id, name }) => [id, name] as const);
 const clampIndex = (index: number) => (index + CLUBS.length) % CLUBS.length;
 const nextClubId = (id: string, direction: number, other: string) => {
   let index = clampIndex(CLUBS.findIndex((club) => club.id === id));
@@ -43,6 +42,31 @@ const nextClubId = (id: string, direction: number, other: string) => {
   }
   return id;
 };
+
+function ClubPickerCard({ label, id, other, locked, onChange }: {
+  label: string;
+  id: string;
+  other: string;
+  locked?: boolean;
+  onChange: (id: string) => void;
+}) {
+  const club = clubById(id);
+  const overall = Math.round((club.ratings.attack + club.ratings.midfield + club.ratings.defense) / 3);
+  return (
+    <div className="g-soccer-lobby-club">
+      <span className="g-soccer-lobby-club-label">{label}</span>
+      <div className={`g-soccer-club-picker-card${locked ? ' is-locked' : ''}`}>
+        {!locked && <button type="button" aria-label={`previous ${label}`} onClick={() => onChange(nextClubId(id, -1, other))}>◀</button>}
+        <Crest club={club} size={36} />
+        <div className="g-soccer-club-picker-copy">
+          <strong>{club.name}</strong>
+          <span>ovr {overall} · att {club.ratings.attack} mid {club.ratings.midfield} def {club.ratings.defense}</span>
+        </div>
+        {!locked && <button type="button" aria-label={`next ${label}`} onClick={() => onChange(nextClubId(id, 1, other))}>▶</button>}
+      </div>
+    </div>
+  );
+}
 
 function MiniBracket({ cup }: { cup: Cup }) {
   const labels = ['quarter-finals', 'semi-finals', 'final'];
@@ -258,7 +282,7 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
   };
 
   return (
-    <div className="g-soccer-phone-lobby">
+    <div className={`g-soccer-phone-lobby${connected.length ? ' is-connected' : ''}`}>
       <div className="g-soccer-phone-qr">
         {qr && <img src={qr} alt="Connect phone QR code" />}
         <strong>{connected.length ? 'your phone is connected' : 'connect a phone'}</strong>
@@ -274,20 +298,11 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
           <>
             <Segmented label="competition" value={competition} options={competitionOptions} onChange={changeCompetition} />
             {competition === 'online' && online.code && <p className="g-soccer-friend-link">friend's mac: <a href={`/?game=soccer&room=${online.code}`}>{location.host}/?game=soccer&amp;room={online.code}</a></p>}
-            <div className="g-soccer-lobby-clubs">
-              {[homeId, awayId].map((id, side) => {
-                const club = clubById(id);
-                return (
-                  <div className="g-soccer-lobby-club" key={side}>
-                    <Crest club={club} size={42} />
-                    <label>{side === 0 ? 'your club' : competition === 'online' ? "friend's club" : 'opponent'}
-                      <select value={id} disabled={side === 0 && isRunningCup} onChange={(event) => setClub(side as 0 | 1, event.currentTarget.value)}>
-                        {clubOptions.map(([clubId, name]) => <option key={clubId} value={clubId} disabled={clubId === (side === 0 ? awayId : homeId)}>{name}</option>)}
-                      </select>
-                    </label>
-                  </div>
-                );
-              })}
+            <div className={`g-soccer-lobby-clubs${def.opponentPick ? '' : ' is-single'}`}>
+              <ClubPickerCard label="your club" id={homeId} other={awayId} locked={isRunningCup} onChange={(value) => setClub(0, value)} />
+              {def.opponentPick && (
+                <ClubPickerCard label={competition === 'online' ? "friend's club" : 'opponent'} id={awayId} other={homeId} onChange={(value) => setClub(1, value)} />
+              )}
             </div>
             {competition === 'cup' && <CupLobbyCard cup={cup} homeId={homeId} setHomeId={setHomeId} setCup={setCup} />}
             {competition !== 'cup' && (
@@ -341,17 +356,23 @@ function GuestMacLobby({ online }: { online: NonNullable<ReturnType<typeof useOn
   return (
     <div className="g-soccer-guest-lobby">
       <div className="g-soccer-guest-card">
+        <div className="g-soccer-guest-main">
         <span className="g-soccer-eyebrow">online vs mac</span>
         <h2>{member ? 'you are on the away side' : 'connecting to the match'}</h2>
-        <Crest club={club} size={76} />
-        <strong>{club.name}</strong>
-        <div className="g-soccer-guest-club-actions">
-          <button type="button" onClick={() => sendNav(-1)}>previous club</button>
-          <button type="button" onClick={() => sendNav(1)}>next club</button>
+        <div className="g-soccer-guest-club">
+          <Crest club={club} size={46} />
+          <strong>{club.name}</strong>
         </div>
-        <p>Share this link with your phone to pick your club.</p>
-        {qr && <img src={qr} alt="Phone picker link for side one" />}
-        {online.round === 0 && <button type="button" className="arcade-btn arcade-btn-primary" onClick={() => sendNav(0, true)}>kick off</button>}
+        <div className="g-soccer-guest-club-actions">
+          <button type="button" aria-label="previous club" onClick={() => sendNav(-1)}>◀</button>
+          <button type="button" aria-label="next club" onClick={() => sendNav(1)}>▶</button>
+        </div>
+        {online.round === 0 && <button type="button" className="arcade-btn arcade-btn-primary g-soccer-guest-kickoff" onClick={() => sendNav(0, true)}>kick off</button>}
+        </div>
+        <div className="g-soccer-guest-qr">
+          <span>scan to pick your club</span>
+          {qr && <img src={qr} alt="Phone picker link for side one" />}
+        </div>
       </div>
     </div>
   );
