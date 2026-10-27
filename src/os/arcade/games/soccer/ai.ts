@@ -192,7 +192,7 @@ export function cpuShotChoice(world: World, player: Player, level: Level, tick: 
   return safe ?? best;
 }
 
-function carrierCommand(world: World, player: Player, level: Level, tick: number, dt: number): Command {
+function carrierCommand(world: World, player: Player, level: Level, tick: number, dt = STEP): Command {
   const dir = teamDir(player.team, world.endsSwapped);
   const goalX = dir * FIELD.length / 2;
   const goalDistance = Math.hypot(goalX - player.x, player.z);
