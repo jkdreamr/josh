@@ -10,6 +10,42 @@ export type BoneBind = {
 };
 
 export type SoccerPose = 'run' | 'dribble' | 'pass' | 'shoot' | 'tackle' | 'slide' | 'header' | 'ready' | 'dive' | 'catch' | 'celebrate';
+type BoneAngles = [number, number, number];
+type SideBone = 'thigh' | 'calf' | 'upperarm' | 'lowerarm';
+const SIDE_BONES: Record<SideBone, { l: string; r: string }> = {
+  thigh: { l: 'thigh_l', r: 'thigh_r' },
+  calf: { l: 'calf_l', r: 'calf_r' },
+  upperarm: { l: 'upperarm_l', r: 'upperarm_r' },
+  lowerarm: { l: 'lowerarm_l', r: 'lowerarm_r' },
+};
+
+export type SoccerAnimationScratch = {
+  pose: Map<string, BoneAngles>;
+  targets: Map<string, T.Quaternion>;
+  rootWorld: T.Quaternion;
+  rootRelative: T.Quaternion;
+  targetRotation: T.Quaternion;
+  targetWorld: T.Quaternion;
+  parentWorld: T.Quaternion;
+  parentInverse: T.Quaternion;
+  euler: T.Euler;
+  zero: BoneAngles;
+};
+
+export function createSoccerAnimationScratch(THREE: Three): SoccerAnimationScratch {
+  return {
+    pose: new Map(),
+    targets: new Map(),
+    rootWorld: new THREE.Quaternion(),
+    rootRelative: new THREE.Quaternion(),
+    targetRotation: new THREE.Quaternion(),
+    targetWorld: new THREE.Quaternion(),
+    parentWorld: new THREE.Quaternion(),
+    parentInverse: new THREE.Quaternion(),
+    euler: new THREE.Euler(),
+    zero: [0, 0, 0],
+  };
+}
 
 export function captureSoccerBoneBinds(THREE: Three, root: T.Object3D, body: T.Object3D): BoneBind[] {
   root.updateMatrixWorld(true);
@@ -44,8 +80,15 @@ export function characterSpaceBoneTarget(
     .multiply(bindWorld);
 }
 
-function poseValue(pose: Map<string, [number, number, number]>, name: string, x: number, y = 0, z = 0) {
-  pose.set(name, [x, y, z]);
+function poseValue(pose: Map<string, BoneAngles>, name: string, x: number, y = 0, z = 0) {
+  let angles = pose.get(name);
+  if (!angles) {
+    angles = [0, 0, 0];
+    pose.set(name, angles);
+  }
+  angles[0] = x;
+  angles[1] = y;
+  angles[2] = z;
 }
 
 export function animateSoccerSkeleton(
@@ -55,13 +98,17 @@ export function animateSoccerSkeleton(
   phase: number,
   speed: number,
   poseName: SoccerPose | null,
+  scratch: SoccerAnimationScratch,
   actionProgress = 0,
   carrying = false,
 ) {
   const run = Math.min(1, speed / 7);
   const stride = Math.sin(phase) * run;
-  const pose = new Map<string, [number, number, number]>();
-  const putSide = (key: string, side: 'l' | 'r', x: number, y = 0, z = 0) => poseValue(pose, `${key}_${side}`, x, y, z);
+  for (const angles of scratch.pose.values()) {
+    angles[0] = 0; angles[1] = 0; angles[2] = 0;
+  }
+  const pose = scratch.pose;
+  const putSide = (key: SideBone, side: 'l' | 'r', x: number, y = 0, z = 0) => poseValue(pose, SIDE_BONES[key][side], x, y, z);
   const lean = Math.min(0.24, speed * 0.027);
   poseValue(pose, 'pelvis', 0, 0, 0);
   poseValue(pose, 'spine_01', -lean, 0, 0);
@@ -149,20 +196,27 @@ export function animateSoccerSkeleton(
   }
 
   root.updateMatrixWorld(true);
-  const rootWorld = root.getWorldQuaternion(new THREE.Quaternion()).invert();
-  const targets = new Map<string, T.Quaternion>();
-  const targetRotation = new THREE.Quaternion();
-  const targetWorld = new THREE.Quaternion();
-  const parentWorld = new THREE.Quaternion();
+  const { rootWorld, rootRelative, targetRotation, targetWorld, parentWorld, parentInverse, euler, targets, zero } = scratch;
+  root.getWorldQuaternion(rootWorld).invert();
   for (const bind of binds) {
-    const angles = pose.get(bind.bone.name) ?? [0, 0, 0];
-    targetRotation.setFromEuler(new THREE.Euler(...angles, 'XYZ'));
+    const angles = pose.get(bind.bone.name) ?? zero;
+    targetRotation.setFromEuler(euler.set(angles[0], angles[1], angles[2], 'XYZ'));
     const parentTarget = bind.parentName ? targets.get(bind.parentName) ?? bind.parentBindWorld : null;
-    targetWorld.copy(characterSpaceBoneTarget(bind.bindWorld, bind.parentBindWorld, parentTarget, targetRotation));
-    targets.set(bind.bone.name, targetWorld.clone());
+    if (parentTarget) {
+      parentInverse.copy(bind.parentBindWorld).invert();
+      targetWorld.copy(parentTarget).multiply(parentInverse).multiply(targetRotation).multiply(bind.bindWorld);
+    } else targetWorld.copy(targetRotation).multiply(bind.bindWorld);
+    let target = targets.get(bind.bone.name);
+    if (target === undefined) {
+      const created = new THREE.Quaternion();
+      targets.set(bind.bone.name, created);
+      target = created;
+    }
+    target.copy(targetWorld);
     if (bind.bone.parent) bind.bone.parent.getWorldQuaternion(parentWorld);
     else parentWorld.copy(rootWorld);
-    bind.bone.quaternion.copy(parentWorld.invert().multiply(rootWorld.clone().multiply(targetWorld)));
+    parentInverse.copy(parentWorld).invert();
+    bind.bone.quaternion.copy(parentInverse).multiply(rootRelative.copy(rootWorld).multiply(targetWorld));
     bind.bone.updateMatrixWorld(true);
   }
 }

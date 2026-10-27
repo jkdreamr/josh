@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { countsAsGoal, createBall, resolvePostCollision, stepBall } from '../src/os/arcade/games/soccer/physics.ts';
-import { createWorld, resolveKeeperContact } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, resolveKeeperContact, stepWorld } from '../src/os/arcade/games/soccer/logic.ts';
 
 test('drag shortens the flight compared with vacuum gravity', () => {
   const ball = createBall();
@@ -70,4 +70,42 @@ test('a goalkeeper parries a reachable 25 m/s shot', () => {
   assert.equal(g.ball.grounded, false);
   assert.ok(Math.hypot(g.ball.vx, g.ball.vy, g.ball.vz) > 1);
   assert.equal(keeper.action, 'parry');
+});
+
+test('a keeper dive extends lateral reach but a ready keeper cannot claim the same shot', () => {
+  const g = createWorld();
+  const keeper = g.players[5]!;
+  keeper.z = 0;
+  g.ball.x = 19.6; g.ball.y = 0.8; g.ball.z = 1.8; g.ball.vx = 12;
+  assert.equal(resolveKeeperContact(g, 19.4), false);
+  keeper.action = 'dive';
+  g.ball.x = 19.6; g.ball.y = 0.8; g.ball.z = 1.8; g.ball.vx = 12;
+  assert.equal(resolveKeeperContact(g, 19.4), true);
+  assert.equal(g.ball.grounded, true);
+});
+
+test('assisted 70% shots stay on target more often than maximum-power shots', () => {
+  const onTarget = (seed: number, power: number) => {
+    const g = createWorld(seed, 120);
+    g.phase = 'live'; g.restart = null;
+    const shooter = g.players[1]!;
+    shooter.x = 11; shooter.z = 0.5; shooter.human = true; shooter.controlled = true;
+    g.ball.x = 11.3; g.ball.z = 0.5; g.ball.y = 0.11;
+    for (const opponent of g.players.filter((p) => p.team === 1)) {
+      opponent.x = 18; opponent.z = 9;
+    }
+    stepWorld(g, 1 / 60, new Map([[shooter.id, {
+      move: { x: 0, z: 0 }, action: 'shoot', pressed: true, power, aim: { x: 1, z: -2 },
+    }]]));
+    for (let i = 0; i < 180 && g.ball.x < 21.2; i++) stepBall(g.ball, 1 / 60);
+    return Math.abs(g.ball.z) < 2.39 && g.ball.y <= 2.09 && g.ball.x >= 21.1;
+  };
+  let assisted = 0;
+  let maximum = 0;
+  for (let seed = 1; seed <= 40; seed++) {
+    if (onTarget(seed, 0.7)) assisted++;
+    if (onTarget(seed, 1)) maximum++;
+  }
+  assert.ok(assisted >= 30, `70% shot target rate: ${assisted}/40`);
+  assert.ok(maximum < assisted, `maximum-power target rate: ${maximum}/40`);
 });

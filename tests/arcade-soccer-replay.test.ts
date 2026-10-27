@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { createWorld } from '../src/os/arcade/games/soccer/logic.ts';
-import { appendReplayFrame, REPLAY_SECONDS, sampleReplay, selectReplay, type ReplayFrame } from '../src/os/arcade/games/soccer/replay.ts';
+import { appendReplayFrame, createReplayWorld, REPLAY_SECONDS, sampleReplay, selectReplay, type ReplayFrame } from '../src/os/arcade/games/soccer/replay.ts';
 
 test('replay snapshots stay compact and bounded to the ring window', () => {
   const world = createWorld();
@@ -30,4 +30,17 @@ test('replay sampling interpolates player and ball transforms', () => {
   const sampled = sampleReplay(frames, 0.5, world)!;
   assert.equal(sampled.players[1]!.x, 5);
   assert.equal(sampled.ball.x, 12);
+});
+
+test('replay sampling can reuse its output world during playback', () => {
+  const world = createWorld();
+  const output = createReplayWorld(world);
+  const frames: ReplayFrame[] = [];
+  world.players[1]!.x = 0;
+  appendReplayFrame(frames, world, 0);
+  world.players[1]!.x = 10;
+  appendReplayFrame(frames, world, 1);
+  const sampled = sampleReplay(frames, 0.5, world, output);
+  assert.equal(sampled, output);
+  assert.equal(sampled?.players[1]!.x, 5);
 });

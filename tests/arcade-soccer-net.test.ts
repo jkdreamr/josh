@@ -1,11 +1,27 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { commandFromPacket, movePacket, parsePacket } from '../src/os/arcade/games/soccer/net.ts';
+import { chargePower } from '../src/os/arcade/games/soccer/input.ts';
 
 test('online move packets round-trip validated inputs', () => {
-  const packet = movePacket(2, 42, 1, { move: { x: 0.32, z: -1 }, sprint: true, action: 'shoot', pressed: true });
+  const packet = movePacket(2, 42, 1, { move: { x: 0.32, z: -1 }, sprint: true, action: 'shoot', heldAction: 'shoot', pressed: true });
   assert.deepEqual(parsePacket(packet), packet);
   assert.equal(commandFromPacket(packet).action, 'shoot');
+  assert.equal(commandFromPacket(packet).heldAction, 'shoot');
+});
+
+test('held action packets round-trip every supported charged action', () => {
+  for (const heldAction of ['pass', 'shoot', 'through', 'lob', 'skill'] as const) {
+    const packet = movePacket(1, 2, 0, { move: { x: 0, z: 0 }, heldAction });
+    assert.deepEqual(parsePacket(packet), packet);
+    assert.equal(commandFromPacket(packet).heldAction, heldAction);
+  }
+});
+
+test('charge time maps to a clamped tenth-to-full power range', () => {
+  assert.equal(chargePower(0), 0.1);
+  assert.equal(chargePower(0.45), 0.45);
+  assert.equal(chargePower(1.4), 1);
 });
 
 test('malformed, non-finite, and out-of-range packet fields are rejected', () => {
