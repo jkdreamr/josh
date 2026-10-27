@@ -30,7 +30,7 @@ function pose(x: number, y: number, z: number, yaw = 0, pitch = 0, roll = 0): Po
 function buildBase(id: CourseId, seed: number, kind: Course['kind'], limit = LIMITS[id]): Course {
   const course: Course = {
     id, name: COURSE_NAMES[id], kind, seed, colliders: [], zones: [], spawns: [], startYaw: 0,
-    killY: -12, limit, path: [], decor: [], palette: palette(0x83b978, 0xa9dafa, 0xe5f2ec, 0xc4dfdb),
+    killY: -12, limit, path: [], decor: [], palette: palette(0x5d8747, 0x48708a, 0xb9ad9b, 0xb9ad9b),
   };
   for (let row = 0; row < 4; row++) {
     for (let col = 0; col < 5; col++) {
@@ -67,8 +67,8 @@ function add(
   return collider;
 }
 
-function floor(course: Course, from: number, to: number, look: Collider['look'] = 'grass', y = -0.35) {
-  add(course, { kind: 'box', hx: 9, hy: 0.35, hz: (to - from) / 2 }, look, 0, y, (from + to) / 2);
+function floor(course: Course, from: number, to: number, look: Collider['look'] = 'grass', y = -0.35, hx = 9, slip = false) {
+  add(course, { kind: 'box', hx, hy: 0.35, hz: (to - from) / 2 }, look, 0, y, (from + to) / 2, { slip });
 }
 
 function checkpoint(course: Course, index: number, z: number, x = 0, y = 0) {
@@ -79,8 +79,12 @@ function checkpoint(course: Course, index: number, z: number, x = 0, y = 0) {
 function racePath(course: Course, finishZ: number, yAt: (z: number) => number = () => 0): Waypoint[] {
   const path: Waypoint[] = [];
   for (let z = -2; z <= finishZ; z += 8) {
-    const special = course.id === 'oval' && (z === 22 || z === 38 || z === 54 || z === 78);
-    path.push({ x: 0, y: yAt(z), z, r: 3, lane: 5.5, ...(special ? { jump: true } : {}) });
+    const jump = course.id === 'oval' && z === 78;
+    const narrow = course.id === 'oval' && z >= 94 && z <= 102;
+    path.push({
+      x: 0, y: yAt(z), z, r: narrow ? 1.5 : 3, lane: narrow ? 1.5 : 5.5,
+      ...(jump ? { jump: true } : {}),
+    });
   }
   path.push({ x: 0, y: yAt(finishZ), z: finishZ, r: 2.5, lane: 4 });
   return path;
@@ -106,22 +110,24 @@ function campusDecor(course: Course, finishZ: number, kind: 'oval' | 'fountain' 
 function makeOval(seed: number): Course {
   const course = buildBase('oval', seed, 'race');
   course.killY = -14;
-  course.palette = palette(0x78ad72, 0x99d5f2, 0xf3e6cf, 0xc4e0d9);
+  course.palette = palette(0x5b8042, 0x47718e, 0xb7a991, 0xb7a991);
   floor(course, -12, 18);
   floor(course, 18, 48);
-  floor(course, 48, 76);
-  floor(course, 82, 112);
+  floor(course, 48, 74);
+  floor(course, 84, 92);
+  floor(course, 92, 108, 'path', -0.35, 4);
+  floor(course, 108, 112);
   floor(course, 112, 132);
-  for (let i = 0; i < 3; i++) {
-    const z = 20 + i * 15;
+  for (let i = 0; i < 5; i++) {
+    const z = 18 + i * 7.5;
     const baseYaw = i * 0.6;
-    add(course, { kind: 'box', hx: 7.2, hy: 0.48, hz: 0.55 }, 'tube', 0, 0.78, z, {
-      bounce: 9,
-      at: (t, out) => setPose(out, 0, 0.78, z, baseYaw + Math.sin(t * 0.8 + i) * 0.72),
+    add(course, { kind: 'box', hx: 8.8, hy: 0.4, hz: 0.5 }, 'tube', 0, 0.55, z, {
+      bounce: 11,
+      at: (t, out) => setPose(out, 0, 0.55, z, baseYaw + Math.sin(t * 0.68 + i * 1.7) * 0.36),
     });
   }
-  for (const [z, y, speed] of [[54, 0.75, 1.15], [62, 1.8, -1.4], [69, 0.72, 1.7]] as const) {
-    add(course, { kind: 'box', hx: 7.8, hy: 0.22, hz: 0.28 }, 'bar', 0, y, z, {
+  for (const [z, y, speed] of [[54, 0.72, 0.9], [62, 0.72, -1], [62, 2.1, 1.15], [70, 0.72, 1.1]] as const) {
+    add(course, { kind: 'box', hx: 8.8, hy: 0.22, hz: 0.28 }, 'bar', 0, y, z, {
       bounce: y > 1 ? 13 : 10,
       at: (t, out) => setPose(out, 0, y, z, t * speed + hash(seed, z) / 0xffffffff),
     });
@@ -134,6 +140,14 @@ function makeOval(seed: number): Course {
     tint: 0xff4fa3,
     at: (t, out) => setPose(out, Math.sin(t * 0.9) * 2.2, 0.4, 83, t * 0.35),
   });
+  add(course, { kind: 'box', hx: 8.8, hy: 0.24, hz: 0.35 }, 'bar', 0, 2.1, 100, {
+    bounce: 11, at: (t, out) => setPose(out, 0, 2.1, 100, Math.sin(t * 0.8) * 0.35),
+  });
+  for (const [z, phase] of [[116, 0], [122, 2.1]] as const) {
+    add(course, { kind: 'box', hx: 1.1, hy: 0.5, hz: 0.7 }, 'bumper', 0, 0.5, z, {
+      bounce: 11, at: (t, out) => setPose(out, Math.sin(t * 0.9 + phase) * 4.8, 0.5, z),
+    });
+  }
   course.zones.push({ kind: 'finish', x: 0, y: 1.2, z: 126, hx: 8, hy: 2, hz: 1.5 });
   [0, 30, 52, 91, 113].forEach((z, i) => checkpoint(course, i, z));
   course.path = racePath(course, 124);
@@ -144,37 +158,38 @@ function makeOval(seed: number): Course {
 function makeFountain(seed: number): Course {
   const course = buildBase('fountain', seed, 'race');
   course.killY = -12;
-  course.palette = palette(0x85b77b, 0xa7dcf2, 0xf5e5d2, 0xc9dfdc);
+  course.palette = palette(0x5d8747, 0x47718e, 0xb9ad9b, 0xb9ad9b);
   floor(course, -12, 32, 'path');
-  floor(course, 32, 54, 'sand');
+  floor(course, 32, 52, 'wet', -0.35, 9, true);
   floor(course, 74, 102, 'path');
   floor(course, 102, 132, 'path');
-  floor(course, 54, 74, 'path');
-  add(course, { kind: 'cyl', r: 2.8, hy: 0.28 }, 'stone', 0, -0.02, 63);
-  add(course, { kind: 'cyl', r: 1.45, hy: 0.3 }, 'stone', -5.2, 0.08, 64);
-  add(course, { kind: 'cyl', r: 1.45, hy: 0.3 }, 'stone', 5.2, 0.08, 64);
-  add(course, { kind: 'box', hx: 2.1, hy: 0.12, hz: 1.2 }, 'stone', 0, 0.1, 56);
-  add(course, { kind: 'box', hx: 2.1, hy: 0.12, hz: 1.2 }, 'stone', 0, 0.1, 70);
-  for (let i = 0; i < 4; i++) {
-    const z = 23 + i * 8;
+  for (let i = 0; i < 6; i++) add(course, { kind: 'cyl', r: 2, hy: 0.3 }, 'stone', i % 2 ? -1.2 : 1.2, 0.08, 56 + i * 3.2);
+  for (let i = 0; i < 8; i++) {
+    const z = 21 + i * 4.2;
+    const x = -8 + i * (16 / 7);
     course.zones.push({
-      kind: 'jet', x: i % 2 ? 3.6 : -3.6, y: 1.1, z, hx: 2.1, hy: 1.3, hz: 2.4,
-      push: { x: i % 2 ? -13 : 13, y: 2.5, z: 1.5 },
-      on: (t) => ((t + hash(seed, i) / 0xffffffff * 2.5) % 2.5) < 1.2,
+      kind: 'jet', x, y: 1.1, z, hx: 1.2, hy: 1.3, hz: 2.1,
+      push: { x: i < 4 ? 12 : -12, y: 1.8, z: 1 },
+      on: (t) => ((t + hash(seed, i) / 0xffffffff * 2) % 3.8) < 0.65,
     });
   }
-  for (const x of [-7, 7]) {
-    add(course, { kind: 'box', hx: 1, hy: 0.06, hz: 9 }, 'wet', x, 0.02, 43, { slip: true });
-  }
-  add(course, { kind: 'box', hx: 6.1, hy: 0.23, hz: 0.3 }, 'bar', 0, 1.1, 91, {
-    bounce: 10,
-    at: (t, out) => setPose(out, 0, 1.1, 91, t * 1.25),
-  });
-  add(course, { kind: 'cyl', r: 1.15, hy: 0.35 }, 'stone', 0, 0.35, 91);
+  for (const [z, y, speed] of [[88, 0.72, 1.25], [96, 1.75, -1.3]] as const) add(course, { kind: 'box', hx: 8.8, hy: 0.22, hz: 0.28 }, 'bar', 0, y, z, { bounce: 11, at: (t, out) => setPose(out, 0, y, z, t * speed) });
   course.decor.push({ kind: 'fountain', x: 17.4, y: 0, z: 63, s: 0.9, yaw: 0 });
   course.zones.push({ kind: 'finish', x: 0, y: 1, z: 126, hx: 8, hy: 2, hz: 1.5 });
   [0, 31, 53, 77, 104].forEach((z, i) => checkpoint(course, i, z));
-  course.path = racePath(course, 124);
+  course.path = [
+    ...racePath(course, 124).filter((node) => node.z < 50 || node.z > 74),
+    { x: 0, y: 0, z: 50, r: 2, lane: 1 },
+    ...Array.from({ length: 6 }, (_, i) => ({
+      x: i % 2 ? -1.2 : 1.2, y: 0.25, z: 56 + i * 3.2, r: 1.8, lane: 0.2,
+      jump: true, jumpDistance: i === 0 ? 10.5 : 6,
+    })),
+  ].sort((a, b) => a.z - b.z);
+  for (const node of course.path) if (node.z >= 18 && node.z <= 46) {
+    node.waitFor = (t) => !course.zones.some((zone) =>
+      zone.kind === 'jet' && zone.on?.(t) && Math.hypot(zone.x - node.x, zone.z - node.z) < 3.2,
+    );
+  }
   campusDecor(course, 130, 'fountain');
   return course;
 }
@@ -182,37 +197,38 @@ function makeFountain(seed: number): Course {
 function makePalm(seed: number): Course {
   const course = buildBase('palm', seed, 'race');
   course.killY = -18;
-  course.palette = palette(0x7eae73, 0x92ceee, 0xf3e1c8, 0xc0d9d5);
+  course.palette = palette(0x5d8747, 0x47718e, 0xb9ad9b, 0xb9ad9b);
   const rampPitch = -0.16;
   for (let section = 0; section < 6; section++) {
     const z = section * 21 + 7;
     const y = section * 3.4;
-    add(course, { kind: 'box', hx: 8.2, hy: 0.45, hz: section === 0 ? 14 : 11 }, section % 2 ? 'path' : 'grass', 0, y, z, { pitch: rampPitch });
+    add(course, { kind: 'box', hx: section === 2 || section === 4 ? 4.2 : 8.2, hy: 0.45, hz: section === 0 ? 14 : 11 }, section % 2 ? 'path' : 'grass', 0, y, z, { pitch: rampPitch });
     if (section < 5) add(course, { kind: 'box', hx: 8.5, hy: 0.4, hz: 2.3 }, 'stone', 0, y + 1.8, z + 13);
   }
   // Seeded coconuts cycle through a fixed pool so their motion stays allocation-free.
-  for (let i = 0; i < 8; i++) {
-    const lane = [-6, -4, -2, 2, 4, 6, -3, 3][i];
+  const coconutLanes = [-3.5, 3.5, -1.75, 1.75, 0, 3.5, -3.5, 1.75, -1.75, 3.5];
+  for (let i = 0; i < 10; i++) {
+    const lane = coconutLanes[i];
     const section = i % 5;
     const z0 = section * 21 + 7;
-    const start = (hash(seed, i, 17) / 0xffffffff) * 4.8;
-    const collider = add(course, { kind: 'sphere', r: 0.68 }, 'coconut', lane, section * 3.4 + 2, z0 + 8, {
+    const start = (hash(seed, i, 17) / 0xffffffff) * 5;
+    const collider = add(course, { kind: 'sphere', r: 0.5 }, 'coconut', lane, section * 3.4 + 0.5, z0 + 8, {
       bounce: 10, on: false,
       at: (t, out) => {
-        const cycle = (t + start) % 6.5;
-        const active = cycle < 3.5;
+        const cycle = (t + start) % 5;
+        const active = cycle < 1.8;
         collider.on = active;
-        const down = Math.max(0, cycle - 0.25) * 4.7;
-        setPose(out, lane, section * 3.4 + 2 + Math.sin(cycle * 2) * 0.3, z0 + 13 - down);
+        const down = Math.max(0, cycle - 0.3) * 6;
+        setPose(out, lane, section * 3.4 + 0.5 + Math.sin(cycle * 2) * 0.2, z0 + 13 - down);
       },
     });
   }
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 7; i++) {
     const z = 28 + i * 20;
-    const y = Math.floor(z / 21) * 3.4 + 2.4;
-    add(course, { kind: 'box', hx: 3.5, hy: 0.2, hz: 0.38 }, 'frond', 0, y, z, {
-      bounce: 11,
-      at: (t, out) => setPose(out, 0, y, z, Math.sin(t * 1.1 + i) * 0.65, Math.sin(t * 1.7 + i) * 0.2),
+    const y = Math.floor(z / 21) * 3.4 + 0.75;
+    add(course, { kind: 'box', hx: 8, hy: 0.2, hz: 0.38 }, 'frond', 0, y, z, {
+      bounce: 8,
+      at: (t, out) => setPose(out, 0, y, z, Math.sin(t * 1.5 + i) * 0.45, Math.sin(t * 1.4 + i) * 0.12),
     });
   }
   course.zones.push({ kind: 'finish', x: 0, y: 20, z: 126, hx: 8, hy: 3, hz: 1.7 });
@@ -220,7 +236,8 @@ function makePalm(seed: number): Course {
   course.path = Array.from({ length: 16 }, (_, i) => {
     const z = i * 8;
     const y = z * 0.16;
-    return { x: 0, y, z, r: 3.2, lane: 4.7, ...(i % 3 === 2 ? { jump: true } : {}) };
+    const section = Math.min(5, Math.floor(z / 21));
+    return { x: 0, y, z, r: 3.2, lane: section === 2 || section === 4 ? 1.2 : 1.4, ...(i % 3 === 2 ? { jump: true } : {}) };
   });
   course.path.push({ x: 0, y: 20, z: 124, r: 2.5, lane: 4 });
   campusDecor(course, 128, 'palm');
@@ -230,7 +247,7 @@ function makePalm(seed: number): Course {
 function makeTiles(seed: number): Course {
   const course = buildBase('tiles', seed, 'survival', 90);
   course.killY = -22;
-  course.palette = palette(0x79a975, 0xa8d7ef, 0xf3e8dc, 0xc6dbd5);
+  course.palette = palette(0x5d8747, 0x47718e, 0xb9ad9b, 0xb9ad9b);
   const rings = [5, 4, 4];
   for (let layer = 0; layer < 3; layer++) {
     const ring = rings[layer];
@@ -273,26 +290,27 @@ function makeHoover(seed: number): Course {
   const course = buildBase('hoover', seed, 'final', 150);
   course.killY = -7;
   course.startYaw = -2.4;
-  course.palette = palette(0x82ad78, 0x87c4ec, 0xffe6c5, 0xb6d4d3);
+  course.palette = palette(0x5d8747, 0x47718e, 0xb9ad9b, 0xb9ad9b);
   add(course, { kind: 'cyl', r: 2.1, hy: 20 }, 'sand', 0, 18, 0, { tint: 0xffd5a3 });
   add(course, { kind: 'box', hx: 5.5, hy: 0.45, hz: 6.5 }, 'sand', 0, -0.3, 0, { tint: 0xe8d5b7 });
   const nodes: Waypoint[] = [];
   const platformLevels = 23;
-  const checkpointLevels = new Set([0, 6, 12, 18]);
-  const platformColors = [0xb8daf1, 0xf5cbd4, 0xf4dfaa, 0xc2dfc6, 0xd6d0f0];
+  const checkpointLevels = new Set([8, 16]);
+  const platformColors = [0xb99c64, 0xa54a3d, 0x667a6c, 0x7597a7, 0xc1a978];
+  course.zones.push({ kind: 'checkpoint', index: 0, x: 0, y: 0.8, z: 0, hx: 4.5, hy: 1.8, hz: 4.5, spawn: { x: 0, y: 0.3, z: 0 } });
   for (let i = 1; i <= platformLevels; i++) {
     const angle = i * 0.47;
-    const x = Math.cos(angle) * 4.3;
-    const z = Math.sin(angle) * 4.3;
+    const x = Math.cos(angle) * 5;
+    const z = Math.sin(angle) * 5;
     const y = i * 1.65;
-    const at = i % 3 === 0;
-    add(course, { kind: 'box', hx: 2.8, hy: 0.32, hz: 2.8 }, 'pad', x, y, z, {
+    const at = i % 2 === 0;
+    add(course, { kind: 'box', hx: 2.4, hy: 0.32, hz: 2.4 }, 'pad', x, y, z, {
       spring: i % 5 === 0 ? 12 : undefined,
       tint: platformColors[(i - 1) % platformColors.length],
       at: at ? (t, out) => setPose(out, x + Math.sin(t * 0.7 + i) * 0.8, y, z + Math.cos(t * 0.65 + i) * 0.8, t * 0.15) : undefined,
     });
     nodes.push({ x, y: y + 0.5, z, r: 2.6, jump: true, dive: i % 4 === 0, lane: 1.8 });
-    if (i % 7 === 0) {
+    if (i % 5 === 0) {
       add(course, { kind: 'box', hx: 4.4, hy: 0.18, hz: 0.32 }, 'bar', 0, y + 1.5, 0, {
         bounce: 13,
         at: (t, out) => setPose(out, 0, y + 1.5, 0, t * (i % 2 ? 1.4 : -1.2)),
@@ -359,6 +377,19 @@ export function progressOf(course: Course, x: number, y: number, z: number): num
   return total > 0 ? Math.max(0, Math.min(1, bestAlong / total)) : 0;
 }
 
+export function goalOf(course: Course): { x: number; y: number; z: number; label: 'finish' | 'crown' } | null {
+  if (course.id === 'tiles') return null;
+  const label = course.id === 'hoover' ? 'crown' : 'finish';
+  const zone = course.zones.find((item) => item.kind === (label === 'crown' ? 'crown' : 'finish'));
+  return zone ? { x: zone.x, y: zone.y, z: zone.z, label } : null;
+}
+
+export function goalDistance(course: Course, _x: number, y: number, z: number): number {
+  const goal = goalOf(course);
+  if (!goal) return 0;
+  return Math.max(0, course.id === 'hoover' ? goal.y - y : goal.z - z);
+}
+
 export function respawnPoint(course: Course, checkpointIndex: number, slot: number): Vec3 {
   const zone = course.zones.find((item) => item.kind === 'checkpoint' && item.index === checkpointIndex);
   const base = zone?.spawn ?? course.spawns[0] ?? { x: 0, y: 0, z: 0 };
@@ -382,7 +413,7 @@ export function applyTouch(course: Course, id: number, touchedAt: number): boole
   if (!collider?.tile || !Number.isFinite(touchedAt)) return false;
   const tile = collider.tile;
   if (tile.touchedAt === null || touchedAt < tile.touchedAt) tile.touchedAt = touchedAt;
-  const fallAt = tile.touchedAt + 0.85;
+  const fallAt = tile.touchedAt + 0.55;
   if (tile.fallAt === null || fallAt < tile.fallAt) tile.fallAt = fallAt;
   return true;
 }
@@ -394,7 +425,7 @@ export function tileFall(course: Course, id: number, at: number): boolean {
   const collider = course.colliders.find((item) => item.id === id && item.tile);
   if (!collider?.tile || !Number.isFinite(at)) return false;
   const tile = collider.tile;
-  if (tile.touchedAt === null || at < tile.touchedAt + 0.85) tile.touchedAt = Math.max(0, at - 0.85);
+  if (tile.touchedAt === null || at < tile.touchedAt + 0.55) tile.touchedAt = Math.max(0, at - 0.55);
   if (tile.fallAt === null || at < tile.fallAt) tile.fallAt = at;
   return true;
 }

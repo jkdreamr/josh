@@ -19,7 +19,7 @@ export function botSkill(seed: number, i: number): number {
   const random = mulberry32(hash(seed, i, 0x51f15e));
   const roll = random();
   const spread = roll < 0.18 ? random() * 0.22 : roll > 0.84 ? 0.78 + random() * 0.22 : 0.26 + random() * 0.48;
-  return Math.round((0.3 + spread * 0.65) * 1000) / 1000;
+  return Math.round((0.78 + spread * 0.22) * 1000) / 1000;
 }
 
 export function offlineEntrants(field: number, seed: number, you = 'you'): Entrant[] {

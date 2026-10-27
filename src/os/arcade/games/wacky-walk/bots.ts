@@ -1,6 +1,7 @@
 import { hash, mulberry32 } from './rng.ts';
 import { progressOf } from './courses.ts';
-import type { Body, Course, Input, Waypoint } from './types.ts';
+import { capsuleOverlapsPose, groundBelow, HEIGHT, RUN_SPEED } from './physics.ts';
+import type { Body, Course, Input, Pose, Waypoint } from './types.ts';
 
 export type Brain = {
   id: number;
@@ -22,6 +23,93 @@ export type Brain = {
 
 type Claim = { owner: number; until: number };
 const tileClaims = new WeakMap<Course, Map<number, Claim>>();
+type HazardPrediction = { hitAt: number; low: boolean; sideStep: number };
+const hazardPose: Pose = { x: 0, y: 0, z: 0, m: [1, 0, 0, 0, 1, 0, 0, 0, 1] };
+const hazardResult: HazardPrediction = { hitAt: 0, low: false, sideStep: 0 };
+const coconutEscapeLanes = [-3.5, -1.75, 1.75, 3.5] as const;
+const LOW_HAZARD_HEIGHT = 1.25;
+
+function colliderRadius(shape: Course['colliders'][number]['shape']): number {
+  if (shape.kind === 'sphere') return shape.r;
+  if (shape.kind === 'cyl') return Math.hypot(shape.r, shape.hy);
+  return Math.hypot(shape.hx, shape.hy, shape.hz);
+}
+
+function hazardVerticalExtent(shape: Course['colliders'][number]['shape'], pose: Pose): number {
+  const m = pose.m;
+  if (shape.kind === 'sphere') return shape.r;
+  if (shape.kind === 'cyl') return Math.abs(m[4]) * shape.hy + Math.hypot(m[3], m[5]) * shape.r;
+  return Math.abs(m[3]) * shape.hx + Math.abs(m[4]) * shape.hy + Math.abs(m[5]) * shape.hz;
+}
+
+export function hazardAhead(
+  course: Course,
+  body: Body,
+  dirX: number,
+  dirZ: number,
+  t: number,
+  horizon = 0.9,
+  pose = hazardPose,
+  result = hazardResult,
+): HazardPrediction | null {
+  const directionLength = Math.hypot(dirX, dirZ);
+  if (directionLength < 0.001) {
+    const speed = Math.hypot(body.vx, body.vz);
+    dirX = speed > 0.05 ? body.vx / speed : Math.sin(body.yaw);
+    dirZ = speed > 0.05 ? body.vz / speed : Math.cos(body.yaw);
+  } else {
+    dirX /= directionLength;
+    dirZ /= directionLength;
+  }
+  const samples = Math.min(12, Math.max(1, Math.ceil(horizon / 0.08)));
+  const sampleStep = horizon / samples;
+  let earliest = Infinity;
+  result.sideStep = 0;
+  for (const collider of course.colliders) {
+    if (!collider.at || collider.bounce === undefined) continue;
+    const bound = colliderRadius(collider.shape);
+    const dx = collider.pose.x - body.x, dz = collider.pose.z - body.z;
+    const along = dx * dirX + dz * dirZ;
+    const side = Math.abs(dx * dirZ - dz * dirX);
+    if (along < -bound || along > 7 + bound || side > 2.2 + bound) continue;
+    const wasOn = collider.on;
+    for (let i = 1; i <= samples; i++) {
+      const hitAt = sampleStep * i;
+      const active = (collider.at(t + hitAt, pose), collider.on);
+      collider.on = wasOn;
+      if (!active) continue;
+      const x = body.x + dirX * RUN_SPEED * hitAt;
+      const z = body.z + dirZ * RUN_SPEED * hitAt;
+      if (!capsuleOverlapsPose(x, body.y, z, collider.shape, pose, 0.15)) continue;
+      const extentY = hazardVerticalExtent(collider.shape, pose);
+      const top = pose.y + extentY;
+      const bottom = pose.y - extentY;
+      if (bottom > body.y + HEIGHT + 0.05) continue;
+      if (hitAt < earliest) {
+        const groundY = groundBelow(course, pose.x, top + 0.25, pose.z, 30, collider.id);
+        earliest = hitAt;
+        result.hitAt = hitAt;
+        result.low = top - (groundY ?? body.y) <= LOW_HAZARD_HEIGHT;
+        if (collider.look === 'coconut') {
+          let nearestLane = 0;
+          let nearestDistance = Infinity;
+          for (const lane of coconutEscapeLanes) {
+            if (capsuleOverlapsPose(lane, body.y, z, collider.shape, pose, 0.15)) continue;
+            const distance = Math.abs(lane - x);
+            if (distance < nearestDistance) {
+              nearestDistance = distance;
+              nearestLane = lane;
+            }
+          }
+          result.sideStep = nearestLane === 0 && nearestDistance === Infinity ? 0 : Math.sign(nearestLane - x);
+        }
+      }
+      break;
+    }
+    collider.on = wasOn;
+  }
+  return earliest < Infinity ? result : null;
+}
 
 export function createBrain(id: number, skill: number, seed: number): Brain {
   const random = mulberry32(hash(seed, id, 0x77ac));
@@ -118,7 +206,7 @@ export function thinkBot(brain: Brain, body: Body, course: Course, t: number, dt
   brain.wanderT -= dt;
   if (brain.courseId !== course.id) resetBrain(brain, course);
   let targetX = body.x, targetZ = body.z, jump = false, dive = false;
-  const moveDirection = direction(body.vx, body.vz);
+  let waitingForSafeWindow = false;
 
   if (course.kind === 'survival') {
     const current = course.colliders[body.ground];
@@ -143,13 +231,14 @@ export function thinkBot(brain: Brain, body: Body, course: Course, t: number, dt
   } else {
     const node = routeTarget(brain, body, course, t);
     if (node) {
+      waitingForSafeWindow = !!node.waitFor && !node.waitFor(t);
       const lane = node.lane ?? 2;
       brain.lane = Math.max(-lane, Math.min(lane, brain.lane));
-      targetX = node.x + brain.lane + brain.wander;
+      targetX = node.x + Math.max(-lane, Math.min(lane, brain.lane + brain.wander));
       targetZ = node.z;
       const distance = Math.hypot(targetX - body.x, targetZ - body.z);
       const timingError = (brain.random() - 0.5) * (1 - brain.skill) * 1.2;
-      if (node.jump && distance < 5.5 + timingError && distance > 1 && brain.jumpCooldown <= 0 &&
+      if (node.jump && distance < (node.jumpDistance ?? 5.5) + timingError && distance > 1 && brain.jumpCooldown <= 0 &&
           (body.ground >= 0 || body.coyote > 0)) {
         jump = brain.random() > (1 - brain.skill) * 0.48;
         if (jump) brain.jumpCooldown = 0.65 + brain.random() * 0.42;
@@ -169,30 +258,39 @@ export function thinkBot(brain: Brain, body: Body, course: Course, t: number, dt
   }
   const toward = direction(targetX - body.x, targetZ - body.z);
   let mx = toward.x, mz = toward.z;
-
-  // Read the deterministic pose at the next short horizon before committing to a jump.
-  let nearestHazard = Infinity, hazardDx = 0, hazardDz = 0;
-  for (const collider of course.colliders) {
-    if (!collider.on || !collider.bounce) continue;
-    const scale = 0.42 / (1 / 60);
-    const futureX = collider.pose.x + (collider.pose.x - collider.prev.x) * scale;
-    const futureZ = collider.pose.z + (collider.pose.z - collider.prev.z) * scale;
-    const dx = futureX - body.x, dz = futureZ - body.z;
-    const along = dx * moveDirection.x + dz * moveDirection.z;
-    const side = Math.abs(dx * moveDirection.z - dz * moveDirection.x);
-    const threshold = 2.1 + (collider.shape.kind === 'box' ? collider.shape.hx * 0.35 : 0.7);
-    if (along > 0 && along < nearestHazard && side < threshold) {
-      nearestHazard = along;
-      hazardDx = dx; hazardDz = dz;
-    }
+  if (waitingForSafeWindow) {
+    mx *= 0.08;
+    mz *= 0.08;
+    jump = false;
+    dive = false;
   }
-  if (nearestHazard < 4.5 && brain.skill > 0.42 && brain.jumpCooldown <= 0 &&
-      (body.ground >= 0 || body.coyote > 0)) {
-    jump = brain.random() < 0.45 + brain.skill * 0.5;
-    if (jump) brain.jumpCooldown = 0.75;
-    if (brain.skill < 0.65 && brain.random() < 0.25) {
-      const side = direction(-hazardDz, hazardDx);
-      mx = side.x; mz = side.z;
+
+  const intendedDirection = direction(mx, mz);
+  const prediction = hazardAhead(course, body, intendedDirection.x, intendedDirection.z, t);
+  if (prediction && brain.random() >= (1 - brain.skill) * 0.3) {
+    const reactionDelay = 0.04 + (1 - brain.skill) * 0.28;
+    const timingError = (brain.random() - 0.5) * (1 - brain.skill) * 0.28;
+    const reactionAt = prediction.hitAt - reactionDelay + timingError;
+    let jumped = false;
+    if (prediction.low && reactionAt >= 0.2 && reactionAt <= 0.4 &&
+        brain.jumpCooldown <= 0 && (body.ground >= 0 || body.coyote > 0)) {
+      if (brain.random() > (1 - brain.skill) * 0.5) {
+        jump = true;
+        brain.jumpCooldown = 0.72;
+        jumped = true;
+      }
+    }
+    if (prediction.sideStep && reactionAt > 0 && !jumped) {
+      const escape = direction(prediction.sideStep * 1.8, intendedDirection.z * 1.2);
+      mx = escape.x;
+      mz = escape.z;
+      jump = false;
+      dive = false;
+    } else if (!prediction.low && reactionAt > 0 && !jumped) {
+      mx = prediction.hitAt < 0.2 ? -intendedDirection.x * 0.12 : 0;
+      mz = prediction.hitAt < 0.2 ? -intendedDirection.z * 0.12 : 0;
+      jump = false;
+      dive = false;
     }
   }
   if (brain.hesitation > 0 && brain.random() < (1 - brain.skill) * 0.25) {

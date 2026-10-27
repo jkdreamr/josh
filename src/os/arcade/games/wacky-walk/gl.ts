@@ -15,7 +15,7 @@ export type GL = {
   dispose: () => void;
 };
 
-export function createGL(THREE: Three, host: HTMLElement, opts: { alpha?: boolean; maxDpr?: number } = {}): GL | null {
+export function createGL(THREE: Three, host: HTMLElement, opts: { alpha?: boolean; maxDpr?: number; touch?: boolean } = {}): GL | null {
   let renderer: T.WebGLRenderer;
   try {
     renderer = new THREE.WebGLRenderer({ antialias: true, alpha: !!opts.alpha, powerPreference: 'high-performance' });
@@ -23,6 +23,11 @@ export function createGL(THREE: Three, host: HTMLElement, opts: { alpha?: boolea
     return null;
   }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, opts.maxDpr ?? 2));
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.08;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = opts.touch ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
   const canvas = renderer.domElement;
   canvas.style.display = 'block';
   canvas.style.width = '100%';

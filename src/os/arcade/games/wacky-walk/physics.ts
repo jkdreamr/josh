@@ -12,7 +12,7 @@ export function cameraRelative(right: number, forward: number, yaw: number): { m
   return { mx: -right * cos + forward * sin, mz: right * sin + forward * cos };
 }
 
-const RUN_SPEED = 7.2;
+export const RUN_SPEED = 7.2;
 const GROUND_ACCEL = 40;
 const AIR_ACCEL = 14;
 const GRAVITY = 28;
@@ -182,6 +182,34 @@ function contactAt(body: Body, collider: Collider): Contact | null {
     nearest = { distance: sample.distance, normal: worldNormal(collider.pose, sample.normal), collider };
   }
   return nearest && nearest.distance <= RADIUS + 0.01 ? nearest : null;
+}
+
+export function capsuleOverlapsPose(x: number, y: number, z: number, shape: Shape, pose: Pose, inflate = 0): boolean {
+  const radius = RADIUS + inflate;
+  const bound = shapeBound(shape);
+  const dx = x - pose.x, dy = y + HEIGHT / 2 - pose.y, dz = z - pose.z;
+  if (dx * dx + dy * dy + dz * dz > (bound + HEIGHT / 2 + radius) ** 2) return false;
+  const m = pose.m;
+  for (let i = 0; i < 7; i++) {
+    const wx = x, wy = y + RADIUS + (HEIGHT - 2 * RADIUS) * i / 6, wz = z;
+    const px = wx - pose.x, py = wy - pose.y, pz = wz - pose.z;
+    const lx = m[0] * px + m[3] * py + m[6] * pz;
+    const ly = m[1] * px + m[4] * py + m[7] * pz;
+    const lz = m[2] * px + m[5] * py + m[8] * pz;
+    if (shape.kind === 'sphere') {
+      if (Math.hypot(lx, ly, lz) <= shape.r + radius) return true;
+    } else if (shape.kind === 'cyl') {
+      const outsideR = Math.max(0, Math.hypot(lx, lz) - shape.r);
+      const outsideY = Math.max(0, Math.abs(ly) - shape.hy);
+      if (Math.hypot(outsideR, outsideY) <= radius) return true;
+    } else {
+      const ox = Math.max(Math.abs(lx) - shape.hx, 0);
+      const oy = Math.max(Math.abs(ly) - shape.hy, 0);
+      const oz = Math.max(Math.abs(lz) - shape.hz, 0);
+      if (Math.hypot(ox, oy, oz) <= radius) return true;
+    }
+  }
+  return false;
 }
 
 function collide(body: Body, course: Course, wasGrounded: boolean, t: number): void {
@@ -440,19 +468,19 @@ function rayShape(from: Vec3, to: Vec3, pose: Pose, shape: Shape): number | null
 }
 
 /** camera raycasts include moving tiles but skip hidden and other moving colliders. */
-export function rayCast(course: Course, from: Vec3, to: Vec3, camera = false): number {
+export function rayCast(course: Course, from: Vec3, to: Vec3, camera = false, ignoreId = -1): number {
   let best = 1;
   let hit = false;
   for (const collider of course.colliders) {
-    if (!collider.on || (camera && (collider.look === 'hidden' || (collider.at && !collider.tile)))) continue;
+    if (collider.id === ignoreId || !collider.on || (camera && (collider.look === 'hidden' || (collider.at && !collider.tile)))) continue;
     const fraction = rayShape(from, to, collider.pose, collider.shape);
     if (fraction !== null && fraction < best) { best = fraction; hit = true; }
   }
   return hit ? best : 1;
 }
 
-export function groundBelow(course: Course, x: number, y: number, z: number, maxDrop = 30): number | null {
+export function groundBelow(course: Course, x: number, y: number, z: number, maxDrop = 30, ignoreId = -1): number | null {
   const endY = y - maxDrop;
-  const fraction = rayCast(course, { x, y, z }, { x, y: endY, z });
+  const fraction = rayCast(course, { x, y, z }, { x, y: endY, z }, false, ignoreId);
   return fraction >= 1 ? null : y + (endY - y) * fraction;
 }
