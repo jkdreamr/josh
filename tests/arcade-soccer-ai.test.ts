@@ -53,6 +53,48 @@ test('hard CPU wins more than it loses across seeded four-minute halves', () => 
   assert.ok(wins > losses + 2, `hard wins ${wins}, loses ${losses}`);
 });
 
+test('CPU teams hold shape without sustained teammate clumping', () => {
+  let nearestDistanceTotal = 0;
+  let playerSamples = 0;
+  let clumpedSamples = 0;
+  let samples = 0;
+  for (const seed of [17, 47, 89]) {
+    let tick = 0;
+    simulateCpuMatch(seed, 'normal', 'normal', 120, (world) => {
+      tick++;
+      if (world.phase !== 'live' || tick % 30 !== 0) return;
+      samples++;
+      for (const team of [0, 1] as const) {
+        const players = world.players.filter((player) => player.team === team && player.slot !== 'GK');
+        for (const player of players) {
+          const nearest = Math.min(...players.filter((mate) => mate.id !== player.id).map((mate) => distance(player, mate)));
+          nearestDistanceTotal += nearest;
+          playerSamples++;
+        }
+        let grouped = false;
+        for (let a = 0; a < players.length && !grouped; a++) {
+          for (let b = a + 1; b < players.length && !grouped; b++) {
+            for (let c = b + 1; c < players.length; c++) {
+              if (distance(players[a]!, players[b]!) < 4
+                && distance(players[a]!, players[c]!) < 4
+                && distance(players[b]!, players[c]!) < 4) {
+                grouped = true;
+                break;
+              }
+            }
+          }
+        }
+        if (grouped) clumpedSamples++;
+      }
+    });
+  }
+  assert.ok(samples > 0, 'expected live-phase samples');
+  const meanNearestDistance = nearestDistanceTotal / playerSamples;
+  const clumpFraction = clumpedSamples / (samples * 2);
+  assert.ok(meanNearestDistance >= 4, `mean nearest teammate distance: ${meanNearestDistance.toFixed(2)}m`);
+  assert.ok(clumpFraction < 0.1, `three-player clump fraction: ${(clumpFraction * 100).toFixed(1)}%`);
+});
+
 test('CPU carrier completes a progressive pass to a teammate', () => {
   const g = createWorld(47);
   g.phase = 'live';
