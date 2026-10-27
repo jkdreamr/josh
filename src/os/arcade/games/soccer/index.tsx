@@ -1164,56 +1164,6 @@ function PhoneController() {
               {faceHint[key] && <em>{faceHint[key]}</em>}
             </button>
           ))}
-          {/* 
-    <div className="g-soccer-phone-controller">
-      <header>
-        <b>{teamOf(phonePlayer) === 1 ? 'NORTHSHORE' : 'BAY CITY'}</b>
-        <strong>{score[0]} · {score[1]}</strong>
-        <button type="button" onClick={() => setShowGame(true)}>Show game</button>
-      </header>
-      <div className="g-soccer-phone-charge" role="progressbar" aria-label={`${chargeName} power`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(chargeProgress * 100)}>
-        <span>{chargingAction ? `${chargeName} · ${Math.round(chargeProgress * 100)}%` : 'HOLD AN ACTION TO CHARGE'}</span>
-        <PowerMeter power={chargeProgress} />
-      </div>
-      <Stick movement={movement} />
-      <div className="g-soccer-phone-buttons">
-        <div className="g-soccer-phone-utilities">
-          <button type="button" className="g-soccer-phone-action" onPointerDown={(event) => {
-            event.preventDefault(); send(attacking ? 'skill' : null, attacking, 0.1, !attacking);
-          }}>LB · {attacking ? 'Skill' : 'Switch'}</button>
-          <button type="button" className="g-soccer-phone-action" onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); shoulder.current = true; send(); }} onPointerUp={() => { shoulder.current = false; send(); }} onPointerCancel={() => { shoulder.current = false; send(); }}>RB · {attacking ? 'Finesse' : 'Press'}</button>
-          <button type="button" className="g-soccer-phone-action is-sprint" onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); sprint.current = true; send(); }} onPointerUp={(event) => { event.preventDefault(); sprint.current = false; send(); }} onPointerCancel={() => { sprint.current = false; send(); }}>Sprint (hold)</button>
-        </div>
-        <div className="g-soccer-phone-diamond">
-          {button('lob', 'X', attacking ? 'Lob·Cross' : 'Slide', 'is-x')}
-          {button('through', 'Y', 'Through', 'is-y')}
-          {button('pass', 'A', attacking ? 'Pass' : 'Switch · hold Contain', 'is-a')}
-          {button('shoot', 'B', attacking ? 'Shoot' : 'Tackle', 'is-b')}
-    <div className="g-soccer-phone-controller">
-      <header>
-        <b>{teamOf(phonePlayer) === 1 ? 'NORTHSHORE' : 'BAY CITY'}</b>
-        <strong>{score[0]} · {score[1]}</strong>
-        <button type="button" onClick={() => setShowGame(true)}>Show game</button>
-      </header>
-      <div className="g-soccer-phone-charge" role="progressbar" aria-label={`${chargeName} power`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(chargeProgress * 100)}>
-        <span>{chargingAction ? `${chargeName} · ${Math.round(chargeProgress * 100)}%` : 'HOLD AN ACTION TO CHARGE'}</span>
-        <PowerMeter power={chargeProgress} />
-      </div>
-      <Stick movement={movement} onChange={sendStickChange} />
-      <div className="g-soccer-phone-buttons">
-        <div className="g-soccer-phone-utilities">
-          <button type="button" className="g-soccer-phone-action" onPointerDown={(event) => {
-            event.preventDefault(); send(attacking ? 'skill' : null, attacking, 0.1, !attacking, true);
-          }}>LB · {attacking ? 'Skill' : 'Switch'}</button>
-          <button type="button" className="g-soccer-phone-action" onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); shoulder.current = true; send(); }} onPointerUp={() => { shoulder.current = false; send(); }} onPointerCancel={() => { shoulder.current = false; send(); }}>RB · {attacking ? 'Finesse' : 'Press'}</button>
-          <button type="button" className="g-soccer-phone-action is-sprint" onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); sprint.current = true; send(); }} onPointerUp={(event) => { event.preventDefault(); sprint.current = false; send(); }} onPointerCancel={() => { sprint.current = false; send(); }}>Sprint (hold)</button>
-        </div>
-        <div className="g-soccer-phone-diamond">
-          {button('lob', 'X', attacking ? 'Lob·Cross' : 'Slide', 'is-x')}
-          {button('through', 'Y', 'Through', 'is-y')}
-          {button('pass', 'A', attacking ? 'Pass' : 'Switch · hold Contain', 'is-a')}
-          {button('shoot', 'B', attacking ? 'Shoot' : 'Tackle', 'is-b')}
-          */}
         </div>
       </div>
       <div className="g-soccer-pad-shoulders is-left">
