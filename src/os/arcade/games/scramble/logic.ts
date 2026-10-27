@@ -4197,13 +4197,14 @@ export function concealed(m: Match, f: Fighter, viewer: Fighter | undefined) {
 /**
  * How long a screen keeps showing an egg once something says to hide it (a bush, a cornfield, flour, a roof, a
  * ghillie suit, the wall beside the doorway we peek through), and keeps it hidden once that says to show it, in
- * seconds: an egg on the edge of one, or a step either side of where it starts to show, never blinks out or in. One
- * that has just fired shows at once.
+ * seconds: an egg on the edge of one, or a step either side of where it starts to show, never blinks out or in, and
+ * one running through a bush stays in sight. Once hidden it stays gone a little while (`gone`), so it never blinks out
+ * for a moment either; one that fires shows at once.
  */
-export const SEEN_HOLD = { hide: 0.4, show: 0.15 };
+export const SEEN_HOLD = { hide: 0.5, show: 0.15, gone: 0.45 };
 
-/** What a screen shows of an egg: `on` while it's drawn, and how long whatever hides it has said otherwise (`t`). */
-export type Seen = { on: boolean; t: number };
+/** What a screen shows of an egg: `on` while it's drawn, how long that has been so (`since`), and how long whatever hides it has said otherwise (`t`). */
+export type Seen = { on: boolean; t: number; since: number };
 
 /**
  * One frame (`dt` seconds) of what a screen shows of an egg that whatever hides it says to `hide` or not (see
@@ -4211,10 +4212,12 @@ export type Seen = { on: boolean; t: number };
  * Whether it's drawn.
  */
 export function seenStep(s: Seen, hide: boolean, dt: number, now = false) {
+  s.since += dt;
   if (s.on !== hide) s.t = 0;
-  else if (now || (s.t += dt) >= (hide ? SEEN_HOLD.hide : SEEN_HOLD.show)) {
+  else if (now || ((s.t += dt) >= (hide ? SEEN_HOLD.hide : SEEN_HOLD.show) && (hide || s.since >= SEEN_HOLD.gone))) {
     s.on = !hide;
     s.t = 0;
+    s.since = 0;
   }
   return s.on;
 }
