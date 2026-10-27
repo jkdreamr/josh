@@ -1,10 +1,10 @@
-import { createWorld, distance, FIELD, FORMATION, findReceiver, groundPassPower, isCross, movePlayer, nearestCarrier, restartTaker, shotAim, shotError, shotOverchargeThreshold, shotSpeed, STEP, stepWorld, tackleWindow, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
+import { createWorld, distance, FIELD, FORMATION, KEEPER_REACH, findReceiver, groundPassPower, isCross, movePlayer, nearestCarrier, restartTaker, shotAim, shotError, shotOverchargeThreshold, shotSpeed, STEP, stepWorld, tackleWindow, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
 
 export const LEVEL_NAMES = ['easy', 'normal', 'hard'] as const;
 export type Level = (typeof LEVEL_NAMES)[number];
 const reaction = { easy: 0.6, normal: 0.3, hard: 0.18 } as const;
 const keeperReaction = { easy: 0.6, normal: 0.42, hard: 0.2 } as const;
-const keeperReadDelay = { easy: 0.7, normal: 0.36, hard: 0.16 } as const;
+const keeperReadDelay = { easy: 0.5, normal: 0.24, hard: 0.16 } as const;
 const keeperReadNoise = { easy: 0.28, normal: 0.08, hard: 0.01 } as const;
 const decisionInterval = { easy: 0.7, normal: 0.3, hard: 0.24 } as const;
 const noise = { easy: 0.65, normal: 0.2, hard: 0.03 } as const;
@@ -114,7 +114,24 @@ export function keeperTarget(world: World, keeper: Player, target = { x: 0, z: 0
     const prediction = flight * 0.13;
     target.z = clamp(target.z * (1 - prediction) + (world.ball.z + world.ball.vz * flight) * prediction, -FIELD.goalWidth / 2, FIELD.goalWidth / 2);
   }
+  if (Math.hypot(world.ball.vx, world.ball.vy, world.ball.vz) < 6 && world.ball.y < 1.5
+    && ballDepth < FIELD.penaltyDepth && Math.abs(world.ball.z) < FIELD.goalWidth / 2 + 1
+    && !nearestCarrier(world)) {
+    target.x = clamp(world.ball.x, goalX - FIELD.penaltyDepth, goalX + FIELD.penaltyDepth);
+    target.z = world.ball.z;
+  }
   return target;
+}
+
+export function keeperShotCoverage(world: World, keeper: Player, crossing: number, flight: number) {
+  const future = { ...keeper };
+  const delay = Math.round(keeperReadDelay.normal / STEP) * STEP;
+  const target = keeperTarget(world, future);
+  for (let time = 0; time < flight; time += STEP) {
+    const z = time >= delay ? clamp(crossing, -FIELD.goalWidth / 2, FIELD.goalWidth / 2) : target.z;
+    movePlayer(future, targetMove(future, target.x, z), false, false, Math.min(STEP, flight - time));
+  }
+  return { z: future.z, reach: flight >= delay + STEP ? KEEPER_REACH.dive : KEEPER_REACH.ready };
 }
 
 function readKeeperShot(world: World, keeper: Player, level: Level, tick: number, state: MatchState) {
@@ -163,7 +180,6 @@ export function cpuShotChoice(world: World, player: Player, level: Level, tick: 
   let safe: typeof best | undefined;
   for (const power of [0.65, 0.75, safePower]) {
     const flight = planeRange / shotSpeed(power);
-    const dive = clamp((flight - keeperReadDelay.normal + reaction.normal / 2) / reaction.normal, 0, 1);
     const targets = Array.from({ length: 25 }, (_, i) => (i / 12 - 1) * FIELD.goalWidth * 0.43);
     for (const sign of [-1, 1]) {
       let z = sign * FIELD.goalWidth * 0.43;
@@ -179,8 +195,10 @@ export function cpuShotChoice(world: World, player: Player, level: Level, tick: 
       const angle = Math.atan2(targetZ - world.ball.z, range);
       const a = angle - error / 2, b = angle + error / 2;
       const onTarget = overlap(a, b, low, high) / error;
-      const saved = (reach: number) => overlap(Math.max(a, low), Math.min(b, high), Math.atan2(keeperZ - reach - world.ball.z, planeRange), Math.atan2(keeperZ + reach - world.ball.z, planeRange)) / error;
-      const probability = onTarget - (keeper ? saved(1.1) * (1 - dive) + saved(2.4) * dive : 0);
+      const crossing = world.ball.z + planeRange * Math.tan(angle);
+      const coverage = keeper ? keeperShotCoverage(world, { ...keeper, z: keeperZ }, crossing, flight) : { z: 0, reach: 0 };
+      const saved = overlap(Math.max(a, low), Math.min(b, high), Math.atan2(coverage.z - coverage.reach - world.ball.z, planeRange), Math.atan2(coverage.z + coverage.reach - world.ball.z, planeRange)) / error;
+      const probability = onTarget - (keeper ? saved : 0);
       if (probability > best.probability + 1e-9 || Math.abs(probability - best.probability) <= 1e-9
         && (onTarget > best.onTarget + 1e-9 || Math.abs(onTarget - best.onTarget) <= 1e-9 && power > best.power)) {
         best = { targetZ, power, probability, onTarget };
@@ -213,7 +231,7 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
   const qualityNoise = Math.sin((tick + rosterIndex(world, player) * 31) * 0.37) * noise[level];
   const shotLane = laneClearance(world, player, { x: goalX, z: -Math.sign(player.z) * FIELD.goalWidth * 0.32 }, player.team, true);
   const goodAngle = Math.abs(player.z) < lateral(level === 'easy' ? 0.21 : 0.18) && Math.abs(player.z) / Math.max(3, Math.abs(goalX - player.x)) < 0.8;
-  const shootRange = level === 'easy' ? 18 : 12;
+  const shootRange = 18;
   if (goalDistance < shootRange && goodAngle && pressure > 1.5 + qualityNoise && shotLane > 0.18 + Math.abs(qualityNoise) * 0.3) {
     const choice = cpuShotChoice(world, player, level, tick, dt);
     return { move: { x: 0, z: 0 }, action: 'shoot', pressed: true,
@@ -328,10 +346,15 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
           continue;
         }
         readKeeperShot(world, p, level, tick, state);
+        const read = state.keeperReads.get(p.id);
         const reacts = tick % Math.round(keeperReaction[level] * 60) === 0;
-        if (reacts || !state.keeperTargets.has(p.id) || Math.abs(p.z) > FIELD.goalWidth / 2 + 1
+        if (read?.decided || reacts || !state.keeperTargets.has(p.id) || Math.abs(p.z) > FIELD.goalWidth / 2 + 1
           || Math.abs(p.x - ownGoal.x) > FIELD.penaltyDepth - 1) state.keeperTargets.set(p.id, keeperTarget(world, p));
         const target = state.keeperTargets.get(p.id)!;
+        if (read?.decided) {
+          const flight = (-dir * (FIELD.length / 2 - 1.5) - world.ball.x) / world.ball.vx;
+          target.z = clamp(world.ball.z + world.ball.vz * flight, -FIELD.goalWidth / 2, FIELD.goalWidth / 2);
+        }
         commands.set(p.id, { move: targetMove(p, target.x, target.z), sprint: false });
         continue;
       }

@@ -3,6 +3,7 @@ import { FIELD } from './field.ts';
 export { FIELD } from './field.ts';
 
 export const STEP = 1 / 60;
+export const KEEPER_REACH = { ready: 1.1, dive: 2.4 } as const;
 export const PLAYER_COUNT = 22;
 export const TEAM_SIZE = 11;
 export const CONTROL_SPEED = 14;
@@ -768,17 +769,27 @@ export function resolveBoundary(world: World) {
 export function resolveKeeperContact(world: World, previousX: number) {
   const ball = world.ball;
   for (const keeper of world.players.filter((p) => p.slot === 'GK')) {
+    if (world.carrierId === keeper.id || (keeper.touchCd ?? 0) > 0
+      || keeper.cooldown > 0 && (keeper.action === 'pass' || keeper.action === 'kick')) continue;
     const direction = teamDir(keeper.team, world.endsSwapped);
     const plane = -direction * (FIELD.length / 2 - 1.5);
     const crossed = direction > 0 ? previousX > plane && ball.x <= plane : previousX < plane && ball.x >= plane;
-    const reach = keeper.action === 'dive' ? 2.4 : 1.1;
-    if (!crossed || ball.y < 0 || ball.y > 2.55 || Math.abs(ball.z - keeper.z) > reach) continue;
     const speed = Math.hypot(ball.vx, ball.vy, ball.vz);
+    const reach = keeper.action === 'dive' ? KEEPER_REACH.dive : KEEPER_REACH.ready;
+    const depth = (ball.x + direction * FIELD.length / 2) * direction;
+    const nearby = speed < 17 && depth >= -0.11 && depth < FIELD.penaltyDepth
+      && Math.abs(ball.z) < FIELD.penaltyWidth / 2 && distance(keeper, ball) <= KEEPER_REACH.ready;
+    if ((!crossed && !nearby) || ball.y < 0 || ball.y > 2.55 || Math.abs(ball.z - keeper.z) > reach) continue;
     ball.x = plane + direction * 0.16;
     ball.z = clamp(ball.z, keeper.z - 2.4, keeper.z + 2.4);
     ball.inNet = false;
     if (speed < 17) {
+      ball.x = keeper.x + direction * 0.25;
+      ball.z = keeper.z;
       ball.y = 0.11; ball.vx = ball.vy = ball.vz = 0; ball.grounded = true;
+      keeper.touchCd = 0;
+      world.carrierId = keeper.id;
+      world.stealProtect = Math.max(world.stealProtect ?? 0, 0.35);
       keeper.action = 'catch';
       world.event = 'keeper claims it';
     } else {
