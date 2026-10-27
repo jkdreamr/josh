@@ -2026,8 +2026,7 @@
   background: rgba(255, 255, 255, 0.94);
   box-shadow: 0 3px 10px rgba(8, 10, 24, 0.3);
   pointer-events: none;
-  will-change: transform;
-  animation: g-scramble-bubble var(--life, 3.5s) linear both;
+  will-change: transform, opacity;
 }
 .g-scramble .g-scramble-bubble::after {
   content: '';
@@ -2067,18 +2066,6 @@
 }
 .g-scramble .g-scramble-bubble.is-call::after {
   border-top-color: var(--mate, #2ee6c9);
-}
-@keyframes g-scramble-bubble {
-  0% {
-    opacity: 0;
-  }
-  5%,
-  85% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-  }
 }
 @keyframes g-scramble-bubble-pop {
   0% {

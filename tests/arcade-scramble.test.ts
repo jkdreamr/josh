@@ -7453,6 +7453,37 @@ test('computer teammates answer a call: the nearest with some to spare brings wh
   assert.ok(near.ai!.followUntil > m.time && near.ai!.followUntil <= m.time + ASK_T);
 });
 
+test('a computer teammate asked for meds that runs into a fight on the way still brings them once it is over', () => {
+  const m = teamQuiet('duos', [0, 0, 1, 1], 'solo', ['player', 'bot', 'player', 'player']);
+  const [a, mate, foe, foe2] = m.fighters;
+  land(a, 0, 0);
+  land(mate, 12, 0);
+  land(foe, 24, 6);
+  land(foe2, -130, 130);
+  mate.items = { ...mate.items, medkit: 3 };
+  mate.guns = [{ w: 'rifle', r: 2, mag: 30 }, null];
+  mate.ammo.heavy = 90;
+  mate.slot = 0;
+  foe.hp = 100;
+  foe.shield = 100;
+  m.clock += EMOTE_SPAN;
+  a.input.emote = { k: 'meds', x: 0, z: 0 };
+  run(m, 0.1);
+  assert.equal(mate.ai!.askK, 'meds');
+  // (the ask nearly run out as the fight starts)
+  mate.ai!.askUntil = m.time + 0.5;
+  let fought = false;
+  const drops: LootItem[] = [];
+  for (let i = 0; i < 400 && drops.length < 2; i++)
+    run(m, 0.1, (es) => {
+      fought ||= mate.ai!.target === foe.id;
+      es.forEach((e) => e.t === 'drop' && e.item.by === mate.id && e.item.def.kind === 'use' && drops.push(e.item));
+    });
+  assert.ok(fought, 'it fought');
+  assert.equal(foe.phase, 'out');
+  assert.equal(drops.length, 2, 'and brought two medkits after');
+});
+
 test('a knocked egg asking its computer teammates for meds (or anything) gets them coming to pick it up, not a medkit it could not take', () => {
   const m = teamQuiet('duos', [0, 0, 1, 1], 'solo', ['player', 'bot', 'player', 'player']);
   const [a, mate, foe, foe2] = m.fighters;

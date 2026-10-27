@@ -1704,8 +1704,11 @@ function Play({ mode }: { mode: StageMode }) {
         if (el.style.visibility !== 'hidden') el.style.visibility = 'hidden';
         continue;
       }
-      // over its name tag, when that's up (clear of a teammate's ring round it)
+      // over its name tag, when that's up (clear of a teammate's ring round it), fading in and out on the game clock
+      // (a paused game keeps it up)
       el.style.visibility = '';
+      const age = m.clock - f.emoteAt;
+      el.style.opacity = calm ? '1' : Math.max(0, Math.min(1, age / 0.18, (EMOTE_T - age) / 0.5)).toFixed(2);
       el.style.transform = `translate(${at.x.toFixed(1)}px, ${(at.y - (shown.has(id) ? TAG_H + 12 : 4)).toFixed(1)}px) translate(-50%, -100%)`;
     }
     // hit marks: a quick X that grows a little and fades
@@ -2314,7 +2317,7 @@ function Play({ mode }: { mode: StageMode }) {
                 if (el) bubbles.current.set(fid, el);
               }}
               className={`g-scramble-bubble${call ? ' is-call' : ''}${side}`}
-              style={{ visibility: 'hidden', ['--life' as string]: `${EMOTE_T}s`, ['--mate' as string]: side === ' is-mate' ? mateColor(m, o) : undefined }}
+              style={{ visibility: 'hidden', ['--mate' as string]: side === ' is-mate' ? mateColor(m, o) : undefined }}
               role="status"
               aria-label={`${fid === m.me ? 'you' : (m.fighters[fid]?.name ?? '')}: ${emoteText(em, (a || null) as Ammo | null)}`}
             >

@@ -4318,6 +4318,8 @@ function think(m: Match, f: Fighter, dt: number) {
   ai.pingCool -= dt;
   ai.shareCool -= dt;
   ai.steps = -1;
+  // a fight on the way doesn't make it forget what a teammate asked it for
+  if (ai.askK && ai.target >= 0) ai.askUntil = Math.max(ai.askUntil, m.time + 10);
   // knocked down: call for help (once a knock), crawl to the team, never shoot
   if (f.down) {
     if (ai.cried !== f.downAt) {
