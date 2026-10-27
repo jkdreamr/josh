@@ -366,33 +366,49 @@ export function shotError(world: World, player: Player, target: Point, power: nu
   return finesse ? error * 0.6 : error;
 }
 
-export function separatePlayers(players: Player[], dt: number, carrier?: Player) {
+export function separatePlayers(players: Player[], dt: number, carrier?: Player, endsSwapped = false) {
   const strength = clamp(dt * 30, 0, 1);
   if (!strength) return;
-  for (let pass = 0; pass < 2; pass++) for (let i = 0; i < players.length; i++) {
-    const a = players[i]!;
-    for (let j = i + 1; j < players.length; j++) {
-      const b = players[j]!;
-      let dx = b.x - a.x, dz = b.z - a.z;
-      const gap = Math.hypot(dx, dz);
-      if (gap >= 0.7) continue;
-      if (gap < 1e-6) {
-        const angle = (a.id * 17 + b.id * 31) * 0.73;
-        dx = Math.sin(angle); dz = Math.cos(angle);
-      } else { dx /= gap; dz /= gap; }
-      if (carrier && a.team === b.team && a.team !== carrier.team && distance(a, carrier) < 3 && distance(b, carrier) < 3) {
-        const mx = (a.x + b.x) / 2 - carrier.x, mz = (a.z + b.z) / 2 - carrier.z;
-        const radius = Math.hypot(mx, mz);
-        if (radius > 1e-6) {
-          const sign = -mz * dx + mx * dz < 0 ? -1 : 1;
-          dx = -mz / radius * sign; dz = mx / radius * sign;
+  const ordered = [...players].sort((a, b) => a.id - b.id);
+  const pushes = new Float64Array(ordered.length * 2);
+  for (let pass = 0; pass < 2; pass++) {
+    pushes.fill(0);
+    for (let i = 0; i < ordered.length; i++) {
+      const a = ordered[i]!;
+      for (let j = i + 1; j < ordered.length; j++) {
+        const b = ordered[j]!;
+        let dx = b.x - a.x, dz = b.z - a.z;
+        const gap = Math.hypot(dx, dz);
+        if (gap >= 0.7) continue;
+        if (gap < 1e-6) {
+          const ai = a.id % TEAM_SIZE, bi = b.id % TEAM_SIZE;
+          if (ai === bi) { dx = teamDir(a.team, endsSwapped); dz = 0; }
+          else {
+            const sign = ai < bi ? 1 : -1;
+            const anchor = ai < bi ? a : b;
+            const angle = (Math.min(ai, bi) * 17 + Math.max(ai, bi) * 31) * 0.73;
+            dx = Math.sin(angle) * sign * teamDir(anchor.team, endsSwapped);
+            dz = Math.cos(angle) * sign;
+          }
+        } else { dx /= gap; dz /= gap; }
+        if (carrier && a.team === b.team && a.team !== carrier.team && distance(a, carrier) < 3 && distance(b, carrier) < 3) {
+          const mx = (a.x + b.x) / 2 - carrier.x, mz = (a.z + b.z) / 2 - carrier.z;
+          const radius = Math.hypot(mx, mz);
+          if (radius > 1e-6) {
+            const cross = -mz * dx + mx * dz;
+            const sign = Math.abs(cross) > 1e-12 ? Math.sign(cross) : teamDir(a.team, endsSwapped);
+            dx = -mz / radius * sign; dz = mx / radius * sign;
+          }
         }
+        const push = (0.7 - gap) * strength / 2;
+        pushes[i * 2] -= dx * push; pushes[i * 2 + 1] -= dz * push;
+        pushes[j * 2] += dx * push; pushes[j * 2 + 1] += dz * push;
       }
-      const push = (0.7 - gap) * strength / 2;
-      a.x = clamp(a.x - dx * push, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3);
-      a.z = clamp(a.z - dz * push, -FIELD.width / 2 + 0.3, FIELD.width / 2 - 0.3);
-      b.x = clamp(b.x + dx * push, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3);
-      b.z = clamp(b.z + dz * push, -FIELD.width / 2 + 0.3, FIELD.width / 2 - 0.3);
+    }
+    for (let i = 0; i < ordered.length; i++) {
+      const p = ordered[i]!;
+      p.x = clamp(p.x + pushes[i * 2]!, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3);
+      p.z = clamp(p.z + pushes[i * 2 + 1]!, -FIELD.width / 2 + 0.3, FIELD.width / 2 - 0.3);
     }
   }
 }
@@ -929,7 +945,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
       kick(world, p, p.buffer.action, { move: command?.move ?? { x: 0, z: 0 }, ...p.buffer });
     }
   }
-  separatePlayers(world.players, t, carrier);
+  separatePlayers(world.players, t, carrier, world.endsSwapped);
   const nowCarrier = nearestCarrier(world);
   if (nowCarrier && nowCarrier.id !== previousCarrierId && nowCarrier.id !== previousToucherId) {
     world.stealProtect = world.stealWinnerId !== null && world.stealWinnerId !== undefined ? 0.9 : 0.35;

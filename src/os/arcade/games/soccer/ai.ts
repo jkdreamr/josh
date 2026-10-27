@@ -413,12 +413,12 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
       if (roleOf(p).line === 'def' && distance(p, world.ball) > 12) {
         const time = tick * dt;
         if (marking) {
-          const angle = Math.sin(time * 1.35 + p.id * 1.7) * 0.22;
+          const angle = dir * Math.sin(time * 1.35 + rosterIndex(world, p) * 1.7) * 0.22;
           const dx = target.x - marking.x, dz = target.z - marking.z;
           target = { x: marking.x + dx * Math.cos(angle) - dz * Math.sin(angle), z: marking.z + dx * Math.sin(angle) + dz * Math.cos(angle) };
         } else target = {
-          x: clamp(target.x + Math.sin(time * 1.35 + p.id * 1.7) * 0.45, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3),
-          z: clamp(target.z + Math.cos(time * 1.05 + p.id * 0.9) * 0.65, -FIELD.width / 2 + 0.3, FIELD.width / 2 - 0.3),
+          x: clamp(target.x + dir * Math.sin(time * 1.35 + rosterIndex(world, p) * 1.7) * 0.45, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3),
+          z: clamp(target.z + Math.cos(time * 1.05 + rosterIndex(world, p) * 0.9) * 0.65, -FIELD.width / 2 + 0.3, FIELD.width / 2 - 0.3),
         };
       }
       targets.set(p.id, target);
