@@ -1,4 +1,4 @@
-import { createWorld, distance, FIELD, FORMATION, findReceiver, groundPassPower, isCross, nearestCarrier, restartTaker, shotAim, stepWorld, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
+import { createWorld, distance, FIELD, FORMATION, findReceiver, groundPassPower, isCross, movePlayer, nearestCarrier, restartTaker, shotAim, shotError, shotOverchargeThreshold, shotSpeed, STEP, stepWorld, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
 
 export const LEVEL_NAMES = ['easy', 'normal', 'hard'] as const;
 export type Level = (typeof LEVEL_NAMES)[number];
@@ -144,7 +144,55 @@ function readKeeperShot(world: World, keeper: Player, level: Level, tick: number
   keeper.action = read.decided && read.dive ? 'dive' : 'ready';
 }
 
-function carrierCommand(world: World, player: Player, level: Level, tick: number): Command {
+export function cpuShotChoice(world: World, player: Player, level: Level, tick: number, dt = STEP) {
+  const prepared = { ...player };
+  movePlayer(prepared, { x: 0, z: 0 }, false, true, dt);
+  const dir = teamDir(player.team, world.endsSwapped);
+  const goalX = dir * FIELD.length / 2;
+  const range = Math.max(0.1, Math.abs(goalX - world.ball.x));
+  const planeRange = Math.max(0.1, range - 1.5);
+  const keeper = world.players.find((p) => p.team !== player.team && p.slot === 'GK');
+  const uncertainty = Math.sin((tick + rosterIndex(world, player) * 31) * 0.37);
+  const estimate = level === 'hard' ? 1 : level === 'normal' ? 0.9 + uncertainty * 0.1 : 0.65 + uncertainty * 0.3;
+  const keeperZ = (keeper?.z ?? 0) + uncertainty * (level === 'hard' ? 0 : noise[level]);
+  const half = FIELD.goalWidth / 2 - 0.11;
+  const low = Math.atan2(-half - world.ball.z, range), high = Math.atan2(half - world.ball.z, range);
+  const overlap = (a: number, b: number, c: number, d: number) => Math.max(0, Math.min(b, d) - Math.max(a, c));
+  const safePower = Math.min(0.9, shotOverchargeThreshold(distance(prepared, { x: goalX, z: 0 })) - 0.025);
+  let best = { targetZ: 0, power: safePower, probability: -1, onTarget: -1 };
+  let safe: typeof best | undefined;
+  for (const power of [0.65, 0.75, safePower]) {
+    const flight = planeRange / shotSpeed(power);
+    const dive = clamp((flight - keeperReadDelay.normal + reaction.normal / 2) / reaction.normal, 0, 1);
+    const targets = Array.from({ length: 25 }, (_, i) => (i / 12 - 1) * FIELD.goalWidth * 0.43);
+    for (const sign of [-1, 1]) {
+      let z = sign * FIELD.goalWidth * 0.43;
+      for (let i = 0; i < 3; i++) {
+        const error = shotError(world, prepared, { x: goalX, z }, power) * estimate;
+        const edge = sign > 0 ? high : low;
+        z = clamp(world.ball.z + range * Math.tan(edge - sign * error / 2), -FIELD.goalWidth * 0.43, FIELD.goalWidth * 0.43);
+      }
+      targets.push(clamp(z - sign * 0.03, -FIELD.goalWidth * 0.43, FIELD.goalWidth * 0.43));
+    }
+    for (const targetZ of targets) {
+      const error = shotError(world, prepared, { x: goalX, z: targetZ }, power) * estimate;
+      const angle = Math.atan2(targetZ - world.ball.z, range);
+      const a = angle - error / 2, b = angle + error / 2;
+      const onTarget = overlap(a, b, low, high) / error;
+      const saved = (reach: number) => overlap(Math.max(a, low), Math.min(b, high), Math.atan2(keeperZ - reach - world.ball.z, planeRange), Math.atan2(keeperZ + reach - world.ball.z, planeRange)) / error;
+      const probability = onTarget - (keeper ? saved(1.1) * (1 - dive) + saved(2.4) * dive : 0);
+      if (probability > best.probability + 1e-9 || Math.abs(probability - best.probability) <= 1e-9
+        && (onTarget > best.onTarget + 1e-9 || Math.abs(onTarget - best.onTarget) <= 1e-9 && power > best.power)) {
+        best = { targetZ, power, probability, onTarget };
+      }
+      if (onTarget >= 1 - 1e-9 && (!safe || probability > safe.probability + 1e-9
+        || Math.abs(probability - safe.probability) <= 1e-9 && power > safe.power)) safe = { targetZ, power, probability, onTarget };
+    }
+  }
+  return safe ?? best;
+}
+
+function carrierCommand(world: World, player: Player, level: Level, tick: number, dt: number): Command {
   const dir = teamDir(player.team, world.endsSwapped);
   const goalX = dir * FIELD.length / 2;
   const goalDistance = Math.hypot(goalX - player.x, player.z);
@@ -167,9 +215,9 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
   const goodAngle = Math.abs(player.z) < lateral(level === 'easy' ? 0.21 : 0.18) && Math.abs(player.z) / Math.max(3, Math.abs(goalX - player.x)) < 0.8;
   const shootRange = level === 'easy' ? 18 : 12;
   if (goalDistance < shootRange && goodAngle && pressure > 1.5 + qualityNoise && shotLane > 0.18 + Math.abs(qualityNoise) * 0.3) {
-    const corner = -Math.sign(player.z || 1) * FIELD.goalWidth * 0.35;
+    const choice = cpuShotChoice(world, player, level, tick, dt);
     return { move: { x: 0, z: 0 }, action: 'shoot', pressed: true,
-      power: 0.75, aim: shotAim(corner, dir) };
+      power: choice.power, aim: shotAim(choice.targetZ, dir) };
   }
   const lastDefender = Math.max(...opponents.filter(outfield).map((p) => p.x * dir));
   let best: { receiver: Player; action: 'pass' | 'through' | 'lob'; score: number } | null = null;
@@ -288,7 +336,7 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
         continue;
       }
       if (carrier?.id === p.id) {
-        commands.set(p.id, carrierCommand(world, p, level, tick));
+        commands.set(p.id, carrierCommand(world, p, level, tick, dt));
         continue;
       }
       if (state.possession !== side || !carrier && world.passTarget === null) {
@@ -373,7 +421,6 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
     }
     command.move = { x: command.move.x + x * 1.2, z: command.move.z + z * 1.2 };
   }
-  void dt;
   return commands;
 }
 

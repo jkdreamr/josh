@@ -273,6 +273,24 @@ export function shotAim(targetZ: number, direction: number): Point {
   return { x: direction * Math.sqrt(1 - z * z), z };
 }
 
+export function shotOverchargeThreshold(goalDistance: number, finesse = false) {
+  return 0.78 + clamp(goalDistance / 60, 0, 0.14) + (finesse ? 0.06 : 0);
+}
+
+export function shotSpeed(power: number, finesse = false) {
+  const charge = clamp(power, 0.1, 1);
+  return finesse ? 12 + charge * 9 : 15 + charge * 17;
+}
+
+export function shotError(world: World, player: Player, target: Point, power: number, finesse = false) {
+  const angle = Math.atan2(target.z - world.ball.z, target.x - world.ball.x);
+  const bodyAngle = Math.abs(Math.atan2(Math.sin(Math.PI / 2 - angle - player.facing), Math.cos(Math.PI / 2 - angle - player.facing)));
+  const pressure = Math.min(...world.players.filter((p) => p.team !== player.team).map((p) => distance(p, player)));
+  const error = 0.03 + distance(player, target) * 0.004 + Math.max(0, bodyAngle - 0.6) * 0.22
+    + (pressure < 1.5 ? 0.1 : 0) + (Math.hypot(player.vx, player.vz) > 6.5 * 9 / 8 ? 0.09 : 0) + (1 - player.stamina) * 0.08 + clamp(power, 0.1, 1) * 0.06;
+  return finesse ? error * 0.6 : error;
+}
+
 function kick(world: World, player: Player, action: Action, command: Command) {
   const d = teamDir(player.team, world.endsSwapped);
   const charge = clamp(command.power ?? 0.45, 0.1, 1);
@@ -316,17 +334,13 @@ function kick(world: World, player: Player, action: Action, command: Command) {
   } else {
     target = { x: d * FIELD.length / 2, z: shotTargetZ(player, stick) };
     const goalDistance = distance(player, { x: d * FIELD.length / 2, z: 0 });
-    const threshold = 0.78 + clamp(goalDistance / 60, 0, 0.14) + (action === 'finesse' ? 0.06 : 0);
+    const threshold = shotOverchargeThreshold(goalDistance, action === 'finesse');
     loft = 0.07 + charge * 0.09 + Math.max(0, charge - threshold) * 3.2;
-    speed = action === 'finesse' ? 12 + charge * 9 : 15 + charge * 17;
+    speed = shotSpeed(charge, action === 'finesse');
   }
   const dx = target.x - world.ball.x, dz = target.z - world.ball.z;
   const baseAngle = Math.atan2(dz, dx);
-  const pressure = Math.min(...world.players.filter((p) => p.team !== player.team).map((p) => distance(p, player)));
-  const bodyAngle = Math.abs(Math.atan2(Math.sin(Math.PI / 2 - baseAngle - player.facing), Math.cos(Math.PI / 2 - baseAngle - player.facing)));
-  let error = shot ? 0.03 + distance(player, target) * 0.004 + Math.max(0, bodyAngle - 0.6) * 0.22
-    + (pressure < 1.5 ? 0.1 : 0) + (Math.hypot(player.vx, player.vz) > 6.5 * 9 / 8 ? 0.09 : 0) + (1 - player.stamina) * 0.08 + charge * 0.06 : 0.015 + (1 - player.stamina) * 0.06;
-  if (action === 'finesse') error *= 0.6;
+  const error = shot ? shotError(world, player, target, charge, action === 'finesse') : 0.015 + (1 - player.stamina) * 0.06;
   const angle = baseAngle + (rng(world) - 0.5) * error;
   if (shot) loft += (rng(world) - 0.5) * error * 0.25;
   const horizontal = speed * Math.cos(loft);
