@@ -453,6 +453,10 @@ export type Ai = {
   below: number[];
   /** The stairway we're making for this step (see head), or -1: we keep off any other (see steer). */
   steps: number;
+  /** When we last came through a stairway, and a few steps on from where it let us out (see decide). */
+  stairAt: number;
+  stairX: number;
+  stairZ: number;
 };
 
 export type Fighter = {
@@ -1240,6 +1244,9 @@ function newAi(m: Match, f: Fighter): Ai {
     cheered: 0,
     below: [],
     steps: -1,
+    stairAt: -99,
+    stairX: 0,
+    stairZ: 0,
   };
 }
 
@@ -1372,6 +1379,12 @@ export function viewOf(f: Fighter) {
   const far = SCOPE_VIEW[clamp(f.scope, 0, MAX_SCOPE)] ?? 0;
   return (isDeep(f.x) ? Math.min(DEEP_VIEW, far) : far) + (f.phase === 'ground' ? levelOf(f.y) * HIGH_VIEW : 0);
 }
+
+/** How much of the island a screen shows round the egg it follows (half the screen's height, in meters): on foot, and gliding down. */
+export const GROUND_VIEW = 14;
+export const DROP_VIEW = 34;
+/** What a screen following egg `f` shows of the island (half its height, in meters): more through a scope, up high, and from up in the air. */
+export const viewAt = (f: Fighter) => (f.phase === 'drop' ? DROP_VIEW + (f.y / BUS_Y) * 20 : GROUND_VIEW + viewOf(f));
 
 /** Does an egg carry the scope of this level? 1x (level 0) it always has. */
 export const hasScope = (f: { scopes: number }, lv: number) => lv === 0 || (lv > 0 && lv <= MAX_SCOPE && (f.scopes & (1 << (lv - 1))) !== 0);
@@ -1864,6 +1877,13 @@ function takeStairs(m: Match, f: Fighter, s: Stair) {
   f.stillT = 0;
   if (f.reviving >= 0) stopReviving(m, f);
   if (f.ai && down && !f.ai.below.includes(s.u)) f.ai.below.push(s.u);
+  if (f.ai) {
+    // (on the way it walked: below on past the foot, up top back off the top end)
+    const k = down ? STAIR_ON : -STAIR_ON;
+    f.ai.stairAt = m.time;
+    f.ai.stairX = p.x + s.dx * k;
+    f.ai.stairZ = p.z + s.dz * k;
+  }
   emit(m, { t: 'stairs', f: f.id, down });
 }
 
@@ -4174,6 +4194,34 @@ export function concealed(m: Match, f: Fighter, viewer: Fighter | undefined) {
   return !!cloud && cloud !== zoneAt(m, 'flour', viewer.x, viewer.z);
 }
 
+/**
+ * How long a screen keeps showing an egg once something says to hide it (a bush, a cornfield, flour, a roof, a
+ * ghillie suit, the wall beside the doorway we peek through), and keeps it hidden once that says to show it, in
+ * seconds: an egg on the edge of one, or a step either side of where it starts to show, never blinks out or in, and
+ * one running through a bush stays in sight. Once hidden it stays gone a little while (`gone`), so it never blinks out
+ * for a moment either; one that fires shows at once.
+ */
+export const SEEN_HOLD = { hide: 0.5, show: 0.15, gone: 0.45 };
+
+/** What a screen shows of an egg: `on` while it's drawn, how long that has been so (`since`), and how long whatever hides it has said otherwise (`t`). */
+export type Seen = { on: boolean; t: number; since: number };
+
+/**
+ * One frame (`dt` seconds) of what a screen shows of an egg that whatever hides it says to `hide` or not (see
+ * SEEN_HOLD); `now` makes the change at once (an egg that has just fired, or one that has only now come into view).
+ * Whether it's drawn.
+ */
+export function seenStep(s: Seen, hide: boolean, dt: number, now = false) {
+  s.since += dt;
+  if (s.on !== hide) s.t = 0;
+  else if (now || ((s.t += dt) >= (hide ? SEEN_HOLD.hide : SEEN_HOLD.show) && (hide || s.since >= SEEN_HOLD.gone))) {
+    s.on = !hide;
+    s.t = 0;
+    s.since = 0;
+  }
+  return s.on;
+}
+
 /** In a ghillie suit, still and quiet on the grass: hard to make out from more than a few steps away. */
 export const camouflaged = (m: Match, f: Fighter) => f.ghillie && f.phase === 'ground' && f.y < 0.5 && f.stillT >= GHILLIE.still && m.clock - f.firedAt > 1.2 && grassAt(m.map, f.x, f.z);
 
@@ -4558,6 +4606,7 @@ function think(m: Match, f: Fighter, dt: number) {
     // stand still behind cover while it takes (or out of our box, see goOut)
   } else if (hiding) head(m, f, ai, ai.hideX, ai.hideZ, dt, 0.5);
   else if (via) head(m, f, ai, via.x, via.z, dt, 0);
+  else if (m.time - ai.stairAt < STAIR_STAY && levelAt(m, ai.gx, ai.gz) !== levelAt(m, f.x, f.z) && ai.goal !== 'zone' && ai.goal !== 'chase' && ai.goal !== 'revive') head(m, f, ai, ai.stairX, ai.stairZ, dt, 0.5);
   else head(m, f, ai, ai.gx, ai.gz, dt, ai.goal === 'roam' ? 2 : ai.goal === 'smash' ? 1.4 : ai.goal === 'vault' ? 0.6 : ai.goal === 'revive' ? REVIVE_R - 0.8 : ai.goal === 'mate' ? (ai.askK ? 1.8 : m.time < ai.followUntil ? 3 : 6) : 0.4);
   // facing the way we go, or where a teammate saw an enemy
   inp.aim = m.clock < ai.lookUntil ? Math.atan2(ai.lookX - topX(f.x), ai.lookZ - f.z) : Math.hypot(f.vx, f.vz) > 0.5 ? Math.atan2(f.vx, f.vz) : f.aim;
@@ -4868,6 +4917,16 @@ function scopeFor(m: Match, f: Fighter, ai: Ai) {
   for (let lv = f.inside >= 0 ? Math.min(best, 1) : best; lv > 0; lv--) if (hasScope(f, lv)) return lv;
   return 0;
 }
+
+/**
+ * Seconds a computer egg keeps on from a stairway it has just come through before it may turn back (unless there's
+ * something to fight, the storm, a fight to chase or a teammate to revive), and how far on it walks meanwhile: never
+ * down and straight back up, gone from sight for a blink.
+ */
+const STAIR_STAY = 2;
+const STAIR_ON = 3;
+/** Which side of the stairs a point is on: up top (-2), or the basement it's in. */
+const levelAt = (m: Match, x: number, z: number) => (isDeep(x) ? basementAt(m.map, x, z) : -2);
 
 /** The widest a computer egg's aim strays (radians), however far off and quick the target. */
 const MISS = 0.35;

@@ -3,7 +3,7 @@
 import type { T } from './gl';
 import { createGL, damp, disposeTree, type GL } from './gl';
 import { BARREL_R, BEACH, BRIDGE_HALF, BUSH_R, BUS_Y, CAMP, CHEST_HD, CHEST_HW, CRATE_HALF, DEEP, DEEP_H, FENCE_T, FRIDGE_HD, FRIDGE_HW, HALF, HAY_HD, HAY_HW, LAMP_R, LOG_R, PAD, RIVER_HALF, ROAD_HALF, STASH, SUPPLY_FALL, SUPPLY_HALF, TABLE_HD, TABLE_HW, TOILET_R, WALL_T, bridgeAt, busAt, fieldAt, isDeep, isStash, padAt, peekAt, riverDist2, roadAt, type Building, type BuildingKind, type Container } from './map';
-import { BARREL, BUILD_START, CELL_B, CRATE_HP, DIR_X, DIR_Z, DOOR_GONE, DOOR_IN, DOOR_OPENING, DOOR_OUT, F_DRINKING, F_GHILLIE, F_HEALING, F_PAN, F_RELOAD, F_REVIVE, F_SHIELDING, F_SMOOTHIE, F_SPIN, F_STUN, F_TART, GAP, HAY_HP, LEVEL_H, MATE_COLORS, PING_T, TOILET_HP, clearLine, concealed, editable, gridOf, held, levelOf, makePiece, mateIndex, owned, pieceIn, pingOf, planPiece, reviveShare, revivedBy, roofOver, shut, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Plan, type Toss, type Wall, type Zone } from './logic';
+import { BARREL, BUILD_START, CELL_B, CRATE_HP, DIR_X, DIR_Z, DOOR_GONE, DOOR_IN, DOOR_OPENING, DOOR_OUT, F_DRINKING, F_GHILLIE, F_HEALING, F_PAN, F_RELOAD, F_REVIVE, F_SHIELDING, F_SMOOTHIE, F_SPIN, F_STUN, F_TART, GAP, HAY_HP, LEVEL_H, MATE_COLORS, PING_T, TOILET_HP, SEEN_HOLD, clearLine, concealed, editable, gridOf, held, levelOf, makePiece, mateIndex, owned, pieceIn, pingOf, planPiece, reviveShare, revivedBy, roofOver, seenStep, shut, tossAt, viewAt, type Ev, type Fighter, type Held, type LootItem, type Seen, type Match, type Plan, type Toss, type Wall, type Zone } from './logic';
 import { MATS, MAT_SPECS, MELEE, RARITY_COLORS, THROWS, WEAPONS, isMelee, isThrow, isWeapon, legendary, type LootDef, type Mat, type UseId } from './items';
 
 type Three = typeof import('three');
@@ -25,6 +25,11 @@ export type View = {
   frame(m: Match, focus: number, dt: number, clock: number, opts: FrameOpts): void;
   /** One-off effects: puffs, chips, blasts, flashes, camera shake. */
   react(e: Ev, m: Match, focus: number): void;
+  /**
+   * Whether the egg we see doesn't see egg `id` (in a bush, flour, a ghillie suit, under a roof or behind a doorway's
+   * walls), as the last frame drew it: its name tag and bubbles go with it.
+   */
+  hides(id: number): boolean;
   /** Screen position (CSS pixels) of a world point, or null when it is off camera. */
   project(x: number, y: number, z: number): { x: number; y: number } | null;
   /** The world point under a screen position (CSS pixels), on the plane at height y. */
@@ -33,8 +38,6 @@ export type View = {
   dispose(): void;
 };
 
-const GROUND_VIEW = 14;
-const DROP_VIEW = 34;
 const BUS_VIEW = 54;
 /** The bus is drawn this much bigger than life, so it reads from up high. */
 const BUS_SCALE = 1.35;
@@ -1061,6 +1064,8 @@ type EggView = {
   /** Meters walked since the last puff of dust, and seconds since the last ripple when wading. */
   step: number;
   ripple: number;
+  /** Whether the egg we see sees it (bushes, flour, roofs, a ghillie suit, a doorway's walls), held a moment (see SEEN_HOLD). */
+  seen: Seen;
 };
 
 type LootView = { group: T.Group; model: T.Object3D; spin: number };
@@ -3774,7 +3779,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     ghost.renderOrder = 20;
     body.add(ghost);
     scene.add(root);
-    return { root, body, slots, hand, guns: new Map(), shadow, glider, heal, cross, ring, ghost, backPan, helmet: null, helmetLv: 0, vest: null, vestLv: 0, walk: 0, swing: 0, recoil: 0, lean: 0, cracked: 0, bubble, bubbleMat, shimmer: 0, sq: 0, sqV: 0, step: 0, ripple: 0 };
+    return { root, body, slots, hand, guns: new Map(), shadow, glider, heal, cross, ring, ghost, backPan, helmet: null, helmetLv: 0, vest: null, vestLv: 0, walk: 0, swing: 0, recoil: 0, lean: 0, cracked: 0, bubble, bubbleMat, shimmer: 0, sq: 0, sqV: 0, step: 0, ripple: 0, seen: { on: true, t: 0, since: 0 } };
   });
 
   /**
@@ -3782,6 +3787,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
    * at the front, so eggs out of sight cost nothing.
    */
   const drawn = { eggs: 0, hats: 0, light: 0, heavy: 0, shadows: 0, gliders: 0, ghillies: 0, dazed: 0 };
+  /** The egg whose eyes the eggs were last shown through (see EggView.seen). */
+  let seenBy = -1;
   /**
    * Puts an egg's instanced parts where its stand-ins are, once its group has been moved: its ghillie suit if it wears
    * one (`worn`), and stars round its head while it's dazed.
@@ -4699,7 +4706,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         } else {
           tx = focus.x;
           tz = focus.z - (focus.y * 0.8) / Math.tan(TILT);
-          want = focus.phase === 'drop' ? DROP_VIEW + (focus.y / BUS_Y) * 20 : GROUND_VIEW + viewOf(focus);
+          want = viewAt(focus);
         }
       }
       // first, and down the stairs or up them (from the island to underground is a long way off): straight there
@@ -4854,7 +4861,10 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       const eggN = dist * FRAME_N + 6;
       const eggS = dist * FRAME_S + 6;
       const eggW = dist * FRAME_W * aspect + 6;
-      drawn.eggs = drawn.hats = drawn.light = drawn.heavy = drawn.shadows = drawn.gliders = 0;
+      drawn.eggs = drawn.hats = drawn.light = drawn.heavy = drawn.shadows = drawn.gliders = drawn.ghillies = drawn.dazed = 0;
+      // another egg to see from: what it sees, as it is now
+      const fresh = focusId !== seenBy;
+      seenBy = focusId;
       // the team we see (none in solo): its eggs show wherever they are in view
       const team = m.mode !== 'solo' && focus ? focus.team : -1;
       let rings = 0;
@@ -4872,11 +4882,15 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         const isFocus = i === focusId;
         const mate = team >= 0 && f.team === team && !isFocus;
         const k = team >= 0 && f.team === team ? mateIndex(m, f) % RING_MATE.length : -1;
-        const inView = Math.abs(f.x - cam.x) < eggW && f.z - cam.z > -eggN - f.y && f.z - cam.z < eggS;
+        // (one up high shows nearer the top of the screen than its feet, from either edge)
+        const inView = Math.abs(f.x - cam.x) < eggW && f.z - cam.z > -eggN - f.y && f.z - cam.z < eggS + f.y;
         const walled = inView && peek >= 0 && !!focus && f.inside === peek && !clearLine(m, focus.x, focus.z, f.x, f.z);
+        const hide = !isFocus && !mate && f.phase !== 'out' && (walled || concealed(m, f, focus));
+        // held a moment either way, but shown at once when it fires, and as it is when it comes into view
+        const seen = seenStep(v.seen, hide, dt, fresh || !inView || f.phase === 'bus' || (!hide && m.clock - f.firedAt < SEEN_HOLD.show));
         // flash red when hit
         const dazed = f.kind === 'remote' ? (f.show.flags & F_STUN) !== 0 : f.stunT > 0;
-        if (!syncEgg(v, f, dt, clock, isFocus, !isFocus && (!inView || (!mate && (concealed(m, f, focus) || walled))), mate ? k : -1)) return;
+        if (!syncEgg(v, f, dt, clock, isFocus, !isFocus && (!inView || !seen), mate ? k : -1)) return;
         placeEgg(v, f.hitT > 0, hatColors[i], f.ghillie || (f.kind === 'remote' && (f.show.flags & F_GHILLIE) !== 0), dazed && f.phase === 'ground', clock);
         if (f.phase !== 'ground' || rings > N * 2 - 2) return;
         if (k >= 0 && !f.down) ring(f, RING_MATE[k], isFocus ? 0.8 : 1.2);
@@ -5446,6 +5460,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         case 'used':
           break;
       }
+    },
+    hides(id) {
+      return !(eggs[id]?.seen.on ?? true);
     },
     project(x, y, z) {
       vec.set(x, y, z).project(camera);
