@@ -102,6 +102,8 @@ const calmMotion = () => (calmed ??= typeof matchMedia === 'function' && matchMe
 const tossReach = (len: number) => THROW.min + Math.max(0, Math.min(1, (len - 12) / (STICK_R - 12))) * (THROW.max - THROW.min);
 /** Seconds a touch throw let go of too soon after the last one waits to go. */
 const TOSS_WAIT = 0.8;
+/** Milliseconds without a wheel event that end a turn of it (a trackpad's glide keeps them coming quicker). */
+const WHEEL_GAP = 140;
 /** Loot named on screen at once: the nearest few by your feet, and the one the mouse is over. */
 const LABELS = 5;
 /** How tall a loot name is on screen, with a little gap. */
@@ -372,7 +374,7 @@ type Hud = {
   high: number;
   /** Consumables by kind, or null when it's someone else's egg. */
   items: Record<UseId, number> | null;
-  /** The scope looked through, and the ones carried (a bit each for 2x, 4x and 8x), someone else's egg's too. */
+  /** The scope looked through, and the ones carried (a bit each from 2x up), someone else's egg's too. */
   scope: number;
   scopes: number;
   pack: number;
@@ -575,18 +577,31 @@ function Play({ mode }: { mode: StageMode }) {
   }, [size.w, size.h, THREE, viewKey]);
 
   // the mouse wheel cycles weapons, and with Shift held the scopes (a native listener, so it can keep the page from
-  // scrolling; with Shift some browsers scroll sideways instead)
+  // scrolling; with Shift some browsers scroll sideways instead). One step a turn of the wheel, never by accident: a
+  // trackpad's glide, a pinch (Ctrl), a sideways swipe without Shift or letting go of Shift partway through a turn is
+  // still the same turn, and a turn ends after a moment's pause
   useEffect(() => {
     const host = ref.current;
     if (!host) return;
     let acc = 0;
+    let last = -Infinity;
+    let stepped = false;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      acc += e.deltaY || e.deltaX;
+      const now = performance.now();
+      if (now - last > WHEEL_GAP) {
+        acc = 0;
+        stepped = false;
+      }
+      last = now;
+      if (stepped || e.ctrlKey || e.metaKey || (!e.shiftKey && Math.abs(e.deltaX) > Math.abs(e.deltaY))) return;
+      // Firefox counts in lines (or pages), the rest in pixels
+      const unit = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1;
+      acc += (e.shiftKey ? e.deltaY || e.deltaX : e.deltaY) * unit;
       if (Math.abs(acc) >= 40) {
         if (e.shiftKey) taps.current.scope = acc > 0 ? -1 : 1;
         else taps.current.cycle = acc > 0 ? 1 : -1;
-        acc = 0;
+        stepped = true;
       }
     };
     host.addEventListener('wheel', onWheel, { passive: false });

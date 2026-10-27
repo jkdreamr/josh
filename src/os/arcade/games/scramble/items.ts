@@ -72,8 +72,6 @@ export type WeaponSpec = {
   wallMult: number;
   /** Walking speed multiplier while holding it. */
   move: number;
-  /** Extra meters of view while holding it (a built-in scope). */
-  zoom: number;
   /** Each shot adds `per` to the spread multiplier, up to `max` more, and it settles at `cool` a second. */
   kick?: { per: number; max: number; cool: number };
   /** Seconds the barrels take to spin up before the first shot, and how much slower you walk while they spin. */
@@ -83,24 +81,24 @@ export type WeaponSpec = {
 };
 
 export const WEAPONS: Record<WeaponId, WeaponSpec> = {
-  pistol: { name: 'pistol', cls: 'pistol', dmg: 16, rate: 4.5, mag: 14, reload: 1.3, spread: 0.035, speed: 120, range: 50, ammo: 'light', pellets: 1, wallMult: 1, move: 1, zoom: 0 },
-  flare: { name: 'flare gun', cls: 'pistol', dmg: 0, rate: 1, mag: 1, reload: 0, spread: 0, speed: 0, range: 0, ammo: 'rockets', pellets: 0, wallMult: 0, move: 1, zoom: 0, call: true },
-  revolver: { name: 'hand cannon', cls: 'pistol', dmg: 33, rate: 1.7, mag: 7, reload: 2, spread: 0.02, speed: 160, range: 62, ammo: 'heavy', pellets: 1, wallMult: 1.2, move: 1, zoom: 2 },
-  smg: { name: 'SMG', cls: 'smg', dmg: 11, rate: 11, mag: 30, reload: 1.9, spread: 0.1, speed: 110, range: 38, ammo: 'light', pellets: 1, wallMult: 1, move: 1, zoom: 0 },
-  micro: { name: 'micro SMG', cls: 'smg', dmg: 8, rate: 16, mag: 24, reload: 1.6, spread: 0.14, speed: 105, range: 30, ammo: 'light', pellets: 1, wallMult: 1, move: 1.04, zoom: 0 },
-  hsmg: { name: 'heavy SMG', cls: 'smg', dmg: 13, rate: 11.5, mag: 28, reload: 2.1, spread: 0.07, speed: 120, range: 42, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.98, zoom: 0, kick: { per: 0.11, max: 1, cool: 2.4 } },
-  rifle: { name: 'rifle', cls: 'rifle', dmg: 20, rate: 5.5, mag: 30, reload: 2.3, spread: 0.045, speed: 140, range: 70, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.96, zoom: 2 },
-  burst: { name: 'burst rifle', cls: 'rifle', dmg: 19, rate: 1.9, mag: 30, reload: 2.4, spread: 0.03, speed: 150, range: 75, ammo: 'heavy', pellets: 1, burst: { n: 3, gap: 0.075 }, wallMult: 1, move: 0.96, zoom: 3 },
-  marksman: { name: 'marksman rifle', cls: 'rifle', dmg: 27, rate: 2.8, mag: 12, reload: 2.4, spread: 0.016, speed: 175, range: 88, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.95, zoom: 5 },
-  scout: { name: 'scout rifle', cls: 'sniper', dmg: 34, rate: 2.2, mag: 10, reload: 2.5, spread: 0.01, speed: 190, range: 100, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.94, zoom: 8 },
-  lmg: { name: 'machine gun', cls: 'heavy', dmg: 16, rate: 9, mag: 80, reload: 4.6, spread: 0.09, speed: 135, range: 65, ammo: 'heavy', pellets: 1, wallMult: 1.3, move: 0.82, zoom: 2 },
-  minigun: { name: 'minigun', cls: 'heavy', dmg: 9, rate: 18, mag: 120, reload: 5.2, spread: 0.12, speed: 125, range: 55, ammo: 'light', pellets: 1, wallMult: 1.3, move: 0.74, zoom: 2, spin: { up: 0.9, slow: 0.8 } },
-  shotgun: { name: 'pump shotgun', cls: 'shotgun', dmg: 8, rate: 1.1, mag: 6, reload: 2.6, spread: 0.24, speed: 95, range: 22, ammo: 'shells', pellets: 9, falloff: { near: 7, far: 20, min: 0.35 }, wallMult: 1, move: 0.96, zoom: 0 },
-  auto: { name: 'auto shotgun', cls: 'shotgun', dmg: 7, rate: 3, mag: 8, reload: 3, spread: 0.22, speed: 95, range: 20, ammo: 'shells', pellets: 6, falloff: { near: 6, far: 18, min: 0.35 }, wallMult: 1, move: 0.95, zoom: 0 },
-  double: { name: 'double barrel', cls: 'shotgun', dmg: 7, rate: 4, mag: 2, reload: 2.3, spread: 0.3, speed: 90, range: 16, ammo: 'shells', pellets: 10, falloff: { near: 5, far: 14, min: 0.3 }, wallMult: 1, move: 0.98, zoom: 0 },
-  sniper: { name: 'sniper', cls: 'sniper', dmg: 70, rate: 0.6, mag: 4, reload: 3, spread: 0.004, speed: 240, range: 130, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.9, zoom: 14 },
-  crossbow: { name: 'crossbow', cls: 'sniper', dmg: 60, rate: 1, mag: 1, reload: 1.5, spread: 0.006, speed: 85, range: 90, ammo: 'heavy', pellets: 1, silent: true, wallMult: 1, move: 0.96, zoom: 6 },
-  launcher: { name: 'egg launcher', cls: 'heavy', dmg: 60, rate: 0.6, mag: 1, reload: 2.8, spread: 0.015, speed: 48, range: 80, ammo: 'rockets', pellets: 1, splash: 4.5, wallMult: 4, move: 0.9, zoom: 4 },
+  pistol: { name: 'pistol', cls: 'pistol', dmg: 16, rate: 4.5, mag: 14, reload: 1.3, spread: 0.035, speed: 120, range: 50, ammo: 'light', pellets: 1, wallMult: 1, move: 1 },
+  flare: { name: 'flare gun', cls: 'pistol', dmg: 0, rate: 1, mag: 1, reload: 0, spread: 0, speed: 0, range: 0, ammo: 'rockets', pellets: 0, wallMult: 0, move: 1, call: true },
+  revolver: { name: 'hand cannon', cls: 'pistol', dmg: 33, rate: 1.7, mag: 7, reload: 2, spread: 0.02, speed: 160, range: 62, ammo: 'heavy', pellets: 1, wallMult: 1.2, move: 1 },
+  smg: { name: 'SMG', cls: 'smg', dmg: 11, rate: 11, mag: 30, reload: 1.9, spread: 0.1, speed: 110, range: 38, ammo: 'light', pellets: 1, wallMult: 1, move: 1 },
+  micro: { name: 'micro SMG', cls: 'smg', dmg: 8, rate: 16, mag: 24, reload: 1.6, spread: 0.14, speed: 105, range: 30, ammo: 'light', pellets: 1, wallMult: 1, move: 1.04 },
+  hsmg: { name: 'heavy SMG', cls: 'smg', dmg: 13, rate: 11.5, mag: 28, reload: 2.1, spread: 0.07, speed: 120, range: 42, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.98, kick: { per: 0.11, max: 1, cool: 2.4 } },
+  rifle: { name: 'rifle', cls: 'rifle', dmg: 20, rate: 5.5, mag: 30, reload: 2.3, spread: 0.045, speed: 140, range: 70, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.96 },
+  burst: { name: 'burst rifle', cls: 'rifle', dmg: 19, rate: 1.9, mag: 30, reload: 2.4, spread: 0.03, speed: 150, range: 75, ammo: 'heavy', pellets: 1, burst: { n: 3, gap: 0.075 }, wallMult: 1, move: 0.96 },
+  marksman: { name: 'marksman rifle', cls: 'rifle', dmg: 27, rate: 2.8, mag: 12, reload: 2.4, spread: 0.016, speed: 175, range: 88, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.95 },
+  scout: { name: 'scout rifle', cls: 'sniper', dmg: 34, rate: 2.2, mag: 10, reload: 2.5, spread: 0.01, speed: 190, range: 100, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.94 },
+  lmg: { name: 'machine gun', cls: 'heavy', dmg: 16, rate: 9, mag: 80, reload: 4.6, spread: 0.09, speed: 135, range: 65, ammo: 'heavy', pellets: 1, wallMult: 1.3, move: 0.82 },
+  minigun: { name: 'minigun', cls: 'heavy', dmg: 9, rate: 18, mag: 120, reload: 5.2, spread: 0.12, speed: 125, range: 55, ammo: 'light', pellets: 1, wallMult: 1.3, move: 0.74, spin: { up: 0.9, slow: 0.8 } },
+  shotgun: { name: 'pump shotgun', cls: 'shotgun', dmg: 8, rate: 1.1, mag: 6, reload: 2.6, spread: 0.24, speed: 95, range: 22, ammo: 'shells', pellets: 9, falloff: { near: 7, far: 20, min: 0.35 }, wallMult: 1, move: 0.96 },
+  auto: { name: 'auto shotgun', cls: 'shotgun', dmg: 7, rate: 3, mag: 8, reload: 3, spread: 0.22, speed: 95, range: 20, ammo: 'shells', pellets: 6, falloff: { near: 6, far: 18, min: 0.35 }, wallMult: 1, move: 0.95 },
+  double: { name: 'double barrel', cls: 'shotgun', dmg: 7, rate: 4, mag: 2, reload: 2.3, spread: 0.3, speed: 90, range: 16, ammo: 'shells', pellets: 10, falloff: { near: 5, far: 14, min: 0.3 }, wallMult: 1, move: 0.98 },
+  sniper: { name: 'sniper', cls: 'sniper', dmg: 70, rate: 0.6, mag: 4, reload: 3, spread: 0.004, speed: 240, range: 130, ammo: 'heavy', pellets: 1, wallMult: 1, move: 0.9 },
+  crossbow: { name: 'crossbow', cls: 'sniper', dmg: 60, rate: 1, mag: 1, reload: 1.5, spread: 0.006, speed: 85, range: 90, ammo: 'heavy', pellets: 1, silent: true, wallMult: 1, move: 0.96 },
+  launcher: { name: 'egg launcher', cls: 'heavy', dmg: 60, rate: 0.6, mag: 1, reload: 2.8, spread: 0.015, speed: 48, range: 80, ammo: 'rockets', pellets: 1, splash: 4.5, wallMult: 4, move: 0.9 },
 };
 
 export const RARITY_NAMES = ['common', 'uncommon', 'rare', 'epic', 'legendary'] as const;
@@ -259,10 +257,13 @@ export const WALL_COST = PIECE_COST;
 // ---------------------------------------------------------------------------------------------------------------------
 // Scopes and backpacks.
 
-/** Scope levels 0..3 are 1x (none), 2x, 4x and 8x; each lets you see farther. */
-export const SCOPES = ['1x', '2x', '4x', '8x'] as const;
-export const SCOPE_VIEW = [0, 5, 11, 18] as const;
-export const MAX_SCOPE = 3;
+/**
+ * Scope levels 0..4 are 1x (none), 2x, 4x, 8x and 15x; each lets you see farther, and only the scope sets how far (no
+ * gun does). 15x is rare: supply drops and the bank's deposit boxes.
+ */
+export const SCOPES = ['1x', '2x', '4x', '8x', '15x'] as const;
+export const SCOPE_VIEW = [0, 5, 11, 18, 28] as const;
+export const MAX_SCOPE = 4;
 /**
  * Backpack levels 0..3: each adds 40% to the ammo, consumables and throwables an egg can carry, rounded up so every
  * level adds some (worked in whole numbers, which keeps it exact).
@@ -392,9 +393,12 @@ function throwDrop(rng: Rng, odds: Partial<Record<ThrowId, number>> = THROW_ODDS
   return { kind: 'throw', w, n: (w === 'grenade' || w === 'stun') && rng() < 0.4 ? 2 : 1 };
 }
 
-const levelDrop = (rng: Rng, kind: 'scope' | 'pack', better: boolean): LootDef => {
+/** A scope or backpack, better in the good places; a 15x scope only from a supply drop or a deposit box (`top`). */
+const levelDrop = (rng: Rng, kind: 'scope' | 'pack', better: boolean, top = false): LootDef => {
   const roll = rng();
   const lv = better ? (roll < 0.45 ? 3 : 2) : roll < 0.55 ? 1 : roll < 0.88 ? 2 : 3;
+  // the 15x from the same roll, so nothing else the generator rolls moves
+  if (kind === 'scope' && top && (better ? roll >= 0.8 : roll >= 0.95)) return { kind, lv: 4 };
   return { kind, lv };
 };
 
@@ -440,7 +444,7 @@ export function rollLoot(rng: Rng, tier: LootTier): LootDef[] {
     const treat = rng();
     out.push(treat < 0.45 ? { kind: 'use', w: 'shield', n: 2 } : treat < 0.75 ? { kind: 'use', w: 'medkit', n: 2 } : { kind: 'use', w: 'tart', n: 1 });
     out.push({ kind: 'throw', w: rng() < 0.6 ? 'grenade' : 'sauce', n: 2 });
-    out.push(levelDrop(rng, rng() < 0.5 ? 'scope' : 'pack', true));
+    out.push(levelDrop(rng, rng() < 0.5 ? 'scope' : 'pack', true, tier === 'supply'));
     out.push(armorDrop(rng, tier));
     return out;
   }
@@ -513,7 +517,7 @@ function pickDrop(rng: Rng, tier: LootTier, pick: string): LootDef[] {
       return [{ kind: 'melee', w: weighted(rng, MELEE_ODDS) }];
     case 'scope':
     case 'pack':
-      return [levelDrop(rng, pick as 'scope' | 'pack', false)];
+      return [levelDrop(rng, pick as 'scope' | 'pack', false, tier === 'deposit')];
     case 'armor':
       return [armorDrop(rng, tier)];
     case 'ghillie':

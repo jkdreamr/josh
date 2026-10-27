@@ -854,14 +854,14 @@ const GUN_HELP: Record<WeaponId, string> = {
   hsmg: 'Hits harder than an SMG, but climbs: every shot goes wider until you let off the trigger.',
   rifle: 'The all-rounder: quick, accurate, long reach.',
   burst: 'Three rounds a pull, dead on target.',
-  marksman: 'One careful shot at a time, between a rifle and a scout. Sees a little farther.',
-  scout: 'A long rifle with a scope built in.',
+  marksman: 'One careful shot at a time, between a rifle and a scout.',
+  scout: 'A light long rifle: quicker than a sniper, but each shot hits softer.',
   lmg: 'An 80-round belt. You walk slower carrying it.',
   minigun: `Hold the trigger: it spins up for ${WEAPONS.minigun.spin?.up} seconds, then pours out ${WEAPONS.minigun.mag} rounds. You walk slowly with it, and slower still while it spins.`,
   shotgun: 'Nine pellets. Huge up close, weak far off.',
   auto: 'Fires as fast as you pull, a little weaker a shot.',
   double: 'Two barrels, then a reload. Brutal at arm’s length.',
-  sniper: 'Two hits crack an egg with no shield, and you see much farther holding it.',
+  sniper: 'Two hits crack an egg with no shield, from far off: a big scope lets you see that far.',
   crossbow: 'Silent: firing it doesn’t give away your bush.',
   launcher: 'Lobs an egg that bursts on impact and flattens walls.',
 };
@@ -1094,7 +1094,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Lockers.</b> In the police station, the warehouses and some sheds. Open one like a chest for what's inside.
           </li>
           <li>
-            <b>Cellars and bunkers.</b> A few houses have a cellar, the police station an armory and the bank (now and then) a strongroom underneath, and a couple of hatches out in the open lead down to bunkers: a dark square ringed yellow on the map. Walk onto the stairs to go down, and back onto them to come up. It's dark down there but for the lamps, and the loot is better than up top: a cellar keeps a chest, an old fridge, drawers and shelves, a bunker rows of lockers, and the one under a hatch a chest as good as a supply drop. Nothing gets between the two levels but eggs on the stairs: nobody up top can see, shoot, throw at or hurt anyone below, or the other way round. The storm still reaches you underground, no scope (nor a long gun's sights) sees farther than 2x in the gloom, so the scope badge dims the bigger ones, and nothing can be built there. While you're below, both maps show its rooms.
+            <b>Cellars and bunkers.</b> A few houses have a cellar, the police station an armory and the bank (now and then) a strongroom underneath, and a couple of hatches out in the open lead down to bunkers: a dark square ringed yellow on the map. Walk onto the stairs to go down, and back onto them to come up. It's dark down there but for the lamps, and the loot is better than up top: a cellar keeps a chest, an old fridge, drawers and shelves, a bunker rows of lockers, and the one under a hatch a chest as good as a supply drop. Nothing gets between the two levels but eggs on the stairs: nobody up top can see, shoot, throw at or hurt anyone below, or the other way round. The storm still reaches you underground, no scope sees farther than 2x in the gloom, so the scope badge dims the bigger ones, and nothing can be built there. While you're below, both maps show its rooms.
           </li>
           <li>
             <b>Warehouses.</b> Full of crates, with a chest in a corner, a pair of lockers and barrels outside.
@@ -1201,7 +1201,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           <li>
             <ScopeIcon size={30} />
             <span>
-              <b>Scopes.</b> {SCOPES.slice(1).join(', ')}: each lets you see farther around you. You keep every one you find and look through whichever you like (the best one yet goes up to your eye as you pick it up), since a big one makes everything small up close.
+              <b>Scopes.</b> {SCOPES.slice(1).join(', ')}: each lets you see farther around you, and only the scope does (no gun zooms in, so a sniper wants a big one). You keep every one you find and look through whichever you like, whatever you hold (the best one yet goes up to your eye as you pick it up, once), since a big one makes everything small up close. The {SCOPES[SCOPES.length - 1]} is rare: supply drops and the bank's deposit boxes.
             </span>
           </li>
           <li>
