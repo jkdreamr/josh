@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
-import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useThree, useOnline, useSetting, getSetting, Segmented, defineSetting, levelOptions, levelIndex, TouchControls, sfx } from '../../kit';
+import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useOnline, useSetting, getSetting, Segmented, defineSetting, levelOptions, levelIndex, TouchControls, sfx } from '../../kit';
 import type { LevelName } from '../../kit/controls';
 import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
@@ -8,7 +8,9 @@ import { cloneSnapshot, commandFromPacket, consumeCommand, mergeRemoteCommand, m
 import { createWorld, distance, FIELD, teamOf, findReceiver, matchClock, nearestCarrier, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { goalRoar, kickThump, netSwish, startCrowd, whistle } from './audio.ts';
-import { createScene, type CameraMode, type SoccerView, type TimeMode } from './scene.ts';
+import type { CameraMode, SoccerView, TimeMode } from './scene.ts';
+import { markShadersReady, parkSoccerView, preloadSoccer, takeSoccerView, useSoccerStadium } from './load.ts';
+import { LoadProgress } from './loading.tsx';
 import { Hud, PowerMeter } from './hud.tsx';
 import { playerForSeat, type Mode } from './seats.ts';
 import './soccer.css';
@@ -128,6 +130,9 @@ function PhoneLobby() {
   const phones = online?.players.filter((player) => player.seat > 0) ?? [];
   const requiredPhones = mode === 'cpu' ? 1 : 2;
   useEffect(() => {
+    if (online?.isHost) preloadSoccer().catch(() => {});
+  }, [online?.isHost]);
+  useEffect(() => {
     if (!online?.code || typeof location === 'undefined') return;
     const url = `${location.protocol}//${location.host}/?game=soccer&room=${online.code}`;
     void QRCode.toDataURL(url, { errorCorrectionLevel: 'H', margin: 2, width: 280 }).then(setQr).catch(() => setQr(''));
@@ -173,6 +178,7 @@ function PhoneLobby() {
       {qr && <img src={qr} alt={`Phone controller QR code for room ${online.code}`} />}
       <span>1 Open your phone camera · 2 Scan · 3 Your phone becomes the controller.</span>
       <b className="g-soccer-room-code">{online.code}</b>
+      <LoadProgress />
       {invite && <a href={invite}>{invite}</a>}
       <Segmented label="Match mode" value={mode} options={phoneModeOptions} onChange={setMode} />
       <span className="g-soccer-phone-mode-note">vs CPU uses 1 phone · 2 players and Co-op use 2 phones.</span>
@@ -222,7 +228,7 @@ function onlineRenderState(frames: NetworkFrame[], now: number, fallback: World)
 function Play() {
   const shell = useShell();
   const keys = useKeys();
-  const THREE = useThree();
+  const stadium = useSoccerStadium();
   const online = useOnline();
   const { ref, size } = useCanvas<HTMLDivElement>();
   const [modeChoice, setModeChoice] = useSetting(MODE);
@@ -323,19 +329,30 @@ function Play() {
 
   useEffect(() => {
     const host = ref.current;
-    if (!THREE || !host) return;
-    const view = createScene(THREE, host, shell.touch, timeRef.current);
+    if (!stadium || !host) return;
+    const kept = takeSoccerView(shell.touch);
+    const view = kept ?? stadium.createScene(stadium.THREE, host, shell.touch, timeRef.current);
     if (!view) return;
+    if (kept) {
+      kept.attach(host);
+      kept.setTime(timeRef.current);
+    }
     viewRef.current = view;
     view.resize(size.w, size.h);
     view.update(world, 0, performance.now() / 1000, localTeam, cameraRef.current);
     renderDirty.current = true;
     shell.invalidate();
+    void view.precompile().then(() => {
+      markShadersReady();
+      if (viewRef.current !== view) return;
+      renderDirty.current = true;
+      shell.invalidate();
+    });
     return () => {
-      view.dispose();
       viewRef.current = null;
+      parkSoccerView(view, shell.touch);
     };
-  }, [THREE, shell.touch]);
+  }, [stadium, shell.touch]);
 
   useEffect(() => {
     viewRef.current?.resize(size.w, size.h);
@@ -713,6 +730,7 @@ function Play() {
   return (
     <div className="g-soccer-stage">
       <div className="g-soccer-canvas" ref={ref} />
+      <LoadProgress className="is-stage" />
       <Hud world={hudWorld} targetId={targetId} selectedId={selectedId} power={power ?? hudPower} contain={containing} watching={!!online?.watching} replaying={replayActive} />
       {shell.touch && shell.status === 'playing' && !online?.watching && <Stick movement={movement} />}
       {shell.touch && shell.status === 'playing' && !online?.watching && <TouchControls buttons={[
@@ -927,9 +945,12 @@ function PhoneController() {
   );
 }
 
-function Stage() {
+function Stage({ joining }: { joining: boolean }) {
   const shell = useShell();
   const online = useOnline();
+  // Whoever opens an invite waits for the room before mounting the 3D match, so a phone that becomes the controller
+  // never loads three.js or the player models (shell.touch is only known after the first render).
+  if (joining && !online && shell.status === 'ready') return null;
   if (shell.touch && online && !online.isHost && !online.watching) return <PhoneController />;
   return <Play key={`${shell.round}-${online?.round ?? 0}-${online?.handoffs ?? 0}`} />;
 }
@@ -952,7 +973,7 @@ export default function Soccer({ onExit, roomCode }: { onExit?: () => void; room
       quickPool="2v2"
       soloLabel="Play with keyboard"
     >
-      <Stage />
+      <Stage joining={!!roomCode} />
     </GameShell>
   );
 }

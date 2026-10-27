@@ -2,6 +2,7 @@ import type * as T from 'three';
 import type { World, Player, Team } from './logic.ts';
 import { FIELD, jerseyNumber, teamDir } from './logic.ts';
 import { disposeTree, damp } from './gl.ts';
+import { loadSoccerModel, MODEL_URLS } from './load.ts';
 import { adTexture, ballNumberTexture, ballTexture, markingsTexture, pitchTextures } from './textures.ts';
 import { IDENTITY_BASIS, type ViewBasis } from './input.ts';
 import { approachAngle, bindSoccerRig, bodyFrameVelocity, createSoccerAnimationInput, createSoccerAnimator, kickingFoot, playSoccerClip, preferredFoot, soccerClipActive, soccerDribbleOffset, updateSoccerAnimator, type SoccerAnimator, type SoccerClip } from './player.ts';
@@ -25,6 +26,10 @@ export type SoccerView = {
   getCameraNdc(): SoccerCameraNdc;
   update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId?: number | null, power?: number | null): void;
   render(): void;
+  /** Resolves once the shaders are compiled; frames rendered meanwhile are skipped. */
+  precompile(): Promise<void>;
+  /** Moves the canvas into another element, so a remounted match keeps its compiled scene. */
+  attach(host: HTMLElement): void;
   setTime(mode: TimeMode): void;
   goal(): void;
   dispose(): void;
@@ -466,21 +471,11 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   ballShadow.rotation.x = -Math.PI / 2; ballShadow.position.y = 0.025; scene.add(ballShadow);
   const actors = new Map<number, Actor>();
   const materialCache = new Map<string, Map<T.Material, T.Material>>();
-  const loadedAssets = new Map<string, Promise<{ scene: T.Object3D; clone: (source: T.Object3D) => T.Object3D }>>();
+  const attachments: Promise<void>[] = [];
   const loadPlayer = (player: Player, actor: Actor) => {
-    const url = `/models/soccer/${player.id % 2 ? 'male' : 'female'}.glb`;
-    let pending = loadedAssets.get(url);
-    if (!pending) {
-      pending = Promise.all([
-        import('three/examples/jsm/loaders/GLTFLoader.js'),
-        import('three/examples/jsm/utils/SkeletonUtils.js'),
-      ]).then(async ([loader, skeleton]) => {
-        const gltf = await new loader.GLTFLoader().loadAsync(url);
-        return { scene: gltf.scene, clone: skeleton.clone };
-      });
-      loadedAssets.set(url, pending);
-    }
-    void pending.then((asset) => {
+    const url = player.id % 2 ? MODEL_URLS.male : MODEL_URLS.female;
+    const pending = loadSoccerModel(url);
+    attachments.push(pending.then((asset) => {
       if (disposed) return;
       const body = asset.clone(asset.scene);
       body.traverse((object) => {
@@ -516,7 +511,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       bindSoccerRig(THREE, actor.anim, body);
     }).catch(() => {
       if (import.meta.env.DEV) console.warn(`Soccer player model unavailable: ${url}; using procedural player`);
-    });
+    }));
   };
   const ensureActor = (player: Player) => {
     let actor = actors.get(player.id);
@@ -958,7 +953,22 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     }
   }
 
+  let warming = false;
+  /** Compiles every shader the match needs (players included) without blocking, before the first frame draws. */
+  async function precompile() {
+    warming = true;
+    try {
+      await Promise.allSettled(attachments);
+      if (!disposed) await renderer.compileAsync(scene, camera);
+    } catch {
+      // The first frame compiles whatever is left.
+    } finally {
+      warming = false;
+    }
+  }
+
   function render() {
+    if (warming) return;
     const now = performance.now();
     if (quality.lastRender > 0) {
       const frameMs = now - quality.lastRender;
@@ -1003,6 +1013,11 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     },
     update,
     render,
+    precompile,
+    attach(next) {
+      next.appendChild(canvas);
+      next.appendChild(indicator);
+    },
     setTime,
     goal() { crowdRoar = 1.3; },
     dispose() {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
-import { bootFiles, gameIds, KEEP_MS, MISS_HEADERS_ROUTE, MISSING_ROUTE, plan, refsIn, withMissingRoute } from '../scripts/keep-old-assets.ts';
+import { bootFiles, gameIds, KEEP_MS, MISS_HEADERS_ROUTE, MISSING_ROUTE, MODEL_CACHE_ROUTE, plan, refsIn, withMissingRoute, withModelCache } from '../scripts/keep-old-assets.ts';
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -57,6 +57,17 @@ test('missing scripts get the stand-in, and no miss is ever cached', () => {
   const hit = [{ handle: 'hit' }, { src: '^/_astro/(.*)$', headers: { 'cache-control': 'public, max-age=31536000, immutable' }, continue: true }];
   assert.deepEqual(withMissingRoute([...adapter, ...hit]), [adapter[0], MISSING_ROUTE, MISS_HEADERS_ROUTE, ...hit]);
   assert.equal(withMissingRoute([spa]), null);
+});
+
+test('built models are cached for good, ahead of the filesystem check', () => {
+  const adapter = [{ src: '^/_astro/(.*)$', headers: { 'cache-control': 'public, max-age=31536000, immutable' }, continue: true }, { handle: 'filesystem' }];
+  const routes = withModelCache(adapter);
+  assert.deepEqual(routes, [adapter[0], MODEL_CACHE_ROUTE, adapter[1]]);
+  assert.deepEqual(withModelCache(routes), routes, 'running twice changes nothing');
+  assert.deepEqual(withModelCache([]), [MODEL_CACHE_ROUTE]);
+  const glb = new RegExp(MODEL_CACHE_ROUTE.src);
+  assert.ok(glb.test('/_astro/male.CA55K1O4.glb'));
+  assert.ok(!glb.test('/_astro/index.abc.js') && !glb.test('/models/soccer/male.glb'));
 });
 
 test('the stand-in answers for missing scripts, but not workers or stylesheets', () => {
