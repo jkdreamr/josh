@@ -9,12 +9,20 @@ import { approachAngle, bindSoccerRig, bodyFrameVelocity, createSoccerAnimationI
 type Three = typeof import('three');
 export type CameraMode = 'broadcast' | 'end' | 'replay';
 export type TimeMode = 'night' | 'golden';
+export type SoccerCameraNdc = {
+  ball: { x: number; y: number };
+  feet: { x: number; y: number };
+  powerBar: { x: number; y: number };
+  maxAbsX: number;
+  maxAbsY: number;
+};
 type Actor = { root: T.Group; anim: SoccerAnimator; contact: T.Mesh; fallback: T.Group; marker: T.Mesh; arrow: T.Mesh; carrierRing: T.Mesh; powerBar: T.Group; powerFill: T.Mesh; number: T.Mesh; prevCooldown: number; prevAction: string; lastKick: World['kickEvent']; keeperShot: boolean; celebrated: boolean; lodTick: number; lodDt: number };
 type Crowd = { mesh: T.InstancedMesh; count: number; phases: number[]; baseY: number[]; fixtures: T.MeshStandardMaterial[] };
 
 export type SoccerView = {
   resize(width: number, height: number): void;
   viewBasis(): ViewBasis;
+  getCameraNdc(): SoccerCameraNdc;
   update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId?: number | null, power?: number | null): void;
   render(): void;
   setTime(mode: TimeMode): void;
@@ -536,8 +544,106 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const target = new THREE.Vector3(0, 0, 0);
   const desired = new THREE.Vector3(0, 0, 0);
   const lookAt = new THREE.Vector3(0, 0, 0);
+  const cameraSafeOffset = new THREE.Vector3();
+  const cameraPanShift = new THREE.Vector3();
+  const cameraSample = new THREE.Vector3();
+  const cameraRight = new THREE.Vector3();
+  const cameraUp = new THREE.Vector3();
+  const cameraNdc: SoccerCameraNdc = {
+    ball: { x: 0, y: 0 },
+    feet: { x: 0, y: 0 },
+    powerBar: { x: 0, y: 0 },
+    maxAbsX: 0,
+    maxAbsY: 0,
+  };
+  const cameraDepth = { ball: 1, feet: 1, powerBar: 1 };
+  const cameraBounds = { minX: 0, maxX: 0, minY: 0, maxY: 0, centerX: 0, centerY: 0, depth: 1 };
+  let cameraPanned = false;
   let cameraReady = false;
   let width = 1, height = 1;
+  function updateCameraNdc(world: World, controlledPlayer: Player | null) {
+    camera.getWorldDirection(cameraDirection);
+    const playerActor = controlledPlayer ? actors.get(controlledPlayer.id) : null;
+    const scale = playerActor?.root.scale.y ?? 1.14;
+    const feetY = Math.max(0, playerActor?.anim.figure.position.y ?? 0);
+    const playerX = controlledPlayer?.x ?? world.ball.x;
+    const playerZ = controlledPlayer?.z ?? world.ball.z;
+    const direction = cameraDirection;
+    const cameraX = camera.position.x, cameraY = camera.position.y, cameraZ = camera.position.z;
+    cameraDepth.ball = Math.max(1, (world.ball.x - cameraX) * direction.x + (world.ball.y - cameraY) * direction.y + (world.ball.z - cameraZ) * direction.z);
+    cameraSample.set(world.ball.x, world.ball.y, world.ball.z).project(camera);
+    cameraNdc.ball.x = cameraSample.x;
+    cameraNdc.ball.y = cameraSample.y;
+    cameraDepth.feet = Math.max(1, (playerX - cameraX) * direction.x + (feetY - cameraY) * direction.y + (playerZ - cameraZ) * direction.z);
+    cameraSample.set(playerX, feetY, playerZ).project(camera);
+    cameraNdc.feet.x = cameraSample.x;
+    cameraNdc.feet.y = cameraSample.y;
+    const barY = feetY + 2.2 * scale;
+    cameraDepth.powerBar = Math.max(1, (playerX - cameraX) * direction.x + (barY - cameraY) * direction.y + (playerZ - cameraZ) * direction.z);
+    cameraSample.set(playerX, barY, playerZ).project(camera);
+    cameraNdc.powerBar.x = cameraSample.x;
+    cameraNdc.powerBar.y = cameraSample.y;
+    cameraNdc.maxAbsX = Math.max(Math.abs(cameraNdc.ball.x), Math.abs(cameraNdc.feet.x), Math.abs(cameraNdc.powerBar.x));
+    cameraNdc.maxAbsY = Math.max(Math.abs(cameraNdc.ball.y), Math.abs(cameraNdc.feet.y), Math.abs(cameraNdc.powerBar.y));
+    cameraBounds.minX = Math.min(cameraNdc.ball.x, cameraNdc.feet.x, cameraNdc.powerBar.x);
+    cameraBounds.maxX = Math.max(cameraNdc.ball.x, cameraNdc.feet.x, cameraNdc.powerBar.x);
+    cameraBounds.minY = Math.min(cameraNdc.ball.y, cameraNdc.feet.y, cameraNdc.powerBar.y);
+    cameraBounds.maxY = Math.max(cameraNdc.ball.y, cameraNdc.feet.y, cameraNdc.powerBar.y);
+    cameraBounds.centerX = (cameraBounds.minX + cameraBounds.maxX) * 0.5;
+    cameraBounds.centerY = (cameraBounds.minY + cameraBounds.maxY) * 0.5;
+    cameraBounds.depth = (cameraDepth.ball + cameraDepth.feet + cameraDepth.powerBar) / 3;
+  }
+  function panCameraToSafeArea(world: World, controlledPlayer: Player) {
+    updateCameraNdc(world, controlledPlayer);
+    if (cameraNdc.maxAbsX <= 0.8 && cameraNdc.maxAbsY <= 0.75) return;
+    cameraRight.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
+    cameraUp.setFromMatrixColumn(camera.matrixWorld, 1).normalize();
+    const halfHeight = cameraBounds.depth * Math.tan(camera.fov * Math.PI / 360);
+    const shiftX = cameraBounds.centerX * halfHeight * camera.aspect;
+    const shiftY = cameraBounds.centerY * halfHeight;
+    cameraPanned = true;
+    cameraPanShift.copy(cameraRight).multiplyScalar(shiftX).addScaledVector(cameraUp, shiftY);
+    camera.position.add(cameraPanShift);
+    cameraSafeOffset.add(cameraPanShift);
+    target.add(cameraPanShift);
+    desired.add(cameraPanShift);
+    lookAt.copy(target);
+    camera.lookAt(lookAt);
+    camera.updateMatrixWorld(true);
+    updateCameraNdc(world, controlledPlayer);
+  }
+  function keepCameraSubjectsInFrame(world: World, controlledPlayer: Player, baseFov: number, dt: number) {
+    cameraPanned = false;
+    updateCameraNdc(world, controlledPlayer);
+    for (let i = 0; i < 3 && (cameraNdc.maxAbsX > 0.8 || cameraNdc.maxAbsY > 0.75); i++) {
+      panCameraToSafeArea(world, controlledPlayer);
+    }
+    if (cameraNdc.maxAbsX > 0.8 || cameraNdc.maxAbsY > 0.75) {
+      const fitScale = Math.max(
+        (cameraBounds.maxX - cameraBounds.minX) / 1.6,
+        (cameraBounds.maxY - cameraBounds.minY) / 1.5,
+      );
+      if (fitScale > 1) {
+        const requiredFov = 2 * Math.atan(Math.tan(camera.fov * Math.PI / 360) * fitScale) * 180 / Math.PI;
+        const safeFov = Math.min(baseFov + 8, Math.max(camera.fov, requiredFov));
+        if (safeFov > camera.fov) {
+          camera.fov = Math.max(damp(camera.fov, safeFov, 2.4, dt), Math.min(baseFov + 8, requiredFov));
+          camera.updateProjectionMatrix();
+          camera.updateMatrixWorld(true);
+          updateCameraNdc(world, controlledPlayer);
+          for (let i = 0; i < 3 && (cameraNdc.maxAbsX > 0.8 || cameraNdc.maxAbsY > 0.75); i++) {
+            panCameraToSafeArea(world, controlledPlayer);
+          }
+        }
+      }
+    }
+    updateCameraNdc(world, controlledPlayer);
+    if (!cameraPanned && dt > 0) {
+      cameraSafeOffset.x = damp(cameraSafeOffset.x, 0, 0.7, dt);
+      cameraSafeOffset.y = damp(cameraSafeOffset.y, 0, 0.7, dt);
+      cameraSafeOffset.z = damp(cameraSafeOffset.z, 0, 0.7, dt);
+    }
+  }
   const debug = typeof location !== 'undefined' && new URLSearchParams(location.search).has('soccerdebug');
   const quality = {
     dpr: Math.min(window.devicePixelRatio || 1, lite ? 1.5 : 2),
@@ -612,21 +718,31 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
 
     const portrait = camera.aspect < 0.72;
     const attackDir = teamDir(humanTeam, world.endsSwapped);
-    const focusX = world.phase === 'restart' ? controlledPlayer?.x ?? world.ball.x : world.ball.x;
-    const tracking = world.phase === 'restart' ? 0.35 : 0.82;
+    const focusDx = (controlledPlayer?.x ?? world.ball.x) - world.ball.x;
+    const focusDz = (controlledPlayer?.z ?? world.ball.z) - world.ball.z;
+    const focusDistance = Math.hypot(focusDx, focusDz);
+    const playerFocusWeight = controlledPlayer ? Math.min(0.32, 8 / Math.max(0.001, focusDistance)) : 0;
+    const focusX = world.ball.x + focusDx * playerFocusWeight;
+    const focusZ = world.ball.z + focusDz * playerFocusWeight;
     const trackedX = cameraMode === 'broadcast'
-      ? Math.max(-FIELD.length * 0.38, Math.min(FIELD.length * 0.38, focusX * tracking + attackDir * FIELD.goalWidth * 0.3))
+      ? focusX + attackDir * FIELD.goalWidth * 0.3
       : world.ball.x * 0.35;
     target.set(
       trackedX + (portrait && cameraMode === 'broadcast' ? attackDir * FIELD.goalWidth * 0.28 : attackDir * FIELD.goalWidth * 0.2),
       0.55,
-      world.ball.z * 0.22,
+      cameraMode === 'broadcast' ? focusZ * 0.55 : world.ball.z * 0.22,
     );
     if (cameraMode === 'replay') desired.set(world.ball.x - attackDir * FIELD.goalWidth * 1.1, 5.2, world.ball.z + FIELD.width * 0.2);
     else if (cameraMode === 'broadcast' && portrait) desired.set(target.x - attackDir * FIELD.width * 0.42, FIELD.width * 0.24, target.z);
-    else if (cameraMode === 'broadcast') desired.set(target.x, FIELD.width * 0.25, -FIELD.width * 0.55);
+    else if (cameraMode === 'broadcast') desired.set(target.x, FIELD.width * 0.25, -FIELD.width * 0.56);
     else desired.set(target.x - attackDir * FIELD.length * 0.26, FIELD.width * 0.2, target.z);
-    const zoom = cameraMode === 'replay' ? 36 : portrait && cameraMode === 'broadcast' ? 68 : 27;
+    if (cameraMode === 'broadcast') {
+      target.add(cameraSafeOffset);
+      desired.add(cameraSafeOffset);
+    } else {
+      cameraSafeOffset.set(0, 0, 0);
+    }
+    const zoom = cameraMode === 'replay' ? 36 : cameraMode === 'broadcast' ? portrait ? 68 : 31 : 28;
     camera.fov = damp(camera.fov, zoom, 2.4, dt);
     camera.updateProjectionMatrix();
     if (!cameraReady) {
@@ -641,6 +757,11 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       camera.lookAt(lookAt);
     }
     camera.updateMatrixWorld(true);
+    if (cameraMode === 'broadcast' && controlledPlayer) {
+      keepCameraSubjectsInFrame(world, controlledPlayer, zoom, dt);
+    } else {
+      updateCameraNdc(world, controlledPlayer);
+    }
     if (cameraMode !== 'replay') {
       camera.getWorldDirection(cameraDirection);
       const forwardLength = Math.hypot(cameraDirection.x, cameraDirection.z);
@@ -872,6 +993,9 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
         right: { ...lastViewBasis.right },
         forward: { ...lastViewBasis.forward },
       };
+    },
+    getCameraNdc() {
+      return cameraNdc;
     },
     update,
     render,
