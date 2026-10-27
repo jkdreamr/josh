@@ -1676,9 +1676,11 @@
   top: 136px;
 }
 .g-scramble .g-scramble-hud.is-touch .g-scramble-help {
-  /* under your egg, below any prompt, clear of the team panel and the buttons */
-  top: calc(50% + 78px);
+  position: static;
+  height: 26px;
+  margin: 2px 0 0 2px;
   font-size: 12px;
+  transform: none;
 }
 .g-scramble .g-scramble-out span small {
   font-size: 11px;

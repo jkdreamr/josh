@@ -2030,6 +2030,16 @@ function Play({ mode }: { mode: StageMode }) {
     </>
   );
   const box = `${-HALF - 8} ${-HALF - 8} ${2 * HALF + 16} ${2 * HALF + 16}`;
+  // a teammate knocked down with nobody reviving it: who, and how far (its marker points the way). Up top in the
+  // middle, or on a touch screen under the team panel, clear of the buttons
+  const helpCall = hud.help && (
+    <div className="g-scramble-help" role="status" style={{ ['--mate' as string]: hud.help.color }}>
+      <em className="g-scramble-num">{hud.help.n}</em>
+      <span>
+        <b>{hud.help.name}</b> {hud.help.name === 'you' ? 'need' : 'needs'} help · {hud.help.far}m
+      </span>
+    </div>
+  );
   const slotLabel = (i: number) => (touchMode ? '' : String(i + 1));
   const heals = hud.items ? hud.items.bandage + hud.items.medkit + hud.items.tart : 0;
   const shields = hud.items ? hud.items.mini + hud.items.shield + hud.items.smoothie : 0;
@@ -2245,17 +2255,10 @@ function Play({ mode }: { mode: StageMode }) {
                 ))}
               </ul>
             )}
+            {touchMode && helpCall}
           </div>
           {hud.storm && <div className={`g-scramble-storm${hud.shrinking ? ' is-moving' : ''}`}>{hud.storm}</div>}
-          {hud.help && (
-            // a teammate knocked down with nobody reviving it: who, and how far (its marker points the way)
-            <div className="g-scramble-help" role="status" style={{ ['--mate' as string]: hud.help.color }}>
-              <em className="g-scramble-num">{hud.help.n}</em>
-              <span>
-                <b>{hud.help.name}</b> {hud.help.name === 'you' ? 'need' : 'needs'} help · {hud.help.far}m
-              </span>
-            </div>
-          )}
+          {!touchMode && helpCall}
           {hud.arrive && (
             <div key={hud.arrive} className="g-scramble-arrive" role="status">
               <small>entering</small>
