@@ -1,13 +1,14 @@
 import type * as T from 'three';
 import type { World, Player, Team } from './logic.ts';
 import { FIELD, jerseyNumber, teamDir } from './logic.ts';
+import { playerName } from './broadcast.ts';
 import { disposeTree, damp } from './gl.ts';
 import { adTexture, ballNumberTexture, ballTexture, markingsTexture, pitchTextures } from './textures.ts';
 import { IDENTITY_BASIS, type ViewBasis } from './input.ts';
 import { approachAngle, bindSoccerRig, bodyFrameVelocity, createSoccerAnimationInput, createSoccerAnimator, kickingFoot, playSoccerClip, preferredFoot, soccerClipActive, soccerDribbleOffset, updateSoccerAnimator, type SoccerAnimator, type SoccerClip } from './player.ts';
 
 type Three = typeof import('three');
-export type CameraMode = 'broadcast' | 'end' | 'replay';
+export type CameraMode = 'broadcast' | 'end' | 'replay' | 'intro';
 export type TimeMode = 'night' | 'golden';
 export type SoccerCameraNdc = {
   ball: { x: number; y: number };
@@ -536,6 +537,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   let crowdTimer = 0;
   let crowdRoar = 0;
   let elapsed = 0;
+  let introStartedAt: number | null = null;
   let adTimer = 0;
   let disposed = false;
   const glowMaterial = new THREE.MeshBasicMaterial({ color: '#f58a49', transparent: true, opacity: 0.38, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
@@ -543,6 +545,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   glow.position.set(15, 9, 24); scene.add(glow);
   const target = new THREE.Vector3(0, 0, 0);
   const desired = new THREE.Vector3(0, 0, 0);
+  const introCameraStart = new THREE.Vector3(-FIELD.length * 0.62, 30, -FIELD.width * 0.9);
   const lookAt = new THREE.Vector3(0, 0, 0);
   const cameraSafeOffset = new THREE.Vector3();
   const cameraPanShift = new THREE.Vector3();
@@ -671,6 +674,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     elapsed += Math.min(0.05, dt);
     crowdTimer += dt; adTimer += dt;
     if (adTimer > 0.08) { ads.draw(elapsed); adTimer = 0; }
+    if (cameraMode === 'intro') introStartedAt ??= time;
+    else introStartedAt = null;
     let currentCarrier: World['players'][number] | null = null;
     let controlledPlayer: World['players'][number] | null = null;
     let controlled: World['players'][number] | null = null;
@@ -724,28 +729,41 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     const playerFocusWeight = controlledPlayer ? Math.min(0.32, 8 / Math.max(0.001, focusDistance)) : 0;
     const focusX = world.ball.x + focusDx * playerFocusWeight;
     const focusZ = world.ball.z + focusDz * playerFocusWeight;
-    const trackedX = cameraMode === 'broadcast'
+    const broadcast = cameraMode === 'broadcast' || cameraMode === 'intro';
+    const trackedX = broadcast
       ? focusX + attackDir * FIELD.goalWidth * 0.3
       : world.ball.x * 0.35;
     target.set(
-      trackedX + (portrait && cameraMode === 'broadcast' ? attackDir * FIELD.goalWidth * 0.28 : attackDir * FIELD.goalWidth * 0.2),
+      trackedX + (portrait && broadcast ? attackDir * FIELD.goalWidth * 0.28 : attackDir * FIELD.goalWidth * 0.2),
       0.55,
-      cameraMode === 'broadcast' ? focusZ * 0.55 : world.ball.z * 0.22,
+      broadcast ? focusZ * 0.55 : world.ball.z * 0.22,
     );
     if (cameraMode === 'replay') desired.set(world.ball.x - attackDir * FIELD.goalWidth * 1.1, 5.2, world.ball.z + FIELD.width * 0.2);
-    else if (cameraMode === 'broadcast' && portrait) desired.set(target.x - attackDir * FIELD.width * 0.42, FIELD.width * 0.24, target.z);
-    else if (cameraMode === 'broadcast') desired.set(target.x, FIELD.width * 0.25, -FIELD.width * 0.56);
+    else if (broadcast && portrait) desired.set(target.x - attackDir * FIELD.width * 0.42, FIELD.width * 0.24, target.z);
+    else if (broadcast) desired.set(target.x, FIELD.width * 0.25, -FIELD.width * 0.56);
     else desired.set(target.x - attackDir * FIELD.length * 0.26, FIELD.width * 0.2, target.z);
-    if (cameraMode === 'broadcast') {
+    if (broadcast) {
       target.add(cameraSafeOffset);
       desired.add(cameraSafeOffset);
     } else {
       cameraSafeOffset.set(0, 0, 0);
     }
-    const zoom = cameraMode === 'replay' ? 36 : cameraMode === 'broadcast' ? portrait ? 68 : 31 : 28;
-    camera.fov = damp(camera.fov, zoom, 2.4, dt);
+    const broadcastZoom = portrait ? 68 : 31;
+    const zoom = cameraMode === 'replay' ? 36 : cameraMode === 'broadcast' || cameraMode === 'intro' ? broadcastZoom : 28;
+    if (cameraMode === 'intro') {
+      const p = Math.max(0, Math.min(1, (time - (introStartedAt ?? time)) / 5.5));
+      const t = p * p * (3 - 2 * p);
+      camera.position.lerpVectors(introCameraStart, desired, t);
+      target.multiplyScalar(t);
+      camera.fov = 50 + (broadcastZoom - 50) * t;
+    } else {
+      camera.fov = damp(camera.fov, zoom, 2.4, dt);
+    }
     camera.updateProjectionMatrix();
-    if (!cameraReady) {
+    if (cameraMode === 'intro') {
+      camera.lookAt(target);
+      cameraReady = true;
+    } else if (!cameraReady) {
       camera.position.copy(desired);
       camera.lookAt(target);
       cameraReady = true;
@@ -762,7 +780,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     } else {
       updateCameraNdc(world, controlledPlayer);
     }
-    if (cameraMode !== 'replay') {
+    if (cameraMode !== 'replay' && cameraMode !== 'intro') {
       camera.getWorldDirection(cameraDirection);
       const forwardLength = Math.hypot(cameraDirection.x, cameraDirection.z);
       if (forwardLength >= 1e-3) {
@@ -907,8 +925,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
         indicator.style.left = `${(projected.x * 0.5 + 0.5) * width}px`;
         indicator.style.top = `${(0.5 - projected.y * 0.5) * height}px`;
         indicator.style.setProperty('--player-color', controlled.team === 0 ? '#ff5368' : '#73defa');
-        const name = controlled.slot === 'GK' ? 'A. MORGAN' : controlled.slot === 'ST' ? 'M. RIVERA' : controlled.slot === 'CM' ? 'J. KIM' : 'D. PARK';
-        indicatorName.textContent = `NO. ${jerseyNumber(controlled.id)}  ${name}`;
+        indicatorName.textContent = `NO. ${jerseyNumber(controlled.id)}  ${playerName(controlled.id)}`;
         indicatorPower.style.width = power === null ? '0%' : `${Math.round(Math.max(0.04, power) * 100)}%`;
         indicatorPower.style.visibility = power === null ? 'hidden' : 'visible';
         indicatorPower.style.backgroundColor = (power ?? 0) > 0.85 ? '#ff755f' : '#e6f36d';
