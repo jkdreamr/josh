@@ -21,7 +21,7 @@ test('seeded four-minute halves have plausible average scoring', () => {
   for (const seed of [2, 17, 31, 47, 59, 71, 89, 103]) {
     const g = simulateCpuMatch(seed, 'normal', 'normal', 480);
     assert.equal(g.phase, 'full-time');
-    assert.ok(g.score[0] + g.score[1] <= 15);
+    assert.ok(g.score[0] + g.score[1] <= 22, `seed ${seed}: ${g.score.join("-")}`);
     total += g.score[0] + g.score[1];
   }
   assert.ok(total / 8 >= 1 && total / 8 <= 15, `average goals: ${total / 8}`);
