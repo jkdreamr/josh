@@ -1,10 +1,11 @@
 // A racing single scull for Redwood Slough (scene.ts builds one per racer when the course is raced in shells): the
-// hull with its decks, washbox, fin and bow ball, the riggers and slide, two sculls with hatchet blades, and the rower in
-// a unisuit on the sliding seat, rowing a real stroke: catch, drive (legs, then back, then arms), finish, and recovery
-// (hands away, body over, up the slide). Static parts share a mesh per material; the rower's limbs are posed by a little
-// two-bone solver each frame.
+// hull with its decks, washbox, fin, bow ball and bow number, the riggers and slide, two sculls with hatchet blades, and
+// the rower in a unisuit and shades on the sliding seat, rowing a real stroke: catch, drive (legs, then back, then arms),
+// finish, and recovery (hands away, body over, up the slide). The fittings are one mesh and the rower, the seat and both
+// sculls another, skinned, its bones posed by a little two-bone solver each frame (drawn the karts' way: see kart.ts).
 import type { T } from './gl';
 import { merge } from './model';
+import { FINISH, STICKER, kartModel } from './kart';
 
 type Three = typeof import('three');
 
@@ -35,8 +36,8 @@ const halfBeam = (z: number) => {
 
 /** The hull: a rounded U section from gunwale to gunwale, run out to a point at each end, with a little rocker. */
 function hullGeometry(THREE: Three) {
-  const STATIONS = 40;
-  const AROUND = 10;
+  const STATIONS = 32;
+  const AROUND = 8;
   const pos: number[] = [];
   const uv: number[] = [];
   const idx: number[] = [];
@@ -146,146 +147,184 @@ function bladeShape(THREE: Three) {
   s.bezierCurveTo(0.5, 0.04, 0.45, 0.085, 0.36, 0.085);
   s.bezierCurveTo(0.24, 0.085, 0.1, 0.06, 0, 0.025);
   s.closePath();
-  const g = new THREE.ExtrudeGeometry(s, { depth: 0.014, bevelEnabled: false, curveSegments: 6 });
+  const g = new THREE.ExtrudeGeometry(s, { depth: 0.014, bevelEnabled: false, curveSegments: 4 });
   g.translate(0, 0, -0.007);
   return g;
 }
 
 export type Scull = {
-  /** The seat (slides), the rower's parts (posed each frame) and the two sculls (each on its pin). */
-  seat: T.Mesh;
-  torso: T.Mesh;
-  head: T.Group;
-  limbs: { thigh: T.Mesh; shin: T.Mesh; upper: T.Mesh; fore: T.Mesh; hand: T.Mesh }[];
-  oars: T.Group[];
-  /** Each oar's own mesh, turned about the shaft to feather the blade. */
-  looms: T.Mesh[];
+  /** The rower, the seat and both sculls: one skinned mesh, its bones set each frame. */
+  mesh: T.SkinnedMesh;
+  seat: T.Object3D;
+  torso: T.Object3D;
+  /** The head (centred on it: the racer's hat goes on it). */
+  head: T.Object3D;
+  limbs: { thigh: T.Object3D; shin: T.Object3D; upper: T.Object3D; fore: T.Object3D }[];
+  /** Each scull, turned on its pin and about its shaft (to feather the blade). */
+  oars: T.Object3D[];
   /** Where each blade's tip is, in the shell's frame, after posing (for the splashes). */
   tips: T.Vector3[];
-  /** How many of the vertices at the end of each oar's mesh are the blade's painted tip (see tintTips). */
-  tipVerts: number;
+  /** Where the blades' painted tips, and what is in the racer's colour (the unisuit and the blades), are among the mesh's vertices (to repaint them). */
+  tipRanges: [number, number][];
+  suitRanges: [number, number][];
 };
 
-/** Shared by every shell in a race: the materials that do not take the racer's color. */
-export function scullKit(THREE: Three) {
-  return {
-    white: new THREE.MeshLambertMaterial({ color: 0xf1efe8 }),
-    carbon: new THREE.MeshLambertMaterial({ color: 0x24262c }),
-    alloy: new THREE.MeshLambertMaterial({ color: 0xb8bec6 }),
-    oar: new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }),
-    limb: new THREE.CylinderGeometry(0.85, 1, 1, 8, 1),
-    joint: new THREE.SphereGeometry(1, 8, 6),
-  };
-}
-export type ScullKit = ReturnType<typeof scullKit>;
+/** The rower's bones: the seat, the torso (from the hips), the head, and each side's thigh, shin, upper arm and forearm; the sculls. */
+const BONE = { seat: 0, torso: 1, head: 2, thigh: [3, 4], shin: [5, 6], upper: [7, 8], fore: [9, 10], oar: [11, 12] };
+const SKIN = 0xe0ad84;
 
 /**
- * Builds the scull into `body` (the kart view's body group) in the racer's color: `paint` (the hull and the unisuit),
- * `deck` (the decks fore and aft: the paint unless given) and `skin`. `blade` is the blade's color and `head` the group the
- * racer's hat goes on.
+ * Builds the scull into `body` (the kart view's body group): the hull in the racer's `paint` and its decks in `deck`;
+ * the riggers, the slide, the stretcher and the bow number (idx + 1) in one mesh; and the rower in a unisuit of `suit`,
+ * with the sculls, their blades in `blade` (all drawn the karts' way, see kartModel).
  */
-export function buildScull(THREE: Three, body: T.Group, kit: ScullKit, paint: T.Material, skin: T.Material, blade: string, deck: T.Material = paint): Scull {
+export function buildScull(THREE: Three, body: T.Group, key: object, paint: T.Material, suit: string, blade: string, idx: number, deck: T.Material = paint): Scull {
+  const F = FINISH;
   const M = (x: number, y: number, z: number, sx = 1, sy = 1, sz = 1, rx = 0, ry = 0, rz = 0) =>
     new THREE.Matrix4().compose(new THREE.Vector3(x, y, z), new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, rz)), new THREE.Vector3(sx, sy, sz));
-  const box = new THREE.BoxGeometry(1, 1, 1);
-  const cyl = new THREE.CylinderGeometry(1, 1, 1, 8);
-  const ball = new THREE.SphereGeometry(1, 10, 8);
   // the hull in the racer's paint, and its decks fore and aft
   body.add(new THREE.Mesh(hullGeometry(THREE), paint));
-  const decks = new THREE.Mesh(merge(THREE, [
+  body.add(new THREE.Mesh(merge(THREE, [
     { g: deckGeometry(THREE, COCKPIT.to, HULL.bow), m: M(0, 0, 0) },
     { g: deckGeometry(THREE, HULL.stern, COCKPIT.from), m: M(0, 0, 0) },
-  ]), deck);
-  body.add(decks);
-  // the white parts: a pinstripe down each deck, the bow ball, the washbox in front of the cockpit, and the shoes
-  const white = merge(THREE, [
-    { g: box, m: M(0, HULL.sheer + 0.04, (COCKPIT.to + HULL.bow) / 2 - 0.2, 0.025, 0.012, HULL.bow - COCKPIT.to - 0.5) },
-    { g: box, m: M(0, HULL.sheer + 0.036, (COCKPIT.from + HULL.stern) / 2, 0.025, 0.012, COCKPIT.from - HULL.stern - 0.4) },
-    { g: ball, m: M(0, HULL.sheer + 0.02, HULL.bow + 0.02, 0.06, 0.06, 0.06) },
-    // (the washbox: a low V of a breakwater pointing to the bow)
-    ...[-1, 1].map((sd) => ({ g: box, m: M(sd * 0.1, HULL.sheer + 0.06, COCKPIT.to + 0.18, 0.02, 0.09, 0.32, 0, sd * 0.5, 0) })),
-    // (the heels' shoes on the stretcher)
-    ...[-1, 1].map((sd) => ({ g: box, m: M(sd * FEET.x, FEET.y + 0.05, FEET.z + 0.13, 0.1, 0.09, 0.27, 0.95, 0, 0) })),
-  ]);
-  body.add(new THREE.Mesh(white, kit.white));
-  // the dark parts: the cockpit floor, the slide's rails, the foot stretcher, the fin under the stern, and the riggers
-  // (two struts and a stay from the gunwale out to each pin, and the pin itself)
-  const dark: { g: T.BufferGeometry; m: T.Matrix4 }[] = [
-    { g: box, m: M(0, 0.1, (COCKPIT.from + COCKPIT.to) / 2, 0.3, 0.02, COCKPIT.to - COCKPIT.from) },
-    ...[-1, 1].map((sd) => ({ g: box, m: M(sd * 0.09, 0.2, -0.3, 0.025, 0.03, 1.15) })),
-    { g: box, m: M(0, FEET.y + 0.06, FEET.z + 0.04, 0.34, 0.26, 0.02, 0.95, 0, 0) },
-    { g: box, m: M(0, -0.06, -2.1, 0.012, 0.16, 0.22) },
-  ];
-  const strut = (ax: number, ay: number, az: number, bx: number, by: number, bz: number, r: number) => {
-    const a = new THREE.Vector3(ax, ay, az);
-    const b = new THREE.Vector3(bx, by, bz);
-    const d = b.clone().sub(a);
-    const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), d.clone().normalize());
-    dark.push({ g: cyl, m: new THREE.Matrix4().compose(a.add(b).multiplyScalar(0.5), q, new THREE.Vector3(r, d.length(), r)) });
-  };
+  ]), deck));
+  // the fittings: a pinstripe down each deck, the bow ball and the bow number on its card, the washbox in front of the
+  // cockpit, the shoes on the stretcher; the cockpit floor, the slide's rails, the stretcher, the fin under the stern
+  // and the riggers (two struts and a stay from the gunwale out to each pin, the pin and its gate)
+  const s = kartModel(THREE, key);
+  const white = 0xf1efe8;
+  const carbon = 0x24262c;
+  s.box(white, [0, HULL.sheer + 0.04, (COCKPIT.to + HULL.bow) / 2 - 0.2], [0.025, 0.012, HULL.bow - COCKPIT.to - 0.5], [0, 0, 0], F.GLOSS);
+  s.box(white, [0, HULL.sheer + 0.036, (COCKPIT.from + HULL.stern) / 2], [0.025, 0.012, COCKPIT.from - HULL.stern - 0.4], [0, 0, 0], F.GLOSS);
+  s.ball(white, [0, HULL.sheer + 0.02, HULL.bow + 0.02], [0.06, 0.06, 0.06], [0, 0, 0], F.GLOSS);
+  s.box(white, [0, HULL.sheer + 0.11, HULL.bow - 0.35], [0.11, 0.12, 0.008], [0, 0, 0], F.PLASTIC);
+  s.box(carbon, [0, HULL.sheer + 0.05, HULL.bow - 0.35], [0.01, 0.06, 0.01], [0, 0, 0], F.CARBON);
+  for (const r of [0, Math.PI]) s.number(idx + 1, M(0, HULL.sheer + 0.115, HULL.bow - 0.35 + (r ? -0.005 : 0.005), 1, 1, 1, 0, r, 0), 0.08, 0.1, white);
   for (const sd of [-1, 1]) {
-    strut(sd * 0.2, HULL.sheer, PIN.z + 0.32, sd * PIN.x, PIN.y - 0.04, PIN.z, 0.016);
-    strut(sd * 0.2, HULL.sheer, PIN.z - 0.32, sd * PIN.x, PIN.y - 0.04, PIN.z, 0.016);
-    strut(sd * 0.22, HULL.sheer - 0.06, PIN.z, sd * PIN.x, PIN.y - 0.04, PIN.z, 0.012);
-    strut(sd * PIN.x, PIN.y - 0.08, PIN.z, sd * PIN.x, PIN.y + 0.1, PIN.z, 0.014);
+    s.box(white, [sd * 0.1, HULL.sheer + 0.06, COCKPIT.to + 0.18], [0.02, 0.09, 0.32], [0, sd * 0.5, 0], F.GLOSS);
+    s.box(0xf6f6f8, [sd * FEET.x, FEET.y + 0.05, FEET.z + 0.13], [0.1, 0.09, 0.27], [0.95, 0, 0], F.PLASTIC);
+    s.box(0x2a2b30, [sd * FEET.x, FEET.y + 0.0, FEET.z + 0.16], [0.105, 0.02, 0.28], [0.95, 0, 0], F.RUBBER);
+    s.box(carbon, [sd * 0.09, 0.2, -0.3], [0.025, 0.03, 1.15], [0, 0, 0], F.ALLOY);
   }
-  body.add(new THREE.Mesh(merge(THREE, dark), kit.carbon));
-  // the seat, on the slide
-  const seat = new THREE.Mesh(box, kit.carbon);
-  seat.scale.set(0.24, 0.05, 0.26);
-  body.add(seat);
-  // the rower: a unisuit in the racer's color, bare arms and calves
-  const part = (g: T.BufferGeometry, m: T.Material) => {
-    const o = new THREE.Mesh(g, m);
-    body.add(o);
-    return o;
-  };
-  const torso = part(ball, paint);
-  const head = new THREE.Group();
-  const face = new THREE.Mesh(ball, skin);
-  face.scale.set(0.12, 0.135, 0.12);
-  head.add(face);
-  body.add(head);
-  const limbs = [-1, 1].map(() => ({ thigh: part(kit.limb, paint), shin: part(kit.limb, skin), upper: part(kit.limb, skin), fore: part(kit.limb, skin), hand: part(kit.joint, skin) }));
-  // the sculls: a white shaft, a black grip on the handle and a collar at the pin, the blade in the racer's color with a
-  // white tip; each in one mesh, laid out along +x from the pin (a left one mirrored)
-  const c = new THREE.Color(blade);
-  const bc: [number, number, number] = [c.r, c.g, c.b];
-  const oars: T.Group[] = [];
-  const looms: T.Mesh[] = [];
-  // (the tip is the last part of each oar's mesh: a box, unindexed)
-  const tipVerts = box.index ? box.index.count : box.getAttribute('position').count;
+  s.box(carbon, [0, 0.1, (COCKPIT.from + COCKPIT.to) / 2], [0.3, 0.02, COCKPIT.to - COCKPIT.from], [0, 0, 0], F.CARBON);
+  s.box(carbon, [0, FEET.y + 0.06, FEET.z + 0.04], [0.34, 0.26, 0.02], [0.95, 0, 0], F.CARBON);
+  s.box(carbon, [0, -0.06, -2.1], [0.012, 0.16, 0.22], [0, 0, 0], F.CARBON);
   for (const sd of [-1, 1]) {
-    const loom = merge(THREE, [
-      { g: cyl, m: M(sd * (OUTBOARD - INBOARD) / 2 - sd * 0.12, 0, 0, 0.022, OUTBOARD + INBOARD - 0.5, 0.022, 0, 0, Math.PI / 2), color: [0.94, 0.94, 0.92] },
-      { g: cyl, m: M(-sd * (INBOARD - 0.08), 0, 0, 0.026, 0.16, 0.026, 0, 0, Math.PI / 2), color: [0.08, 0.08, 0.09] },
-      { g: cyl, m: M(sd * 0.04, 0, 0, 0.04, 0.06, 0.04, 0, 0, Math.PI / 2), color: [0.85, 0.85, 0.82] },
-      { g: bladeShape(THREE), m: M(sd * (OUTBOARD - 0.49), 0, 0, sd, 1, 1), color: bc },
-      { g: box, m: M(sd * (OUTBOARD - 0.03), -0.02, 0, 0.05, 0.12, 0.018), color: [0.97, 0.97, 0.95] },
-    ]);
-    const mesh = new THREE.Mesh(loom, kit.oar);
-    const pin = new THREE.Group();
-    pin.position.set(sd * PIN.x, PIN.y, PIN.z);
-    pin.add(mesh);
-    body.add(pin);
-    oars.push(pin);
-    looms.push(mesh);
+    s.tube(carbon, [sd * 0.2, HULL.sheer, PIN.z + 0.32], [sd * PIN.x, PIN.y - 0.04, PIN.z], 0.016, F.CARBON);
+    s.tube(carbon, [sd * 0.2, HULL.sheer, PIN.z - 0.32], [sd * PIN.x, PIN.y - 0.04, PIN.z], 0.016, F.CARBON);
+    s.tube(carbon, [sd * 0.22, HULL.sheer - 0.06, PIN.z], [sd * PIN.x, PIN.y - 0.04, PIN.z], 0.012, F.CARBON);
+    s.tube(0xb9bec6, [sd * PIN.x, PIN.y - 0.08, PIN.z], [sd * PIN.x, PIN.y + 0.1, PIN.z], 0.014, F.CHROME);
+    s.box(0x2a2b30, [sd * PIN.x, PIN.y + 0.02, PIN.z], [0.05, 0.09, 0.07], [0, 0, 0], F.PLASTIC);
   }
-  box.dispose();
-  cyl.dispose();
-  ball.dispose();
-  return { seat, torso, head, limbs, oars, looms, tips: [new THREE.Vector3(), new THREE.Vector3()], tipVerts };
+  const fit = new THREE.Mesh(s.bake(), s.mat);
+  body.add(fit);
+  // the rower and the sculls, each part on its bone
+  const r = kartModel(THREE, key);
+  const suitAt: [number, number][] = [];
+  const suitPart = (fn: () => void) => {
+    const from = r.verts();
+    fn();
+    suitAt.push([from, r.verts()]);
+  };
+  const c = new THREE.Color(suit).getHex();
+  // the seat
+  r.bone(BONE.seat);
+  r.box(carbon, [0, 0, 0], [0.24, 0.05, 0.26], [0, 0, 0], F.CARBON);
+  for (const sd of [-1, 1]) r.cyl6(0x8d929a, [sd * 0.09, -0.03, 0], [0.025, 0.03, 0.025], [0, 0, Math.PI / 2], F.ALLOY);
+  // the torso in the unisuit (facing the stern, -z), a white stripe down each side, the Block S on the chest and
+  // Stanford across the back; bare shoulders and the neck
+  r.bone(BONE.torso);
+  const lathe = new THREE.LatheGeometry(
+    [[0.001, -0.04], [0.15, -0.03], [0.165, 0.07], [0.15, 0.19], [0.165, 0.31], [0.175, 0.39], [0.15, 0.46], [0.09, 0.5], [0.001, 0.51]].map(([x, y]) => new THREE.Vector2(x, y)),
+    9,
+  );
+  suitPart(() => r.push(lathe, M(0, 0, 0, 1, 1, 0.74), c, F.CLOTH));
+  for (const sd of [-1, 1]) {
+    r.box(0xf6f6f8, [sd * 0.158, 0.22, 0], [0.025, 0.42, 0.1], [0, 0, sd * 0.05], F.CLOTH);
+  }
+  r.sticker(STICKER.blockS, [0, 0.32, -0.172 * 0.74 * 0.98 - 0.002], 0.08, 0.08, [0, Math.PI, 0], 0xffffff, 0.15);
+  r.sticker(STICKER.stanford, [0, 0.33, 0.175 * 0.74 + 0.002], 0.22, 0.055, [0, 0, 0], 0xffffff, 0.15);
+  r.cyl(SKIN, [0, 0.54, 0], [0.05, 0.12, 0.05], [0, 0, 0], F.CLOTH);
+  // the head, centred on its bone, the face toward the stern: ears, nose, wraparound shades and the hair under the hat
+  r.bone(BONE.head);
+  r.ball(SKIN, [0, 0, 0], [0.11, 0.128, 0.118], [0, 0, 0], F.CLOTH);
+  r.ball6(SKIN, [0, -0.01, -0.115], [0.022, 0.03, 0.025], [0, 0, 0], F.CLOTH);
+  for (const sd of [-1, 1]) r.ball6(SKIN, [sd * 0.108, 0, 0.01], [0.022, 0.035, 0.03], [0, 0, 0], F.CLOTH);
+  r.push(new THREE.SphereGeometry(1, 8, 2, Math.PI * 1.15, Math.PI * 0.7, Math.PI * 0.4, Math.PI * 0.12), M(0, 0, 0, 0.116, 0.134, 0.124), 0x14161c, F.GLASS);
+  r.push(new THREE.SphereGeometry(1, 8, 4, 0, Math.PI * 2, 0, Math.PI * 0.55), M(0, 0.008, 0.012, 0.115, 0.13, 0.122), 0x3a2a1e, F.CLOTH);
+  // the legs: the unisuit down to mid-thigh, then bare legs, white socks
+  for (const n of [0, 1]) {
+    r.bone(BONE.thigh[n]);
+    suitPart(() => r.push(new THREE.CylinderGeometry(0.068, 0.078, THIGH * 0.55, 6, 1, true), M(0, THIGH * 0.275, 0), c, F.CLOTH));
+    r.push(new THREE.CylinderGeometry(0.055, 0.067, THIGH * 0.47, 6, 1, true), M(0, THIGH * 0.76, 0), SKIN, F.CLOTH);
+    r.bone(BONE.shin[n]);
+    r.ball6(SKIN, [0, 0, 0], [0.058, 0.058, 0.058], [0, 0, 0], F.CLOTH);
+    r.push(new THREE.CylinderGeometry(0.036, 0.052, SHIN * 0.8, 6, 1, true), M(0, SHIN * 0.4, 0), SKIN, F.CLOTH);
+    r.push(new THREE.CylinderGeometry(0.035, 0.037, SHIN * 0.2, 6, 1, true), M(0, SHIN * 0.9, 0), 0xf6f6f8, F.CLOTH);
+  }
+  // the arms, bare, the hands round the grips
+  for (const n of [0, 1]) {
+    r.bone(BONE.upper[n]);
+    r.ball6(SKIN, [0, 0, 0], [0.055, 0.052, 0.058], [0, 0, 0], F.CLOTH);
+    r.push(new THREE.CylinderGeometry(0.038, 0.047, UPPER, 6, 1, true), M(0, UPPER / 2, 0), SKIN, F.CLOTH);
+    r.bone(BONE.fore[n]);
+    r.ball6(SKIN, [0, 0, 0], [0.038, 0.038, 0.038], [0, 0, 0], F.CLOTH);
+    r.push(new THREE.CylinderGeometry(0.03, 0.038, FORE, 6, 1, true), M(0, FORE / 2, 0), SKIN, F.CLOTH);
+    r.ball6(SKIN, [0, FORE + 0.01, 0], [0.04, 0.05, 0.042], [0, 0, 0], F.CLOTH);
+  }
+  // the sculls: a white shaft, the black grip on the handle and the collar at the pin, the blade in the racer's colour
+  // with its tip (painted in the colour of the wheels), out along +x from the pin (the left one mirrored)
+  const bc = new THREE.Color(blade).getHex();
+  const tipAt: [number, number][] = [];
+  [-1, 1].forEach((sd, n) => {
+    r.bone(BONE.oar[n]);
+    r.push(new THREE.CylinderGeometry(1, 1, 1, 5, 1, true), M((sd * (OUTBOARD - INBOARD)) / 2 - sd * 0.12, 0, 0, 0.022, OUTBOARD + INBOARD - 0.5, 0.022, 0, 0, Math.PI / 2), 0xf0f0eb, F.GLOSS);
+    r.cyl6(0x141518, [-sd * (INBOARD - 0.08), 0, 0], [0.027, 0.16, 0.027], [0, 0, Math.PI / 2], F.RUBBER);
+    r.cyl6(0xdcdcd6, [sd * 0.04, 0, 0], [0.04, 0.06, 0.04], [0, 0, Math.PI / 2], F.PLASTIC);
+    suitPart(() => r.push(bladeShape(THREE), M(sd * (OUTBOARD - 0.49), 0, 0, sd, 1, 1), bc, F.GLOSS));
+    const from = r.verts();
+    r.box(0xf7f7f2, [sd * (OUTBOARD - 0.03), -0.02, 0], [0.05, 0.12, 0.018], [0, 0, 0], F.GLOSS);
+    tipAt.push([from, r.verts()]);
+  });
+  const bones = Array.from({ length: 13 }, () => new THREE.Object3D());
+  const mesh = new THREE.SkinnedMesh(r.bake(true), r.mat);
+  for (const b of bones) mesh.add(b);
+  // (plain objects as bones: all a skeleton needs of them is their matrices)
+  mesh.bind(new THREE.Skeleton(bones as unknown as T.Bone[], bones.map(() => new THREE.Matrix4())), new THREE.Matrix4());
+  body.add(mesh);
+  const scull: Scull = {
+    mesh,
+    seat: bones[BONE.seat],
+    torso: bones[BONE.torso],
+    head: bones[BONE.head],
+    limbs: [0, 1].map((n) => ({ thigh: bones[BONE.thigh[n]], shin: bones[BONE.shin[n]], upper: bones[BONE.upper[n]], fore: bones[BONE.fore[n]] })),
+    oars: BONE.oar.map((b) => bones[b]),
+    tips: [new THREE.Vector3(), new THREE.Vector3()],
+    tipRanges: tipAt,
+    suitRanges: suitAt,
+  };
+  poseScull(THREE, scull, [0, 1].map(() => ({ sweep: 0, dip: 0, feather: 0 })), 0.75, 0.55, 0);
+  // (culled by a generous sphere round the cockpit, whatever the pose)
+  mesh.updateMatrixWorld(true);
+  mesh.skeleton.update();
+  mesh.computeBoundingBox();
+  mesh.computeBoundingSphere();
+  mesh.boundingSphere!.center.set(0, 0.6, -0.5);
+  mesh.boundingSphere!.radius = 3.4;
+  return scull;
 }
 
-/** Paints the tips of a scull's blades (white to start with) in `color`. */
-export function tintTips(THREE: Three, s: Scull, color: string) {
+/** Paints vertex ranges of a scull's mesh in `color`. */
+function repaint(THREE: Three, s: Scull, ranges: [number, number][], color: string) {
+  const col = s.mesh.geometry.getAttribute('color') as T.BufferAttribute;
   const c = new THREE.Color(color);
-  for (const loom of s.looms) {
-    const col = loom.geometry.getAttribute('color') as T.BufferAttribute;
-    for (let k = col.count - s.tipVerts; k < col.count; k++) col.setXYZ(k, c.r, c.g, c.b);
-    col.needsUpdate = true;
-  }
+  for (const [a, b] of ranges) for (let k = a; k < b; k++) col.setXYZ(k, c.r, c.g, c.b);
+  col.needsUpdate = true;
 }
+/** Paints the tips of a scull's blades (white to start with) in `color`. */
+export const tintTips = (THREE: Three, s: Scull, color: string) => repaint(THREE, s, s.tipRanges, color);
+/** The rower's unisuit and the blades in a new colour. */
+export const resuit = (THREE: Three, s: Scull, color: string) => repaint(THREE, s, s.suitRanges, color);
 
 const ease = (u: number) => u * u * (3 - 2 * u);
 const clamp01 = (u: number) => Math.max(0, Math.min(1, u));
@@ -305,19 +344,18 @@ export function strokeBody(phase: number, drive: number) {
 // scratch for the solver and the pose
 type Scratch = Record<'a' | 'b' | 'c' | 'd' | 'up' | 'hip' | 'shoulder' | 'knee' | 'elbow' | 'hand' | 'sh' | 'foot' | 'pole', T.Vector3>;
 let V: Scratch | null = null;
+let Q: { pin: T.Quaternion; feather: T.Quaternion; e: T.Euler } | null = null;
 
-/** Lays a limb (a tapered cylinder) from a to b, `r` thick. */
-function bone(m: T.Mesh, a: T.Vector3, b: T.Vector3, r: number) {
+/** Puts a bone at a, its +y pointing at b. */
+function aim(bone: T.Object3D, a: T.Vector3, b: T.Vector3) {
   const v = V!;
-  v.d.subVectors(b, a);
-  const len = v.d.length();
-  m.position.addVectors(a, b).multiplyScalar(0.5);
-  m.quaternion.setFromUnitVectors(v.up, v.d.divideScalar(len || 1));
-  m.scale.set(r, len, r);
+  bone.position.copy(a);
+  v.d.subVectors(b, a).normalize();
+  bone.quaternion.setFromUnitVectors(v.up, v.d);
 }
 
 /**
- * Where the joint between two bones of lengths l1 and l2 goes, from a to b, bent toward `pole` (out = the joint). Too far
+ * Where the joint goes between two bones of lengths l1 and l2, from a to b, bent toward `pole` (out = the joint). Too far
  * apart, the limb goes straight toward b.
  */
 function solve(a: T.Vector3, b: T.Vector3, l1: number, l2: number, pole: T.Vector3, out: T.Vector3) {
@@ -334,30 +372,38 @@ function solve(a: T.Vector3, b: T.Vector3, l1: number, l2: number, pole: T.Vecto
 
 /**
  * Poses the rower and sculls. sweep/dip/feather per oar (sweep: toward the bow at the catch; dip: the blade end up;
- * feather 0 squared to 1 flat), `slide` 0 at the catch to 1 at the finish and `lean` the same for the back.
+ * feather 0 squared to 1 flat), `slide` 0 at the catch to 1 at the finish and `lean` the same for the back; crab, a crab
+ * throwing the rower back; cheer, both fists in the air (the sculls let go, trailing); rest, the hands off the handles
+ * and on the knees (the sculls in along the hull).
  */
-export function poseScull(THREE: Three, s: Scull, oar: { sweep: number; dip: number; feather: number }[], slide: number, lean: number, crab: number) {
+export function poseScull(THREE: Three, s: Scull, oar: { sweep: number; dip: number; feather: number }[], slide: number, lean: number, crab: number, cheer = 0, rest = 0) {
   if (!V) {
     const keys = ['a', 'b', 'c', 'd', 'up', 'hip', 'shoulder', 'knee', 'elbow', 'hand', 'sh', 'foot', 'pole'] as const;
     V = Object.fromEntries(keys.map((k) => [k, new THREE.Vector3()])) as Scratch;
     V.up.set(0, 1, 0);
+    Q = { pin: new THREE.Quaternion(), feather: new THREE.Quaternion(), e: new THREE.Euler() };
   }
   const { knee, elbow, hand, sh, foot, pole } = V;
+  const q = Q!;
   const hip = V.hip.set(0, SLIDE.y + 0.06, SLIDE.catch + (SLIDE.finish - SLIDE.catch) * slide);
   s.seat.position.set(0, SLIDE.y - 0.04, hip.z + 0.03);
-  // the back: forward over the knees at the catch, laid back at the finish (thrown back further by a crab)
-  const th = 0.42 - 0.74 * lean + 0.35 * crab;
+  s.seat.quaternion.identity();
+  // the back: forward over the knees at the catch, laid back at the finish (thrown back further by a crab, sat up
+  // straight to cheer)
+  const th = (0.42 - 0.74 * lean + 0.35 * crab) * (1 - cheer) - 0.08 * cheer;
   const shoulder = V.shoulder.set(0, hip.y + Math.cos(th) * TORSO, hip.z - Math.sin(th) * TORSO);
-  s.torso.position.set(0, hip.y + Math.cos(th) * TORSO * 0.52, hip.z - Math.sin(th) * TORSO * 0.52);
-  s.torso.rotation.set(-th, 0, 0);
-  s.torso.scale.set(0.17, 0.3, 0.12);
+  s.torso.position.copy(hip);
+  s.torso.quaternion.setFromEuler(q.e.set(-th, 0, 0));
+  // (the head stays nearer level than the back, looking down the boat; up at the sky to cheer)
   s.head.position.set(0, shoulder.y + Math.cos(th * 0.6) * 0.17, shoulder.z - Math.sin(th * 0.6) * 0.17);
-  s.head.rotation.set(-th * 0.4, 0, 0);
+  s.head.quaternion.setFromEuler(q.e.set(-th * 0.35 + 0.25 * cheer, 0, 0));
   s.oars.forEach((pin, n) => {
     const sd = n ? 1 : -1;
     const o = oar[n];
-    pin.rotation.set(0, -sd * o.sweep, sd * o.dip);
-    s.looms[n].rotation.x = sd * o.feather * (Math.PI / 2);
+    q.pin.setFromEuler(q.e.set(0, -sd * o.sweep, sd * o.dip));
+    q.feather.setFromEuler(q.e.set(sd * o.feather * (Math.PI / 2), 0, 0));
+    pin.position.set(sd * PIN.x, PIN.y, PIN.z);
+    pin.quaternion.copy(q.pin).multiply(q.feather);
     // (the handle, inboard of the pin along the shaft)
     const cd = Math.cos(o.dip);
     const dirx = sd * cd * Math.cos(o.sweep);
@@ -370,17 +416,60 @@ export function poseScull(THREE: Three, s: Scull, oar: { sweep: number; dip: num
     foot.set(sd * FEET.x, FEET.y, FEET.z);
     const h = V!.c.set(sd * 0.1, hip.y, hip.z);
     solve(h, foot, THIGH, SHIN, pole.set(sd * 0.15, 1, 0), knee);
-    bone(L.thigh, h, knee, 0.075);
-    bone(L.shin, knee, foot, 0.055);
-    // arms: from the shoulder to the hand on the grip, the elbow out and down
+    aim(L.thigh, h, knee);
+    aim(L.shin, knee, foot);
+    // arms: from the shoulder to the hand on the grip, the elbow out and down (resting, on the knee; to cheer, fists up
+    // over the head)
     sh.set(sd * 0.17, shoulder.y - 0.04, shoulder.z);
-    solve(sh, hand, UPPER, FORE, pole.set(sd * 1, -0.6, 0.6), elbow);
+    if (rest > 0) hand.lerp(V!.a.copy(knee).add(V!.b.set(sd * 0.02, 0.07, 0.04)), rest);
+    if (cheer > 0) {
+      V!.a.set(sd * 0.22, 0.55, -0.05).add(sh);
+      hand.lerp(V!.a, cheer);
+    }
+    solve(sh, hand, UPPER, FORE, pole.set(sd * 1, -0.6 + cheer * 0.5, 0.6), elbow);
     // (out of reach, the hand stops short of the grip)
     const reach = V!.d.subVectors(hand, sh).length();
     if (reach > UPPER + FORE) hand.copy(sh).addScaledVector(V!.d.normalize(), UPPER + FORE);
-    bone(L.upper, sh, elbow, 0.05);
-    bone(L.fore, elbow, hand, 0.042);
-    L.hand.position.copy(hand);
-    L.hand.scale.setScalar(0.045);
+    aim(L.upper, sh, elbow);
+    aim(L.fore, elbow, hand);
   });
+}
+
+/**
+ * One of an eight's crew (a Mega on the water), sat facing the stern, from the hips: a unisuit of `suit`, a cap of it
+ * and shades, arms out to the handle of the oar on the `side` it rows on; and that sweep oar, out along x from its pin,
+ * its blade in `blade`. Each one mesh, drawn the karts' way.
+ */
+export function crewGeometry(THREE: Three, key: object, suit: string, side: number) {
+  const F = FINISH;
+  const r = kartModel(THREE, key);
+  const c = new THREE.Color(suit).getHex();
+  const lathe = new THREE.LatheGeometry(
+    [[0.001, -0.04], [0.15, -0.03], [0.165, 0.07], [0.15, 0.19], [0.165, 0.31], [0.175, 0.39], [0.15, 0.46], [0.09, 0.5], [0.001, 0.51]].map(([x, y]) => new THREE.Vector2(x, y)),
+    10,
+  );
+  r.push(lathe, new THREE.Matrix4().makeScale(1, 1, 0.74), c, F.CLOTH);
+  for (const sd of [-1, 1]) {
+    r.box(0xf6f6f8, [sd * 0.158, 0.22, 0], [0.025, 0.42, 0.1], [0, 0, sd * 0.05], F.CLOTH);
+    // (the thighs forward under the arms; the arms out to the handle, the hands together on it)
+    r.tube(c, [sd * 0.1, 0, 0], [sd * 0.13, 0.12, -0.42], 0.07, F.CLOTH);
+    r.tube(SKIN, [sd * 0.17, 0.44, 0], [-side * 0.06 + sd * 0.06, 0.24, -0.4], 0.042, F.CLOTH);
+    r.ball6(SKIN, [-side * 0.06 + sd * 0.06, 0.24, -0.42], [0.042, 0.048, 0.042], [0, 0, 0], F.CLOTH);
+  }
+  r.cyl(SKIN, [0, 0.54, 0], [0.05, 0.12, 0.05], [0, 0, 0], F.CLOTH);
+  r.ball(SKIN, [0, 0.67, -0.02], [0.11, 0.128, 0.118], [0, 0, 0], F.CLOTH);
+  r.push(new THREE.SphereGeometry(1, 10, 3, Math.PI * 1.15, Math.PI * 0.7, Math.PI * 0.4, Math.PI * 0.12), new THREE.Matrix4().compose(new THREE.Vector3(0, 0.67, -0.02), new THREE.Quaternion(), new THREE.Vector3(0.116, 0.134, 0.124)), 0x14161c, F.GLASS);
+  r.push(new THREE.SphereGeometry(1, 10, 4, 0, Math.PI * 2, 0, Math.PI * 0.45), new THREE.Matrix4().compose(new THREE.Vector3(0, 0.69, -0.02), new THREE.Quaternion(), new THREE.Vector3(0.118, 0.13, 0.124)), c, F.CLOTH);
+  r.box(c, [0, 0.72, -0.15], [0.16, 0.015, 0.12], [0.2, 0, 0], F.CLOTH);
+  return r.bake();
+}
+
+export function sweepGeometry(THREE: Three, key: object, blade: string, side: number) {
+  const F = FINISH;
+  const r = kartModel(THREE, key);
+  r.tube(0xf0f0eb, [-side * 0.75, 0, 0], [side * 3.0, 0, 0], 0.025, F.GLOSS);
+  r.cyl6(0x141518, [-side * 0.68, 0, 0], [0.03, 0.2, 0.03], [0, 0, Math.PI / 2], F.RUBBER);
+  r.cyl6(0xdcdcd6, [0, 0, 0], [0.045, 0.07, 0.045], [0, 0, Math.PI / 2], F.PLASTIC);
+  r.push(bladeShape(THREE), new THREE.Matrix4().compose(new THREE.Vector3(side * 2.95, 0, 0), new THREE.Quaternion(), new THREE.Vector3(side * 1.2, 1.3, 1)), new THREE.Color(blade).getHex(), F.GLOSS);
+  return r.bake();
 }

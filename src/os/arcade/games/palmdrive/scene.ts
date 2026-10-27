@@ -8,12 +8,12 @@ import { buildTraffic, onStreet, streetsOf, wallGaps } from './traffic';
 import { LOOKS, SCENERY, bikeKit, bunkerTexture, canvas, cowMaterials, golfBag, golferKit, greenTexture, makeBike, makeBus, makeCart, makeCow, makeGolfer, makePin, makePlanter, makeStatue, noise, scatter, swingAt, texture, waterTexture } from './scenery';
 import { BOULDER, COUNTDOWN, FALL_CARRY, FALL_SINK, HAMMER, PIRANHA_GAP, PIRANHA_LUNGE, POW_GAP, POW_T, RAMP_H, RAMP_LEN, TURBO_AT, boulderAt, gustWarn, hazState, hazardV, hurt, strokeAt, turboLevel, windAt, type Ev, type Hat, type HazPhase, type Kart, type LiveHazard, type Race, type ThingKind } from './logic';
 import { buildRiver, marshMaterial } from './water';
-import { buildScull, deckStripe, hullSkin, poseScull, scullKit, strokeBody, tintTips, type Scull, type ScullKit } from './shell';
+import { buildScull, crewGeometry, deckStripe, hullSkin, poseScull, resuit, strokeBody, sweepGeometry, tintTips, type Scull } from './shell';
 import { buildFairway, mowerGaps, onPath } from './fairway';
 import { SKIES, buildAtmosphere, qualityOf } from './sky';
 import { skyWater, waterTick } from './skywater';
 import { floraTick } from './flora';
-import { kartDetail, mergeByMaterial } from './kart';
+import { HAT_AT, HAT_SCALE, HEAD_REST, WHEELS, bodywork, chassis, driver, farKart, flameGeometry, frontWheel, kartKit, liveryOf, poseDriver, rearAxle, repaintHelmet, stripeGeometry, type Driver, type Livery, type Stance } from './kart';
 import { knollGeometry } from './dish';
 import { bake, bakeInPlace, vcMats } from './landmarks';
 import { GROUNDS, asphaltTexture, curbTexture, glassDeck, glassTick, grassTufts, groundMaterial, lawnMaterial, roadMaterial, wallTexture } from './surfaces';
@@ -49,7 +49,7 @@ type KartView = {
   decals: T.Group;
   stripes: T.Group;
   steer: T.Group[];
-  /** Each wheel's spinning group (its radius, width and side in userData, for fit). */
+  /** The front wheels' and the rear axle's spinning groups (the radius, width, side (0 the axle) and height in userData, for fit). */
   spinners: T.Group[];
   wheels: Wheel;
   flames: T.Group;
@@ -83,6 +83,8 @@ type KartView = {
   prop: T.Object3D | null;
   /** Swap the hat, the wheels and the paint job when a kart's look changes (an online racer's arrives after the race is built). */
   wear: (hat: Hat) => void;
+  /** And the driver's suit and helmet for a new colour. */
+  redress?: (color: string) => void;
   fit: (wheels: Wheel) => void;
   refinish: (gear: Gear) => void;
   roll: number;
@@ -93,9 +95,22 @@ type KartView = {
   wheelA: number;
   smoke: number;
   /** A racing shell's oars (each turning on its rigger pin, its blade at the end) and the rower's body, on the water. */
-  oars?: { scull: Scull; off: number; tuck: number; crab: number; carve: number; side: 1 | -1; puddle: number; eight: T.Group; crew: { pin: T.Group; side: number; body: T.Mesh }[] };
+  oars?: { scull: Scull; off: number; tuck: number; crab: number; carve: number; cheer: number; side: 1 | -1; puddle: number; eight: T.Group; crew: { pin: T.Group; side: number; body: T.Mesh }[] };
   /** On the water: colours the oar blades' tips (in the colour of the wheels). */
   tips?: (color: string) => void;
+  /**
+   * A kart's driver (posed each frame, null on the water), their livery, and what the hat sits on (the driver's head);
+   * how they sit (eased toward where they are going each frame).
+   */
+  driver: Driver | null;
+  livery: Livery | null;
+  hatMount: T.Object3D;
+  stance: Stance;
+  /** Far off a kart draws as a few boxes: the detail it hides, the boxes it shows and the paint's near and far shapes. */
+  near: T.Group | null;
+  far: T.Group | null;
+  isFar: boolean;
+  panels: { paint: T.Mesh; trim: T.Mesh; shapes: ReturnType<typeof bodywork> } | null;
 };
 
 type KartGeo = { box: T.BoxGeometry; wheel: T.CylinderGeometry; ball: T.SphereGeometry; ring: T.TorusGeometry; cone: T.ConeGeometry; plane: T.PlaneGeometry };
@@ -113,12 +128,9 @@ type KartMats = {
   green: T.Material;
   wood: T.Material;
   straw: T.Material;
-  chrome: T.Material;
-  neon: T.Material;
   /** What metallic and pearl paint reflect: sky, a bright horizon and the ground (an equirectangular map). */
   env: T.Texture;
-  /** The Block S hubcap, and the flames finish's decals for a kart and a shell (shared by every kart wearing them). */
-  blockS: T.Material;
+  /** The flames finish's decals for a kart and a shell (shared by every kart wearing them). */
   decal: T.Material;
   hullDecal: T.Material;
   /** The piranha plant's head, a thunder cloud, a block of ice, a Boo and a see-through Boo kart. */
@@ -268,72 +280,6 @@ function makeHat(THREE: Three, geo: KartGeo, m: KartMats, hat: Hat, paint: T.Mat
 const CHUNKY = 1.12;
 const chunkyLift = (r: number) => r * (CHUNKY - 1) + 0.035;
 
-/** One wheel in a style from the garage: radius r and width w at the origin, axle along x, the hub on the `side` face. */
-function makeWheel(THREE: Three, geo: KartGeo, m: KartMats, style: Wheel, r: number, w: number, side: number) {
-  const g = new THREE.Group();
-  let width = w;
-  const add = (geom: T.BufferGeometry, mat: T.Material, x: number, sx: number, sy: number, sz: number) => {
-    const o = new THREE.Mesh(geom, mat);
-    o.position.x = x;
-    o.scale.set(sx, sy, sz);
-    g.add(o);
-    return o;
-  };
-  /** A disc (or ring) flat against the outside face of the tyre. */
-  const face = (geom: T.BufferGeometry, mat: T.Material, rr: number, out = 0.01, thick = 0.03) => {
-    const ring = geom === geo.ring;
-    const o = add(geom, mat, side * (width / 2 + out), rr, ring ? rr : thick, ring ? thick : rr);
-    if (ring) o.rotation.y = Math.PI / 2;
-    else o.rotation.z = Math.PI / 2;
-    return o;
-  };
-  /** The bar across the hub that shows the wheel turning (further out when it lies over a hubcap). */
-  const bar = (mat: T.Material, len: number, out = 0.035) => add(geo.box, mat, side * (width / 2 + out), 0.02, len, 0.12);
-  if (style === 'chunky') {
-    // a bigger, wider knobbly tyre (the kart lifts its axle by chunkyLift)
-    const R = r * CHUNKY;
-    width = w * 1.3;
-    add(geo.wheel, m.dark, 0, R, width, R).rotation.z = Math.PI / 2;
-    for (let i = 0; i < 10; i++) {
-      const a = (i / 10) * Math.PI * 2;
-      const tread = add(geo.box, m.dark, 0, width * 1.05, 0.07, 0.11);
-      tread.position.set(0, Math.sin(a) * R, Math.cos(a) * R);
-      tread.rotation.x = Math.PI / 2 - a;
-    }
-    face(geo.wheel, m.stone, R * 0.5);
-    bar(m.white, R * 1.1);
-    return g;
-  }
-  if (style === 'spoke') {
-    // a bicycle wheel: a thin tyre round a chrome rim, spokes you can see through and a hub
-    width = w * 0.55;
-    add(geo.ring, m.dark, 0, r * 0.82, r * 0.82, width * 2).rotation.y = Math.PI / 2;
-    add(geo.ring, m.chrome, 0, r * 0.68, r * 0.68, width * 0.9).rotation.y = Math.PI / 2;
-    for (let i = 0; i < 6; i++) add(geo.box, m.chrome, 0, 0.015, r * 1.36, 0.025).rotation.x = (i / 6) * Math.PI;
-    add(geo.wheel, m.chrome, 0, r * 0.16, width * 1.2, r * 0.16).rotation.z = Math.PI / 2;
-    add(geo.box, m.red, 0, width * 0.8, r * 1.36, 0.05);
-    return g;
-  }
-  add(geo.wheel, m.dark, 0, r, w, r).rotation.z = Math.PI / 2;
-  if (style === 'gold') {
-    face(geo.wheel, m.gold, r * 0.68);
-    bar(m.dark, r * 1.1);
-  } else if (style === 'whitewall') {
-    face(geo.ring, m.white, r * 0.66, 0, 0.1);
-    face(geo.wheel, m.chrome, r * 0.42);
-    bar(m.dark, r * 0.8);
-  } else if (style === 'cardinal') {
-    // a cardinal hubcap with the Block S on it (which turns with the wheel)
-    face(geo.wheel, m.blockS, r * 0.74).rotation.z = (-side * Math.PI) / 2;
-  } else if (style === 'neon') {
-    face(geo.ring, m.neon, r * 0.6, 0.005, 0.12);
-    bar(m.neon, r * 1.1);
-  } else {
-    bar(m.white, r * 1.3, 0.01);
-  }
-  return g;
-}
-
 /** Hot rod flames, yellow to red, their tongues licking off to the right in a 128 x 32 box. */
 function drawFlames(g: CanvasRenderingContext2D) {
   const grad = g.createLinearGradient(0, 0, 128, 0);
@@ -380,28 +326,6 @@ function hullFlames(THREE: Three) {
   return new THREE.MeshLambertMaterial({ map, alphaTest: 0.5, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
 }
 
-/** The Block S on a cardinal disc, for the hubcaps. */
-function blockS(THREE: Three) {
-  const map = texture(
-    THREE,
-    canvas(64, 64, (g) => {
-      g.fillStyle = '#8c1515';
-      g.fillRect(0, 0, 64, 64);
-      g.strokeStyle = '#f6f6f8';
-      g.lineWidth = 3;
-      g.beginPath();
-      g.arc(32, 32, 28, 0, Math.PI * 2);
-      g.stroke();
-      g.fillStyle = '#f6f6f8';
-      g.font = 'bold 40px Georgia, serif';
-      g.textAlign = 'center';
-      g.textBaseline = 'middle';
-      g.fillText('S', 32, 34);
-    }),
-  );
-  return new THREE.MeshLambertMaterial({ map });
-}
-
 /** THREE.EquirectangularReflectionMapping and THREE.AddOperation, by value: kit/three-lib.ts does not export the constants. */
 const EQUIRECT_REFLECTION = 303 as T.Mapping;
 const ADD_OPERATION = 2 as T.Combine;
@@ -429,10 +353,10 @@ function reflection(THREE: Three) {
 }
 
 /**
- * How each paint finish catches the light: [specular grey, shininess, how much of the sky it reflects]. Flat paint has
- * no shine, so it reads like plain Lambert; metal and pearl reflect the sky and the horizon like a polished car.
+ * How each paint finish catches the light: [specular grey, shininess, how much of the sky it reflects]. Even flat paint
+ * has a clear coat over it (a little shine and sky); metal and pearl reflect the sky and the horizon like a polished car.
  */
-const SHINE: Record<Finish, [number, number, number]> = { flat: [0, 30, 0], metal: [0x9a9a9a, 45, 0.35], pearl: [0xa0a0a0, 70, 0.25], duo: [0x262626, 30, 0], stripe: [0x262626, 30, 0], flames: [0x3a3a3a, 40, 0.1] };
+const SHINE: Record<Finish, [number, number, number]> = { flat: [0x2e2e2e, 55, 0.07], metal: [0x9a9a9a, 45, 0.35], pearl: [0xa0a0a0, 70, 0.25], duo: [0x2e2e2e, 55, 0.07], stripe: [0x2e2e2e, 55, 0.07], flames: [0x3a3a3a, 55, 0.12] };
 
 /**
  * A strip along the track between lateral offsets a and b (meters, positive to the right), from s0 to s1.
@@ -550,11 +474,13 @@ function fence(THREE: Three, t: Track, d: number, h: number, vLen: number, s0 = 
 /** What a kart or a shell is built to look like. */
 type Dress = Pick<Kart, 'color' | 'hat' | 'gear'>;
 
-function makeKart(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats): KartView {
+function makeKart(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats, idx = 0): KartView {
   const root = new THREE.Group();
   const body = new THREE.Group();
   root.add(body);
   const gear = k.gear ?? PLAIN_GEAR;
+  const kit = kartKit(THREE, shared, shared.env);
+  // the paint, a clear coat over it (see SHINE); the trim, a two-tone's second colour; the accent, a racing stripe's
   const paint = new THREE.MeshPhongMaterial({ color: k.color, specular: 0, shininess: 30 });
   const trim = new THREE.MeshPhongMaterial({ color: k.color, specular: 0, shininess: 30 });
   const accent = new THREE.MeshPhongMaterial({ color: gear.trim, specular: 0x262626, shininess: 30 });
@@ -565,57 +491,56 @@ function makeKart(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats): KartV
     parent.add(o);
     return o;
   };
-  const { dark, skin, white } = shared;
-  // (a two-tone's nose, side pods and helmet stripe are in its trim)
-  add(body, geo.box, paint, 0, 0.34, 0.05, 1.3, 0.22, 2.6);
-  add(body, geo.box, trim, 0, 0.42, 1.45, 0.95, 0.22, 0.7);
-  add(body, geo.box, dark, 0, 0.32, 1.86, 1.45, 0.16, 0.18);
-  for (const sx of [-1, 1]) add(body, geo.box, trim, sx * 0.66, 0.46, -0.1, 0.2, 0.3, 1.5);
-  add(body, geo.box, dark, 0, 0.78, -0.62, 0.78, 0.72, 0.16);
-  add(body, geo.box, paint, 0, 0.8, -0.28, 0.6, 0.56, 0.5);
-  add(body, geo.ball, skin, 0, 1.24, -0.2, 0.28, 0.28, 0.28);
-  add(body, geo.ball, white, 0, 1.3, -0.26, 0.34, 0.32, 0.34);
-  add(body, geo.box, trim, 0, 1.36, -0.26, 0.1, 0.36, 0.7);
-  add(body, geo.ring, dark, 0, 1.0, 0.3, 0.24, 0.24, 0.24).rotation.x = -0.9;
-  // (its frame, engine, the driver's arms and the rest: see kart.ts)
-  body.add(kartDetail(THREE, shared, k.color));
-  // the flames finish: flames down the outside of both side pods and over the nose, licking back toward the driver (the
-  // decal's tongues are at its right-hand edge, so it is mirrored on the left)
+  const { dark, white } = shared;
+  // the bodywork in the paint (the nose and the rear bumper) and the trim (the side pods and the front fairing); the
+  // chassis, the driver and the wheels (see kart.ts); and, far off, all of that as a few boxes
+  const livery = liveryOf(THREE, k.color, idx);
+  const shapes = bodywork(THREE, shared);
+  const paintMesh = add(body, shapes.paint, paint, 0, 0, 0);
+  const trimMesh = add(body, shapes.trim, trim, 0, 0, 0);
+  paintMesh.userData.kartBody = trimMesh.userData.kartBody = true;
+  const near = new THREE.Group();
+  const far = new THREE.Group();
+  far.visible = false;
+  near.add(chassis(THREE, shared, livery));
+  const drv = driver(THREE, shared, livery);
+  near.add(drv.mesh);
+  far.add(farKart(THREE, shared, livery));
+  body.add(near, far);
+  // the flames finish: flames down the side pods and over the nose; the stripe finish: twin racing stripes
   const decals = new THREE.Group();
-  for (const sx of [-1, 1]) add(decals, geo.plane, shared.decal, sx * 0.765, 0.46, -0.1, sx * 1.5, 0.3, 1).rotation.y = (sx * Math.PI) / 2;
-  add(decals, geo.plane, shared.decal, 0, 0.535, 1.45, 0.7, 0.9, 1).rotation.set(-Math.PI / 2, 0, Math.PI / 2);
-  body.add(decals);
-  // the stripe finish: twin racing stripes over the nose, down the body and up the seat back, and one over the helmet
+  decals.add(new THREE.Mesh(flameGeometry(THREE, shared), shared.decal));
+  near.add(decals);
   const stripes = new THREE.Group();
-  for (const sx of [-1, 1]) {
-    add(stripes, geo.box, accent, sx * 0.13, 0.535, 1.45, 0.14, 0.012, 0.7);
-    add(stripes, geo.box, accent, sx * 0.13, 0.455, 0.6, 0.14, 0.012, 1.1);
-    add(stripes, geo.box, accent, sx * 0.13, 0.455, -0.98, 0.14, 0.012, 0.56);
-    add(stripes, geo.box, accent, sx * 0.13, 0.32, 1.96, 0.14, 0.14, 0.012);
-    add(stripes, geo.box, accent, sx * 0.13, 0.8, -0.705, 0.14, 0.72, 0.012);
-  }
-  add(stripes, geo.box, accent, 0, 1.36, -0.26, 0.12, 0.37, 0.72);
-  body.add(stripes);
+  stripes.add(new THREE.Mesh(stripeGeometry(THREE, shared), accent));
+  near.add(stripes);
+  // the wheels: the front two each on a kingpin that steers, the rear pair on their axle (each in a garage style)
   const steer: T.Group[] = [];
   const spinners: T.Group[] = [];
-  for (const [x, y, z, r, w, front] of [[-0.8, 0.28, 0.95, 0.28, 0.3, 1], [0.8, 0.28, 0.95, 0.28, 0.3, 1], [-0.84, 0.36, -0.82, 0.36, 0.42, 0], [0.84, 0.36, -0.82, 0.36, 0.42, 0]]) {
+  const F = WHEELS.front;
+  const B = WHEELS.rear;
+  for (const sx of [-1, 1]) {
     const pivot = new THREE.Group();
-    pivot.position.set(x, y, z);
+    pivot.position.set(sx * F.x, F.y, F.z);
     const spin = new THREE.Group();
-    spin.userData = { r, w, side: Math.sign(x) };
+    spin.userData = { r: F.r, w: F.w, side: sx, y: 0 };
     pivot.add(spin);
-    body.add(pivot);
+    near.add(pivot);
     spinners.push(spin);
-    if (front) steer.push(pivot);
+    steer.push(pivot);
   }
-  for (const sx of [-1, 1]) add(body, geo.wheel, dark, sx * 0.3, 0.45, -1.32, 0.09, 0.3, 0.09).rotation.x = Math.PI / 2;
-  // the boost flames out of the exhausts, a hotter core inside each
+  const axle = new THREE.Group();
+  axle.position.set(0, B.y, B.z);
+  axle.userData = { r: B.r, w: B.w, side: 0, y: B.y };
+  near.add(axle);
+  spinners.push(axle);
+  // the boost flames out of the tail pipes, a hotter core inside each
   const flames = new THREE.Group();
   const fire = new THREE.MeshBasicMaterial({ color: 0xffa31a, transparent: true, opacity: 0.75, depthWrite: false });
   const core = new THREE.MeshBasicMaterial({ color: 0xffe9a0, transparent: true, opacity: 0.95, depthWrite: false });
   for (const sx of [-1, 1]) {
-    add(flames, geo.cone, fire, sx * 0.3, 0.45, -1.85, 0.16, 0.8, 0.16).rotation.x = -Math.PI / 2;
-    add(flames, geo.cone, core, sx * 0.3, 0.45, -1.68, 0.085, 0.45, 0.085).rotation.x = -Math.PI / 2;
+    add(flames, geo.cone, fire, sx * 0.3, 0.47, -1.85, 0.16, 0.8, 0.16).rotation.x = -Math.PI / 2;
+    add(flames, geo.cone, core, sx * 0.3, 0.47, -1.68, 0.085, 0.45, 0.085).rotation.x = -Math.PI / 2;
   }
   flames.visible = false;
   body.add(flames);
@@ -625,14 +550,20 @@ function makeKart(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats): KartV
     m.visible = false;
     return m;
   });
+  // the hat, on the driver's helmet (the mount follows the head; makeHat puts a hat where a head of the old size was)
+  const hatMount = new THREE.Object3D();
+  hatMount.position.set(...HEAD_REST);
+  body.add(hatMount);
   const hatGroup = new THREE.Group();
-  body.add(hatGroup);
+  hatGroup.scale.setScalar(HAT_SCALE);
+  hatGroup.position.set(HAT_AT[0], HAT_AT[1] - 1.58 * HAT_SCALE, HAT_AT[2] + 0.26 * HAT_SCALE);
+  hatMount.add(hatGroup);
   const trail = new THREE.Group();
   trail.position.set(0, 0.05, -1.95);
   body.add(trail);
   // dizzy stars over the driver's head after a hit
   const stars = new THREE.Group();
-  stars.position.set(0, 1.95, -0.25);
+  stars.position.set(HEAD_REST[0], 1.95, HEAD_REST[2]);
   for (let i = 0; i < 3; i++) {
     const st = add(stars, geo.box, shared.star, Math.cos((i / 3) * Math.PI * 2) * 0.45, 0, Math.sin((i / 3) * Math.PI * 2) * 0.45, 0.16, 0.16, 0.05);
     st.rotation.z = Math.PI / 4;
@@ -641,7 +572,7 @@ function makeKart(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats): KartV
   body.add(stars);
   // wind lines streaming past while you ride someone's slipstream
   const wind = new THREE.Group();
-  for (const [x, y] of [[-1.05, 0.5], [1.05, 0.5], [-0.6, 1.5], [0.6, 1.5]]) add(wind, geo.box, shared.wind, x, y, 0.2, 0.035, 0.035, 2.6);
+  for (const [x, y] of [[-1.05, 0.5], [1.05, 0.5], [-0.6, 1.6], [0.6, 1.6]]) add(wind, geo.box, shared.wind, x, y, 0.2, 0.035, 0.035, 2.6);
   wind.visible = false;
   body.add(wind);
   // a big black bullet with white eyes and fins, hidden until a Bullet item
@@ -668,7 +599,7 @@ function makeKart(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats): KartV
   root.add(bullet);
   // a piranha plant in a pot on the nose: a red spotted head over a lower jaw, both rimmed with teeth
   const plant = new THREE.Group();
-  plant.position.set(0, 0.5, 1.5);
+  plant.position.set(0, 0.42, 1.5);
   plant.scale.setScalar(1.3);
   add(plant, geo.wheel, shared.dark, 0, 0.1, 0, 0.26, 0.22, 0.26);
   add(plant, geo.wheel, shared.green, 0, 0.7, 0, 0.06, 1.1, 0.06);
@@ -696,7 +627,7 @@ function makeKart(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats): KartV
   cloud.visible = false;
   root.add(cloud);
   // frozen solid
-  const ice = add(body, geo.box, shared.ice, 0, 0.85, 0.05, 2.1, 1.9, 3.7);
+  const ice = add(body, geo.box, shared.ice, 0, 0.88, 0.05, 2.15, 1.95, 3.75);
   ice.visible = false;
   // a little Boo floating alongside while the kart is see-through, tongue out
   const boo = new THREE.Group();
@@ -709,13 +640,12 @@ function makeKart(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats): KartV
   add(boo, geo.cone, shared.boo, 0, 0.02, -0.5, 0.18, 0.3, 0.18).rotation.x = -Math.PI / 2;
   boo.visible = false;
   root.add(boo);
-  // (its static parts merged by material, the same materials so a refinish still applies: see kart.ts)
-  mergeByMaterial(THREE, body, new Set<T.Object3D>([...sparks, ice]));
   body.scale.setScalar(0.85);
-  const shadow = new THREE.Mesh(geo.plane, shared.shadow);
+  // the shadow on the ground under it, darkest under the tyres
+  const shadow = new THREE.Mesh(geo.plane, kit.shadow);
   shadow.rotation.x = -Math.PI / 2;
-  shadow.scale.set(2.2, 3.2, 1);
-  shadow.position.y = 0.11;
+  shadow.scale.set(2.1, 3.3, 1);
+  shadow.position.set(0, 0.11, 0.03);
   root.add(shadow);
   const view: KartView = {
     root, body, paint, trim, accent, color: new THREE.Color(k.color).getHex(), finish: 'flat', trimColor: new THREE.Color(k.color), decals, stripes,
@@ -724,6 +654,14 @@ function makeKart(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats): KartV
     hat: hatGroup,
     hatName: k.hat,
     prop: null,
+    driver: drv,
+    livery,
+    hatMount,
+    stance: { steer: 0, lean: 0, yaw: 0, pitch: 0, cheer: 0, flail: 0, clock: 0, breathe: 0 },
+    near,
+    far,
+    isFar: false,
+    panels: { paint: paintMesh, trim: trimMesh, shapes },
     wear(next) {
       view.hatName = next;
       for (const child of [...hatGroup.children]) hatGroup.remove(child);
@@ -734,10 +672,10 @@ function makeKart(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats): KartV
       view.wheels = next;
       view.tips?.(WHEEL_TIPS[next]);
       for (const spin of view.spinners) {
-        const { r, w, side } = spin.userData as { r: number; w: number; side: number };
+        const { r, w, side, y } = spin.userData as { r: number; w: number; side: number; y: number };
         for (const child of [...spin.children]) spin.remove(child);
-        spin.add(makeWheel(THREE, geo, shared, next, r, w, side));
-        spin.position.y = next === 'chunky' ? chunkyLift(r) : 0;
+        spin.add(side ? frontWheel(THREE, shared, next, r, w, side) : rearAxle(THREE, shared, next, r, w, B.x * 2));
+        spin.position.y = y + (next === 'chunky' ? chunkyLift(r) : 0);
       }
     },
     refinish(next) {
@@ -748,7 +686,8 @@ function makeKart(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats): KartV
       for (const m of [paint, trim]) {
         m.specular.setHex(specular);
         m.shininess = shininess;
-        const env = reflect > 0 ? shared.env : null;
+        // (on the cheap tier, where the karts' own gloss reflects nothing, flat paint's clear coat does not either)
+        const env = reflect > (kit.mat.envMap ? 0 : 0.1) ? shared.env : null;
         if (m.envMap !== env) {
           m.envMap = env;
           m.needsUpdate = true;
@@ -758,6 +697,33 @@ function makeKart(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats): KartV
       }
       view.decals.visible = next.finish === 'flames';
       view.stripes.visible = next.finish === 'stripe';
+      // (a two-tone's helmet stripe is in its trim, a racing stripe's in the stripe's colour)
+      if (view.driver && view.livery) repaintHelmet(THREE, view.driver, next.finish === 'duo' || next.finish === 'stripe' ? view.trimColor.getHex() : view.livery.stripe);
+    },
+    redress(color) {
+      // (a new colour, an online racer's look arriving: the chassis, the driver and the far boxes made again for it)
+      if (!view.driver || !view.near || !view.far) return;
+      const lv = liveryOf(THREE, color, idx);
+      view.livery = lv;
+      const swap = (old: T.Object3D | undefined, next: T.Mesh) => {
+        if (!old) return;
+        next.castShadow = old.castShadow;
+        next.receiveShadow = old.receiveShadow;
+        next.userData.noCast = old.userData.noCast;
+        if (view.ghost) {
+          next.userData.solid = next.material;
+          next.material = view.ghostMat;
+        }
+        old.parent?.add(next);
+        old.removeFromParent();
+        (old as T.Mesh).geometry.dispose();
+      };
+      swap(view.near.getObjectByName('detail'), chassis(THREE, shared, lv));
+      swap(view.far.getObjectByName('far'), farKart(THREE, shared, lv));
+      const d = driver(THREE, shared, lv);
+      swap(view.driver.mesh, d.mesh);
+      view.driver = d;
+      repaintHelmet(THREE, d, view.finish === 'duo' || view.finish === 'stripe' ? view.trimColor.getHex() : lv.stripe);
     },
     roll: 0, spinA: 0, flipA: 0, trickA: 0, driftYaw: 0, wheelA: 0, smoke: 0,
   };
@@ -774,14 +740,20 @@ function makeKart(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats): KartV
  * the paint's finish on the hull (a two-tone's trim on the decks, a racing stripe's twin stripes along them, a hot rod's
  * flames down the sides), the wheels' colour on the oar blades' tips and the boost trail's in the white water.
  */
-function makeShell(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats, idx: number, kit: ScullKit): KartView {
-  const view = makeKart(THREE, geo, k, shared);
+function makeShell(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats, idx: number): KartView {
+  const view = makeKart(THREE, geo, k, shared, idx);
   const { body, paint } = view;
   // (the kart's own parts go: the shell keeps only the groups the view animates)
-  const keep = new Set<T.Object3D>([view.flames, view.trail, view.stars, view.wind, view.hat, view.plant, view.ice, ...view.sparks]);
+  const keep = new Set<T.Object3D>([view.flames, view.trail, view.stars, view.wind, view.plant, view.ice, ...view.sparks]);
   for (const child of [...body.children]) if (!keep.has(child)) body.remove(child);
   view.steer = [];
   view.spinners = [];
+  view.driver = null;
+  view.livery = null;
+  view.near = view.far = null;
+  view.panels = null;
+  view.shadow.material = shared.shadow;
+  view.shadow.position.set(0, 0.11, 0);
   const add = (parent: T.Object3D, g: T.BufferGeometry, m: T.Material, x: number, y: number, z: number, sx = 1, sy = 1, sz = 1) => {
     const o = new THREE.Mesh(g, m);
     o.position.set(x, y, z);
@@ -794,15 +766,15 @@ function makeShell(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats, idx: 
   // second colour), the rower in a unisuit of it, and the racer's hat on the rower's head (which faces the stern)
   paint.side = THREE.DoubleSide;
   view.trim.side = THREE.DoubleSide;
-  const scull = buildScull(THREE, body, kit, paint, skin, k.color, view.trim);
+  const scull = buildScull(THREE, body, shared, paint, k.color, k.color, idx, view.trim);
   scull.head.add(view.hat);
   view.hat.scale.setScalar(0.5);
   view.hat.rotation.y = Math.PI;
   view.hat.position.set(0, 0.11 - 1.58 * 0.5, 0.26 * 0.5);
-  const bladeMat = new THREE.MeshLambertMaterial({ color: k.color });
   // (the oar blades' tips in the colour of the wheels)
   view.tips = (c) => tintTips(THREE, scull, c);
   view.tips(WHEEL_TIPS[view.wheels]);
+  view.redress = (color) => resuit(THREE, scull, color);
   // (a hot rod's flames down both sides of the hull, licking back from the bow, drawn just over it)
   const decals = new THREE.Group();
   decals.add(new THREE.Mesh(hullSkin(THREE), shared.hullDecal));
@@ -845,15 +817,19 @@ function makeShell(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats, idx: 
   // (most of the extra length out ahead of you, so the chase camera is not sat in the cox's lap)
   add(eight, geo.ball, paint, 0, 0.19, 1.3, 0.47, 0.21, 4.9);
   add(eight, geo.box, white, 0, 0.37, 1.5, 0.08, 0.04, 8.6);
+  // (each of the crew rows one sweep oar, swinging from the hips: see crewGeometry)
   const crew: { pin: T.Group; side: number; body: T.Mesh }[] = [];
+  const kitMat = (scull.mesh.material as T.Material);
+  const crewGeo = [-1, 1].map((side) => crewGeometry(THREE, shared, k.color, side));
+  const sweepGeo = [-1, 1].map((side) => sweepGeometry(THREE, shared, k.color, side));
   [4.35, 3.3, 2.25, 1.2, -1.4].forEach((z, n) => {
     const side = n % 2 ? 1 : -1;
-    const body = add(eight, geo.box, paint, 0, 0.75, z, 0.4, 0.52, 0.25);
-    add(body, geo.ball, skin, 0, 0.8, 0, 0.36, 0.33, 0.6);
+    const body = new THREE.Mesh(crewGeo[n % 2], kitMat);
+    body.position.set(0, 0.46, z);
+    eight.add(body);
     const pin = new THREE.Group();
-    pin.position.set(side * 0.62, 0.52, z + 0.35);
-    add(pin, geo.box, white, side * 1.6, 0, 0, 3.4, 0.05, 0.05);
-    add(pin, geo.box, bladeMat, side * 3.25, 0, 0, 0.5, 0.03, 0.16);
+    pin.position.set(side * 0.62, 0.62, z - 0.3);
+    pin.add(new THREE.Mesh(sweepGeo[n % 2], kitMat));
     eight.add(pin);
     crew.push({ pin, side, body });
   });
@@ -863,7 +839,7 @@ function makeShell(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats, idx: 
   add(eight, geo.cone, white, 0, 0.75, -2.42, 0.07, 0.22, 0.07).rotation.x = Math.PI / 2;
   eight.visible = false;
   body.add(eight);
-  view.oars = { scull, off: idx * 0.04, tuck: 0, crab: 0, carve: 0, side: idx % 2 ? 1 : -1, puddle: -1, eight, crew };
+  view.oars = { scull, off: idx * 0.04, tuck: 0, crab: 0, carve: 0, cheer: 0, side: idx % 2 ? 1 : -1, puddle: -1, eight, crew };
   return view;
 }
 
@@ -882,8 +858,9 @@ function syncOars(THREE: Three, v: KartView, k: Kart, time: number, me: boolean,
   const phase = strokeAt(time - (me ? 0 : o.off));
   const drive = 0.38;
   const rowing = k.v > 3 && k.sunk === 0 && !hurt(k);
-  // (and while the launch has it in tow)
-  o.tuck = damp(o.tuck, posed || k.y > 0.05 || crowd || k.bullet > 0 ? 1 : 0, 14, dt);
+  // (and while the launch has it in tow; and for a while after the finish, both fists in the air)
+  o.cheer = damp(o.cheer, k.done !== null && time - k.done < 9 && !posed ? 1 : 0, 4, dt);
+  o.tuck = damp(o.tuck, posed || k.y > 0.05 || crowd || k.bullet > 0 || o.cheer > 0.3 ? 1 : 0, 14, dt);
   o.crab = damp(o.crab, k.spin > 0 && !posed ? 1 : 0, 9, dt);
   o.carve = damp(o.carve, k.drift !== 0 && !posed ? 1 : 0, 8, dt);
   if (k.spin <= 0) o.side = k.steer > 0.1 ? -1 : k.steer < -0.1 ? 1 : o.side;
@@ -921,7 +898,7 @@ function syncOars(THREE: Three, v: KartView, k: Kart, time: number, me: boolean,
   // the rower: up and down the slide and swinging the back on the stroke (still, sat at the finish, when not rowing)
   const still = Math.max(o.tuck, o.crab);
   const b = rowing ? strokeBody(phase, drive) : { slide: 0.75, lean: 0.55 };
-  poseScull(THREE, o.scull, pose, 0.75 + (b.slide - 0.75) * (1 - still), 0.55 + (b.lean - 0.55) * (1 - still), o.crab);
+  poseScull(THREE, o.scull, pose, 0.75 + (b.slide - 0.75) * (1 - still), 0.55 + (b.lean - 0.55) * (1 - still), o.crab, o.cheer, o.tuck * (1 - o.crab));
   // (an eight: the rest of the crew rowing with you)
   o.eight.visible = k.mega > 0;
   if (o.eight.visible) {
@@ -1029,6 +1006,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   scene.add(sun);
   // (on the road: the time of day's sky, the hills on the horizon, and the light and shadows to match: see sky.ts)
   const quality = qualityOf(host);
+  /** How far off a kart is drawn as a few boxes (nearer on the cheap tier). */
+  const lodAt = quality === 'low' ? 18 : 30;
   const atmos = r.boat ? null : buildAtmosphere(THREE, scene, gl.renderer, r.course, t, { hemi, sun }, quality);
   const surf = r.boat ? undefined : GROUNDS[r.course];
 
@@ -1062,10 +1041,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     green: new THREE.MeshLambertMaterial({ color: 0x2f8a3c }),
     wood: new THREE.MeshLambertMaterial({ color: 0x8a5a2e }),
     straw: new THREE.MeshLambertMaterial({ color: 0xe8cf86 }),
-    chrome: new THREE.MeshPhongMaterial({ color: 0xc9d1d8, specular: 0xffffff, shininess: 60 }),
-    neon: new THREE.MeshBasicMaterial({ color: 0x3cf2ff }),
     env: reflection(THREE),
-    blockS: blockS(THREE),
     decal: flameDecal(THREE),
     hullDecal: hullFlames(THREE),
     plant: new THREE.MeshLambertMaterial({ color: 0xd8312a }),
@@ -2989,9 +2965,10 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   scene.add(coins);
 
   // karts (or, on the water, racing shells)
-  const scullParts = boat ? scullKit(THREE) : null;
+  // (what karts share: on the cheap tier their chrome and gloss catch the light without reflecting the sky)
+  kartKit(THREE, kartShared, quality === 'low' ? null : kartShared.env);
   const karts = r.karts.map((k) => {
-    const v = scullParts ? makeShell(THREE, geo, k, kartShared, k.idx, scullParts) : makeKart(THREE, geo, k, kartShared);
+    const v = boat ? makeShell(THREE, geo, k, kartShared, k.idx) : makeKart(THREE, geo, k, kartShared, k.idx);
     scene.add(v.root);
     return v;
   });
@@ -3342,16 +3319,12 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   let fovBase = 68;
   let back = 6.6;
 
-  // (everything that stands up casts the sun's shadow, where the screen can afford it; of a kart, only its body, its
-  // detail and the driver's helmet, which are most of its shadow for a fraction of the draws)
+  // (everything that stands up casts the sun's shadow, where the screen can afford it; of a kart, only its bodywork,
+  // chassis and driver, which are most of its shadow for a fraction of the draws)
   for (const v of karts) {
-    // (with real shadows the painted blob under each kart is not drawn: the camera never sees layer 2)
-    if (atmos?.shadows) v.shadow.layers.set(2);
-    v.root.traverse((o) => (o.userData.noCast = true));
-    for (const o of v.body.children) {
-      const m = o as T.Mesh;
-      if (o.userData.kartBody || o.name === 'detail' || (m.geometry === geo.ball && m.material === kartShared.white)) o.userData.noCast = false;
-    }
+    // (with real shadows the soft one painted under each kart is lighter: just the dark where the tyres meet the road)
+    if (atmos?.shadows && !v.oars) (v.shadow.material as T.MeshBasicMaterial).opacity = 0.7;
+    v.root.traverse((o) => (o.userData.noCast = !o.userData.kartBody));
   }
   atmos?.shade(scene);
   let reflTick = 0;
@@ -3989,7 +3962,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         const v = karts[i];
         const pose = k.sunk > 0 ? fallPose(race, k, clock) : null;
         poses[i] = pose;
-        syncKart(v, k, dt, clock, pose);
+        syncKart(THREE, v, k, dt, clock, pose, camera.position, lodAt, race.time);
         if (v.oars) syncOars(THREE, v, k, race.time, i === me, dt, clock, crowded(race, k), !!pose);
         v.smoke -= dt;
         if (pose) {
@@ -4508,7 +4481,11 @@ const FIRE = Object.fromEntries(
     return [f, [n(a), n(b ?? a), b ? n(b) : 0xffe9a0]];
   }),
 ) as Record<Flame, [number, number, number]>;
-function syncKart(v: KartView, k: Kart, dt: number, clock: number, pose: Pose | null) {
+/**
+ * Moves a kart's view to match the kart. cam: where the camera was last frame, and lod how far off a kart becomes a few
+ * boxes; time, the race's clock.
+ */
+function syncKart(THREE: Three, v: KartView, k: Kart, dt: number, clock: number, pose: Pose | null, cam: T.Vector3, lod: number, time: number) {
   if (k.hat !== v.hatName) v.wear(k.hat);
   const gear = k.gear ?? PLAIN_GEAR;
   if (gear.wheels !== v.wheels) v.fit(gear.wheels);
@@ -4516,7 +4493,10 @@ function syncKart(v: KartView, k: Kart, dt: number, clock: number, pose: Pose | 
   // a moment's grace after a hit or being set back on the road: the kart blinks
   v.root.visible = !k.left && !(k.safe > 0 && !hurt(k) && Math.floor(clock * 15) % 2 === 1);
   scratch.color = parseInt(k.color.slice(1), 16);
-  if (scratch.color !== v.color) v.color = scratch.color;
+  if (scratch.color !== v.color) {
+    v.color = scratch.color;
+    v.redress?.(k.color);
+  }
   v.root.position.set(pose ? pose.x : k.x, 0, pose ? pose.z : k.z);
   v.root.rotation.y = pose ? pose.h : k.h;
   v.driftYaw = damp(v.driftYaw, k.drift * 0.38, 10, dt);
@@ -4538,7 +4518,7 @@ function syncKart(v: KartView, k: Kart, dt: number, clock: number, pose: Pose | 
   const size = k.shrink > 0 ? 0.62 : k.mega > 0 ? 1.5 : 1;
   const flat = k.squash > 0 ? 0.35 : 1;
   v.body.scale.set(0.85 * size * (flat < 1 ? 1.25 : 1), 0.85 * size * flat, 0.85 * size * (flat < 1 ? 1.25 : 1));
-  v.shadow.scale.set(2.2 * size, 3.2 * size, 1);
+  v.shadow.scale.set(2.1 * size, 3.3 * size, 1);
   v.wheelA += (k.v * dt) / 0.32;
   for (const s of v.spinners) s.rotation.x = v.wheelA;
   for (const s of v.steer) s.rotation.y = -k.steer * 0.45;
@@ -4609,5 +4589,43 @@ function syncKart(v: KartView, k: Kart, dt: number, clock: number, pose: Pose | 
   if (ghost) {
     v.boo.position.set(1.6, 1.7 + k.y + Math.sin(clock * 3) * 0.2, -0.4);
     v.boo.rotation.y = Math.PI - 0.4 + Math.sin(clock * 1.3) * 0.3;
+  }
+  // far off, a kart is a few boxes (and its driver is not posed)
+  if (v.near && v.far && v.panels) {
+    const dx = v.root.position.x - cam.x;
+    const dz = v.root.position.z - cam.z;
+    const reach = v.isFar ? lod - 3 : lod + 3;
+    const far = dx * dx + dz * dz > reach * reach;
+    if (far !== v.isFar) {
+      v.isFar = far;
+      v.near.visible = !far;
+      v.far.visible = far;
+      v.panels.paint.geometry = far ? v.panels.shapes.paintFar : v.panels.shapes.paint;
+      v.panels.trim.geometry = far ? v.panels.shapes.trimFar : v.panels.shapes.trim;
+      if (far) {
+        v.hatMount.position.set(...HEAD_REST);
+        v.hatMount.quaternion.identity();
+      }
+    }
+  }
+  // the driver: hands on the wheel, leaning out of a turn and looking into it, glancing round sat still on the grid,
+  // arms up in a hit, and a fist in the air for a while after the finish
+  if (v.driver && !v.isFar && k.frozen <= 0) {
+    const st = v.stance;
+    const speed = Math.min(1, Math.abs(k.v) / 16);
+    const hit = k.spin > 0 || k.tumble > 0 || k.squash > 0 || k.sunk > 0;
+    const glance = (1 - speed) * 0.45 * Math.sin(clock * 0.45 + k.idx * 1.9);
+    st.clock = clock;
+    st.steer = damp(st.steer, Math.max(-1, Math.min(1, k.steer - k.drift * 0.4)), 12, dt);
+    st.lean = damp(st.lean, -(k.steer * 0.14 + k.drift * 0.1) * speed, 5, dt);
+    st.yaw = damp(st.yaw, -k.steer * 0.3 - k.drift * 0.25 + glance + (hit ? Math.sin(clock * 17) * 0.4 : 0), 6, dt);
+    st.cheer = damp(st.cheer, k.done !== null && time - k.done < 9 ? 1 : 0, 4, dt);
+    st.flail = damp(st.flail, hit ? 1 : 0, 10, dt);
+    st.pitch = damp(st.pitch, st.cheer > 0.5 ? -0.22 : hit ? 0.12 : 0, 5, dt);
+    st.breathe = Math.sin(clock * 1.7 + k.idx);
+    poseDriver(THREE, v.driver, st);
+    const head = v.driver.bones[1];
+    v.hatMount.position.copy(head.position);
+    v.hatMount.quaternion.copy(head.quaternion);
   }
 }
