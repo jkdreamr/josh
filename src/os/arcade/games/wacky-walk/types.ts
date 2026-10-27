@@ -55,7 +55,7 @@ export type Zone = {
 };
 
 /** Bot path node. r: how close counts as reached. jump/dive: do it on the way to this node. lane: half width bots spread across. */
-export type Waypoint = { x: number; y: number; z: number; r: number; jump?: boolean; dive?: boolean; lane?: number; waitFor?: (t: number) => boolean };
+export type Waypoint = { x: number; y: number; z: number; r: number; jump?: boolean; jumpDistance?: number; dive?: boolean; lane?: number; waitFor?: (t: number) => boolean };
 
 /** Render-only scenery. */
 export type DecorKind = 'palm' | 'arch' | 'arcade' | 'roof' | 'tower' | 'fountain' | 'tree' | 'lamp' | 'flag' | 'bush' | 'banner' | 'stands' | 'hedge';

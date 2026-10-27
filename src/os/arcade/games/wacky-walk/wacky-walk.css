@@ -201,6 +201,20 @@
   text-shadow: 0 1px 3px rgb(25 43 58 / 65%);
 }
 
+.g-wacky-walk .g-wacky-walk-goal-pill {
+  align-self: center;
+  margin-top: 5px;
+  padding: 4px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 999px;
+  background: rgba(38, 54, 57, 0.78);
+  color: #fff4df;
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: lowercase;
+}
+
 .g-wacky-walk .g-wacky-walk-progress-track {
   position: relative;
   flex: 1;
@@ -242,6 +256,16 @@
   line-height: 1;
   text-shadow: 0 2px 4px rgb(27 36 45 / 85%), 0 0 2px white;
   animation: g-wacky-walk-arrow-bob 700ms ease-in-out infinite alternate;
+  pointer-events: none;
+}
+
+.g-wacky-walk .g-wacky-walk-goal-arrow {
+  position: absolute;
+  z-index: 16;
+  color: #ffe2a2;
+  font-size: 27px;
+  line-height: 1;
+  text-shadow: 0 2px 8px rgba(24, 32, 38, 0.9);
   pointer-events: none;
 }
 

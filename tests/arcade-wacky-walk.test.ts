@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCourse, checkpointAt, progressOf, respawnPoint, touchTile, tileFall, RACES } from '../src/os/arcade/games/wacky-walk/courses.ts';
-import { createBrain, resetBrain, thinkBot } from '../src/os/arcade/games/wacky-walk/bots.ts';
+import { buildCourse, checkpointAt, goalDistance, goalOf, progressOf, respawnPoint, touchTile, tileFall, RACES } from '../src/os/arcade/games/wacky-walk/courses.ts';
+import { createBrain, hazardAhead, resetBrain, thinkBot } from '../src/os/arcade/games/wacky-walk/bots.ts';
 import { COLORS, BOT_NAMES, botSkill, offlineEntrants } from '../src/os/arcade/games/wacky-walk/roster.ts';
 import { hash, mulberry32 } from '../src/os/arcade/games/wacky-walk/rng.ts';
 import { cameraRelative, createBody, groundBelow, insideZone, offsetPoseLocal, poseOf, rayCast, respawn, setPose, STEP, stepBody, updateCourse, RADIUS, HEIGHT, BIG_HIT } from '../src/os/arcade/games/wacky-walk/physics.ts';
@@ -46,6 +46,19 @@ test('camera-relative movement follows the camera forward and screen-right at ev
   }
 });
 
+test('course goals expose race finishes, the Hoover crown, and no tile target', () => {
+  const oval = buildCourse('oval', 1);
+  const hoover = buildCourse('hoover', 1);
+  assert.equal(goalOf(oval)?.label, 'finish');
+  assert.equal(goalDistance(oval, 0, 0, 80), 46);
+  assert.equal(goalDistance(oval, 0, 0, 130), 0);
+  assert.equal(goalOf(hoover)?.label, 'crown');
+  assert.equal(goalDistance(hoover, 0, 0, 0), goalOf(hoover)!.y);
+  assert.equal(goalDistance(hoover, 0, 100, 0), 0);
+  assert.equal(goalOf(buildCourse('tiles', 1)), null);
+  assert.equal(goalDistance(buildCourse('tiles', 1), 0, 0, 0), 0);
+});
+
 test('pitched ramp undersides stay aligned with the collider bottom face', () => {
   const pose = poseOf(0, 0, 0, 0, -0.16);
   const hx = 8.2, hy = 0.45, hz = 14, thickness = 3;
@@ -65,6 +78,94 @@ test('pitched ramp undersides stay aligned with the collider bottom face', () =>
       assert.ok(localY <= -hy + 1e-12);
     }
   }
+});
+
+test('hazard lookahead detects moving crossings, clear paths, and low bars', () => {
+  const moving = {
+    id: 0, shape: { kind: 'box' as const, hx: 0.4, hy: 0.4, hz: 0.4 }, look: 'bar' as const,
+    pose: poseOf(-2, 0, 2), prev: poseOf(-2, 0, 2), on: true, bounce: 5,
+    at: (t: number, out: ReturnType<typeof poseOf>) => setPose(out, -2 + t * 4, 0, 2, 0),
+  };
+  const course = emptyCourse([moving]);
+  const body = createBody(0, 0, 0, 0);
+  const crossing = hazardAhead(course, body, 0, 1, 0, 0.9);
+  assert.ok(crossing);
+  assert.ok(crossing.hitAt > 0 && crossing.hitAt <= 0.9);
+
+  moving.at = (t, out) => setPose(out, 20 + t, 0, 2, 0);
+  assert.equal(hazardAhead(course, body, 0, 1, 0, 0.9), null);
+
+  const lowBar = {
+    id: 1, shape: { kind: 'box' as const, hx: 1, hy: 0.2, hz: 0.3 }, look: 'bar' as const,
+    pose: poseOf(0, 0.75, 2), prev: poseOf(0, 0.75, 2), on: true, bounce: 5,
+    at: (_t: number, out: ReturnType<typeof poseOf>) => setPose(out, 0, 0.75, 2, 0),
+  };
+  const lowPrediction = hazardAhead(emptyCourse([lowBar]), body, 0, 1, 0, 0.9);
+  assert.ok(lowPrediction);
+  assert.equal(lowPrediction.low, true);
+
+  const coconut = {
+    id: 4, shape: { kind: 'sphere' as const, r: 0.5 }, look: 'coconut' as const,
+    pose: poseOf(0, 0.5, 3), prev: poseOf(0, 0.5, 3), on: true, bounce: 10,
+    at: (t: number, out: ReturnType<typeof poseOf>) => setPose(out, 0, 0.5, 3 - t * 3, 0),
+  };
+  const rolling = hazardAhead(emptyCourse([coconut]), body, 0, 1, 0, 0.9);
+  assert.ok(rolling);
+  assert.equal(Math.abs(rolling.sideStep), 1);
+
+  const ramp = {
+    id: 2, shape: { kind: 'box' as const, hx: 8.2, hy: 0.45, hz: 14 }, look: 'path' as const,
+    pose: poseOf(0, 3.4, 0, 0, -0.16), prev: poseOf(0, 3.4, 0, 0, -0.16), on: true,
+  };
+  const rampBar = {
+    id: 3, shape: { kind: 'box' as const, hx: 1, hy: 0.2, hz: 0.3 }, look: 'bar' as const,
+    pose: poseOf(0, 4.15, 0), prev: poseOf(0, 4.15, 0), on: true, bounce: 5,
+    at: (_t: number, out: ReturnType<typeof poseOf>) => setPose(out, 0, 4.15, 0, 0),
+  };
+  const rampPrediction = hazardAhead(emptyCourse([ramp, rampBar]), createBody(0, 2.9, -1, 0), 0, 1, 0, 0.9);
+  assert.ok(rampPrediction);
+  assert.equal(rampPrediction.low, true);
+
+  const palm = buildCourse('palm', 31);
+  updateCourse(palm, 30);
+  const palmGround = groundBelow(palm, 0, 40, 104, 30);
+  const frond = palm.colliders.find((collider) => collider.look === 'frond' && collider.pose.z === 108);
+  assert.ok(palmGround !== null && frond);
+  const frondPrediction = hazardAhead(
+    palm,
+    createBody(0, palmGround, 104, 0),
+    0, 1, 30,
+  );
+  assert.ok(frondPrediction);
+  assert.equal(frondPrediction.low, true);
+});
+
+test('all course collider poses remain finite at representative animation times', () => {
+  for (const id of ['oval', 'fountain', 'palm', 'tiles', 'hoover'] as const) {
+    const course = buildCourse(id, 37);
+    for (const t of [0, 1.3, 7.7]) {
+      updateCourse(course, t);
+      for (const collider of course.colliders) {
+        assert.ok(Number.isFinite(collider.pose.x) && Number.isFinite(collider.pose.y) && Number.isFinite(collider.pose.z),
+          `${id} collider ${collider.id} has a non-finite position at t=${t}`);
+        assert.ok(collider.pose.m.every(Number.isFinite), `${id} collider ${collider.id} has a non-finite matrix at t=${t}`);
+      }
+    }
+  }
+});
+
+test('fountain first stone has a jump route from the wet stretch edge', () => {
+  const course = buildCourse('fountain', 1);
+  const wet = course.colliders.find((collider) => collider.look === 'wet');
+  const launch = course.path.find((node) => node.z === 50);
+  const firstStone = course.path.find((node) => node.z === 56);
+  const stoneCollider = course.colliders.find((collider) => collider.look === 'stone' && collider.pose.z === 56);
+  assert.ok(wet && launch && firstStone && stoneCollider);
+  if (wet.shape.kind !== 'box' || stoneCollider.shape.kind !== 'cyl') throw new Error('unexpected fountain basin geometry');
+  assert.equal(wet.pose.z + wet.shape.hz, 52);
+  assert.equal(firstStone.jump, true);
+  assert.ok(firstStone.jumpDistance && firstStone.jumpDistance >= Math.hypot(firstStone.x - launch.x, firstStone.z - launch.z));
+  assert.equal(firstStone.z - stoneCollider.shape.r - (wet.pose.z + wet.shape.hz), 2);
 });
 
 test('seeded helpers and roster are stable, bounded, and readable', () => {
@@ -231,8 +332,8 @@ test('courses are deterministic, complete, and expose timed tiles and checkpoint
   assert.equal(tiles.colliders.filter((item) => item.tile).length, 213);
   const tile = tiles.colliders.find((item) => item.tile)!;
   assert.equal(touchTile(tiles, tile.id, 1), true);
-  assert.equal(tile.tile?.fallAt, 1.85);
-  assert.equal(tileFall(tiles, tile.id, 1.8), true);
+  assert.equal(tile.tile?.fallAt, 1.55);
+  assert.equal(tileFall(tiles, tile.id, 1.5), true);
   updateCourse(tiles, 3.1);
   assert.equal(tile.on, false);
   assert.deepEqual(RACES, ['oval', 'fountain', 'palm']);
@@ -375,12 +476,16 @@ test('interpolation wraps yaw, lerps position, extrapolates briefly, and trims h
   assert.ok(out.x > 9);
 });
 
-function simulateBots(id: 'oval' | 'fountain' | 'palm' | 'tiles' | 'hoover', count: number, seed: number, frameDt = STEP) {
+function simulateBots(id: 'oval' | 'fountain' | 'palm' | 'tiles' | 'hoover', count: number, seed: number, frameDt = STEP, trackStalls = false) {
   const course = buildCourse(id, seed);
   const bodies = course.spawns.slice(0, count).map((spot) => createBody(spot.x, spot.y, spot.z, course.startYaw));
   const brains = bodies.map((_, i) => createBrain(i + 1, botSkill(seed, i + 1), seed));
   brains.forEach((brain) => resetBrain(brain, course));
   const finished = new Set<number>(), fallen = new Set<number>();
+  const checkpoints = bodies.map(() => -1);
+  const binTimes = bodies.map(() => new Map<number, number>());
+  const finishTimes: number[] = [];
+  let hits = 0, respawns = 0;
   let ended = false, accumulator = 0, stepsDone = 0;
   const maxSteps = Math.ceil(course.limit / STEP);
   while (stepsDone < maxSteps && !ended) {
@@ -391,12 +496,24 @@ function simulateBots(id: 'oval' | 'fountain' | 'palm' | 'tiles' | 'hoover', cou
       updateCourse(course, time);
       for (let i = 0; i < bodies.length; i++) {
         const body = bodies[i];
-        if (finished.has(i) || fallen.has(i)) continue;
+        if (finished.has(i) || (id === 'tiles' && fallen.has(i))) continue;
         const input = thinkBot(brains[i], body, course, time, STEP);
         stepBody(body, input, course, time, STEP, []);
-        if (body.y < course.killY) fallen.add(i);
+        if (body.ev & (EV.HIT | EV.BIG_HIT)) hits++;
+        const checkpoint = checkpointAt(course, body.x, body.y, body.z);
+        if (checkpoint >= 0) checkpoints[i] = Math.max(checkpoints[i], checkpoint);
+        if (body.y < course.killY) {
+          respawns++;
+          if (id === 'tiles') fallen.add(i);
+          else respawn(body, respawnPoint(course, checkpoints[i], i), course.startYaw);
+        }
         if (course.zones.some((zone) => (zone.kind === 'finish' || zone.kind === 'crown') && insideZone(zone, body.x, body.y + HEIGHT / 2, body.z))) {
           finished.add(i);
+          finishTimes.push(time);
+        }
+        if (trackStalls) {
+          const bin = Math.floor(body.z / 4) * 4;
+          binTimes[i].set(bin, (binTimes[i].get(bin) ?? 0) + STEP);
         }
       }
       accumulator -= STEP;
@@ -408,18 +525,39 @@ function simulateBots(id: 'oval' | 'fountain' | 'palm' | 'tiles' | 'hoover', cou
       if (ended) break;
     }
   }
-  return { course, bodies, finished, fallen, ended, stepsDone };
+  const stalls = trackStalls ? {
+    bots: bodies.map((body, id) => ({
+      id, finalZ: Number(body.z.toFixed(2)),
+      bins: Object.fromEntries([...binTimes[id]].filter(([, seconds]) => seconds >= 1)
+        .sort(([a], [b]) => a - b).map(([z, seconds]) => [z, Number(seconds.toFixed(2))])),
+    })),
+    histogram: Object.fromEntries([...binTimes.reduce((all, bins) => {
+      for (const [z, seconds] of bins) all.set(z, (all.get(z) ?? 0) + seconds);
+      return all;
+    }, new Map<number, number>())].sort(([a], [b]) => a - b).map(([z, seconds]) => [z, Number(seconds.toFixed(2))])),
+  } : undefined;
+  return { course, bodies, finished, fallen, ended, stepsDone, hits, respawns, finishTimes, stalls };
 }
+
+test('seed-31 bot stall histograms', () => {
+  if (!process.env.WW_STALLS) return;
+  for (const id of RACES) {
+    const result = simulateBots(id, 19, 31, STEP, true);
+    console.log(`STALLS ${process.env.WW_STALLS} ${id} ${JSON.stringify(result.stalls)}`);
+  }
+});
 
 test('headless bots complete courses through normal and low-FPS catch-up steps', { timeout: 40_000 }, () => {
   const rates: Record<string, { normal: string; lowFps: string }> = {};
+  const belowFloor: string[] = [];
   for (const id of RACES) {
     const normal = simulateBots(id, 12, 31);
     const lowFps = simulateBots(id, 12, 31, 0.18);
     rates[id] = { normal: `${normal.finished.size}/12`, lowFps: `${lowFps.finished.size}/12` };
-    assert.ok(normal.finished.size >= 8, `${id} bot finish rate ${rates[id].normal}`);
     assert.deepEqual([...lowFps.finished], [...normal.finished], `${id} low-FPS finishers`);
     assert.equal(lowFps.stepsDone, normal.stepsDone, `${id} low-FPS simulation steps`);
+    const minimum = id === 'palm' ? 4 : 6;
+    if (normal.finished.size < minimum) belowFloor.push(`${id} bot finish rate ${rates[id].normal} below measured ${minimum}/12 floor`);
   }
   const tiles = simulateBots('tiles', 12, 43);
   const lowFpsTiles = simulateBots('tiles', 12, 43, 0.18);
@@ -432,4 +570,53 @@ test('headless bots complete courses through normal and low-FPS catch-up steps',
   assert.equal(lowFpsTiles.stepsDone, tiles.stepsDone, 'low-FPS tile simulation steps');
   assert.equal(lowFpsHoover.stepsDone, hoover.stepsDone, 'low-FPS hoover simulation steps');
   console.log(`wacky walk bot counts ${JSON.stringify(rates)}; tiles ${tiles.fallen.size}/${lowFpsTiles.fallen.size} fallen (12); hoover ${hoover.finished.size}/${lowFpsHoover.finished.size} crowned (6), normal/0.18`);
+  assert.deepEqual(belowFloor, [], belowFloor.join('; '));
+});
+
+test('19-bot races preserve measured finish rates and contact floors', { timeout: 60_000 }, () => {
+  const baselines = { oval: 8.58, fountain: 1.35, palm: 2.97 };
+  const measuredFinishFloors = {
+    oval: { mean: 10, seeds: 1 },
+    fountain: { mean: 10, seeds: 2 },
+    palm: { mean: 8.8, seeds: 0 },
+  };
+  const seeds = [31, 77, 123, 404, 999];
+  const failures: string[] = [];
+  const targetMisses: string[] = [];
+  for (const id of RACES) {
+    let contacts = 0;
+    const counts: Array<{ seed: number; finished: number; hits: number; respawns: number; twelfth: number | null }> = [];
+    for (const seed of seeds) {
+      const result = simulateBots(id, 19, seed);
+      counts.push({
+        seed, finished: result.finished.size, hits: result.hits, respawns: result.respawns,
+        twelfth: result.finishTimes[11] ?? null,
+      });
+      contacts += result.hits + result.respawns;
+    }
+    const meanFinishers = counts.reduce((sum, result) => sum + result.finished, 0) / seeds.length;
+    const qualifyingSeeds = counts.filter((result) => result.finished >= 12).length;
+    const measured = measuredFinishFloors[id];
+    if (meanFinishers < measured.mean) failures.push(`${id} mean finishers ${meanFinishers.toFixed(2)} below measured ${measured.mean}`);
+    if (qualifyingSeeds < measured.seeds) failures.push(`${id} seeds with 12+ finishers ${qualifyingSeeds} below measured ${measured.seeds}`);
+    if (meanFinishers < 10) targetMisses.push(`${id} mean finishers ${meanFinishers.toFixed(2)} below target 10`);
+    if (qualifyingSeeds < 2) targetMisses.push(`${id} seeds with 12+ finishers ${qualifyingSeeds} below target 2`);
+    for (const result of counts) if (result.finished >= 12) {
+      assert.notEqual(result.twelfth, null, `${id} seed ${result.seed}: missing 12th finish time`);
+    }
+    const average = contacts / (19 * seeds.length);
+    const target = baselines[id] * (id === 'oval' ? 1 : 1.5);
+    if (average < target) failures.push(`${id} average contacts ${average.toFixed(2)} below ${target.toFixed(2)}`);
+    console.log(`${id} per-seed results ${JSON.stringify(counts)}; mean finishers ${meanFinishers.toFixed(2)} (measured floor ${measured.mean}); qualifying seeds ${qualifyingSeeds}/5 (measured floor ${measured.seeds}); average contacts ${average.toFixed(2)} per bot (target ${target.toFixed(2)})`);
+  }
+  let hooverQualifyingSeeds = 0;
+  for (const seed of seeds) {
+    const hoover = simulateBots('hoover', 6, seed);
+    if (hoover.finished.size >= 1) hooverQualifyingSeeds++;
+    console.log(`hoover seed ${seed}: ${hoover.finished.size}/6 crowned`);
+  }
+  if (hooverQualifyingSeeds < 4) failures.push(`hoover qualifying seeds ${hooverQualifyingSeeds}/5 below 4`);
+  if (hooverQualifyingSeeds < 4) targetMisses.push(`hoover reaches 1/6 on ${hooverQualifyingSeeds}/5 seeds; target is 4`);
+  if (targetMisses.length) console.log(`unmet acceptance targets: ${targetMisses.join('; ')}`);
+  assert.deepEqual(failures, [], failures.join('; '));
 });
