@@ -1,6 +1,7 @@
-import { FIELD, PLAYER_COUNT, teamOf, type Command, type World } from './logic.ts';
+import { FIELD, PLAYER_COUNT, teamOf, type World } from './logic.ts';
+import type { ControlCommand } from './input.ts';
 
-export type MovePacket = { t: 'soccer'; k: 'mv'; r: number; seq: number; seat: number; x: number; z: number; ax: number; az: number; power: number; buttons: number; held: number };
+export type MovePacket = { t: 'soccer'; k: 'mv'; r: number; seq: number; seat: number; x: number; z: number; ax: number; az: number; power: number; buttons: number; held: number; sx?: number; sz?: number };
 export type SnapshotPacket = { t: 'soccer'; k: 's'; r: number; seq: number; state: World };
 export type ConfigPacket = { t: 'soccer'; k: 'cfg'; r: number; seq: number; half: 2 | 3 | 4 | 6; level: 0 | 1 | 2; displayOnly: boolean; mode?: 'cpu' | 'versus' | 'coop' };
 export type SoccerPacket = MovePacket | SnapshotPacket | ConfigPacket;
@@ -51,7 +52,7 @@ function validWorld(value: unknown): value is World {
   return true;
 }
 
-export function movePacket(round: number, seq: number, seat: number, command: Command): MovePacket {
+export function movePacket(round: number, seq: number, seat: number, command: ControlCommand): MovePacket {
   const aimLength = Math.hypot(command.aim?.x ?? 1, command.aim?.z ?? 0) || 1;
   const buttons = (command.action === 'pass' ? 1 : 0)
     | (command.action === 'shoot' ? 2 : 0)
@@ -61,7 +62,9 @@ export function movePacket(round: number, seq: number, seat: number, command: Co
     | (command.action === 'slide' ? 32 : 0)
     | (command.press ? 128 : 0)
     | (command.action === 'finesse' ? 256 : 0)
-    | (command.action === 'skill' ? 512 : 0);
+    | (command.action === 'skill' ? 512 : 0)
+    | (command.jockey ? 1024 : 0) | (command.autoJockey ? 2048 : 0) | (command.contain ? 4096 : 0)
+    | (command.switchNearest ? 8192 : 0) | (command.finesseHeld ? 16384 : 0);
   return {
     t: 'soccer', k: 'mv', r: round, seq, seat,
     x: Math.round(command.move.x * 100) / 100, z: Math.round(command.move.z * 100) / 100,
@@ -69,6 +72,7 @@ export function movePacket(round: number, seq: number, seat: number, command: Co
     az: Math.round((command.aim?.z ?? 0) / aimLength * 100) / 100,
     power: Math.round(Math.max(0, Math.min(1, command.power ?? 0.72)) * 100) / 100,
     buttons: buttons | (command.sprint ? 64 : 0),
+    ...(command.switchDir ? { sx: Math.round(command.switchDir.x * 100) / 100, sz: Math.round(command.switchDir.z * 100) / 100 } : {}),
     held: (command.heldAction === 'pass' ? 1 : 0)
       | (command.heldAction === 'shoot' ? 2 : 0)
       | (command.heldAction === 'through' ? 4 : 0)
@@ -94,9 +98,10 @@ export function parsePacket(value: unknown): SoccerPacket | null {
   if (p.k === 'mv') {
     if (!Number.isInteger(p.seat) || (p.seat as number) < 0 || (p.seat as number) > 3 || !quantized(p.x) || !quantized(p.z)
       || !quantized(p.ax) || !quantized(p.az) || !inRange(p.power, 0, 1)
-      || !Number.isInteger(p.buttons) || (p.buttons as number) < 0 || ((p.buttons as number) & ~1023) !== 0
-      || !Number.isInteger(p.held) || (p.held as number) < 0 || ((p.held as number) & ~527) !== 0) return null;
-    return { t: 'soccer', k: 'mv', r: p.r as number, seq: p.seq as number, seat: p.seat as number, x: p.x as number, z: p.z as number, ax: p.ax as number, az: p.az as number, power: p.power as number, buttons: p.buttons as number, held: p.held as number };
+      || !Number.isInteger(p.buttons) || (p.buttons as number) < 0 || (p.buttons as number) > 32767 || ((p.buttons as number) & ~32767) !== 0
+      || ((p.sx !== undefined || p.sz !== undefined) && (!quantized(p.sx) || !quantized(p.sz)))
+      || !Number.isInteger(p.held) || (p.held as number) < 0 || (p.held as number) > 527 || ((p.held as number) & ~527) !== 0) return null;
+    return { t: 'soccer', k: 'mv', r: p.r as number, seq: p.seq as number, seat: p.seat as number, x: p.x as number, z: p.z as number, ax: p.ax as number, az: p.az as number, power: p.power as number, buttons: p.buttons as number, held: p.held as number, ...(p.sx === undefined ? {} : { sx: p.sx as number, sz: p.sz as number }) };
   }
   if (p.k === 's' && validWorld(p.state)) {
     return { t: 'soccer', k: 's', r: p.r as number, seq: p.seq as number, state: structuredClone(p.state) };
@@ -104,12 +109,26 @@ export function parsePacket(value: unknown): SoccerPacket | null {
   return null;
 }
 
-export function commandFromPacket(packet: MovePacket): Command {
+export function commandFromPacket(packet: MovePacket): ControlCommand {
   const buttons = packet.buttons;
   const action = buttons & 256 ? 'finesse' : buttons & 512 ? 'skill' : buttons & 2 ? 'shoot' : buttons & 1 ? 'pass' : buttons & 4 ? 'through' : buttons & 8 ? 'lob' : buttons & 32 ? 'slide' : buttons & 16 ? 'tackle' : null;
   const held = packet.held;
   const heldAction = held & 2 ? 'shoot' : held & 1 ? 'pass' : held & 4 ? 'through' : held & 8 ? 'lob' : held & 512 ? 'skill' : null;
-  return { move: { x: packet.x, z: packet.z }, sprint: !!(buttons & 64), action, heldAction, press: !!(buttons & 128), pressed: !!action, power: packet.power, aim: { x: packet.ax, z: packet.az } };
+  return { move: { x: packet.x, z: packet.z }, sprint: !!(buttons & 64), action, heldAction, press: !!(buttons & 128), pressed: !!action, power: packet.power, aim: { x: packet.ax, z: packet.az },
+    jockey: !!(buttons & 1024), autoJockey: !!(buttons & 2048), contain: !!(buttons & 4096), switchNearest: !!(buttons & 8192), finesseHeld: !!(buttons & 16384),
+    switchDir: packet.sx === undefined ? null : { x: packet.sx, z: packet.sz! } };
+}
+
+export function mergeRemoteCommand(previous: ControlCommand | undefined, current: ControlCommand): ControlCommand {
+  return { ...current,
+    ...(previous?.pressed && !current.pressed ? { action: previous.action, pressed: true, power: previous.power, aim: previous.aim } : {}),
+    switchNearest: current.switchNearest || previous?.switchNearest,
+    switchDir: current.switchDir ?? previous?.switchDir,
+  };
+}
+
+export function consumeCommand(command: ControlCommand): ControlCommand {
+  return { ...command, action: null, pressed: false, switchNearest: false, switchDir: null };
 }
 
 export function cloneSnapshot(world: World) {
