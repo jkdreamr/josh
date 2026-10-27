@@ -528,6 +528,7 @@ function Play({ mode }: { mode: StageMode }) {
   const view = useRef<View | null>(null);
   const match = useRef<Match | null>(null);
   const net = useRef<Session>(null as unknown as Session);
+  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__scramble = { match: () => match.current, view: () => view.current, net: () => net.current, logic: () => import('./logic') };
   net.current ??= newSession(!live || online!.isHost);
   if (!match.current) {
     if (mode === 'idle') match.current = soloMatch(randomSeed(), level);
