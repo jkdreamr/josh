@@ -5,6 +5,11 @@ export type Mode = 'cpu' | 'versus' | 'coop';
 const homeSeatOrder = [6, 9, 5, 7, 3, 8, 10, 1, 2, 4] as const;
 const playerForSideSeat = (side: 0 | 1, index: number) => side * TEAM_SIZE + homeSeatOrder[index % homeSeatOrder.length]!;
 
+export function missingPhoneSeats(matchSeats: readonly number[], present: readonly number[]) {
+  const presentSeats = new Set(present);
+  return matchSeats.filter((seat) => !presentSeats.has(seat));
+}
+
 export const playerForSeat = (seat: number, displayOnly = false, mode: Mode = 'cpu') => {
   if (displayOnly && seat === 0) return playerForSideSeat(0, 0);
   if (displayOnly && mode === 'coop') return playerForSideSeat(0, Math.max(0, seat - 1));

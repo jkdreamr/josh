@@ -2,6 +2,19 @@ export function advanceOnlineRound(round: number) {
   return round + 1;
 }
 
+export function roundLeftVerdict(o: {
+  phoneFirst: boolean;
+  watching: boolean;
+  inRound: number;
+  bots: number;
+  players: number;
+}): { title: string; detail: string } | null {
+  if (o.phoneFirst || o.inRound + o.bots >= 2) return null;
+  return o.watching
+    ? { title: 'Round Over', detail: 'A Player Left, So Nobody Is Left to Play This Round.' }
+    : { title: 'Opponent Left', detail: o.players > 1 ? 'Nobody Is Left in This Round.' : 'Your Opponent Left the Room.' };
+}
+
 /** The most seats a room has: a game's own room holds as many as its meta says, never more than this. */
 export const MAX_SEATS = 20;
 

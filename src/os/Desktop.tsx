@@ -12,6 +12,7 @@ import { clamp, monthGrid, useBattery, useNow, useWeatherReport, type BatteryVie
 import { getMeta } from './arcade/manifest';
 import { formatCount, useStats, type StatsPeriod } from './stats';
 import { onEscapeCapture } from './escape';
+import { isPhoneControllerInvite } from './arcade/apps';
 
 const MENU_H = 26;
 const DOCK_SPACE = 78;
@@ -96,6 +97,10 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
   const [welcomeAt, setWelcomeAt] = useState<number | 'pending' | 'cleared'>('pending');
   const holdBanner = useRef(false);
   const holdBannerTimer = useRef<number | null>(null);
+  const phoneControllerInvite = useMemo(
+    () => typeof window !== 'undefined' && isPhoneControllerInvite(window.location.search, mobile),
+    [mobile],
+  );
   const [ctx, setCtx] = useState<{ x: number; y: number; icon?: string } | null>(null);
   const zTop = useRef(10);
   const winsRef = useRef(wins);
@@ -199,6 +204,7 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
   }, [mobile, tablet]);
 
   const revealHeldBanner = useCallback(() => {
+    if (phoneControllerInvite) return;
     if (!holdBanner.current) return;
     holdBanner.current = false;
     if (holdBannerTimer.current !== null) {
@@ -206,9 +212,10 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
       holdBannerTimer.current = null;
     }
     setToast(true);
-  }, []);
+  }, [phoneControllerInvite]);
 
   const scheduleHeldBanner = useCallback(() => {
+    if (phoneControllerInvite) return;
     if (!holdBanner.current || holdBannerTimer.current !== null) return;
     holdBannerTimer.current = window.setTimeout(() => {
       holdBannerTimer.current = null;
@@ -216,7 +223,7 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
       holdBanner.current = false;
       setToast(true);
     }, 600);
-  }, []);
+  }, [phoneControllerInvite]);
 
   const greeted = useRef(false);
   useEffect(() => {
@@ -261,6 +268,7 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
   // Welcome notification. The banner itself handles auto-dismiss, hover and swipes.
   useEffect(() => {
     const root = rootRef.current;
+    if (phoneControllerInvite) return;
     const t = window.setTimeout(() => {
       if (!holdBanner.current) setToast(true);
     }, 1400);
@@ -275,7 +283,7 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
         holdBannerTimer.current = null;
       }
     };
-  }, [scheduleHeldBanner]);
+  }, [phoneControllerInvite, scheduleHeldBanner]);
   const dismissToast = useCallback(() => setToast(false), []);
   useEffect(() => {
     if (toast) setWelcomeAt((at) => (at === 'pending' ? Date.now() : at));
@@ -592,7 +600,7 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
         )}
 
         <Banner
-          show={toast}
+          show={toast && !phoneControllerInvite}
           mobile={mobile}
           onDismiss={dismissToast}
           onOpen={() => {

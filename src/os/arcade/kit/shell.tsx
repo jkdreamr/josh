@@ -11,7 +11,7 @@ import { sfx, useMusicOn, useMuted } from './sfx';
 import { useBackgroundMusic } from './music';
 import { defineSetting, getSetting, isGameSetting, onSettingChange, setSetting, trackSettingChange, useSetting } from './settings';
 import { BotStepper, OnlinePanel, OnlineProvider, QuickPanel, ROOM_VISIBILITY, ROOM_WATCHERS, RoomCode, RoomRoster, VisibilityPicker, WatchPicker } from './online';
-import { MAX_SEATS, botPlayers, canStartNext, handOffSettled, nextOnlineRound, parseRacePacket, raceSeats, raceStandings, raceVerdict, RoundRouter, type RaceScores, type SettledRace } from './online-core';
+import { MAX_SEATS, botPlayers, canStartNext, handOffSettled, nextOnlineRound, parseRacePacket, roundLeftVerdict, raceSeats, raceStandings, raceVerdict, RoundRouter, type RaceScores, type SettledRace } from './online-core';
 import { createRoom, quickRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import { handOffScores, handOffSeat } from './online-core';
 import { countPlay } from '../../stats';
@@ -475,10 +475,14 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       // in the room, so someone else can join and the host can start the next round.
       // (quick play's game fills every empty place with bots of its own)
       if (!onlineModeRef.current || statusRef.current !== 'playing' || quickRef.current) return;
-      const left = players.filter((player) => roundSeatsRef.current.includes(player.seat)).length;
-      if (left + roundBotsRef.current.length >= 2) return;
-      if (link.watching) gameOver(undefined, { title: 'Round Over', detail: 'A Player Left, So Nobody Is Left to Play This Round.' });
-      else gameOver(undefined, { title: 'Opponent Left', detail: players.length > 1 ? 'Nobody Is Left in This Round.' : 'Your Opponent Left the Room.' });
+      const verdict = roundLeftVerdict({
+        phoneFirst,
+        watching: link.watching,
+        inRound: players.filter((player) => roundSeatsRef.current.includes(player.seat)).length,
+        bots: roundBotsRef.current.length,
+        players: players.length,
+      });
+      if (verdict) gameOver(undefined, verdict);
     });
     link.on('transport', setOnlineTransport);
     link.on('start', ({ round: serverRound, bots, players }) => {

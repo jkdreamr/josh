@@ -13,7 +13,7 @@ import { createHudModel, Hud, type HudModel } from './hud.tsx';
 import { captureSnapshot, createSnapshot, interpolateInto, type Snapshot } from './render-lerp.ts';
 import { publishSoccerPerf, recordSoccerPerf, recordSoccerRendererStats, soccerPerfEnabled } from './perf.ts';
 import { clampOrigin, followOrigin, haptic, hitButton, STICK, stickVector, type PadPoint } from './pad.ts';
-import { playerForSeat, type Mode } from './seats.ts';
+import { missingPhoneSeats, playerForSeat, type Mode } from './seats.ts';
 import './soccer.css';
 import QRCode from 'qrcode';
 
@@ -248,6 +248,7 @@ function Play() {
   const [cameraChoice] = useSetting(CAMERA);
   const [timeChoice] = useSetting(TIME);
   const hudPublish = useRef<(model: HudModel) => void>(() => {});
+  const [phoneGone, setPhoneGone] = useState(false);
   const movement = useRef({ x: 0, z: 0 });
   const worldRef = useRef<World | null>(null);
   const viewRef = useRef<SoccerView | null>(null);
@@ -257,6 +258,7 @@ function Play() {
   const cameraRef = useRef<CameraMode>(cameraChoice);
   const timeRef = useRef<TimeMode>(timeChoice);
   const accumulator = useRef(0);
+  const matchSeats = useRef<number[] | null>(null);
   const simulationTime = useRef(0);
   const lastFrameTime = useRef<number | null>(null);
   const debugTimer = useRef(0);
@@ -324,6 +326,8 @@ function Play() {
   useEffect(() => {
     if (shell.status !== 'ready') return;
     const fresh = createWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
+    matchSeats.current = null;
+    setPhoneGone(false);
     controllerPlayers.current.clear();
     setupHumans(fresh, currentMode, online);
     worldRef.current = fresh;
@@ -540,6 +544,20 @@ function Play() {
     const current = worldRef.current;
     const room = onlineRef.current;
     if (!current || shellRef.current.status !== 'playing') return;
+    const presentPhoneSeats = room?.players.filter((player) => player.seat > 0).map((player) => player.seat) ?? [];
+    let phoneDisconnected = false;
+    if (room?.isHost) {
+      if (matchSeats.current === null) matchSeats.current = [...presentPhoneSeats];
+      const missing = missingPhoneSeats(matchSeats.current, presentPhoneSeats);
+      if (missing.length === 0) {
+        for (const seat of presentPhoneSeats) {
+          if (!matchSeats.current.includes(seat)) matchSeats.current.push(seat);
+        }
+      }
+      phoneDisconnected = missingPhoneSeats(matchSeats.current, presentPhoneSeats).length > 0;
+    }
+    setPhoneGone(phoneDisconnected);
+    if (phoneDisconnected) accumulator.current = 0;
     crowdIntensity.current = current.phase === 'goal'
       ? 1
       : 0.08 + Math.min(0.82, Math.max(0, (Math.abs(current.ball.x) - FIELD.penaltyDepth * 0.42) / (FIELD.length / 2 - FIELD.penaltyDepth * 0.42)) * 0.75);
@@ -594,7 +612,7 @@ function Play() {
       }
     }
 
-    if (!isOnlineGuest) {
+    if (!isOnlineGuest && !phoneDisconnected) {
       const simulationStart = soccerPerfEnabled ? performance.now() : 0;
       accumulator.current = Math.min(STEP * 6, accumulator.current + dt);
       const steps = Math.min(6, Math.floor(accumulator.current / STEP));
@@ -645,7 +663,7 @@ function Play() {
       }
       if (stepped) renderDirty.current = true;
       if (soccerPerfEnabled) recordSoccerPerf('simulationMs', performance.now() - simulationStart);
-    } else {
+    } else if (isOnlineGuest) {
       guestRenderTimer.current += dt;
       if (guestRenderTimer.current >= 1 / 30) {
         guestRenderTimer.current %= 1 / 30;
@@ -751,6 +769,7 @@ function Play() {
     <div className="g-soccer-stage">
       <div className="g-soccer-canvas" ref={ref} />
       <Hud source={hudPublish} />
+      {phoneGone && <div className="g-soccer-phone-gone" role="status">Phone disconnected — reopen the link</div>}
       {shell.touch && shell.status === 'playing' && !online?.watching && <Stick movement={movement} />}
       {shell.touch && shell.status === 'playing' && !online?.watching && <TouchControls buttons={[
         { key: 'KeyJ', label: 'pass / contain' },

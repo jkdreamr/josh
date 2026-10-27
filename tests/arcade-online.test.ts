@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { roomApp } from '../src/os/arcade/apps.ts';
-import { advanceOnlineRound, botPlayers, canStartNext, MAX_SEATS, nextOnlineRound, relayPlan, RoundRouter, tagRound, openRoomAction, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, handOffSettled, parseRacePacket, raceSeats, raceStandings, raceVerdict, type OpenRoom, type RaceScores, type SettledRace } from '../src/os/arcade/kit/online-core.ts';
+import { advanceOnlineRound, botPlayers, canStartNext, MAX_SEATS, nextOnlineRound, relayPlan, roundLeftVerdict, RoundRouter, tagRound, openRoomAction, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, handOffSettled, parseRacePacket, raceSeats, raceStandings, raceVerdict, type OpenRoom, type RaceScores, type SettledRace } from '../src/os/arcade/kit/online-core.ts';
 import { createRoom, listRooms, quickRoom, RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
 import { agreedWinner, agreedWinners, isPool, isRelayMessage, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, canWatchRoom, endRound, GATHER_FULL_MS, GATHER_MS, gatherFull, gathering, joinable, LISTING_REFRESH_MS, lowestFreeSeat, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, pickQuick, QUICK_LATE_MS, QUICK_PENDING_MS, roomListing, roundPlayable, roundSeats, seatsFor, sortListings, WATCHERS_MAX, type LobbyRow, type RoomState } from '../worker/src/room-core.ts';
 import { ONLINE_SPECS } from '../worker/src/specs.gen.ts';
@@ -69,6 +69,24 @@ test('online rounds advance independently from local game rounds', () => {
   assert.equal(advanceOnlineRound(40), 41);
   assert.equal(nextOnlineRound(0, null), 1);
   assert.equal(nextOnlineRound(3, 7), 7, 'the server round wins so late joiners line up');
+});
+
+test('round-left verdict preserves ordinary outcomes and lets phone-first games handle disconnects', () => {
+  assert.deepEqual(roundLeftVerdict({
+    phoneFirst: false, watching: false, inRound: 0, bots: 0, players: 1,
+  }), { title: 'Opponent Left', detail: 'Your Opponent Left the Room.' });
+  assert.deepEqual(roundLeftVerdict({
+    phoneFirst: false, watching: false, inRound: 0, bots: 0, players: 2,
+  }), { title: 'Opponent Left', detail: 'Nobody Is Left in This Round.' });
+  assert.deepEqual(roundLeftVerdict({
+    phoneFirst: false, watching: true, inRound: 0, bots: 0, players: 1,
+  }), { title: 'Round Over', detail: 'A Player Left, So Nobody Is Left to Play This Round.' });
+  assert.equal(roundLeftVerdict({
+    phoneFirst: false, watching: false, inRound: 1, bots: 1, players: 1,
+  }), null);
+  assert.equal(roundLeftVerdict({
+    phoneFirst: true, watching: false, inRound: 0, bots: 0, players: 1,
+  }), null);
 });
 
 test('relay plans preserve direct and per-seat relays unless every broadcast recipient is relayed', () => {
