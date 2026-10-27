@@ -1493,8 +1493,9 @@ function Play({ mode }: { mode: StageMode }) {
       const at = o && eye ? v.project(topX(o.x) + (isDeep(eye.x) ? DEEP : 0), (k.level ? eye.y : o.y) + 1.2, o.z) : null;
       // (one whose tag is on the screen at all needs none)
       const seen = !!at && k.level === 0 && at.x > 8 && at.x < w - 8 && at.y > 8 && at.y < h - 8;
-      const pad = 24;
-      const e = at && !seen ? edgeOf(at.x, at.y, from?.x ?? w / 2, from?.y ?? h / 2, pad, Math.max(pad + 20, h * 0.15), w - pad, h - Math.max(pad + 30, h * 0.22)) : null;
+      // (kept in far enough for the distance under it)
+      const pad = 30;
+      const e = at && !seen ? edgeOf(at.x, at.y, from?.x ?? w / 2, from?.y ?? h / 2, pad, Math.max(pad + 14, h * 0.15), w - pad, h - Math.max(pad + 24, h * 0.22)) : null;
       if (!k || !e) {
         if (el.style.opacity !== '0') el.style.opacity = '0';
         continue;
@@ -1502,7 +1503,8 @@ function Play({ mode }: { mode: StageMode }) {
       el.style.opacity = '1';
       el.style.transform = `translate(${e.x.toFixed(1)}px, ${e.y.toFixed(1)}px) translate(-50%, -50%)`;
       el.style.setProperty('--a', `${(e.off ? e.a : k.level > 0 ? -Math.PI / 2 : Math.PI / 2).toFixed(3)}rad`);
-      const text = `${k.n}|${k.level > 0 ? 'above' : k.level < 0 ? 'below' : `${Math.round(k.dist)}m`}|${k.color}`;
+      const far = `${Math.round(k.dist)}m`;
+      const text = `${k.n}|${k.level === 0 ? far : e.off ? `${far} ${k.level > 0 ? 'up' : 'down'}` : k.level > 0 ? 'above' : 'below'}|${k.color}`;
       if (el.dataset.k !== text) {
         el.dataset.k = text;
         const [num, far] = text.split('|');
@@ -2007,8 +2009,9 @@ function Play({ mode }: { mode: StageMode }) {
       })}
       {team.map((o) =>
         o === focusFighter || o.phase === 'out' || o.phase === 'bus' ? null : (
-          // each teammate in its color (with its number on the big map), a red ring blinking round it while it's down
-          <g key={`m${o.id}`} transform={`translate(${topX(o.x).toFixed(1)} ${o.z.toFixed(1)}) scale(${k})`}>
+          // each teammate in its color (with its number on the big map, drawn bigger on a small touch screen), a red
+          // ring blinking round it while it's down
+          <g key={`m${o.id}`} transform={`translate(${topX(o.x).toFixed(1)} ${o.z.toFixed(1)}) scale(${big && touchMode ? 1.6 : k})`}>
             {o.down && <circle r={big ? 8.5 : 12} fill="none" stroke="#ff4d4d" strokeWidth={big ? 2 : 3.4} className="is-down" />}
             <circle r={big ? 6 : 8} fill={mateColor(m, o)} stroke="#fff" strokeWidth={big ? 1.4 : 2.4} />
             {big && (
