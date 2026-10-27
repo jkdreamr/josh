@@ -3,6 +3,7 @@ import { FIELD, type World } from './logic.ts';
 import { recordSoccerHudCommit, soccerPerfEnabled } from './perf.ts';
 import { EventBanner, GoalBanner, PlayerTag, Scoreboard, Ticker } from './presentation.tsx';
 import { setPieceLabels, shootoutScore } from './setpieces.ts';
+import { clubById, matchKits, rosterName } from './teams.ts';
 export type HudState = {
   score0: number;
   score1: number;
@@ -35,21 +36,23 @@ export const Hud = memo(function Hud({ state, watching, radarRef, world }: {
   const selected = world.players[state.selectedId];
   const labels = setPieceLabels(world, selected?.team ?? 0, selected?.id);
   const pens = shootoutScore(world);
+  const clubs = [clubById(world.clubs?.[0]), clubById(world.clubs?.[1])] as const;
+  const kits = matchKits(clubs[0], clubs[1]);
   useEffect(() => {
     if (soccerPerfEnabled) recordSoccerHudCommit();
   }, [state]);
   return (
     <div className="g-soccer-hud">
-      <Scoreboard score0={state.score0} score1={state.score1} clock={state.clock} added={state.added} half={state.half} />
+      <Scoreboard score0={state.score0} score1={state.score1} clock={state.clock} added={state.added} half={state.half} clubs={clubs} kits={kits} />
       {(labels || world.shootout) && <div className="g-soccer-setpiece-status">
-        {world.shootout && <div>PENS {pens.join(' - ')} <span className="g-soccer-pen-dots">{world.shootout.kicks.map((kicks, team) => <span key={team} aria-label={team === 0 ? 'Bay City penalties' : 'Northshore penalties'}>{kicks.map((scored, i) => <i key={i} className={scored ? 'is-scored' : 'is-missed'} aria-label={scored ? 'scored' : 'missed'} />)}</span>)}</span></div>}
+        {world.shootout && <div>PENS {pens.join(' - ')} <span className="g-soccer-pen-dots">{world.shootout.kicks.map((kicks, team) => <span key={team} aria-label={`${clubs[team]?.name ?? `Team ${team + 1}`} penalties`}>{kicks.map((scored, i) => <i key={i} className={scored ? 'is-scored' : 'is-missed'} aria-label={scored ? 'scored' : 'missed'} />)}</span>)}</span></div>}
         {labels && <small>{labels.title}</small>}
       </div>}
       {live && <>
         <EventBanner key={state.eventKey} event={state.event} eventKey={state.eventKey} eventTime={state.eventTime} phase={state.phase} />
         <GoalBanner statsVersion={state.statsVersion} />
         <Ticker statsVersion={state.statsVersion} />
-        <PlayerTag selectedId={state.selectedId} stamina={state.stamina} state={state.state} power={state.power} />
+        <PlayerTag selectedId={state.selectedId} stamina={state.stamina} state={state.state} power={state.power} playerName={selected ? rosterName(clubs[selected.team], selected.id % 11) : 'player'} />
       </>}
       <Radar ref={radarRef} world={world} />
       {state.replaying && <div className="g-soccer-replay">replay</div>}

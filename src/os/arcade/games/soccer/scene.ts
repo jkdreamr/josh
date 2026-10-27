@@ -1,7 +1,7 @@
 import type * as T from 'three';
 import type { World, Player, Team } from './logic.ts';
 import { FIELD, jerseyNumber, teamDir } from './logic.ts';
-import { playerName } from './broadcast.ts';
+import { clubById, DEFAULT_CLUBS, matchKits, rosterName, type Kit } from './teams.ts';
 import { disposeTree, damp } from './gl.ts';
 import { loadSoccerModel, MODEL_URLS } from './load.ts';
 import { ballNumberTexture, ballTexture } from './textures.ts';
@@ -22,7 +22,8 @@ export type SoccerCameraNdc = {
   maxAbsX: number;
   maxAbsY: number;
 };
-type Actor = { root: T.Group; anim: SoccerAnimator; contact: T.Mesh; fallback: T.Group; marker: T.Mesh; arrow: T.Mesh; carrierRing: T.Mesh; powerBar: T.Group; powerFill: T.Mesh; number: T.Mesh; prevCooldown: number; prevAction: string; lastKick: World['kickEvent']; keeperShot: boolean; celebrated: boolean; lodTick: number; lodDt: number };
+type Actor = { root: T.Group; anim: SoccerAnimator; team: Team; keeper: boolean; contact: T.Mesh; fallback: T.Group; marker: T.Mesh; arrow: T.Mesh; carrierRing: T.Mesh; powerBar: T.Group; powerFill: T.Mesh; number: T.Mesh; kitMaterials: Record<'shirt' | 'shorts' | 'socks' | 'trim', T.Material>; prevCooldown: number; prevAction: string; lastKick: World['kickEvent']; keeperShot: boolean; celebrated: boolean; lodTick: number; lodDt: number };
+type Crowd = { mesh: T.InstancedMesh; count: number; phases: number[]; baseY: number[]; fixtures: T.MeshStandardMaterial[] };
 
 export type SoccerView = {
   resize(width: number, height: number): void;
@@ -37,15 +38,13 @@ export type SoccerView = {
   attach(host: HTMLElement): void;
   setTime(mode: TimeMode): void;
   setPattern(pattern: PitchPattern): void;
+  setKits(clubs: [string, string]): void;
   goal(): void;
   setMarkers(markers: readonly PracticeMarker[]): void;
   dispose(): void;
 };
 
-const teamKit = [
-  { shirt: '#d52f43', shorts: '#faf6ed', trim: '#fff3e5', keeper: '#f6c945' },
-  { shirt: '#112744', shorts: '#7bc9ee', trim: '#c7efff', keeper: '#f18548' },
-] as const;
+const defaultKits = matchKits(clubById(DEFAULT_CLUBS[0]), clubById(DEFAULT_CLUBS[1]));
 const skinTones = ['#b87550', '#f0c19a', '#8e5942', '#d79b70', '#b88768'];
 
 function isKeeper(player: Player) {
@@ -86,17 +85,26 @@ function box(THREE: Three, parent: T.Object3D, size: [number, number, number], a
   return mesh;
 }
 
-function createPlayer(THREE: Three, player: Player, lite: boolean): Actor {
+function cylinderBetween(THREE: Three, parent: T.Object3D, from: T.Vector3, to: T.Vector3, radius: number, material: T.Material) {
+  const delta = to.clone().sub(from);
+  const mesh = new THREE.Mesh(new THREE.CylinderGeometry(radius, radius, delta.length(), 7), material);
+  mesh.position.copy(from).add(to).multiplyScalar(0.5);
+  mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), delta.normalize());
+  parent.add(mesh);
+  return mesh;
+}
+
+function createPlayer(THREE: Three, player: Player, lite: boolean, kits: [Kit, Kit], keepers: [string, string]): Actor {
   const root = new THREE.Group();
   root.scale.setScalar(1.14);
   const fallback = new THREE.Group();
   const anim = createSoccerAnimator(THREE, (player.id * 0.618) % 1, preferredFoot(player.id));
   anim.figure.add(fallback);
-  const kit = teamKit[player.team]!;
-  const shirt = standard(THREE, isKeeper(player) ? kit.keeper : kit.shirt, 0.52);
+  const kit = kits[player.team]!;
+  const shirt = standard(THREE, isKeeper(player) ? keepers[player.team]! : kit.shirt, 0.52);
   const trim = standard(THREE, kit.trim, 0.62, 0.06);
   const shorts = standard(THREE, isKeeper(player) ? '#162536' : kit.shorts, 0.68);
-  const socks = standard(THREE, player.team === 0 ? '#f7f4ec' : '#10243a', 0.73);
+  const socks = standard(THREE, kit.socks, 0.73);
   const boot = standard(THREE, '#172027', 0.38, 0.18);
   const skin = standard(THREE, skinTones[player.id % skinTones.length]!, 0.83);
   const hair = standard(THREE, ['#2a201c', '#523727', '#1d2022', '#957650'][player.id % 4]!, 0.92);
@@ -142,7 +150,7 @@ function createPlayer(THREE: Three, player: Player, lite: boolean): Actor {
     sleeve.rotation.z = side * -0.16;
     fallback.add(sleeve);
   }
-  const digit = new THREE.MeshBasicMaterial({ color: player.team === 0 ? '#fef3e6' : '#17293e', side: THREE.DoubleSide });
+  const digit = new THREE.MeshBasicMaterial({ color: kit.number, side: THREE.DoubleSide });
   const numberTexture = ballNumberTexture(THREE, jerseyNumber(player.id));
   const number = new THREE.Mesh(new THREE.PlaneGeometry(0.18, 0.22), new THREE.MeshBasicMaterial({ map: numberTexture, transparent: true, side: THREE.DoubleSide }));
   number.position.set(0, 1.25, -0.255);
@@ -168,7 +176,7 @@ function createPlayer(THREE: Three, player: Player, lite: boolean): Actor {
   root.add(anim.figure);
   void boots;
   void digit;
-  return { root, anim, contact, fallback, marker, arrow, carrierRing, powerBar, powerFill, number, prevCooldown: 0, prevAction: 'idle', lastKick: null, keeperShot: false, celebrated: false, lodTick: 0, lodDt: 0 };
+  return { root, anim, team: player.team, keeper: isKeeper(player), contact, fallback, marker, arrow, carrierRing, powerBar, powerFill, number, kitMaterials: { shirt, shorts, socks, trim }, prevCooldown: 0, prevAction: 'idle', lastKick: null, keeperShot: false, celebrated: false, lodTick: 0, lodDt: 0 };
 }
 
 export function createScene(THREE: Three, host: HTMLElement, lite: boolean, timeMode: TimeMode, pattern: PitchPattern): SoccerView | null {
@@ -287,6 +295,32 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const actors = new Map<number, Actor>();
   const materialCache = new Map<string, Map<T.Material, T.Material>>();
   const attachments: Promise<void>[] = [];
+  const modelMaterialRoles = new Map<T.Material, { team: Team; keeper: boolean; part: 'shirt' | 'shorts' | 'socks' | 'trim' }>();
+  let activeKits: [Kit, Kit] = [defaultKits.home, defaultKits.away];
+  let activeKeepers: [string, string] = defaultKits.keepers;
+  let kitClubs: [string, string] = [...DEFAULT_CLUBS];
+  const kitColor = (team: Team, keeper: boolean, part: 'shirt' | 'shorts' | 'socks' | 'trim' | 'number') => {
+    if (part === 'shirt' && keeper) return activeKeepers[team];
+    if (part === 'shorts' && keeper) return '#162536';
+    return activeKits[team][part];
+  };
+  const recolor = (material: T.Material, color: string) => {
+    (material as T.MeshStandardMaterial).color?.set(color);
+  };
+  const setKits = (clubs: [string, string]) => {
+    if (kitClubs[0] === clubs[0] && kitClubs[1] === clubs[1]) return;
+    kitClubs = [...clubs];
+    const result = matchKits(clubById(clubs[0]), clubById(clubs[1]));
+    activeKits = [result.home, result.away];
+    activeKeepers = result.keepers;
+    for (const actor of actors.values()) {
+      for (const part of ['shirt', 'shorts', 'socks', 'trim'] as const) {
+        recolor(actor.kitMaterials[part], kitColor(actor.team, actor.keeper, part));
+      }
+    }
+    for (const [material, role] of modelMaterialRoles) recolor(material, kitColor(role.team, role.keeper, role.part));
+  };
+  const loadedAssets = new Map<string, Promise<{ scene: T.Object3D; clone: (source: T.Object3D) => T.Object3D }>>();
   const loadPlayer = (player: Player, actor: Actor) => {
     const url = player.id % 2 ? MODEL_URLS.male : MODEL_URLS.female;
     const pending = loadSoccerModel(url);
@@ -309,12 +343,13 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
             const name = material.name.trim().toLowerCase();
             const shirt = name === 'shirt' || name.includes('jersey');
             const shorts = name === 'shorts' || name.includes('short');
-            if (shirt || shorts) {
-              const color = shirt
-                ? isKeeper(player) ? teamKit[player.team]!.keeper : teamKit[player.team]!.shirt
-                : isKeeper(player) ? '#162536' : teamKit[player.team]!.shorts;
-              const materialColor = (cloned as T.MeshStandardMaterial).color;
-              materialColor?.set(color);
+            const socks = name.includes('sock');
+            const trim = name.includes('trim') || name.includes('stripe');
+            const part: 'shirt' | 'shorts' | 'socks' | 'trim' | undefined = shirt ? 'shirt' : shorts ? 'shorts' : socks ? 'socks' : trim ? 'trim' : undefined;
+            if (part) {
+              const role = { team: player.team, keeper: isKeeper(player), part };
+              modelMaterialRoles.set(cloned, role);
+              recolor(cloned, kitColor(role.team, role.keeper, role.part));
             }
             variants!.set(material, cloned);
           }
@@ -331,7 +366,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const ensureActor = (player: Player) => {
     let actor = actors.get(player.id);
     if (actor) return actor;
-    actor = createPlayer(THREE, player, lite);
+    actor = createPlayer(THREE, player, lite, activeKits, activeKeepers);
     actors.set(player.id, actor);
     scene.add(actor.root);
     loadPlayer(player, actor);
@@ -476,6 +511,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   }
 
   function update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId: number | null = null, power: number | null = null) {
+    const clubs = world.clubs ?? DEFAULT_CLUBS;
+    setKits([clubs[0], clubs[1]]);
     elapsed += Math.min(0.05, dt);
     let scoreChanged = false;
     for (const team of [0, 1] as const) {
@@ -724,8 +761,9 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       if (visible) {
         indicator.style.left = `${(projected.x * 0.5 + 0.5) * width}px`;
         indicator.style.top = `${(0.5 - projected.y * 0.5) * height}px`;
-        indicator.style.setProperty('--player-color', controlled.team === 0 ? '#ff5368' : '#73defa');
-        indicatorName.textContent = `NO. ${jerseyNumber(controlled.id)}  ${playerName(controlled.id)}`;
+        indicator.style.setProperty('--player-color', activeKits[controlled.team].shirt);
+        const name = rosterName(clubById(world.clubs?.[controlled.team]), controlled.id % 11).toUpperCase();
+        indicatorName.textContent = `NO. ${jerseyNumber(controlled.id)}  ${name}`;
         indicatorPower.style.width = power === null ? '0%' : `${Math.round(Math.max(0.04, power) * 100)}%`;
         indicatorPower.style.visibility = power === null ? 'hidden' : 'visible';
         indicatorPower.style.backgroundColor = (power ?? 0) > 0.85 ? '#ff755f' : '#e6f36d';
@@ -847,6 +885,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     },
     setTime,
     setPattern(pattern) { stadium.setPattern(pattern); },
+    setKits,
     goal() {
       if (elapsed - lastScoreChange > 0.5) {
         roar[0] = Math.max(roar[0], 0.8);

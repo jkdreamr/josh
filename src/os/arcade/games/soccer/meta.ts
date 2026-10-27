@@ -10,7 +10,7 @@ export const meta: GameMeta = {
   howTo: [
     'On your Mac, choose Connect Phone and scan the QR with your iPhone camera. Your phone joins as the controller while the Mac shows the match.',
     'Use the left stick to move. Hold A to pass, B to shoot, Y for a through ball, or X to lob; hold Sprint to run faster.',
-    'Play five a side for Bay City FC or Northshore United. Move your selected player by hand while teammates hold their shape.',
+    'Play full-size football with your selected clubs. Control your team on the pitch, or connect a phone to play.',
     'PlayStation and Xbox pads use the left stick, A/Cross to pass, B/Circle to shoot, Y/Triangle through, X/Square to lob, and RT/R2 to sprint.',
     'Keyboard fallback: WASD or arrows to move, Shift to sprint, J to pass or switch, K to shoot or tackle, L through or slide, I lob or press, and U for skill.',
     'Hold K to charge a shot and aim for a corner. Hold U as you release for a finesse curler.',

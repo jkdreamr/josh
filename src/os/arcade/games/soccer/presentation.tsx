@@ -1,26 +1,32 @@
 import { createContext, memo, useContext, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { CLUBS, broadcastClock, passAccuracy, playerName, possessionShare, type MatchStats, type TickerItem, type TeamStats } from './broadcast.ts';
 import { FORMATION, jerseyNumber, teamOf, type World } from './logic.ts';
+import { Crest } from './crest.tsx';
+import type { Club, Kit } from './teams.ts';
 
 export type Presentation = 'intro' | 'live' | 'half-time' | 'full-time';
 export type MatchData = { world: World | null; stats: MatchStats | null };
 type MatchRef = { current: MatchData | null };
 export const MatchContext = createContext<MatchRef | null>(null);
 
-export const Scoreboard = memo(function Scoreboard({ score0, score1, clock, added, half }: {
+export const Scoreboard = memo(function Scoreboard({ score0, score1, clock, added, half, clubs, kits }: {
   score0: number;
   score1: number;
   clock: string;
   added: number | null;
   half: 1 | 2;
+  clubs?: readonly [Club, Club];
+  kits?: { home: Kit; away: Kit };
 }) {
+  const home = clubs?.[0];
+  const away = clubs?.[1];
   return (
     <div className="g-soccer-scoreboard">
-      <div className="g-soccer-club g-soccer-home"><i /><b>{CLUBS[0].abbr}</b></div>
+      <div className="g-soccer-club g-soccer-home">{home && <Crest club={home} size={17} />}<i style={kits ? { backgroundColor: kits.home.shirt } : undefined} /><b>{home?.short ?? CLUBS[0].abbr}</b></div>
       <strong key={score0} className="g-soccer-score-home">{score0}</strong>
       <span className="g-soccer-score-separator">:</span>
       <strong key={score1} className="g-soccer-score-away">{score1}</strong>
-      <div className="g-soccer-club g-soccer-away"><b>{CLUBS[1].abbr}</b><i /></div>
+      <div className="g-soccer-club g-soccer-away"><b>{away?.short ?? CLUBS[1].abbr}</b><i style={kits ? { backgroundColor: kits.away.shirt } : undefined} />{away && <Crest club={away} size={17} />}</div>
       <div className="g-soccer-clock"><b>{clock}</b>{added !== null && <em>+{added}</em>}</div>
       <small className="g-soccer-half">{half === 1 ? '1st half' : '2nd half'}</small>
     </div>
@@ -107,11 +113,12 @@ export function PowerMeter({ power }: { power: number }) {
   );
 }
 
-export const PlayerTag = memo(function PlayerTag({ selectedId, stamina, state, power }: {
+export const PlayerTag = memo(function PlayerTag({ selectedId, stamina, state, power, playerName: selectedName }: {
   selectedId: number;
   stamina: number;
   state: string | null;
   power: number | null;
+  playerName?: string;
 }) {
   const team = teamOf(selectedId);
   const level = stamina > 0.6 ? 'high' : stamina > 0.3 ? 'mid' : 'low';
@@ -119,7 +126,7 @@ export const PlayerTag = memo(function PlayerTag({ selectedId, stamina, state, p
     <div className="g-soccer-player-tag">
       <b className={`g-soccer-player-number is-team-${team}`}>{jerseyNumber(selectedId)}</b>
       <div className="g-soccer-player-name">
-        <strong>{playerName(selectedId)}</strong>
+        <strong>{selectedName ?? playerName(selectedId)}</strong>
         <small>{FORMATION[selectedId % 11]!.slot}</small>
       </div>
       <div className={`g-soccer-stamina is-${level}`}><i><em style={{ width: `${stamina * 100}%` }} /></i></div>

@@ -1,3 +1,5 @@
+import { clubById, DEFAULT_CLUBS } from './teams.ts';
+
 import { FIELD, distance, kick, movePlayer, rng, setRestart, teamDir, transferControl, type Action, type Command, type Player, type Point, type Team, type World } from './logic.ts';
 import { stepBall } from './physics.ts';
 
@@ -251,10 +253,11 @@ export function resolveShootoutKick(w: World,scored: boolean) {
   }
   if(a>=5 && b>=5 && a===b && tally[0]!==tally[1]) winner=tally[0]>tally[1]?0:1;
   w.setPieceRun=null; w.setPiece=null; w.ball.vx=w.ball.vy=w.ball.vz=0;
+  const name = (team: Team) => clubById(w.clubs?.[team] ?? DEFAULT_CLUBS[team]).call;
   if(winner!==null) {
-    s.done=true; s.winner=winner; w.phase='full-time'; w.event=(winner===0?'bay city':'northshore')+' win on penalties'; return;
+    s.done=true; s.winner=winner; w.phase='full-time'; w.event=name(winner)+' win on penalties'; return;
   }
-  w.event=scored?(s.turn===0?'bay city':'northshore')+' scores · '+tally.join('-'):'missed / saved!';
+  w.event=scored?name(s.turn)+' scores · '+tally.join('-'):'missed / saved!';
   s.turn=opposition(s.turn); s.round=Math.min(a,b)+1; s.pause=1.5; w.eventTime=1.5;
 }
 export function stepShootout(w: World,t: number) {

@@ -1,39 +1,37 @@
 import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent } from 'react';
 import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useOnline, useSetting, useMuted, getSetting, Segmented, defineSetting, levelOptions, levelIndex, TouchControls, sfx } from '../../kit';
-import type { LevelName } from '../../kit/controls';
 import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
 import { chargePower, IDENTITY_BASIS, screenToWorld, gamepadInput, keyboardInput, reconcileControllers, type ControlCommand, type GamepadHistory } from './input.ts';
-import { acceptMovePacket, cloneSnapshot, consumeCommand, movePacket, parsePacket, type RemoteSeat } from './net.ts';
-import { createWorld, distance, teamOf, findReceiver, matchClock, nearestCarrier, setRestart, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
+import { acceptMovePacket, cloneSnapshot, consumeCommand, movePacket, parsePacket, type RemoteSeat, type LobbyMember } from './net.ts';
+import { createWorld, distance, FIELD, teamOf, findReceiver, matchClock, nearestCarrier, setRestart, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
 import { setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { SoccerSound, type CommentaryMode } from './audio.ts';
 import type { CameraMode, SoccerView, TimeMode } from './scene.ts';
-import { markShadersReady, parkSoccerView, preloadSoccer, takeSoccerView, useSoccerStadium } from './load.ts';
-import { LoadProgress } from './loading.tsx';
+import { markShadersReady, parkSoccerView, takeSoccerView, useSoccerStadium } from './load.ts';
 import { Hud, type HudState, type RadarHandle } from './hud.tsx';
-import { CLUBS, broadcastClock, createStatsObserver, possessionShare } from './broadcast.ts';
+import { broadcastClock, createStatsObserver, possessionShare } from './broadcast.ts';
 import { IntroCard, MatchContext, PausePanel, StatsScreen, type MatchData, type Presentation } from './presentation.tsx';
 import { captureSnapshot, createSnapshot, interpolateInto, type Snapshot } from './render-lerp.ts';
 import { publishSoccerPerf, recordSoccerPerf, recordSoccerRendererStats, soccerPerfEnabled } from './perf.ts';
 import { clampOrigin, followOrigin, haptic, hitButton, STICK, stickVector, type PadPoint } from './pad.ts';
-import { missingPhoneSeats, playerForSeat, type Mode } from './seats.ts';
+import { assignControllers, missingPhoneSeats, playerForSeat, type ControllerMember, type Mode } from './seats.ts';
 import type { PitchPattern } from './stadium.ts';
 import { createPracticeState, createTutorial, markTutorialSeen, selectDrill, setupDrill, stepPractice, stepTutorial, tutorialSeen, TUTORIAL_SECONDS, DRILLS, type DrillId, type PracticeState, type TutorialState } from './practice.ts';
 import { DRILL, PRACTICE_MODE_OPTION, PhonePracticeStrip, PracticePanel, practiceView, TutorialOverlay, tutorialText, type ControlScheme, type PhonePracticeStatus, type PracticeView } from './practice-mode.tsx';
+import { CAMERA, COMPETITION, HALF, HOME_CLUB, AWAY_CLUB, LEVEL, TIME } from './settings.ts';
+import { COMPETITIONS, type CompetitionId } from './modes.ts';
+import { CLUBS, clubById, DEFAULT_CLUBS } from './teams.ts';
+import { PhoneLobby as SoccerPhoneLobby, PhoneTeamPicker, publishLobby, sideForRoom, useLobbyState } from './lobby.tsx';
+import { createCup, loadCup, matchOutcome, recordUserResult, saveCup } from './cup.ts';
+import { simulateShootout } from './shootout.ts';
 import './soccer.css';
-import QRCode from 'qrcode';
 
 type Minutes = '2' | '4' | '6';
-type Camera = 'broadcast' | 'end';
 type Volume = 'off' | 'low' | 'mid' | 'full';
 
 const MODE = defineSetting<Mode>('soccer:mode', ['cpu', 'versus', 'coop', 'practice'], 'cpu');
-const HALF = defineSetting<Minutes>('soccer:half', ['2', '4', '6'], '4');
-const LEVEL = defineSetting<LevelName>('soccer:level', ['easy', 'normal', 'hard'], 'normal');
-const CAMERA = defineSetting<Camera>('soccer:camera', ['broadcast', 'end'], 'broadcast', { live: true });
-const TIME = defineSetting<TimeMode>('soccer:time', ['night', 'golden', 'overcast', 'rain'], 'night', { live: true });
 const PITCH = defineSetting<PitchPattern>('soccer:pitch', ['stripes', 'checker'], 'stripes', { live: true });
 const DISPLAY_ONLY = defineSetting<'on' | 'off'>('soccer:display-only', ['on', 'off'], 'on');
 const VOLUME = defineSetting<Volume>('soccer:volume', ['off', 'low', 'mid', 'full'], 'mid', { live: true });
@@ -55,6 +53,9 @@ function Settings({ online = false }: { online?: boolean }) {
   const shell = useShell();
   const match = useContext(MatchContext);
   const [mode, setMode] = useSetting(MODE);
+  const [competition, setCompetition] = useSetting(COMPETITION);
+  const [homeClub, setHomeClub] = useSetting(HOME_CLUB);
+  const [awayClub, setAwayClub] = useSetting(AWAY_CLUB);
   const [half, setHalf] = useSetting(HALF);
   const [level, setLevel] = useSetting(LEVEL);
   const [camera, setCamera] = useSetting(CAMERA);
@@ -62,10 +63,26 @@ function Settings({ online = false }: { online?: boolean }) {
   const [pitch, setPitch] = useSetting(PITCH);
   const [volume, setVolume] = useSetting(VOLUME);
   const [commentary, setCommentary] = useSetting(COMMENTARY);
+  const definition = COMPETITIONS.find((entry) => entry.id === competition) ?? COMPETITIONS[0]!;
+  const changeCompetition = (value: CompetitionId) => {
+    const next = COMPETITIONS.find((entry) => entry.id === value) ?? COMPETITIONS[0]!;
+    setCompetition(next.id);
+    if (!next.arrangements.some((arrangement) => arrangement === mode)) setMode(next.arrangements[0]!);
+  };
+  const availableModes = definition.arrangements.map((arrangement) => [
+    arrangement, arrangement === 'cpu' ? 'vs CPU' : arrangement === 'versus' ? '2P versus' : '2P co-op',
+  ] as const);
   return (
     <div className="g-soccer-settings">
       {!online && <Segmented label="Match" value={mode} options={modeOptions} onChange={setMode} />}
       {mode !== 'practice' && <Segmented label="Half length" value={half} options={halfOptions} onChange={setHalf} />}
+      {!online && <Segmented label="Competition" value={competition} options={COMPETITIONS.map(({ id, label }) => [id, label] as const)} onChange={changeCompetition} />}
+      {!online && <Segmented label="Match" value={mode} options={availableModes} onChange={setMode} />}
+      <div className="g-soccer-setting-clubs">
+        <label>Your club<select value={homeClub} onChange={(event) => setHomeClub(event.currentTarget.value)}>{CLUBS.map((club) => <option key={club.id} value={club.id} disabled={club.id === awayClub}>{club.name}</option>)}</select></label>
+        <label>Opponent<select value={awayClub} onChange={(event) => setAwayClub(event.currentTarget.value)}>{CLUBS.map((club) => <option key={club.id} value={club.id} disabled={club.id === homeClub}>{club.name}</option>)}</select></label>
+      </div>
+      <Segmented label="Half length" value={half} options={halfOptions} onChange={setHalf} />
       <Segmented label="Difficulty" value={level} options={levelOptions} onChange={setLevel} />
       <Segmented label="Camera" value={camera} options={cameraOptions} onChange={setCamera} />
       <Segmented label="Time of day" value={time} options={timeOptions} onChange={setTime} />
@@ -121,22 +138,25 @@ function Stick({ movement, onChange }: { movement: { current: { x: number; z: nu
   );
 }
 
-function setupHumans(world: World, mode: Mode, online: ReturnType<typeof useOnline>) {
-  const displayOnly = !!online;
+function setupHumans(world: World, mode: Mode, online: ReturnType<typeof useOnline>, competition: CompetitionId, lobbyMembers: LobbyMember[] = []) {
   for (const player of world.players) {
     player.human = false;
     player.controlled = false;
   }
   if (online) {
-    for (const member of online.players) {
-      if (member.seat === 0 && displayOnly) continue;
-      const player = world.players[playerForSeat(member.seat, displayOnly, mode)]!;
+    const members: ControllerMember[] = online.players.filter((member) => member.seat >= 0).map((member) => {
+      const known = lobbyMembers.find((entry) => entry.seat === member.seat);
+      return known ?? { seat: member.seat, role: member.seat === 0 ? 'host' : 'phone', side: member.seat === 0 ? 0 : 1 };
+    });
+    const assignments = assignControllers(members, mode, competition);
+    for (const id of assignments.values()) {
+      const player = world.players[id]!;
       player.human = true;
       player.controlled = true;
       const team = player.team;
       if (!world.players.some((p) => p.team === team && p.id !== player.id && p.human)) world.controlled[team] = player.id;
     }
-    return;
+    return assignments;
   }
   const ids = mode === 'versus' ? [6, 17] : mode === 'coop' ? [6, 9] : [6];
   ids.forEach((id) => {
@@ -145,92 +165,7 @@ function setupHumans(world: World, mode: Mode, online: ReturnType<typeof useOnli
   });
   world.controlled[0] = 6;
   world.controlled[1] = 17;
-}
-
-function PhoneLobby() {
-  const online = useOnline();
-  const [mode, setMode] = useSetting(MODE);
-  const [, setDisplayOnly] = useSetting(DISPLAY_ONLY);
-  const [qr, setQr] = useState('');
-  const [countdown, setCountdown] = useState<number | null>(null);
-  const startedCode = useRef('');
-  const phones = online?.players.filter((player) => player.seat > 0) ?? [];
-  const requiredPhones = mode === 'cpu' || mode === 'practice' ? 1 : 2;
-  useEffect(() => {
-    if (online?.isHost) preloadSoccer().catch(() => {});
-  }, [online?.isHost]);
-  useEffect(() => {
-    if (!online?.code || typeof location === 'undefined') return;
-    const url = `${location.protocol}//${location.host}/?game=soccer&room=${online.code}`;
-    void QRCode.toDataURL(url, { errorCorrectionLevel: 'H', margin: 2, width: 280 }).then(setQr).catch(() => setQr(''));
-  }, [online?.code]);
-  useEffect(() => {
-    if (online?.isHost && getSetting(DISPLAY_ONLY) !== 'on') setDisplayOnly('on');
-  }, [online?.isHost, setDisplayOnly]);
-  useEffect(() => {
-    if (!online?.isHost) {
-      setCountdown(null);
-      return;
-    }
-    if (online.round > 0) {
-      startedCode.current = online.code;
-      setCountdown(null);
-      return;
-    }
-    if (startedCode.current === online.code || phones.length < requiredPhones) {
-      setCountdown(null);
-      return;
-    }
-    let seconds = 3;
-    setCountdown(seconds);
-    const timer = window.setInterval(() => {
-      seconds -= 1;
-      if (seconds <= 0) {
-        window.clearInterval(timer);
-        startedCode.current = online.code;
-        setCountdown(null);
-        online.start();
-      } else {
-        setCountdown(seconds);
-      }
-    }, 1000);
-    return () => window.clearInterval(timer);
-  }, [online?.code, online?.isHost, online?.players, online?.round, online?.start, phones.length, requiredPhones]);
-  if (!online?.isHost) return null;
-  const fallback = typeof location === 'undefined' ? '' : `${location.host}/?room=${online.code}`;
-  const fallbackHref = typeof location === 'undefined' ? '' : `${location.protocol}//${fallback}`;
-  return (
-    <div className="g-soccer-phone-lobby">
-      <div className="g-soccer-phone-qr">
-        {qr && <img src={qr} alt="Phone controller QR code" />}
-        <strong>Scan with your iPhone camera</strong>
-      </div>
-      <div className="g-soccer-phone-lobby-content">
-        <div className="g-soccer-phone-connections" role="status">
-          {Array.from({ length: requiredPhones }, (_, index) => phones[index]
-            ? <span key={index}>Phone {index + 1} connected ✓</span>
-            : <span className="is-waiting" key={index}>{index === 0 ? 'Waiting for phone…' : `Waiting for phone ${index + 1}…`}</span>)}
-        </div>
-        {countdown !== null && <strong className="g-soccer-phone-countdown" role="status">Starting in {countdown}…</strong>}
-        <div className="g-soccer-phone-toggle" role="group" aria-label="How many phones">
-          <button type="button" aria-pressed={mode === 'cpu'} onClick={() => setMode('cpu')}>1 phone · vs CPU</button>
-          <button type="button" aria-pressed={mode !== 'cpu'} onClick={() => setMode(mode === 'coop' ? 'coop' : 'versus')}>2 phones</button>
-        </div>
-        {mode !== 'cpu' && (
-          <div className="g-soccer-phone-toggle is-secondary" role="group" aria-label="Team setup">
-            <button type="button" aria-pressed={mode === 'coop'} onClick={() => setMode('coop')}>Same team</button>
-            <button type="button" aria-pressed={mode === 'versus'} onClick={() => setMode('versus')}>Against each other</button>
-          </div>
-        )}
-        {fallback && <p className="g-soccer-phone-fallback">No camera? Go to <a href={fallbackHref}>{fallback}</a></p>}
-        <details className="g-soccer-phone-settings">
-          <summary>Settings</summary>
-          <Settings online />
-        </details>
-        <LoadProgress />
-      </div>
-    </div>
-  );
+  return new Map<number, number>(ids.map((id, index) => [index, id]));
 }
 
 function interpolate(a: World, b: World, t: number): World {
@@ -279,8 +214,12 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const sound = soundRef.current;
   const soundLocked = useSyncExternalStore(sound.synth.subscribe, sound.synth.isLocked, () => true);
   const caption = useSyncExternalStore(sound.announcer.subscribe, sound.announcer.getCaption, () => null);
+  const lobbyState = useLobbyState();
   const { ref, size } = useCanvas<HTMLDivElement>();
   const [modeChoice, setModeChoice] = useSetting(MODE);
+  const [competitionChoice, setCompetitionChoice] = useSetting(COMPETITION);
+  const [homeClubChoice, setHomeClubChoice] = useSetting(HOME_CLUB);
+  const [awayClubChoice, setAwayClubChoice] = useSetting(AWAY_CLUB);
   const [halfChoice, setHalfChoice] = useSetting(HALF);
   const [levelChoice, setLevelChoice] = useSetting(LEVEL);
   const [cameraChoice] = useSetting(CAMERA);
@@ -371,7 +310,9 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   pitchRef.current = pitchChoice;
 
   const halfMinutes = online?.quick ? 3 : Number(halfChoice);
-  const currentMode: Mode = modeChoice;
+  const currentCompetition = online && lobbyState ? lobbyState.comp : competitionChoice;
+  const currentMode: Mode = online && lobbyState ? lobbyState.mode : modeChoice;
+  const currentClubs: [string, string] = online && lobbyState ? [...lobbyState.clubs] : [homeClubChoice, awayClubChoice];
   useEffect(() => {
     sound.configure({ volume: volumeLevels[volumeChoice], crowd: 1, muted, commentary: commentaryChoice });
   }, [sound, volumeChoice, muted, commentaryChoice]);
@@ -396,14 +337,16 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     const seed = Math.floor(Date.now() % 0xffff_ffff);
     if (!practicing) {
       practiceRef.current = null;
-      const fresh = createWorld(seed, halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
-      setupHumans(fresh, currentMode, online);
+      const fresh = createWorld(seed, halfMinutes * 60, currentMode === 'coop' ? 2 : 1, currentClubs);
+      fresh.cup = currentCompetition === 'cup';
+      controllerPlayers.current = setupHumans(fresh, currentMode, online, currentCompetition, lobbyState?.members);
       return fresh;
     }
     const practice = createPracticeState(drillChoice);
     practiceRef.current = practice;
-    const fresh = createWorld(seed, 360, 1);
-    setupHumans(fresh, currentMode, online);
+    const fresh = createWorld(seed, 360, 1, currentClubs);
+    fresh.cup = currentCompetition === 'cup';
+    controllerPlayers.current = setupHumans(fresh, currentMode, online, currentCompetition, lobbyState?.members);
     setupDrill(practice, fresh);
     return fresh;
   };
@@ -420,7 +363,8 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     previousRenderSnapshot.current = captureSnapshot(world, createSnapshot(world));
     interpolatedWorld.current = structuredClone(world);
   }
-  const localPlayerIds = online ? online.seat < 0 || (online.isHost && displayOnlyRoom.current) ? [] : [controllerPlayers.current.get(online.seat) ?? playerForSeat(online.seat, displayOnlyRoom.current, currentMode)] : currentMode === 'versus' ? [world.controlled[0], world.controlled[1]] : currentMode === 'coop' ? [controllerPlayers.current.get(0) ?? 6, controllerPlayers.current.get(1) ?? 9] : [world.controlled[0]];
+  const localOnlineId = online ? controllerPlayers.current.get(online.seat) : undefined;
+  const localPlayerIds = online ? online.seat < 0 || localOnlineId === undefined ? [] : [localOnlineId] : currentMode === 'versus' ? [world.controlled[0], world.controlled[1]] : currentMode === 'coop' ? [controllerPlayers.current.get(0) ?? 6, controllerPlayers.current.get(1) ?? 9] : [world.controlled[0]];
   const localTeam = localPlayerIds.length ? teamOf(localPlayerIds[0]!) : 0;
   const showPresentation = (next: Presentation) => {
     if (presentation.current === next) return false;
@@ -431,10 +375,10 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
 
   useEffect(() => {
     if (shell.status !== 'ready') return;
+    controllerPlayers.current.clear();
     const fresh = freshWorld();
     matchSeats.current = null;
     setPhoneGone(false);
-    controllerPlayers.current.clear();
     if (!practicing) {
       const forced = debugConfig.setpiece;
       if (forced === 'shootout') startShootout(fresh);
@@ -472,7 +416,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       replaying: false, statsVersion: 0, presentation: 'live',
     });
     setPracticeHud(practiceRef.current ? practiceView(practiceRef.current) : null);
-  }, [shell.status, modeChoice, halfMinutes, drillChoice, online?.round, online?.seat, online?.players]);
+  }, [shell.status, modeChoice, halfMinutes, drillChoice, online?.round, online?.seat, online?.players, currentCompetition, currentClubs[0], currentClubs[1], lobbyState?.members]);
 
   useEffect(() => {
     if (shell.status !== 'playing' || online && !online.isHost || online?.watching || tutorialSeen()) return;
@@ -631,10 +575,12 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         setLevelChoice((['easy', 'normal', 'hard'] as const)[packet.level]!);
         setHalfChoice(String(packet.half) as Minutes);
         if (packet.mode) setModeChoice(packet.mode);
+        if (packet.comp) setCompetitionChoice(packet.comp);
+        if (packet.clubs) { setHomeClubChoice(packet.clubs[0]); setAwayClubChoice(packet.clubs[1]); }
       }
     });
     return off;
-  }, [audioEnabled, online, online?.round, online?.isHost, setHalfChoice, setLevelChoice, setModeChoice, sound]);
+  }, [audioEnabled, online, online?.round, online?.isHost, setHalfChoice, setLevelChoice, setModeChoice, setCompetitionChoice, setHomeClubChoice, setAwayClubChoice, sound]);
 
   useEffect(() => {
     if (!online?.isHost) return;
@@ -644,11 +590,13 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       level: onlineRef.current?.quick ? 1 : levelIndex(levelChoice),
       displayOnly: true,
       mode: modeChoice,
+      comp: currentCompetition,
+      clubs: currentClubs,
     });
     sendConfig();
     const timer = window.setInterval(sendConfig, 1500);
     return () => window.clearInterval(timer);
-  }, [online?.isHost, online?.round, online?.quick, halfChoice, levelChoice, modeChoice]);
+  }, [online?.isHost, online?.round, online?.quick, halfChoice, levelChoice, modeChoice, currentCompetition, currentClubs[0], currentClubs[1]]);
 
   const soundForWorld = (current: World) => {
     if (current.phase === 'goal' && lastScore.current.some((score, i) => score !== current.score[i])) {
@@ -719,22 +667,41 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
 
   const finishMatch = (current: World) => {
     if (reported.current || current.phase !== 'full-time') return;
+    const outcome = currentCompetition === 'cup' ? matchOutcome(current) : { score: current.score };
+    if (!outcome) return;
     reported.current = true;
     const room = onlineRef.current;
-    const draw = current.score[0] === current.score[1];
+    const draw = outcome.score[0] === outcome.score[1];
     const pensWinner = shootoutWinner(current);
-    const winner: Team | null = pensWinner ?? (draw ? null : current.score[0] > current.score[1] ? 0 : 1);
-    if (room?.isHost) {
-      const seats = winner === null ? undefined : winner === 0 ? [0, 2] : [1, 3];
-      room.reportResult(room.round, seats?.[0] ?? null, seats);
-    }
-    const title = winner === null ? 'full time · draw' : room
-      ? (teamOf(room?.seat === undefined ? 0 : playerForSeat(room.seat, displayOnlyRoom.current, currentMode)) === winner ? 'you win' : 'match over')
-      : winner === localTeam ? 'you win' : 'match lost';
+    const home = clubById(current.clubs?.[0] ?? DEFAULT_CLUBS[0]);
+    const away = clubById(current.clubs?.[1] ?? DEFAULT_CLUBS[1]);
+    let winner: Team | null = pensWinner ?? (draw ? null : outcome.score[0] > outcome.score[1] ? 0 : 1);
     const stats = statsObserver.current.stats;
     const [homePossession, awayPossession] = possessionShare(stats);
-    const penalties = pensWinner !== null ? ` · pens ${shootoutScore(current).join(' - ')}` : '';
-    const detail = `${CLUBS[0].name.toLowerCase()} ${current.score[0]} - ${current.score[1]} ${CLUBS[1].name.toLowerCase()} · ${matchClock(current)}' · shots ${stats.teams[0].shots}-${stats.teams[1].shots} · possession ${homePossession}%-${awayPossession}%${penalties}`;
+    let penalties: [number, number] | undefined;
+    let detail = `${home.name} ${outcome.score[0]} - ${outcome.score[1]} ${away.name} · ${matchClock(current)}'`;
+    let title = winner === null ? 'full time · draw' : online
+      ? (localPlayerIds.some((id) => teamOf(id) === winner) ? 'you win' : 'match over')
+      : winner === localTeam ? 'you win' : 'match lost';
+    if (currentCompetition === 'cup') {
+      const cup = loadCup() ?? createCup(home.id, current.seed);
+      penalties = draw ? outcome.pens ?? (pensWinner !== null ? shootoutScore(current) : simulateShootout(current.seed, home, away).score) : undefined;
+      if (penalties) {
+        winner = penalties[0] > penalties[1] ? 0 : 1;
+        detail += ` (${penalties[0]}-${penalties[1]} pens)`;
+      }
+      const nextCup = recordUserResult(cup, outcome.score, penalties);
+      saveCup(nextCup);
+      title = nextCup.champion ? 'cup winners!' : nextCup.out ? 'knocked out'
+        : nextCup.round === 1 ? 'through to the semi-finals'
+        : nextCup.round === 2 ? 'through to the final' : 'through to the next round';
+    }
+    if (room?.isHost) {
+      const seats = winner === null ? [] : [...controllerPlayers.current].filter(([, id]) => teamOf(id) === winner).map(([seat]) => seat);
+      room.reportResult(room.round, seats[0] ?? null, seats);
+    }
+    const penaltiesText = pensWinner !== null ? ` · pens ${shootoutScore(current).join(' - ')}` : penalties ? ` · pens ${penalties.join(' - ')}` : '';
+    detail += ` · shots ${stats.teams[0].shots}-${stats.teams[1].shots} · possession ${homePossession}%-${awayPossession}%${penaltiesText}`;
     fullTimeResult.current = { title, detail };
     showPresentation('full-time');
   };
@@ -812,15 +779,19 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         if (player) { player.human = false; player.controlled = false; }
         controllerPlayers.current.delete(seat); remoteCommands.current.delete(id);
       }
+      const roomMembers: ControllerMember[] = room.players.filter((entry) => entry.seat >= 0).map((entry) => {
+        const known = lobbyState?.members.find((member) => member.seat === entry.seat);
+        return known ?? { seat: entry.seat, role: entry.seat === 0 ? 'host' : 'phone', side: entry.seat === 0 ? 0 : 1 };
+      });
+      const assigned = assignControllers(roomMembers, currentMode, currentCompetition);
+      for (const [seat, id] of assigned) {
+        if (currentCompetition === 'online' || !controllerPlayers.current.has(seat)) controllerPlayers.current.set(seat, id);
+      }
       for (const entry of room.players) {
-        if (entry.seat === 0 && displayOnlyRoom.current || entry.seat < 0) continue;
-        if (!controllerPlayers.current.has(entry.seat)) {
-          const preferred = playerForSeat(entry.seat, displayOnlyRoom.current, currentMode);
-          const occupied = [...controllerPlayers.current.values()];
-          const id = occupied.includes(preferred) ? current.players.find((p) => p.team === teamOf(preferred) && !occupied.includes(p.id))?.id : preferred;
-          if (id !== undefined) controllerPlayers.current.set(entry.seat, id);
-        }
-        const player = current.players[controllerPlayers.current.get(entry.seat)!];
+        if (entry.seat === 0 && displayOnlyRoom.current && currentCompetition !== 'online' || entry.seat < 0) continue;
+        const id = controllerPlayers.current.get(entry.seat);
+        if (id === undefined) continue;
+        const player = current.players[id];
         if (player) { player.human = true; player.controlled = true; }
       }
     } else if (currentMode === 'coop' && controllerPlayers.current.size === 0) {
@@ -1183,6 +1154,7 @@ function PadStick({ movement, onChange }: { movement: { current: { x: number; z:
 
 export function PhoneController() {
   const online = useOnline();
+  const lobbyState = useLobbyState();
   const movement = useRef({ x: 0, z: 0 });
   const held = useRef<Command['action']>(null);
   const sprint = useRef(false);
@@ -1292,7 +1264,12 @@ export function PhoneController() {
   }, []);
   const phoneHasBall = () => {
     const snapshot = phoneWorld.current;
-    return !!snapshot && nearestCarrier(snapshot)?.team === teamOf(playerForSeat(online?.seat ?? 0, displayOnly, mode));
+    const seat = online?.seat ?? 0;
+    const member = lobbyState?.members.find((entry) => entry.seat === seat)
+      ?? { seat, role: 'phone' as const, side: sideForRoom(online?.code) };
+    const playerId = assignControllers([member], mode, lobbyState?.comp ?? 'quick').get(seat)
+      ?? playerForSeat(seat, displayOnly, mode);
+    return !!snapshot && nearestCarrier(snapshot)?.team === teamOf(playerId);
   };
   const phonePlayerId = () => {
     const assigned = playerForSeat(online?.seat ?? 0, displayOnly, mode);
@@ -1386,6 +1363,7 @@ export function PhoneController() {
     const off = online.onMessage((from, data) => {
       if (from !== 0) return;
       const packet = parsePacket(data);
+      if (packet?.k === 'lobby') publishLobby(packet);
       if (packet?.k === 's') {
         phoneWorld.current = packet.state;
         if (packet.state.score.some((value, index) => value !== previousScore.current[index])) navigator.vibrate?.([70, 40, 120]);
@@ -1406,7 +1384,9 @@ export function PhoneController() {
     return () => { off(); window.clearInterval(timer); window.clearTimeout(stickSendTimer.current); };
   }, [online, mode, displayOnly]);
   if (!online) return null;
-  const phonePlayer = phonePlayerId();
+  if (online.round === 0) return <PhoneTeamPicker online={online} />;
+  const controllerMembers = lobbyState?.members ?? [{ seat: online.seat, role: 'phone' as const, side: sideForRoom(online.code) }];
+  const phonePlayer = assignControllers(controllerMembers, mode, lobbyState?.comp ?? 'quick').get(online.seat) ?? phonePlayerId();
   const myTeam = teamOf(phonePlayer);
   const attacking = phoneHasBall();
   const labels = phoneWorld.current ? setPieceLabels(phoneWorld.current, teamOf(phonePlayer), phonePlayer) : null;
@@ -1519,10 +1499,10 @@ export function PhoneController() {
       </div>
       <div className="g-soccer-pad-strip">
         {practiceStatus && <PhonePracticeStrip status={practiceStatus} onPick={(pick) => online.send({ t: 'soccer', k: 'pd', r: online.round || 1, seq: sequence.current++, seat: online.seat, pick })} />}
-        <div className="g-soccer-pad-score" aria-label={`Bay City ${score[0]}, Northshore ${score[1]}`}>
-          <span className={myTeam === 0 ? 'is-mine' : undefined}>BAY CITY</span>
+        <div className="g-soccer-pad-score" aria-label={`${clubById(phoneWorld.current?.clubs?.[0] ?? lobbyState?.clubs[0] ?? DEFAULT_CLUBS[0]).name} ${score[0]}, ${clubById(phoneWorld.current?.clubs?.[1] ?? lobbyState?.clubs[1] ?? DEFAULT_CLUBS[1]).name} ${score[1]}`}>
+          <span className={myTeam === 0 ? 'is-mine' : undefined}>{clubById(phoneWorld.current?.clubs?.[0] ?? lobbyState?.clubs[0] ?? DEFAULT_CLUBS[0]).name.toUpperCase()}</span>
           <strong>{score[0]}<i>–</i>{score[1]}</strong>
-          <span className={myTeam === 1 ? 'is-mine' : undefined}>NORTHSHORE</span>
+          <span className={myTeam === 1 ? 'is-mine' : undefined}>{clubById(phoneWorld.current?.clubs?.[1] ?? lobbyState?.clubs[1] ?? DEFAULT_CLUBS[1]).name.toUpperCase()}</span>
         </div>
         <div className={`g-soccer-pad-meter${chargeProgress > 0.85 ? ' is-over' : ''}`} role="progressbar" aria-label={`${chargeName} power`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(chargeProgress * 100)}>
           <i style={{ width: `${chargeProgress * 100}%` }} />
@@ -1562,7 +1542,7 @@ export default function Soccer({ onExit, roomCode }: { onExit?: () => void; room
         roomCode={roomCode}
         phoneFirst
         setup={<Settings />}
-        hostSetup={<PhoneLobby />}
+        hostSetup={<SoccerPhoneLobby />}
         defaultBots={0}
         botNames={['bay city bot', 'northshore bot', 'wing bot', 'keeper bot']}
         quickNote="2v2, normal bots, and three-minute halves."
