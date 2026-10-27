@@ -291,6 +291,35 @@ export function shotError(world: World, player: Player, target: Point, power: nu
   return finesse ? error * 0.6 : error;
 }
 
+export function separatePlayers(players: Player[], dt: number, carrier?: Player) {
+  const strength = clamp(dt * 30, 0, 1);
+  if (!strength) return;
+  for (let pass = 0; pass < 2; pass++) for (let i = 0; i < players.length; i++) {
+    const a = players[i]!;
+    for (let j = i + 1; j < players.length; j++) {
+      const b = players[j]!;
+      let dx = b.x - a.x, dz = b.z - a.z;
+      const gap = Math.hypot(dx, dz);
+      if (gap >= 0.7) continue;
+      if (gap < 1e-6) {
+        const angle = (a.id * 17 + b.id * 31) * 0.73;
+        dx = Math.sin(angle); dz = Math.cos(angle);
+      } else { dx /= gap; dz /= gap; }
+      if (carrier && a.team === b.team && a.team !== carrier.team && distance(a, carrier) < 3 && distance(b, carrier) < 3) {
+        const mx = (a.x + b.x) / 2 - carrier.x, mz = (a.z + b.z) / 2 - carrier.z;
+        const radius = Math.hypot(mx, mz) || 1;
+        const sign = -mz * dx + mx * dz < 0 ? -1 : 1;
+        dx = -mz / radius * sign; dz = mx / radius * sign;
+      }
+      const push = (0.7 - gap) * strength / 2;
+      a.x = clamp(a.x - dx * push, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3);
+      a.z = clamp(a.z - dz * push, -FIELD.width / 2 + 0.3, FIELD.width / 2 - 0.3);
+      b.x = clamp(b.x + dx * push, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3);
+      b.z = clamp(b.z + dz * push, -FIELD.width / 2 + 0.3, FIELD.width / 2 - 0.3);
+    }
+  }
+}
+
 function kick(world: World, player: Player, action: Action, command: Command) {
   const d = teamDir(player.team, world.endsSwapped);
   const charge = clamp(command.power ?? 0.45, 0.1, 1);
@@ -785,6 +814,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
       kick(world, p, p.buffer.action, { move: command?.move ?? { x: 0, z: 0 }, ...p.buffer });
     }
   }
+  separatePlayers(world.players, t, carrier);
   const nowCarrier = nearestCarrier(world);
   if (nowCarrier && world.passTarget === nowCarrier.id) {
     if (world.passControl) {
