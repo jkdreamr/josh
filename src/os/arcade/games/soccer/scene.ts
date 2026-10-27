@@ -805,14 +805,18 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       const ballSpeed = Math.hypot(world.ball.vx, world.ball.vz);
       const towardOwnGoal = world.ball.vx * -teamDir(player.team, world.endsSwapped) > 0;
       if (isKeeper(player)) {
+        const keeperPlaneX = ownGoalX + teamDir(player.team, world.endsSwapped) * 1.5;
         if (player.action !== actor.prevAction && (player.action === 'dive' || player.action === 'catch' || player.action === 'parry')) {
-          const side = bodyFrameVelocity(actor.root.rotation.y, world.ball.x - player.x, world.ball.z - player.z, actor.anim.frame).side >= 0 ? 1 : -1;
+          const timeToPlane = (keeperPlaneX - world.ball.x) / world.ball.vx;
+          const crossingZ = timeToPlane > 0 ? world.ball.z + world.ball.vz * timeToPlane : world.ball.z;
+          const side = bodyFrameVelocity(actor.root.rotation.y, keeperPlaneX - player.x, crossingZ - player.z, actor.anim.frame).side >= 0 ? 1 : -1;
           startClip(actor, player.action === 'dive' ? 'dive' : 'catch', side, 0.5);
           actor.keeperShot = true;
         }
         if (ballSpeed < 6 || !towardOwnGoal) actor.keeperShot = false;
-        if (!actor.keeperShot && ballSpeed > 10 && towardOwnGoal) {
-          const timeToPlane = (ownGoalX - world.ball.x) / world.ball.vx;
+        const hasKeeperAction = player.action === 'ready' || player.action === 'dive' || player.action === 'catch' || player.action === 'parry';
+        if (!hasKeeperAction && !actor.keeperShot && ballSpeed > 10 && towardOwnGoal) {
+          const timeToPlane = (keeperPlaneX - world.ball.x) / world.ball.vx;
           if (timeToPlane > 0 && timeToPlane < 0.42) {
             const keeperZ = player.z + player.vz * timeToPlane;
             const lateral = world.ball.z + world.ball.vz * timeToPlane - keeperZ;
