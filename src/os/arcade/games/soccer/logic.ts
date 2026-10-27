@@ -11,6 +11,7 @@ import {
 export { FIELD } from './field.ts';
 
 export const STEP = 1 / 60;
+export const KEEPER_REACH = { ready: 1.1, dive: 2.4 } as const;
 export const PLAYER_COUNT = 22;
 export const TEAM_SIZE = 11;
 export const CONTROL_SPEED = 14;
@@ -256,6 +257,8 @@ export function nearestCarrier(world: World) {
     && Math.hypot(world.ball.vx - p.vx, world.ball.vz - p.vz) > CONTROL_SPEED;
   const eligible = (p: Player) => !p.slide && !(p.touchCd! > 0) && !(p.cooldown > 0 && (p.action === 'kick' || p.action === 'pass'))
     && !p.sentOff && !tooFast(p) && distance(p, world.ball) < 0.64;
+  const eligible = (p: Player) => !p.slide && !(p.touchCd! > 0) && !(p.cooldown > 0 && (p.action === 'kick' || p.action === 'pass'))
+    && !p.sentOff && !tooFast(p) && distance(p, world.ball) < 0.64;
   return world.players.find((p) => p.id === world.carrierId && eligible(p)) ?? world.players.find(eligible);
 }
 
@@ -383,6 +386,71 @@ export function shotAim(targetZ: number, direction: number): Point {
   return { x: direction * Math.sqrt(1 - z * z), z };
 }
 
+export function shotOverchargeThreshold(goalDistance: number, finesse = false) {
+  return 0.78 + clamp(goalDistance / 60, 0, 0.14) + (finesse ? 0.06 : 0);
+}
+
+export function shotSpeed(power: number, finesse = false) {
+  const charge = clamp(power, 0.1, 1);
+  return finesse ? 12 + charge * 9 : 15 + charge * 17;
+}
+
+export function shotError(world: World, player: Player, target: Point, power: number, finesse = false) {
+  const angle = Math.atan2(target.z - world.ball.z, target.x - world.ball.x);
+  const bodyAngle = Math.abs(Math.atan2(Math.sin(Math.PI / 2 - angle - player.facing), Math.cos(Math.PI / 2 - angle - player.facing)));
+  const pressure = Math.min(...world.players.filter((p) => p.team !== player.team && !p.sentOff).map((p) => distance(p, player)));
+  const error = 0.03 + distance(player, target) * 0.004 + Math.max(0, bodyAngle - 0.6) * 0.22
+    + (pressure < 1.5 ? 0.1 : 0) + (Math.hypot(player.vx, player.vz) > 6.5 * 9 / 8 ? 0.09 : 0) + (1 - player.stamina) * 0.08 + clamp(power, 0.1, 1) * 0.06;
+  return finesse ? error * 0.6 : error;
+}
+
+export function separatePlayers(players: Player[], dt: number, carrier?: Player, endsSwapped = false) {
+  const strength = clamp(dt * 30, 0, 1);
+  if (!strength) return;
+  const ordered = [...players].sort((a, b) => a.id - b.id);
+  const pushes = new Float64Array(ordered.length * 2);
+  for (let pass = 0; pass < 2; pass++) {
+    pushes.fill(0);
+    for (let i = 0; i < ordered.length; i++) {
+      const a = ordered[i]!;
+      for (let j = i + 1; j < ordered.length; j++) {
+        const b = ordered[j]!;
+        let dx = b.x - a.x, dz = b.z - a.z;
+        const gap = Math.hypot(dx, dz);
+        if (gap >= 0.7) continue;
+        if (gap < 1e-6) {
+          const ai = a.id % TEAM_SIZE, bi = b.id % TEAM_SIZE;
+          if (ai === bi) { dx = teamDir(a.team, endsSwapped); dz = 0; }
+          else {
+            const sign = ai < bi ? 1 : -1;
+            const anchor = ai < bi ? a : b;
+            const angle = (Math.min(ai, bi) * 17 + Math.max(ai, bi) * 31) * 0.73;
+            dx = Math.sin(angle) * sign * teamDir(anchor.team, endsSwapped);
+            dz = Math.cos(angle) * sign;
+          }
+        } else { dx /= gap; dz /= gap; }
+        if (carrier && a.team === b.team && a.team !== carrier.team && distance(a, carrier) < 3 && distance(b, carrier) < 3) {
+          const mx = (a.x + b.x) / 2 - carrier.x, mz = (a.z + b.z) / 2 - carrier.z;
+          const radius = Math.hypot(mx, mz);
+          if (radius > 1e-6) {
+            const cross = -mz * dx + mx * dz;
+            const sign = Math.abs(cross) > 1e-12 ? Math.sign(cross) : teamDir(a.team, endsSwapped);
+            dx = -mz / radius * sign; dz = mx / radius * sign;
+          }
+        }
+        const push = (0.7 - gap) * strength / 2;
+        pushes[i * 2] -= dx * push; pushes[i * 2 + 1] -= dz * push;
+        pushes[j * 2] += dx * push; pushes[j * 2 + 1] += dz * push;
+      }
+    }
+    for (let i = 0; i < ordered.length; i++) {
+      const p = ordered[i]!;
+      p.x = clamp(p.x + pushes[i * 2]!, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3);
+      p.z = clamp(p.z + pushes[i * 2 + 1]!, -FIELD.width / 2 + 0.3, FIELD.width / 2 - 0.3);
+    }
+  }
+}
+
 export function kick(world: World, player: Player, action: Action, command: Command) {
   const multipliers = worldMultipliers(world, player.id);
   const d = teamDir(player.team, world.endsSwapped);
@@ -428,19 +496,16 @@ export function kick(world: World, player: Player, action: Action, command: Comm
   } else {
     target = { x: d * FIELD.length / 2, z: shotTargetZ(player, stick) };
     const goalDistance = distance(player, { x: d * FIELD.length / 2, z: 0 });
-    const threshold = 0.78 + clamp(goalDistance / 60, 0, 0.14) + (action === 'finesse' ? 0.06 : 0);
+    const threshold = shotOverchargeThreshold(goalDistance, action === 'finesse');
     loft = 0.07 + charge * 0.09 + Math.max(0, charge - threshold) * 3.2;
-    speed = action === 'finesse' ? 12 + charge * 9 : 15 + charge * 17;
+    speed = shotSpeed(charge, action === 'finesse');
   }
   if (shot) speed *= multipliers.shotPower;
   const dx = target.x - world.ball.x, dz = target.z - world.ball.z;
   const baseAngle = Math.atan2(dz, dx);
-  const pressure = Math.min(...world.players.filter((p) => p.team !== player.team && !p.sentOff).map((p) => distance(p, player)));
-  const bodyAngle = Math.abs(Math.atan2(Math.sin(Math.PI / 2 - baseAngle - player.facing), Math.cos(Math.PI / 2 - baseAngle - player.facing)));
-  let error = shot ? 0.03 + distance(player, target) * 0.004 + Math.max(0, bodyAngle - 0.6) * 0.22
-    + (pressure < 1.5 ? 0.1 : 0) + (Math.hypot(player.vx, player.vz) > 6.5 * 9 / 8 ? 0.09 : 0) + (1 - player.stamina) * 0.08 + charge * 0.06 : 0.015 + (1 - player.stamina) * 0.06;
-  if (action === 'finesse') error *= 0.6;
-  error *= shot ? multipliers.shotSpread : multipliers.passError;
+  const error = shot
+    ? shotError(world, player, target, charge, action === 'finesse') * multipliers.shotSpread
+    : (0.015 + (1 - player.stamina) * 0.06) * multipliers.passError;
   const angle = baseAngle + (rng(world) - 0.5) * error;
   if (shot) loft += (rng(world) - 0.5) * error * 0.25;
   const horizontal = speed * Math.cos(loft);
@@ -506,6 +571,20 @@ function pointLineDistance(point: Point, start: Point, end: Point) {
   const length2 = dx * dx + dz * dz || 1;
   const t = clamp(((point.x - start.x) * dx + (point.z - start.z) * dz) / length2, 0, 1);
   return Math.hypot(point.x - (start.x + dx * t), point.z - (start.z + dz * t));
+}
+
+export function tackleWindow(world: World, player: Player) {
+  const enemy = world.players.filter((p) => p.team !== player.team && !p.sentOff).sort((a, b) => distance(a, world.ball) - distance(b, world.ball))[0];
+  const ballDistance = distance(player, world.ball);
+  const angle = enemy ? approachAngle(player, enemy) : 0;
+  const exposed = !enemy || distance(enemy, world.ball) > 0.55;
+  const chance = (angle < 1.3 ? 0.55 : angle > 1.9 ? 0.15 : 0.3) * (enemy?.action === 'shield' ? 0.4 : 1);
+  return { enemy, ballDistance, angle, exposed, chance, probability: exposed ? 1 : chance * (angle > 1.9 ? 0.65 : 1), inReach: ballDistance < 1.5 && world.ball.y < 0.75 };
+}
+
+function approachAngle(player: Player, enemy: Player) {
+  const from = Math.atan2(player.x - enemy.x, player.z - enemy.z);
+  return Math.abs(Math.atan2(Math.sin(enemy.facing - from), Math.cos(enemy.facing - from)));
 }
 
 function foul(world: World, player: Player, enemy: Player, kind: 'tackle' | 'slide', ballContact: boolean) {
@@ -578,8 +657,8 @@ function applyAction(world: World, player: Player, command: Command) {
       player.cooldown = 0.95; player.action = 'slide';
       return;
     }
-    const enemy = world.players.filter((p) => p.team !== player.team && !p.sentOff).sort((a, b) => distance(a, world.ball) - distance(b, world.ball))[0];
-    const ballDistance = distance(player, world.ball);
+    const window = tackleWindow(world, player);
+    const { enemy, ballDistance } = window;
     const protectedCarrier = enemy?.id === world.carrierId && (world.stealProtect ?? 0) > 0;
     if (protectedCarrier) {
       player.cooldown = ballDistance < 1.5 ? 0.6 : 0.35;
@@ -589,12 +668,10 @@ function applyAction(world: World, player: Player, command: Command) {
       if (speed > 2) { player.vx *= 2 / speed; player.vz *= 2 / speed; }
       return;
     }
-    if (ballDistance < 1.5 && world.ball.y < 0.75) {
-      const angle = enemy ? approachAngle(player, enemy) : 0;
-      const exposed = !enemy || distance(enemy, world.ball) > 0.55;
+    if (window.inReach) {
+      const { angle, exposed } = window;
       const behind = angle > 1.9;
-      const chance = clamp((angle < 1.3 ? 0.55 : behind ? 0.15 : 0.3)
-        * (enemy?.action === 'shield' ? 0.4 : 1) * worldMultipliers(world, player.id).tackle, 0, 0.9);
+      const chance = clamp(window.chance * worldMultipliers(world, player.id).tackle, 0, 0.9);
       if (!exposed && behind && rng(world) < 0.35) {
         foul(world, player, enemy!, 'tackle', false);
         player.cooldown = 0.6; player.action = 'tackle-miss';
@@ -776,18 +853,28 @@ export function resolveKeeperContact(world: World, previousX: number) {
   const ball = world.ball;
   for (const keeper of world.players.filter((p) => p.slot === 'GK' && !p.sentOff)) {
     if (world.setPieceRun?.penalty?.keeperId === keeper.id) continue;
+    if (world.carrierId === keeper.id || (keeper.touchCd ?? 0) > 0
+      || keeper.cooldown > 0 && (keeper.action === 'pass' || keeper.action === 'kick')) continue;
     const direction = teamDir(keeper.team, world.endsSwapped);
     const plane = -direction * (FIELD.length / 2 - 1.5);
     const crossed = direction > 0 ? previousX > plane && ball.x <= plane : previousX < plane && ball.x >= plane;
     const multipliers = worldMultipliers(world, keeper.id);
-    const reach = (keeper.action === 'dive' ? 2.4 : 1.1) * multipliers.keeperReach / multipliers.keeperReaction;
-    if (!crossed || ball.y < 0 || ball.y > 2.55 || Math.abs(ball.z - keeper.z) > reach) continue;
+    const reach = (keeper.action === 'dive' ? KEEPER_REACH.dive : KEEPER_REACH.ready) * multipliers.keeperReach / multipliers.keeperReaction;
     const speed = Math.hypot(ball.vx, ball.vy, ball.vz);
+    const depth = (ball.x + direction * FIELD.length / 2) * direction;
+    const nearby = speed < 17 && depth >= -0.11 && depth < FIELD.penaltyDepth
+      && Math.abs(ball.z) < FIELD.penaltyWidth / 2 && distance(keeper, ball) <= KEEPER_REACH.ready;
+    if ((!crossed && !nearby) || ball.y < 0 || ball.y > 2.55 || Math.abs(ball.z - keeper.z) > reach) continue;
     ball.x = plane + direction * 0.16;
     ball.z = clamp(ball.z, keeper.z - 2.4, keeper.z + 2.4);
     ball.inNet = false;
     if (speed < 17) {
+      ball.x = keeper.x + direction * 0.25;
+      ball.z = keeper.z;
       ball.y = 0.11; ball.vx = ball.vy = ball.vz = 0; ball.grounded = true;
+      keeper.touchCd = 0;
+      world.carrierId = keeper.id;
+      world.stealProtect = Math.max(world.stealProtect ?? 0, 0.35);
       keeper.action = 'catch';
       world.event = 'keeper claims it';
     } else {
@@ -971,6 +1058,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
       kick(world, p, p.buffer.action, { move: command?.move ?? { x: 0, z: 0 }, ...p.buffer });
     }
   }
+  separatePlayers(world.players, t, carrier, world.endsSwapped);
   const nowCarrier = nearestCarrier(world);
   checkOffside(world, nowCarrier);
   if (world.phase !== 'live') return;

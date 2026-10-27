@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { computeAI } from '../src/os/arcade/games/soccer/ai.ts';
+import { computeAI, cpuShotChoice } from '../src/os/arcade/games/soccer/ai.ts';
 import { createWorld, FIELD, groundPassPower, groundPassSpeed, nearestCarrier, shotAim, shotTargetZ, STEP } from '../src/os/arcade/games/soccer/logic.ts';
 
 function shootingWorld() {
@@ -57,12 +57,12 @@ test('CPU only kicks for the mechanics carrier, respecting knock-ons, slides and
   assert.notEqual(commands.get(player.id)?.action, 'shoot');
 });
 
-test('CPU shoots using the shared corner-aim inverse', () => {
+test('CPU shoots using the shared target-aim inverse', () => {
   const { world, player } = shootingWorld();
   const command = computeAI(world, 'normal', STEP, 0).get(player.id)!;
   assert.equal(command.action, 'shoot');
   const z = shotTargetZ(player, command.aim!);
-  assert.ok(Math.abs(z + FIELD.goalWidth * 0.35) < 1e-12);
+  assert.ok(Math.abs(z - cpuShotChoice(world, player, 'normal', 0).targetZ) < 1e-12);
 });
 
 test('CPU through-ball receiver steers toward the authoritative pass point', () => {
