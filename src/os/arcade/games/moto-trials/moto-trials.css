@@ -109,11 +109,9 @@
 /* touch: finger sized buttons and readable text, grown by --g-moto-trials-u (1 / the phone or iPad frame scale) */
 @media (pointer: coarse) {
   .g-moto-trials .g-moto-trials-pick {
-    /* six buttons share a narrow phone card, never under 40px */
-    flex: 1 1 0;
-    width: auto;
-    min-width: calc(40px * var(--g-moto-trials-u, 1));
-    max-width: calc(44px * var(--g-moto-trials-u, 1));
+    /* 44px on screen, so the iPad frame's rounding can't take it under 40; the strip scrolls */
+    flex: none;
+    width: calc(44px * var(--g-moto-trials-u, 1));
     height: calc(44px * var(--g-moto-trials-u, 1));
     border-radius: calc(9px * var(--g-moto-trials-u, 1));
     font-size: calc(13px * var(--g-moto-trials-u, 1));
@@ -133,5 +131,125 @@
   .g-moto-trials .arcade-field:has(.g-moto-trials-strip) > span,
   .g-moto-trials .arcade-field:has(.g-moto-trials-worlds) > span {
     display: none;
+  }
+}
+
+/* touch: the shell's toolbar, segments and card buttons, at least 44px on screen even inside the iPad frame */
+@media (pointer: coarse) {
+  .g-moto-trials .arcade-ctrl button {
+    height: calc(44px * var(--g-moto-trials-u, 1));
+  }
+  .g-moto-trials .arcade-ctrl button:not(.is-armed) {
+    width: calc(44px * var(--g-moto-trials-u, 1));
+  }
+  .g-moto-trials .arcade-ctrl button svg {
+    width: calc(16px * var(--g-moto-trials-u, 1));
+    height: calc(16px * var(--g-moto-trials-u, 1));
+  }
+  .g-moto-trials.arcade-shell .arcade-seg > button {
+    min-width: calc(40px * var(--g-moto-trials-u, 1));
+    height: calc(44px * var(--g-moto-trials-u, 1));
+    font-size: calc(13.5px * var(--g-moto-trials-u, 1));
+  }
+  .g-moto-trials.arcade-shell .arcade-btn {
+    height: calc(44px * var(--g-moto-trials-u, 1));
+    padding: 0 calc(16px * var(--g-moto-trials-u, 1));
+    border-radius: calc(9px * var(--g-moto-trials-u, 1));
+    font-size: calc(13.5px * var(--g-moto-trials-u, 1));
+  }
+  .g-moto-trials.arcade-shell .arcade-btn-lg {
+    min-width: calc(160px * var(--g-moto-trials-u, 1));
+    border-radius: calc(10px * var(--g-moto-trials-u, 1));
+    font-size: calc(14px * var(--g-moto-trials-u, 1));
+  }
+  .g-moto-trials.arcade-shell .arcade-card p {
+    font-size: calc(13px * var(--g-moto-trials-u, 1));
+  }
+  .g-moto-trials.arcade-shell .arcade-card small,
+  .g-moto-trials.arcade-shell .arcade-field > span {
+    font-size: calc(12px * var(--g-moto-trials-u, 1));
+  }
+}
+
+/*
+ * Short stages (a phone on its side): the level cards lay out in rows, so the result line and every
+ * button fit without scrolling. Online and leaderboard cards keep the shell's own layout.
+ */
+@container arcade-ov (max-height: 340px) {
+  .g-moto-trials .arcade-card:has(> .arcade-setup .g-moto-trials-strip):not(:has(.arcade-race, .arcade-lb-form, .arcade-room-code, .arcade-online-divider)) {
+    flex-direction: row;
+    flex-wrap: wrap;
+    justify-content: center;
+    align-items: center;
+    gap: 6px 8px;
+    width: min(780px, 100%);
+    /* clear the shell's toolbar, which floats over the top of the stage */
+    margin: 28px -8px -8px;
+  }
+  .g-moto-trials .arcade-card:has(> .arcade-setup .g-moto-trials-strip):not(:has(.arcade-race, .arcade-lb-form, .arcade-room-code, .arcade-online-divider)) > :is(p, small, .arcade-final) {
+    flex: 0 0 100%;
+  }
+  /* the title leads the first row: before the level picker, or the result line after a run */
+  .g-moto-trials .arcade-card:has(> .arcade-setup .g-moto-trials-strip):not(:has(.arcade-race, .arcade-lb-form, .arcade-room-code, .arcade-online-divider)) > h2 {
+    flex: none;
+    margin: 0 4px 0 0;
+  }
+  .g-moto-trials .arcade-card:has(> .arcade-setup .g-moto-trials-strip):not(:has(.arcade-race, .arcade-lb-form, .arcade-room-code, .arcade-online-divider)) > p.arcade-detail {
+    display: block;
+    flex: 0 1 auto;
+    margin: 0;
+    font-size: calc(13px * var(--g-moto-trials-u, 1));
+    line-height: 1.35;
+    color: rgba(245, 245, 247, 0.85);
+  }
+  .g-moto-trials .arcade-card:has(> .arcade-setup .g-moto-trials-strip):not(:has(.arcade-race, .arcade-lb-form, .arcade-room-code, .arcade-online-divider)) > .arcade-setup {
+    flex: 0 1 auto;
+    width: auto;
+    min-width: 0;
+    margin: 0;
+  }
+  .g-moto-trials .arcade-card:has(> .arcade-setup .g-moto-trials-strip):not(:has(.arcade-race, .arcade-lb-form, .arcade-room-code, .arcade-online-divider)) .arcade-field:has(> .g-moto-trials-strip) {
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+  }
+  .g-moto-trials .arcade-card:has(> .arcade-setup .g-moto-trials-strip):not(:has(.arcade-race, .arcade-lb-form, .arcade-room-code, .arcade-online-divider)) .arcade-field:has(> .g-moto-trials-strip) > .arcade-field {
+    flex: none;
+  }
+  .g-moto-trials .arcade-card:has(> .arcade-setup .g-moto-trials-strip):not(:has(.arcade-race, .arcade-lb-form, .arcade-room-code, .arcade-online-divider)) .g-moto-trials-strip {
+    width: auto;
+    min-width: 0;
+    flex: 0 1 auto;
+  }
+  .g-moto-trials .arcade-card:has(> .arcade-setup .g-moto-trials-strip):not(:has(.arcade-race, .arcade-lb-form, .arcade-room-code, .arcade-online-divider)) > :is(.arcade-btn, .arcade-row) {
+    flex: none;
+    margin: 0;
+  }
+  .g-moto-trials.arcade-shell .arcade-card:has(> .arcade-setup .g-moto-trials-strip):not(:has(.arcade-race, .arcade-lb-form, .arcade-room-code, .arcade-online-divider)) > .arcade-btn-lg {
+    min-width: 0;
+    padding: 0 18px;
+  }
+  /* after a run the next level is already picked, so the world segments give their room to the result */
+  .g-moto-trials .arcade-card:has(> .arcade-detail):has(> .arcade-setup .g-moto-trials-strip):not(:has(.arcade-race, .arcade-lb-form, .arcade-room-code, .arcade-online-divider)) .arcade-field:has(> .g-moto-trials-strip) > .arcade-field {
+    display: none;
+  }
+}
+@media (pointer: coarse) {
+  @container arcade-ov (max-height: 340px) {
+    .g-moto-trials .arcade-card:has(> .arcade-setup .g-moto-trials-strip):not(:has(.arcade-race, .arcade-lb-form, .arcade-room-code, .arcade-online-divider)) {
+      margin-top: calc(10px + 50px * var(--g-moto-trials-u, 1) - 16px);
+    }
+  }
+}
+
+/* narrow touch screens: the bigger toolbar spans the top, so the online badge and the cards drop below it */
+@media (pointer: coarse) and (max-width: 560px) {
+  .g-moto-trials .arcade-online-status {
+    top: calc(22px + 44px * var(--g-moto-trials-u, 1));
+    left: 16px;
+    transform: none;
+  }
+  .g-moto-trials.arcade-shell .arcade-ov:not(.arcade-ov-compact) {
+    padding-top: calc(22px + 44px * var(--g-moto-trials-u, 1));
   }
 }

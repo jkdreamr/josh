@@ -14,6 +14,7 @@
   user-select: none;
   -webkit-user-select: none;
   background: radial-gradient(120% 90% at 50% 45%, #141a3e 0%, #0a0d24 55%, #05060f 100%);
+  container: g-run-3d-host / size;
 }
 .g-run-3d .g-run-3d-loading {
   position: absolute;
@@ -292,4 +293,46 @@
   margin: 6px 0 0;
   font-size: 12px;
   color: rgba(255, 255, 255, 0.66);
+}
+
+/* touch: shell controls, setup buttons and level picks stay at least 44px on screen, grown by --g-run-3d-u inside a scaled frame */
+@media (pointer: coarse) {
+  .g-run-3d .arcade-ctrl button {
+    width: calc(44px * var(--g-run-3d-u, 1));
+    height: calc(44px * var(--g-run-3d-u, 1));
+  }
+  .g-run-3d .arcade-ctrl svg {
+    width: calc(18px * var(--g-run-3d-u, 1));
+    height: calc(18px * var(--g-run-3d-u, 1));
+  }
+  .g-run-3d .arcade-ov .arcade-btn,
+  .g-run-3d .arcade-ov .arcade-seg > button {
+    height: auto;
+    min-height: calc(44px * var(--g-run-3d-u, 1));
+    font-size: calc(13px * var(--g-run-3d-u, 1));
+  }
+  .g-run-3d .g-run-3d-pick {
+    width: calc(44px * var(--g-run-3d-u, 1));
+    height: calc(44px * var(--g-run-3d-u, 1));
+    font-size: calc(14px * var(--g-run-3d-u, 1));
+  }
+}
+/* narrow touch screens: the bigger toolbar spans the top, so the progress bar and notices drop below it */
+@media (pointer: coarse) {
+  @container g-run-3d-host (max-width: 560px) {
+    .g-run-3d .g-run-3d-bar {
+      top: calc(20px + 44px * var(--g-run-3d-u, 1));
+    }
+    .g-run-3d .g-run-3d-zone,
+    .g-run-3d .g-run-3d-done {
+      top: calc(88px + 44px * var(--g-run-3d-u, 1));
+    }
+  }
+}
+@media (pointer: coarse) and (max-width: 560px) {
+  .g-run-3d .arcade-online-status {
+    top: calc(52px + 44px * var(--g-run-3d-u, 1));
+    left: 18px;
+    transform: none;
+  }
 }

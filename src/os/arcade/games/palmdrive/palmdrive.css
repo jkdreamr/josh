@@ -1,3 +1,26 @@
+/* the safe area inside the game (set from index.tsx: the notch, home bar and corners less what the window already
+   keeps clear), and the stage as a container so the HUD and the buttons can size to the screen */
+.g-palmdrive {
+  --pd-sat: 0px;
+  --pd-sar: 0px;
+  --pd-sab: 0px;
+  --pd-sal: 0px;
+}
+.g-palmdrive .arcade-stage {
+  container: pdstage / size;
+}
+/* the shell's own buttons and cards keep clear of it too */
+.g-palmdrive .arcade-ctrl {
+  top: calc(10px + var(--pd-sat));
+  right: calc(10px + var(--pd-sar));
+}
+.g-palmdrive .arcade-online-status {
+  top: calc(10px + var(--pd-sat));
+}
+.g-palmdrive .arcade-ov,
+.g-palmdrive .g-palmdrive-sheet {
+  padding: calc(16px + var(--pd-sat)) calc(16px + var(--pd-sar)) calc(16px + var(--pd-sab)) calc(16px + var(--pd-sal));
+}
 .g-palmdrive .g-palmdrive-host {
   position: absolute;
   inset: 0;
@@ -34,8 +57,8 @@
 }
 .g-palmdrive .g-palmdrive-item {
   position: absolute;
-  top: 10px;
-  left: 10px;
+  top: calc(10px + var(--pd-sat));
+  left: calc(10px + var(--pd-sal));
   display: grid;
   place-items: center;
   width: 62px;
@@ -76,7 +99,7 @@
 }
 .g-palmdrive .g-palmdrive-time {
   position: absolute;
-  top: 12px;
+  top: calc(12px + var(--pd-sat));
   left: 50%;
   transform: translateX(-50%);
   padding: 4px 12px;
@@ -90,7 +113,7 @@
   text-align: center;
 }
 .g-palmdrive .g-palmdrive-time.is-online {
-  top: 42px;
+  top: calc(42px + var(--pd-sat));
 }
 .g-palmdrive .g-palmdrive-lapnote {
   position: absolute;
@@ -122,8 +145,8 @@
 }
 .g-palmdrive .g-palmdrive-map {
   position: absolute;
-  top: 52px;
-  right: 10px;
+  top: calc(52px + var(--pd-sat));
+  right: calc(10px + var(--pd-sar));
   width: 112px;
   height: 128px;
   overflow: visible;
@@ -191,35 +214,33 @@
 }
 /* the stroke ring under your shell: the outer ring closes onto the beat, the inner one lights up in the catch window,
    and the run of catches toward a Power Ten fills round it */
-.g-palmdrive .g-palmdrive-stroke {
-  position: absolute;
-  left: 50%;
-  bottom: 14px;
-  width: 92px;
-  height: 92px;
-  transform: translateX(-50%);
-  pointer-events: none;
-  overflow: visible;
+.g-palmdrive .g-palmdrive-strokes {
+  align-self: center;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 5px 8px;
+  border-radius: 999px;
+  background: rgba(20, 20, 26, 0.45);
+  transition: background-color 0.12s, box-shadow 0.12s;
 }
-.g-palmdrive .g-palmdrive-stroke circle {
-  fill: none;
-  stroke: rgba(255, 255, 255, 0.55);
-  stroke-width: 3;
+.g-palmdrive .g-palmdrive-strokes i {
+  width: 5px;
+  height: 10px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.3);
 }
-.g-palmdrive .g-palmdrive-stroke circle.is-open {
-  stroke: #ffe14d;
-  stroke-width: 5;
-  fill: rgba(255, 225, 77, 0.25);
+.g-palmdrive .g-palmdrive-strokes i.is-on {
+  background: #ff5a3c;
 }
-.g-palmdrive .g-palmdrive-stroke .g-palmdrive-stroke-ring {
-  stroke: #ffffff;
-  stroke-width: 2.5;
+/* the catch coming: warming up; the catch window: lit */
+.g-palmdrive .g-palmdrive-strokes.is-near {
+  background: rgba(255, 225, 77, 0.2);
 }
-.g-palmdrive .g-palmdrive-stroke rect {
-  fill: rgba(255, 255, 255, 0.25);
-}
-.g-palmdrive .g-palmdrive-stroke rect.is-on {
-  fill: #ff5a3c;
+.g-palmdrive .g-palmdrive-strokes.is-open {
+  transition: none;
+  background: rgba(255, 225, 77, 0.5);
+  box-shadow: 0 0 0 2px #ffe14d, 0 0 16px rgba(255, 225, 77, 0.8);
 }
 /* a Marguerite bus: white with a cardinal edge */
 .g-palmdrive .g-palmdrive-map-bus {
@@ -241,8 +262,8 @@
 }
 .g-palmdrive .g-palmdrive-lap {
   position: absolute;
-  left: 14px;
-  bottom: max(14px, env(safe-area-inset-bottom));
+  left: calc(14px + var(--pd-sal));
+  bottom: calc(14px + var(--pd-sab));
   display: flex;
   align-items: baseline;
   gap: 12px;
@@ -302,8 +323,8 @@
 }
 .g-palmdrive .g-palmdrive-place {
   position: absolute;
-  right: 16px;
-  bottom: max(8px, env(safe-area-inset-bottom));
+  right: calc(16px + var(--pd-sar));
+  bottom: calc(8px + var(--pd-sab));
   display: flex;
   align-items: baseline;
   gap: 4px;
@@ -321,11 +342,18 @@
   font-size: 17px;
 }
 .g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-lap {
-  top: 82px;
+  top: calc(82px + var(--pd-sat));
   bottom: auto;
 }
+/* (on a phone the lap line is full: the stroke light goes under it) */
+.g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-strokes {
+  position: absolute;
+  left: 0;
+  top: 100%;
+  margin-top: 8px;
+}
 .g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-place {
-  top: 186px;
+  top: calc(186px + var(--pd-sat));
   bottom: auto;
 }
 .g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-place b {
@@ -344,7 +372,16 @@
 }
 /* on phones the lap row sits up top; keep the lights clear of it */
 .g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-lights {
-  top: 132px;
+  top: calc(132px + var(--pd-sat));
+}
+/* (a phone on its side: up under the clock, clear of the countdown) */
+@container pdstage (max-height: 500px) {
+  .g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-lights {
+    top: calc(46px + var(--pd-sat));
+  }
+  .g-palmdrive .g-palmdrive-hud.is-touch.is-online .g-palmdrive-lights {
+    top: calc(76px + var(--pd-sat));
+  }
 }
 .g-palmdrive .g-palmdrive-lights i {
   width: 22px;
@@ -462,9 +499,31 @@
   background: #f4f6ff;
   animation: none;
 }
-/* on phones the lap row and the coins sit up top: below them, where the lights hang before the start */
+/* on a touch screen the lap row and the coins sit up top: the wind (and the swell) hang just under the clock, clear of
+   the road ahead and of the lights before the start */
 .g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-gust {
-  top: 132px;
+  padding: 3px 12px;
+  font-size: 14px;
+}
+/* (the two side by side there when both are up, on the slough) */
+.g-palmdrive .g-palmdrive-badges {
+  display: contents;
+}
+.g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-badges {
+  position: absolute;
+  top: calc(48px + var(--pd-sat));
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 6px;
+}
+.g-palmdrive .g-palmdrive-hud.is-touch.is-online .g-palmdrive-badges {
+  top: calc(78px + var(--pd-sat));
+}
+.g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-badges .g-palmdrive-gust {
+  position: static;
+  transform: none;
+  white-space: nowrap;
 }
 .g-palmdrive .g-palmdrive-wrong {
   position: absolute;
@@ -486,7 +545,7 @@
 }
 .g-palmdrive .g-palmdrive-rear {
   position: absolute;
-  top: 54px;
+  top: calc(54px + var(--pd-sat));
   left: 50%;
   transform: translateX(-50%);
   padding: 3px 12px;
@@ -598,7 +657,9 @@
     opacity: 0;
   }
 }
+/* the touch controls: a steering pad on the left, the actions under the right thumb. --pd-k scales them to the screen */
 .g-palmdrive .g-palmdrive-touch {
+  --pd-k: 1;
   position: absolute;
   left: 0;
   right: 0;
@@ -606,25 +667,45 @@
   display: flex;
   justify-content: space-between;
   align-items: flex-end;
-  padding: 12px 12px max(18px, env(safe-area-inset-bottom));
+  gap: 8px;
+  padding: 12px calc(12px + var(--pd-sar)) calc(18px + var(--pd-sab)) calc(12px + var(--pd-sal));
   pointer-events: none;
+  -webkit-touch-callout: none;
 }
-.g-palmdrive .g-palmdrive-steer,
+@container pdstage (max-width: 374px) {
+  .g-palmdrive .g-palmdrive-touch {
+    --pd-k: 0.88;
+    padding-left: calc(8px + var(--pd-sal));
+    padding-right: calc(8px + var(--pd-sar));
+  }
+}
+@container pdstage (max-width: 330px) {
+  .g-palmdrive .g-palmdrive-touch {
+    --pd-k: 0.78;
+  }
+}
+/* an iPad: bigger buttons, further in from the corners */
+@container pdstage (min-width: 700px) and (min-height: 600px) {
+  .g-palmdrive .g-palmdrive-touch {
+    --pd-k: 1.22;
+    padding: 16px calc(24px + var(--pd-sar)) calc(26px + var(--pd-sab)) calc(24px + var(--pd-sal));
+  }
+}
 .g-palmdrive .g-palmdrive-actions {
   display: flex;
   align-items: flex-end;
-  gap: 10px;
+  gap: calc(8px * var(--pd-k));
 }
 .g-palmdrive .g-palmdrive-touch button {
   display: grid;
   place-items: center;
-  width: 64px;
-  height: 64px;
+  width: calc(64px * var(--pd-k));
+  height: calc(64px * var(--pd-k));
   padding: 0;
   border: 0;
   border-radius: 50%;
   font: inherit;
-  font-size: 13px;
+  font-size: calc(13px * var(--pd-k));
   font-weight: 700;
   color: #fff;
   background: rgba(20, 20, 26, 0.4);
@@ -635,37 +716,84 @@
   touch-action: none;
   -webkit-user-select: none;
   user-select: none;
+  -webkit-touch-callout: none;
 }
 .g-palmdrive .g-palmdrive-touch button:active {
   background: rgba(255, 255, 255, 0.3);
 }
+.g-palmdrive .g-palmdrive-touch button svg {
+  width: calc(26px * var(--pd-k));
+  height: calc(26px * var(--pd-k));
+}
+/* one pill for both ways: a thumb slides across the middle to switch sides without lifting */
+.g-palmdrive .g-palmdrive-steer {
+  display: flex;
+  flex: none;
+  border-radius: 999px;
+  background: rgba(20, 20, 26, 0.4);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.3);
+  pointer-events: auto;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+}
+.g-palmdrive .g-palmdrive-touch .g-palmdrive-steer button,
+.g-palmdrive .g-palmdrive-touch .g-palmdrive-steer button:active {
+  width: calc(74px * var(--pd-k));
+  height: calc(68px * var(--pd-k));
+  border-radius: 999px;
+  background: none;
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+.g-palmdrive .g-palmdrive-touch .g-palmdrive-steer button.is-on {
+  background: rgba(255, 255, 255, 0.32);
+}
 .g-palmdrive .g-palmdrive-touch .g-palmdrive-back {
-  width: 44px;
-  height: 44px;
+  width: calc(44px * var(--pd-k));
+  height: calc(44px * var(--pd-k));
 }
 .g-palmdrive .g-palmdrive-touch .g-palmdrive-use {
-  width: 70px;
-  height: 70px;
-  margin-bottom: 30px;
+  width: calc(68px * var(--pd-k));
+  height: calc(68px * var(--pd-k));
+  margin-bottom: calc(30px * var(--pd-k));
   background: color-mix(in srgb, var(--accent) 55%, rgba(20, 20, 26, 0.4));
 }
+.g-palmdrive .g-palmdrive-touch .g-palmdrive-use svg {
+  width: calc(34px * var(--pd-k));
+  height: calc(34px * var(--pd-k));
+}
 .g-palmdrive .g-palmdrive-touch .g-palmdrive-drift {
-  width: 76px;
-  height: 76px;
+  width: calc(76px * var(--pd-k));
+  height: calc(76px * var(--pd-k));
+}
+/* on the water, row lights up through the catch window as the ring closes */
+.g-palmdrive .g-palmdrive-touch .g-palmdrive-drift.is-catch {
+  background: rgba(255, 225, 77, 0.35);
+  box-shadow: inset 0 0 0 3px #ffe14d, 0 0 18px rgba(255, 225, 77, 0.75);
 }
 .g-palmdrive .g-palmdrive-minis {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: calc(10px * var(--pd-k));
 }
 .g-palmdrive .g-palmdrive-touch .g-palmdrive-bump {
-  width: 52px;
-  height: 52px;
-  font-size: 12px;
+  width: calc(52px * var(--pd-k));
+  height: calc(52px * var(--pd-k));
+  font-size: calc(12px * var(--pd-k));
 }
 .g-palmdrive .g-palmdrive-touch .g-palmdrive-use.is-trailing {
   box-shadow: inset 0 0 0 3px #7fd3ff, 0 0 14px rgba(127, 211, 255, 0.7);
+}
+/* an iPad: the HUD a size up to match */
+@container pdstage (min-width: 700px) and (min-height: 600px) {
+  .g-palmdrive .g-palmdrive-hud.is-touch {
+    zoom: 1.25;
+  }
 }
 /* How to Play and Garage under the setup pickers */
 .g-palmdrive .g-palmdrive-extras {
@@ -991,7 +1119,7 @@
   animation: g-palmdrive-hint 4.2s ease-in-out forwards;
 }
 .g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-hint {
-  bottom: 190px;
+  bottom: calc(200px + var(--pd-sab));
 }
 @keyframes g-palmdrive-hint {
   0% {
@@ -1052,9 +1180,9 @@
 .g-palmdrive .g-palmdrive-course {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
-  padding: 6px 8px;
+  padding: 6px 7px;
   border: 0;
   border-radius: 10px;
   font: inherit;
@@ -1081,8 +1209,13 @@
 }
 .g-palmdrive .g-palmdrive-course svg {
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 30px;
+  height: 30px;
+}
+/* (a little less padding round the cards, so the class and length under each course fit on a phone) */
+.g-palmdrive .arcade-card:has(.g-palmdrive-courses) {
+  padding-left: 16px;
+  padding-right: 16px;
 }
 .g-palmdrive .g-palmdrive-course path {
   fill: none;
@@ -1099,11 +1232,12 @@
 .g-palmdrive .g-palmdrive-course small {
   display: block;
   overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
   font-size: 11px;
   font-weight: 600;
   opacity: 0.9;
+}
+.g-palmdrive .g-palmdrive-course small span {
+  white-space: nowrap;
 }
 .g-palmdrive .g-palmdrive-course small.is-easy {
   color: #7ddf8a;
@@ -1165,11 +1299,6 @@
   transform: rotate(-24deg);
 }
 /* (on a touch screen, up clear of the buttons) */
-.g-palmdrive .g-palmdrive-hud.is-touch .g-palmdrive-stroke {
-  bottom: 150px;
-  width: 72px;
-  height: 72px;
-}
 /* the fire flower burns while it lasts */
 .g-palmdrive .g-palmdrive-item.is-fire {
   box-shadow: inset 0 0 0 3px #ff7a1a, inset 0 0 0 5px rgba(0, 0, 0, 0.35), 0 0 20px rgba(255, 90, 20, 0.9);
@@ -1192,5 +1321,42 @@
 @keyframes g-palmdrive-frost {
   from {
     opacity: 0;
+  }
+}
+/* a phone on its side: the Start, Pause and Game Over cards go wide, the courses three or four across and the class
+   and music side by side, so far less of it scrolls */
+@container arcade-ov (max-height: 460px) and (min-width: 560px) {
+  .g-palmdrive .arcade-card:has(.g-palmdrive-courses) {
+    width: min(620px, 100%);
+  }
+  .g-palmdrive .arcade-setup:has(.g-palmdrive-courses) {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px 12px;
+  }
+  .g-palmdrive .arcade-setup:has(.g-palmdrive-courses) > :has(.g-palmdrive-courses),
+  .g-palmdrive .arcade-setup:has(.g-palmdrive-courses) > .g-palmdrive-extras,
+  .g-palmdrive .arcade-setup:has(.g-palmdrive-courses) > .g-palmdrive-best {
+    grid-column: 1 / -1;
+  }
+  .g-palmdrive .g-palmdrive-courses {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+@container arcade-ov (max-height: 460px) and (min-width: 700px) {
+  .g-palmdrive .arcade-card:has(.g-palmdrive-courses) {
+    width: min(700px, 100%);
+  }
+  .g-palmdrive .g-palmdrive-courses {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+/* an iPad: a roomier card */
+@container arcade-ov (min-width: 640px) and (min-height: 640px) {
+  .g-palmdrive .arcade-card:has(.g-palmdrive-courses) {
+    width: min(440px, 100%);
+  }
+  .g-palmdrive .g-palmdrive-course {
+    padding: 8px 10px;
   }
 }

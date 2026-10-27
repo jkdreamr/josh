@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { BALL_R, COURT, PADDLE, PADDLE_SPEED, WIN_SCORE, aiStep, createAi, createMatch, mergeGuestSnapshot, movePaddle, paddleX, predictY, serve, step } from '../src/os/arcade/games/pong/pong.ts';
+import { advanceGuest, BALL_R, COURT, PADDLE, PADDLE_SPEED, WIN_SCORE, aiStep, createAi, createMatch, mergeGuestSnapshot, movePaddle, paddleX, predictY, serve, step } from '../src/os/arcade/games/pong/pong.ts';
 
 const fixed = (v: number) => () => v;
 
@@ -18,6 +18,74 @@ test('Pong guest snapshots preserve the local paddle', () => {
   assert.deepEqual(merged.paddles[0], { y: 24, vy: -4 });
   assert.equal(merged.ball.x, 111);
   assert.deepEqual(host.paddles[1], { y: 51, vy: -2 });
+});
+
+test('a guest advances the ball and host paddle while leaving its own paddle alone', () => {
+  const m = createMatch();
+  m.serveIn = 0;
+  Object.assign(m.ball, { x: 80, y: 50, vx: 20, vy: 10 });
+  m.paddles[0] = { y: 40, vy: 30 };
+  m.paddles[1] = { y: 72, vy: 18 };
+
+  advanceGuest(m, 0.5);
+
+  assert.deepEqual(m.ball, { x: 90, y: 55, vx: 20, vy: 10, spin: 0 });
+  assert.deepEqual(m.paddles[0], { y: 55, vy: 30 });
+  assert.deepEqual(m.paddles[1], { y: 72, vy: 18 });
+});
+
+test('a guest reflects the ball at both walls', () => {
+  const m = createMatch();
+  m.serveIn = 0;
+  Object.assign(m.ball, { x: 80, y: BALL_R + 0.5, vx: 0, vy: -60 });
+
+  advanceGuest(m, 0.05);
+
+  assert.ok(m.ball.y >= BALL_R);
+  assert.ok(m.ball.vy > 0);
+  Object.assign(m.ball, { y: COURT.h - BALL_R - 0.5, vy: 60 });
+
+  advanceGuest(m, 0.05);
+
+  assert.ok(m.ball.y <= COURT.h - BALL_R);
+  assert.ok(m.ball.vy < 0);
+});
+
+test('a guest clamps the ball at both paddle faces without deciding collisions', () => {
+  const m = createMatch();
+  m.serveIn = 0;
+  const leftFace = paddleX(0) + PADDLE.w / 2 + BALL_R;
+  const rightFace = paddleX(1) - PADDLE.w / 2 - BALL_R;
+  Object.assign(m.ball, { x: 15, y: 50, vx: -100, vy: 0 });
+
+  advanceGuest(m, 0.1);
+
+  assert.equal(m.ball.x, leftFace);
+  assert.equal(m.ball.vx, -100);
+  Object.assign(m.ball, { x: COURT.w - 15, vx: 100 });
+
+  advanceGuest(m, 0.1);
+
+  assert.equal(m.ball.x, rightFace);
+  assert.equal(m.ball.vx, 100);
+});
+
+test('guest advancement is a no-op during a serve or after a winner', () => {
+  const serving = createMatch();
+  Object.assign(serving.ball, { x: 20, y: 30, vx: 40, vy: -10 });
+  serving.paddles[0] = { y: 20, vy: -30 };
+  const servingBefore = structuredClone(serving);
+  advanceGuest(serving, 0.5);
+  assert.deepEqual(serving, servingBefore);
+
+  const finished = createMatch();
+  finished.serveIn = 0;
+  finished.winner = 0;
+  Object.assign(finished.ball, { x: 20, y: 30, vx: 40, vy: -10 });
+  finished.paddles[0] = { y: 20, vy: -30 };
+  const finishedBefore = structuredClone(finished);
+  advanceGuest(finished, 0.5);
+  assert.deepEqual(finished, finishedBefore);
 });
 
 test('a new match holds the ball at center and serves after the delay', () => {

@@ -1,6 +1,6 @@
 // Run state machine for Moto Trials: countdown, timer, flips, checkpoints, crashes, finish.
 // Pure: tests drive it under node. Drawing reads the same state.
-import { groundAt, newBike, step, wrapAngle, type Bike, type Input, type PhysWorld } from './physics.ts';
+import { groundAt, newBike, resetCrumbles, sawAt, step, wrapAngle, type Bike, type Input, type PhysWorld } from './physics.ts';
 import { worldOf, type Level } from './levels.ts';
 
 export const COUNTDOWN = 3;
@@ -20,6 +20,10 @@ export type Air = {
   touch: number;
   /** Seconds both wheels have been down together. */
   both: number;
+  /** Flips already announced and credited for this jump, the moment the wheels came down square. */
+  credited?: number;
+  /** The toast announcing them, upgraded in place if the landing finishes more rotation. */
+  toastId?: number;
 };
 
 /** A jump ends once both wheels have been down this long, so the pivot onto the second wheel counts. */
@@ -45,7 +49,7 @@ export function flipsIn(accum: number): number {
 }
 
 export type Toast = { id: number; text: string; t: number };
-export type Particle = { x: number; y: number; vx: number; vy: number; t: number; life: number; kind: 'dust' | 'puff' | 'debris' | 'confetti'; c?: string };
+export type Particle = { x: number; y: number; vx: number; vy: number; t: number; life: number; kind: 'dust' | 'puff' | 'debris' | 'confetti' | 'fire'; c?: string };
 
 export type Run = {
   level: Level;
@@ -140,8 +144,17 @@ function crash(run: Run, kind: 'head' | 'saw' | 'fell') {
   run.crashT = 0;
   run.crashKind = kind;
   run.shake = 1;
+  if (run.air.on) revokeFlips(run);
   run.air = noAir();
   const b = run.bike;
+  const boom = kind === 'saw' && run.world.saws.find((h) => h.kind === 'tnt' && Math.hypot(sawAt(h, run.world.clock).x - b.p.x, h.y - b.p.y) < h.r + 1.6);
+  if (boom) {
+    for (let i = 0; i < 18; i++) {
+      const a = (i / 18) * Math.PI * 2;
+      run.fx.push({ x: boom.x, y: boom.y, vx: Math.cos(a) * (3 + (i % 4)), vy: Math.sin(a) * (3 + (i % 3)) + 4, t: run.t, life: 0.7, kind: 'fire', c: i % 3 ? '#ff8a2a' : '#ffd25a' });
+    }
+    toast(run, 'Boom');
+  }
   // fling a few debris bits and the rider's helmet from where it happened
   for (let i = 0; i < 10; i++) {
     const a = (i / 10) * Math.PI * 2;
@@ -156,6 +169,34 @@ function crash(run: Run, kind: 'head' | 'saw' | 'fell') {
     });
   }
   toast(run, 'Crash');
+}
+
+/** A jump that ends in a crash before it settles earns nothing: take back what its landing announced. */
+function revokeFlips(run: Run) {
+  const n = run.air.credited ?? 0;
+  if (!n) return;
+  run.bonusMs -= n * FLIP_BONUS_MS;
+  run.flips -= n;
+  run.toasts = run.toasts.filter((t) => t.id !== run.air.toastId);
+}
+
+/** Credits flips as soon as a wheel is down with the chassis near square, so the call lands with the bike. */
+function creditFlips(run: Run, total: number) {
+  const air = run.air;
+  const had = air.credited ?? 0;
+  if (total <= had) return;
+  run.bonusMs += (total - had) * FLIP_BONUS_MS;
+  run.flips += total - had;
+  air.credited = total;
+  const text = `${(air.accum > 0 ? namesB : namesF)[Math.min(3, total)]} -${total}s`;
+  const prev = run.toasts.find((t) => t.id === air.toastId);
+  if (prev) {
+    prev.text = text;
+    prev.t = run.t;
+  } else {
+    toast(run, text);
+    air.toastId = run.toasts[run.toasts.length - 1].id;
+  }
 }
 
 /**
@@ -191,17 +232,13 @@ export function trackAir(run: Run, da: number, dt: number) {
   const square = -Math.sin(b.a) * n.x + Math.cos(b.a) * n.y;
   // touchdown soaks up leftover spin, so a nearly finished flip lands instead of bouncing into another turn
   if (square > LAND_SQUARE) b.w *= Math.exp(-LAND_DAMP * dt);
+  // announce on touchdown, not after the bounces settle; a crash before it settles takes it back
+  if (square > LAND_SQUARE && air.time > 0.12) creditFlips(run, flipsIn(air.accum));
   if (air.touch < BRUSH) return;
   if (air.both < SETTLE_BOTH && air.touch < SETTLE_ONE && square < SETTLE_SQUARE) return;
   // settled on the wheels; score flips for real airtime only
   if (air.time > 0.12) {
-    const flips = flipsIn(air.accum);
-    if (flips > 0) {
-      const list = air.accum > 0 ? namesB : namesF;
-      toast(run, `${list[Math.min(3, flips)]} -${flips}s`);
-      run.bonusMs += flips * FLIP_BONUS_MS;
-      run.flips += flips;
-    }
+    creditFlips(run, flipsIn(air.accum));
     for (let i = 0; i < 6; i++)
       run.fx.push({ x: b.p.x + (i - 3) * 0.3, y: b.p.y - 0.6, vx: (i - 3) * 0.8, vy: 1 + (i % 2), t: run.t, life: 0.45, kind: 'puff' });
   }
@@ -249,6 +286,7 @@ export function stepRun(run: Run, input: Input, dt: number) {
       p.y += p.vy * dt;
     }
     if (run.crashT >= RESPAWN_DELAY) {
+      resetCrumbles(run.world);
       const s = spawnAt(run.world, run.spawn.x);
       run.bike = newBike(s.x, s.y);
       run.bike.a = run.spawn.a;
@@ -380,7 +418,7 @@ function copyRun(run: Run): Run {
   const wh = (x: typeof b.fw) => ({ p: { ...x.p }, v: { ...x.v }, spin: x.spin, rot: x.rot, on: x.on, n: { ...x.n } });
   return {
     ...run,
-    world: { ...run.world, loops: run.world.loops.map((l) => ({ ...l })) },
+    world: { ...run.world, loops: run.world.loops.map((l) => ({ ...l })), crumbles: run.world.crumbles.slice() },
     bike: { p: { ...b.p }, v: { ...b.v }, a: b.a, w: b.w, fw: wh(b.fw), rw: wh(b.rw), crashed: b.crashed },
     air: { ...run.air },
     spawn: { ...run.spawn },

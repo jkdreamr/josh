@@ -5,6 +5,16 @@ import type { CourseId } from './courses';
 import { LANDMARKS, deltaS, fromMap, headingOf, locate, pointAt, type P2, type Track } from './track';
 import type { Race } from './logic';
 import { boatHull, merge, modelKit } from './model';
+import { gumTrees, oakTrees, palmTrees, pineTrees, shrubs as shrubsOf } from './flora';
+import { SKIES } from './sky';
+import { campusExtras } from './campus';
+import { boathouse, lakeLife, lilyPads, reedBeds } from './lake';
+import { horse, paddockFence, redBarn, silo, tractor, windmill } from './barn';
+import { holstein, knollGeometry, smallDishes } from './dish';
+import { GROUNDS, groundMaterial } from './surfaces';
+import { crowd, crowdTick, goalpost, lightTower, portal, scoreboard } from './stadium';
+import { skyWater } from './skywater';
+import { arcadeWall, bake, batchStatic, mergeAlike, church as churchModel, dishTelescope, gableRoof, hall as hallModel, hall, hill, hooverTower, vcMats } from './landmarks';
 
 export type Three = typeof import('three');
 
@@ -69,80 +79,28 @@ function frondGeometry(THREE: Three) {
 
 /** Memorial Church with its gold mosaic, framed by the Main Quad arcades. The facade faces south. */
 function makeChurch(THREE: Three, box: T.BoxGeometry) {
-  const g = new THREE.Group();
-  const stone = new THREE.MeshLambertMaterial({ color: 0xd9b98a });
-  const tile = new THREE.MeshLambertMaterial({ color: 0xb4553a });
-  const gold = new THREE.MeshLambertMaterial({ color: 0xe6c36a, emissive: 0x3a2a00 });
-  const shadow = new THREE.MeshLambertMaterial({ color: 0x5a3f2e });
-  const mesh = (geo: T.BufferGeometry, mat: T.Material, x: number, y: number, z: number, sx = 1, sy = 1, sz = 1, ry = 0) => {
-    const m = new THREE.Mesh(geo, mat);
-    m.position.set(x, y, z);
-    m.scale.set(sx, sy, sz);
-    m.rotation.y = ry;
-    g.add(m);
-    return m;
-  };
-  const roof = new THREE.CylinderGeometry(0, 1, 1, 4, 1);
-  // long arcade wings either side, with their row of arches
-  for (const side of [-1, 1]) {
-    mesh(box, stone, side * 30, 4, 8, 34, 8, 10);
-    mesh(roof, tile, side * 30, 9.2, 8, 27, 2.6, 9, Math.PI / 4);
-    for (let a = 0; a < 7; a++) mesh(box, shadow, side * (16 + a * 4.4), 2.6, 2.9, 2.6, 4, 0.3);
-  }
-  mesh(box, stone, 0, 8, 14, 22, 16, 30);
-  mesh(roof, tile, 0, 19.5, 14, 17, 7, 24, Math.PI / 4);
-  mesh(box, stone, 0, 9.5, -2, 26, 19, 3);
-  mesh(roof, stone, 0, 22, -2, 19, 6, 2.2, Math.PI / 4);
-  mesh(box, gold, 0, 13.5, -3.7, 18, 7.5, 0.4);
-  for (const x of [-6, 0, 6]) mesh(box, shadow, x, 4, -3.7, 3.4, 6.5, 0.4);
-  mesh(new THREE.CylinderGeometry(6, 6, 6, 8), stone, 0, 26, 22);
-  mesh(new THREE.SphereGeometry(6, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2), tile, 0, 29, 22);
-  return g;
+  void box;
+  const m = vcMats(THREE);
+  return churchModel(THREE).build(m.vc, m.lit);
 }
 
 /** Hoover Tower: a tall sandstone shaft, the open belfry and the red dome; floodlit, its belfry glows at night. */
 function makeHoover(THREE: Three, box: T.BoxGeometry, lit = false) {
-  const g = new THREE.Group();
-  const stone = new THREE.MeshLambertMaterial({ color: 0xe0c49a, emissive: lit ? 0x5a4428 : 0x000000 });
-  const dark = lit ? new THREE.MeshBasicMaterial({ color: 0xffe0a0 }) : new THREE.MeshLambertMaterial({ color: 0x4a3a2c });
-  const tile = new THREE.MeshLambertMaterial({ color: 0xb4553a, emissive: lit ? 0x6a2410 : 0x000000 });
-  const add = (geo: T.BufferGeometry, m: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
-    const o = new THREE.Mesh(geo, m);
-    o.position.set(x, y, z);
-    o.scale.set(sx, sy, sz);
-    g.add(o);
-  };
-  add(box, stone, 0, 6, 0, 16, 12, 16);
-  add(box, stone, 0, 26, 0, 10, 40, 10);
-  for (const [x, z, sx, sz] of [[0, 5.05, 7, 0.2], [0, -5.05, 7, 0.2], [5.05, 0, 0.2, 7], [-5.05, 0, 0.2, 7]]) add(box, dark, x, 48, z, sx, 6, sz);
-  add(box, stone, 0, 51.5, 0, 10.6, 1.2, 10.6);
-  add(new THREE.SphereGeometry(1, 14, 8, 0, Math.PI * 2, 0, Math.PI / 2), tile, 0, 52, 0, 4.6, 5.5, 4.6);
-  add(box, stone, 0, 58.5, 0, 1.2, 2.5, 1.2);
-  // a red warning light on the very top
-  if (lit) add(box, new THREE.MeshBasicMaterial({ color: 0xff3a2a }), 0, 60.2, 0, 0.6, 0.6, 0.6);
-  return g;
+  void box;
+  const m = vcMats(THREE);
+  return hooverTower(THREE, lit).build(m.vc, m.lit);
 }
 
 /** A sandstone campus building with a red tile hip roof. */
 function makeHall(THREE: Three, box: T.BoxGeometry, roof: T.BufferGeometry, mats: { stone: T.Material; tile: T.Material; dark: T.Material }, w: number, d: number, h: number) {
-  const g = new THREE.Group();
-  const body = new THREE.Mesh(box, mats.stone);
-  body.scale.set(w, h, d);
-  body.position.y = h / 2;
-  const top = new THREE.Mesh(roof, mats.tile);
-  top.scale.set(w * 0.72, 4, d * 0.72);
-  top.rotation.y = Math.PI / 4;
-  top.position.y = h + 2;
-  g.add(body, top);
-  for (let x = -w / 2 + 3; x <= w / 2 - 3; x += 4) {
-    for (const side of [-1, 1]) {
-      const win = new THREE.Mesh(box, mats.dark);
-      win.scale.set(1.6, h * 0.4, 0.2);
-      win.position.set(x, h * 0.5, (side * d) / 2);
-      g.add(win);
-    }
-  }
-  return g;
+  void box;
+  void roof;
+  // (after dark, given lit windows: a basic material for them, most of them lit)
+  const lit = (mats.dark as T.MeshBasicMaterial).isMeshBasicMaterial ? (mats.dark as T.MeshBasicMaterial).color.getHex() : undefined;
+  const mk = modelKit(THREE);
+  hallModel(THREE, mk, w, d, h, w > 14, lit);
+  const m = vcMats(THREE);
+  return mk.build(m.vc, m.lit);
 }
 
 /** A Holstein's spotted hide and the rest of its colors. */
@@ -236,18 +194,31 @@ export function makeStatue(THREE: Three, geo: { box: T.BoxGeometry; ball: T.Sphe
     return m;
   };
   const w = r * 1.45;
-  add(geo.box, stone, 0, 0.7, 0, w, 1.4, w);
-  add(geo.box, stone, 0, 1.45, 0, w + 0.2, 0.12, w + 0.2);
-  // seated on a rock, leaning forward with his chin on his right hand and his left forearm across his knee
-  add(geo.box, bronze, 0, 1.8, -0.15, 0.9, 0.6, 0.8);
+  // the plinth: a stepped base, the die, its cornice, a bronze plaque on the front
+  const dark = new THREE.MeshLambertMaterial({ color: 0xb59c74, emissive: 0x241a0c });
+  add(geo.box, dark, 0, 0.12, 0, w + 0.3, 0.24, w + 0.3);
+  add(geo.box, stone, 0, 0.75, 0, w, 1.1, w);
+  add(geo.box, dark, 0, 1.33, 0, w + 0.14, 0.08, w + 0.14);
+  add(geo.box, stone, 0, 1.45, 0, w + 0.2, 0.14, w + 0.2);
+  add(geo.box, bronze, 0, 0.8, w / 2 + 0.01, w * 0.45, 0.32, 0.02);
+  // The Thinker: seated on a rock, leaning forward with his chin on his right hand and his left forearm across his
+  // knee; rounded limbs, his back bowed, his feet planted on the rock's ledge
+  add(geo.ball, bronze, 0, 1.78, -0.15, 0.55, 0.32, 0.5);
+  add(geo.box, bronze, 0, 1.62, 0.32, 0.9, 0.22, 0.4);
   for (const sx of [-1, 1]) {
-    add(geo.box, bronze, sx * 0.2, 2.1, 0.25, 0.3, 0.26, 0.85);
-    add(geo.box, bronze, sx * 0.2, 1.78, 0.62, 0.24, 0.66, 0.26);
+    add(geo.ball, bronze, sx * 0.2, 2.1, 0.22, 0.17, 0.15, 0.48);
+    add(geo.ball, bronze, sx * 0.2, 2.06, 0.62, 0.15, 0.15, 0.15);
+    add(geo.ball, bronze, sx * 0.21, 1.8, 0.66, 0.12, 0.34, 0.13, 0.12);
+    add(geo.box, bronze, sx * 0.21, 1.48, 0.76, 0.15, 0.08, 0.3);
   }
-  add(geo.box, bronze, 0, 2.75, 0.05, 0.62, 1.05, 0.42, 0.45);
-  add(geo.ball, bronze, 0.02, 3.28, 0.42, 0.22, 0.25, 0.22);
-  add(geo.box, bronze, 0.2, 2.75, 0.38, 0.14, 0.62, 0.14, -0.2);
-  add(geo.box, bronze, -0.25, 2.42, 0.45, 0.14, 0.14, 0.62, 0.1);
+  add(geo.ball, bronze, 0, 2.66, 0.02, 0.33, 0.5, 0.25, 0.45);
+  add(geo.ball, bronze, 0, 2.9, -0.04, 0.36, 0.22, 0.24, 0.5);
+  add(geo.ball, bronze, 0.02, 3.2, 0.38, 0.17, 0.2, 0.18, 0.3);
+  add(geo.ball, bronze, 0.2, 2.78, 0.36, 0.08, 0.34, 0.08, -0.2);
+  add(geo.ball, bronze, 0.18, 2.96, 0.42, 0.08, 0.1, 0.09);
+  add(geo.ball, bronze, -0.24, 2.48, 0.42, 0.08, 0.08, 0.34, 0.1);
+  add(geo.ball, bronze, 0.27, 2.62, 0.08, 0.1, 0.3, 0.1, 0.6);
+  add(geo.ball, bronze, -0.3, 2.62, 0.08, 0.1, 0.28, 0.1, 0.4);
   // the spotlight: a soft cone down onto him, and the pool it throws round the plinth
   const beam = new THREE.Mesh(geo.cone, new THREE.MeshBasicMaterial({ color: 0xfff1c4, transparent: true, opacity: 0.1, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
   beam.scale.set(2.6, 8, 2.6);
@@ -262,8 +233,10 @@ export function makeStatue(THREE: Three, geo: { box: T.BoxGeometry; ball: T.Sphe
 }
 
 /** A round sandstone planter `r` meters across the middle, with a little tree and some flowers in it. */
-export function makePlanter(THREE: Three, geo: { ball: T.SphereGeometry; wheel: T.CylinderGeometry }, r: number, rand: () => number) {
+export function makePlanter(THREE: Three, geo0: { ball: T.SphereGeometry; wheel: T.CylinderGeometry }, r: number, rand: () => number) {
   const g = new THREE.Group();
+  // (its many leaves and flowers on a lower-poly ball than the karts')
+  const geo = { ...geo0, ball: new THREE.SphereGeometry(1, 8, 6) };
   const stone = new THREE.MeshLambertMaterial({ color: 0xe2c79c });
   const add = (geom: T.BufferGeometry, mat: T.Material, x: number, y: number, z: number, sx: number, sy: number, sz: number) => {
     const m = new THREE.Mesh(geom, mat);
@@ -276,17 +249,29 @@ export function makePlanter(THREE: Three, geo: { ball: T.SphereGeometry; wheel: 
   add(new THREE.CylinderGeometry(1, 0.86, 1, 20), stone, 0, 0.45, 0, r, 0.9, r);
   add(geo.wheel, stone, 0, 0.92, 0, r * 1.06, 0.12, r * 1.06);
   add(geo.wheel, new THREE.MeshLambertMaterial({ color: 0x4a3423 }), 0, 0.95, 0, r * 0.9, 0.06, r * 0.9);
-  // flowers round the edge and a young oak in the middle
+  // (bands round the bowl, and the drip of shadow under its lip)
+  add(geo.wheel, new THREE.MeshLambertMaterial({ color: 0xcfb284 }), 0, 0.25, 0, r * 0.91, 0.1, r * 0.91);
+  add(geo.wheel, new THREE.MeshLambertMaterial({ color: 0xcfb284 }), 0, 0.68, 0, r * 0.97, 0.08, r * 0.97);
+  // flowers in clumps round the edge, trailing ivy over the lip, and a young oak in the middle
   const bloom = [0xe8486a, 0xf6d24a, 0xf3f0ea, 0xb04ad8][Math.floor(rand() * 4)];
   const flower = new THREE.MeshLambertMaterial({ color: bloom });
-  const leaf = new THREE.MeshLambertMaterial({ color: 0x4f8a3c, flatShading: true });
-  for (let k = 0; k < 9; k++) {
-    const a = (k / 9) * Math.PI * 2 + rand() * 0.3;
-    add(geo.ball, k % 3 ? leaf : flower, Math.cos(a) * r * 0.66, 1.05, Math.sin(a) * r * 0.66, 0.26, 0.2, 0.26);
+  const leaf = new THREE.MeshLambertMaterial({ color: 0x4f8a3c });
+  const ivy = new THREE.MeshLambertMaterial({ color: 0x3a6a2e });
+  for (let k = 0; k < 14; k++) {
+    const a = (k / 14) * Math.PI * 2 + rand() * 0.3;
+    add(geo.ball, leaf, Math.cos(a) * r * 0.68, 1.04, Math.sin(a) * r * 0.68, 0.24, 0.18, 0.24);
+    if (k % 2) add(geo.ball, flower, Math.cos(a + 0.2) * r * 0.7, 1.16, Math.sin(a + 0.2) * r * 0.7, 0.1, 0.08, 0.1);
+    if (k % 3 === 0) add(geo.ball, ivy, Math.cos(a) * r * 1.0, 0.75, Math.sin(a) * r * 1.0, 0.12, 0.3, 0.12);
   }
-  add(geo.wheel, new THREE.MeshLambertMaterial({ color: 0x6b4f37 }), 0, 1.7, 0, 0.12, 1.6, 0.12);
+  const bark = new THREE.MeshLambertMaterial({ color: 0x6b4f37 });
+  add(geo.wheel, bark, 0, 1.7, 0, 0.12, 1.6, 0.12);
+  add(geo.wheel, bark, 0.15, 2.4, 0, 0.05, 0.6, 0.05).rotation.z = -0.6;
+  add(geo.wheel, bark, -0.12, 2.5, 0.05, 0.05, 0.6, 0.05).rotation.z = 0.6;
+  const crown = new THREE.MeshLambertMaterial({ color: 0x5a9442 });
   add(geo.ball, leaf, 0, 2.9, 0, r * 0.7, r * 0.6, r * 0.7);
-  add(geo.ball, leaf, r * 0.25, 3.4, -r * 0.1, r * 0.45, r * 0.4, r * 0.45);
+  add(geo.ball, crown, r * 0.25, 3.4, -r * 0.1, r * 0.45, r * 0.4, r * 0.45);
+  add(geo.ball, crown, -r * 0.3, 3.2, r * 0.2, r * 0.42, r * 0.38, r * 0.42);
+  add(geo.ball, leaf, r * 0.1, 3.0, r * 0.35, r * 0.4, r * 0.35, r * 0.4);
   return g;
 }
 
@@ -404,7 +389,7 @@ export function makeBike(THREE: Three, geo: { box: T.BoxGeometry; ball: T.Sphere
     });
   };
   pedal(rand() * Math.PI * 2);
-  return { g, wheels, pedal };
+  return { g, wheels, pedal, cranks, legs };
 }
 
 /**
@@ -642,7 +627,7 @@ export function makeGolfer(THREE: Three, geo: { box: T.BoxGeometry; ball: T.Sphe
     // the shoulders turn with it
     torso.rotation.y = a * 0.25;
   };
-  return { g, legs, arms: arms.children as T.Group[], swing };
+  return { g, legs, arms: arms.children as T.Group[], swing, moving: [swingArms, torso] as T.Object3D[] };
 }
 
 /**
@@ -753,6 +738,100 @@ export function makePin(THREE: Three, geo: { box: T.BoxGeometry; wheel: T.Cylind
   flag.add(sheet);
   g.add(flag);
   return { g, flag };
+}
+
+/**
+ * Flagsticks' flags (makePin's `flag` groups) drawn as one mesh, their cloths in one texture, not a draw and a texture
+ * each: the flag groups stay where they are (empty now) to be waved as ever, and tick() then moves each cloth to its
+ * group's place. Call it after the groups are waved each frame.
+ */
+export function flagBatch(THREE: Three, scene: T.Scene, flags: T.Group[]) {
+  const sheets = flags.map((f) => f.children.find((c): c is T.Mesh => (c as T.Mesh).isMesh && !!((c as T.Mesh).material as T.MeshLambertMaterial).map));
+  const list = flags.flatMap((f, i) => (sheets[i] ? [{ f, sheet: sheets[i]! }] : []));
+  if (list.length < 2) return null;
+  // (each cloth in a cell of the atlas, its edges run out into a border so the smaller mipmaps do not bleed between them)
+  const W = 64;
+  const H = 48;
+  const PAD = 4;
+  const cols = 8;
+  const rows = Math.ceil(list.length / cols);
+  const cw = W + 2 * PAD;
+  const ch = H + 2 * PAD;
+  const atlas = texture(
+    THREE,
+    canvas(cols * cw, rows * ch, (g) => {
+      list.forEach(({ sheet }, i) => {
+        const img = ((sheet.material as T.MeshLambertMaterial).map!.image ?? null) as CanvasImageSource | null;
+        if (!img) return;
+        const x = (i % cols) * cw;
+        const y = Math.floor(i / cols) * ch;
+        g.drawImage(img, x, y, cw, ch);
+        g.drawImage(img, x + PAD, y + PAD, W, H);
+      });
+    }),
+  );
+  const n = list.length;
+  const pos = new Float32Array(n * 12);
+  const nrm = new Float32Array(n * 12);
+  const uv = new Float32Array(n * 8);
+  const idx: number[] = [];
+  list.forEach((_, i) => {
+    const u0 = ((i % cols) * cw + PAD) / (cols * cw);
+    const u1 = u0 + W / (cols * cw);
+    const v1 = 1 - (Math.floor(i / cols) * ch + PAD) / (rows * ch);
+    const v0 = v1 - H / (rows * ch);
+    // (as PlaneGeometry's corners: top left, top right, bottom left, bottom right)
+    uv.set([u0, v1, u1, v1, u0, v0, u1, v0], i * 8);
+    const b = i * 4;
+    idx.push(b, b + 2, b + 1, b + 2, b + 3, b + 1);
+  });
+  const g = new THREE.BufferGeometry();
+  const posAttr = new THREE.BufferAttribute(pos, 3).setUsage(THREE.DynamicDrawUsage);
+  const nrmAttr = new THREE.BufferAttribute(nrm, 3).setUsage(THREE.DynamicDrawUsage);
+  g.setAttribute('position', posAttr);
+  g.setAttribute('normal', nrmAttr);
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+  g.setIndex(idx);
+  const mat = new THREE.MeshLambertMaterial({ map: atlas, side: THREE.DoubleSide });
+  const mesh = new THREE.Mesh(g, mat);
+  // the cloths' places in their groups, and the groups emptied
+  const local = list.map(({ sheet }) => {
+    sheet.updateMatrix();
+    const m = sheet.matrix.clone();
+    sheet.removeFromParent();
+    return m;
+  });
+  const m = new THREE.Matrix4();
+  const nm = new THREE.Matrix4();
+  const v = new THREE.Vector3();
+  const q = new THREE.Vector3();
+  const corners = [
+    [-0.5, 0.5],
+    [0.5, 0.5],
+    [-0.5, -0.5],
+    [0.5, -0.5],
+  ];
+  const tick = () => {
+    list.forEach(({ f }, i) => {
+      f.updateWorldMatrix(true, false);
+      m.multiplyMatrices(f.matrixWorld, local[i]);
+      nm.copy(m).invert().transpose();
+      v.set(0, 0, 1).transformDirection(nm);
+      for (let c = 0; c < 4; c++) {
+        nrm.set([v.x, v.y, v.z], (i * 4 + c) * 3);
+        q.set(corners[c][0], corners[c][1], 0).applyMatrix4(m);
+        pos.set([q.x, q.y, q.z], (i * 4 + c) * 3);
+      }
+    });
+    posAttr.needsUpdate = true;
+    nrmAttr.needsUpdate = true;
+  };
+  tick();
+  // (the cloths only flutter about their poles: their bounds as they first stand, with a little room)
+  g.computeBoundingSphere();
+  g.boundingSphere!.radius += 2;
+  scene.add(mesh);
+  return { tick };
 }
 
 /** Raked white sand with a soft, lumpy edge: a bunker seen from above. */
@@ -911,21 +990,7 @@ function campus(c: Scenery) {
     const z = oval.z + Math.sin(a) * (oval.rz + 3);
     if (clear(x, z, 1.5)) palms.push({ x, z, hgt: 8 + rand() * 3 });
   }
-  const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.24, 0.38, 1, 7), new THREE.MeshLambertMaterial({ color: 0x9c7b58 }), palms.length);
-  const crowns = new THREE.InstancedMesh(frondGeometry(THREE), new THREE.MeshLambertMaterial({ color: 0x3f8a4c, side: THREE.DoubleSide }), palms.length);
-  palms.forEach((p, i) => {
-    dummy.position.set(p.x, p.hgt / 2, p.z);
-    dummy.scale.set(1, p.hgt, 1);
-    dummy.rotation.set(0, 0, 0);
-    dummy.updateMatrix();
-    trunks.setMatrixAt(i, dummy.matrix);
-    dummy.position.set(p.x, p.hgt + 0.2, p.z);
-    dummy.scale.set(1.1, 1.1, 1.1);
-    dummy.rotation.set(0, i * 1.3, 0);
-    dummy.updateMatrix();
-    crowns.setMatrixAt(i, dummy.matrix);
-  });
-  scene.add(trunks, crowns);
+  palmTrees(THREE, scene, dummy, palms);
 
   // oaks and eucalyptus in the Arboretum, east of Palm Drive
   const oaks: { x: number; z: number; r: number }[] = [];
@@ -942,20 +1007,7 @@ function campus(c: Scenery) {
     const z = Math.sin(a) * dist;
     if (clear(x, z, 4) && Math.hypot(x - LANDMARKS.church.x, z - LANDMARKS.church.z) > 60) oaks.push({ x, z, r: 2.5 + rand() * 3 });
   }
-  const oakTrunk = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.3, 0.45, 1, 6), new THREE.MeshLambertMaterial({ color: 0x6b4f37 }), oaks.length);
-  const oakTop = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 7, 5), new THREE.MeshLambertMaterial({ color: 0x4f7d3a, flatShading: true }), oaks.length);
-  oaks.forEach((o, i) => {
-    dummy.rotation.set(0, i, 0);
-    dummy.position.set(o.x, o.r * 0.6, o.z);
-    dummy.scale.set(1, o.r * 1.2, 1);
-    dummy.updateMatrix();
-    oakTrunk.setMatrixAt(i, dummy.matrix);
-    dummy.position.set(o.x, o.r * 1.5, o.z);
-    dummy.scale.set(o.r * 1.15, o.r * 0.9, o.r * 1.15);
-    dummy.updateMatrix();
-    oakTop.setMatrixAt(i, dummy.matrix);
-  });
-  scene.add(oakTrunk, oakTop);
+  oakTrees(THREE, scene, dummy, oaks);
 
   // landmarks
   const church = makeChurch(THREE, geo.box);
@@ -1010,37 +1062,10 @@ function campus(c: Scenery) {
     scene.add(s);
   }
 
-  // golden foothills all round, and the Dish up on one of them
-  const hillMat = new THREE.MeshLambertMaterial({ color: 0xc8b06a, flatShading: true });
-  const hillGeo = new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
-  for (let a = 0; a < Math.PI * 2; a += Math.PI / 14) {
-    const dist = 560 + rand() * 160;
-    const hill = new THREE.Mesh(hillGeo, hillMat);
-    hill.position.set(-20 + Math.cos(a) * dist, -4, Math.sin(a) * dist);
-    hill.scale.set(110 + rand() * 90, 40 + rand() * 70, 110 + rand() * 90);
-    scene.add(hill);
-  }
-  {
-    const dish = new THREE.Group();
-    const white = new THREE.MeshLambertMaterial({ color: 0xf2f2f0, side: THREE.DoubleSide });
-    const bowl = new THREE.Mesh(new THREE.SphereGeometry(14, 18, 8, 0, Math.PI * 2, 0, 0.9), white);
-    bowl.rotation.x = -2.2;
-    bowl.position.y = 26;
-    const stand = new THREE.Mesh(geo.box, white);
-    stand.scale.set(4, 22, 4);
-    stand.position.y = 11;
-    dish.add(bowl, stand);
-    dish.position.set(LANDMARKS.dish.x, 20, LANDMARKS.dish.z);
-    scene.add(dish);
-    const hill = new THREE.Mesh(hillGeo, hillMat);
-    hill.position.set(LANDMARKS.dish.x, -6, LANDMARKS.dish.z);
-    hill.scale.set(120, 30, 120);
-    scene.add(hill);
-  }
-  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(30, 32), new THREE.MeshBasicMaterial({ color: 0xfff0c8, fog: false }));
-  sunDisc.position.set(320, 230, -900);
-  sunDisc.lookAt(0, 0, 0);
-  scene.add(sunDisc);
+  // the Dish up in the foothills (the hills on the horizon all round are the sky's: see sky.ts), and the rest of
+  // campus: see campus.ts
+  foothills(c, 0, 0, LANDMARKS.dish);
+  campusExtras(c);
 }
 
 /** Whether (x, z) is inside the loop the centerline makes. */
@@ -1073,46 +1098,30 @@ function instances(THREE: Three, scene: T.Scene, dummy: T.Object3D, geo: T.Buffe
 /** Oaks scattered where there is room. */
 function oaks(c: Scenery, spots: { x: number; z: number; r: number }[]) {
   const { THREE, scene, dummy } = c;
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.3, 0.45, 1, 6), new THREE.MeshLambertMaterial({ color: 0x6b4f37 }), spots.map((o, i) => ({ x: o.x, y: o.r * 0.6, z: o.z, sx: 1, sy: o.r * 1.2, sz: 1, ry: i })));
-  instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 7, 5), new THREE.MeshLambertMaterial({ color: 0x4f7d3a, flatShading: true }), spots.map((o, i) => ({ x: o.x, y: o.r * 1.5, z: o.z, sx: o.r * 1.15, sy: o.r * 0.9, sz: o.r * 1.15, ry: i })));
+  oakTrees(THREE, scene, dummy, spots);
 }
 
 /** Golden foothills in a ring 560-720 m round (cx, cz), with the Dish up on one of them unless `dish` is null. */
 function foothills(c: Scenery, cx: number, cz: number, dish: { x: number; z: number } | null) {
-  const { THREE, scene, geo, rand } = c;
-  const hillMat = new THREE.MeshLambertMaterial({ color: 0xc8b06a, flatShading: true });
-  const hillGeo = new THREE.SphereGeometry(1, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
-  for (let a = 0; a < Math.PI * 2; a += Math.PI / 14) {
-    const dist = 560 + rand() * 160;
-    const hill = new THREE.Mesh(hillGeo, hillMat);
-    hill.position.set(cx + Math.cos(a) * dist, -4, cz + Math.sin(a) * dist);
-    hill.scale.set(110 + rand() * 90, 40 + rand() * 70, 110 + rand() * 90);
-    scene.add(hill);
-  }
+  // (the hills on the horizon all round are the sky's: see sky.ts)
+  void cx;
+  void cz;
   if (!dish) return;
-  const white = new THREE.MeshLambertMaterial({ color: 0xf2f2f0, side: THREE.DoubleSide });
-  const d = new THREE.Group();
-  const bowl = new THREE.Mesh(new THREE.SphereGeometry(14, 18, 8, 0, Math.PI * 2, 0, 0.9), white);
-  bowl.rotation.x = -2.2;
-  bowl.position.y = 26;
-  const stand = new THREE.Mesh(geo.box, white);
-  stand.scale.set(4, 22, 4);
-  stand.position.y = 11;
-  d.add(bowl, stand);
-  d.position.set(dish.x, 20, dish.z);
-  scene.add(d);
-  const hill = new THREE.Mesh(hillGeo, hillMat);
-  hill.position.set(dish.x, -6, dish.z);
-  hill.scale.set(120, 30, 120);
-  scene.add(hill);
+  const { THREE, scene } = c;
+  const m = vcMats(THREE);
+  scene.add(new THREE.Mesh(hill(THREE, dish.x, dish.z, 150, 34), m.vc));
+  const mk = modelKit(THREE);
+  mk.place(dish.x, 31, dish.z, 2.4);
+  dishTelescope(THREE, mk, 0.8);
+  scene.add(mk.build(m.vc, m.lit));
 }
 
 /**
  * Lake Lagunita: water fills the loop, reeds and lily pads line the shore, sailboats and ducks are out on the water,
  * the boathouse stands on its peninsula inside the hairpin, oaks and foothills all round, and the sun is going down.
  */
-function lake(c: Scenery) {
-  const { THREE, scene, t, geo, mats, rand, clear, dummy } = c;
+function lake(c: Scenery): SceneryTick {
+  const { THREE, scene, t, geo, rand, clear, dummy } = c;
   let minX = Infinity;
   let maxX = -Infinity;
   let minZ = Infinity;
@@ -1165,37 +1174,33 @@ function lake(c: Scenery) {
     }),
   );
   ripples.wrapS = ripples.wrapT = THREE.RepeatWrapping;
-  scene.add(new THREE.Mesh(waterGeo, new THREE.MeshLambertMaterial({ map: ripples })));
+  // (the evening sky mirrored in it: see skywater.ts)
+  ripples.dispose();
+  scene.add(new THREE.Mesh(waterGeo, skyWater(THREE, SKIES.lake!, 0x1b3a50, 0x3a6474)));
 
-  // reeds and cattails in clumps along the shore, and lily pads just off it
-  const reeds: Parameters<typeof instances>[5] = [];
-  const tops: Parameters<typeof instances>[5] = [];
-  const pads: Parameters<typeof instances>[5] = [];
-  const flowers: Parameters<typeof instances>[5] = [];
+  // reed beds of cattails and rushes along the shore, and lily pads just off it (see lake.ts)
+  const reeds: { x: number; z: number; s: number }[] = [];
+  const pads: { x: number; z: number; s: number }[] = [];
+  const flowers: { x: number; z: number }[] = [];
   for (let s = 0; s < t.length; s += 3.5) {
-    if (rand() < 0.45) continue;
+    if (rand() < 0.4) continue;
     const p = pointAt(t, s, -(t.edge + 1.2 + rand() * 3));
     if (!clear(p.x, p.z, 0.8) || !insideLoop(t, p.x, p.z)) continue;
-    for (let k = 0; k < 3 + Math.floor(rand() * 4); k++) {
-      const x = p.x + (rand() - 0.5) * 2.2;
-      const z = p.z + (rand() - 0.5) * 2.2;
-      const h = 1.3 + rand() * 1.4;
-      reeds.push({ x, y: h / 2, z, sx: 0.09, sy: h, sz: 0.09, rx: (rand() - 0.5) * 0.25 });
-      if (rand() < 0.4) tops.push({ x, y: h * 0.92, z, sx: 0.12, sy: 0.4, sz: 0.12 });
-    }
-    if (rand() < 0.35) {
+    for (let k = 0; k < 2 + Math.floor(rand() * 3); k++) reeds.push({ x: p.x + (rand() - 0.5) * 2.6, z: p.z + (rand() - 0.5) * 2.6, s: 0.8 + rand() * 0.5 });
+    if (rand() < 0.45) {
       const q = pointAt(t, s, -(t.edge + 5 + rand() * 9));
       if (clear(q.x, q.z, 1) && insideLoop(t, q.x, q.z)) {
-        const size = 0.7 + rand() * 0.6;
-        pads.push({ x: q.x, y: 0.01, z: q.z, sx: size, sy: size, sz: size, rx: -Math.PI / 2 });
-        if (rand() < 0.3) flowers.push({ x: q.x + 0.2, y: 0.12, z: q.z, sx: 0.22, sy: 0.16, sz: 0.22 });
+        for (let k = 0; k < 1 + Math.floor(rand() * 4); k++) {
+          const x = q.x + (rand() - 0.5) * 3;
+          const z = q.z + (rand() - 0.5) * 3;
+          pads.push({ x, z, s: 0.5 + rand() * 0.6 });
+          if (rand() < 0.25) flowers.push({ x: x + 0.15, z });
+        }
       }
     }
   }
-  instances(THREE, scene, dummy, new THREE.ConeGeometry(1, 1, 4), new THREE.MeshLambertMaterial({ color: 0x5f7f3a }), reeds);
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(1, 1, 1, 6), new THREE.MeshLambertMaterial({ color: 0x5a3b22 }), tops);
-  instances(THREE, scene, dummy, new THREE.CircleGeometry(1, 10), new THREE.MeshLambertMaterial({ color: 0x4f8f3f, side: THREE.DoubleSide }), pads);
-  instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 8, 6), new THREE.MeshLambertMaterial({ color: 0xf6a8c8 }), flowers);
+  reedBeds(THREE, scene, dummy, reeds);
+  lilyPads(THREE, scene, dummy, pads, flowers);
 
   // somewhere out on the open water, well clear of the road
   const onWater = (margin: number) => {
@@ -1206,71 +1211,27 @@ function lake(c: Scenery) {
     }
     return null;
   };
-  // sailboats with cardinal and white sails
-  const sail = new THREE.BufferGeometry();
-  sail.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 1, 0, 0, 0, 1], 3));
-  sail.computeVertexNormals();
-  const hullMat = new THREE.MeshLambertMaterial({ color: 0xf4f1ea });
-  const mastMat = new THREE.MeshLambertMaterial({ color: 0x3e3128 });
-  const sailMats = [new THREE.MeshLambertMaterial({ color: 0xfafafa, side: THREE.DoubleSide }), new THREE.MeshLambertMaterial({ color: 0xb1282a, side: THREE.DoubleSide })];
+  // sailing dinghies with cardinal and white sails, and mallards paddling about, bobbing
+  const boats: { x: number; z: number }[] = [];
   for (let b = 0; b < 6; b++) {
-    const at = onWater(10);
-    if (!at) break;
-    const boat = new THREE.Group();
-    const hull = new THREE.Mesh(geo.box, hullMat);
-    hull.scale.set(1.4, 0.7, 3.6);
-    hull.position.y = 0.3;
-    const mast = new THREE.Mesh(geo.box, mastMat);
-    mast.scale.set(0.12, 5.2, 0.12);
-    mast.position.set(0, 3, 0.4);
-    const sl = new THREE.Mesh(sail, sailMats[b % 2]);
-    sl.scale.set(1, 4.6, -2.6);
-    sl.position.set(0.05, 0.9, 0.35);
-    boat.add(hull, mast, sl);
-    boat.position.set(at.x, 0, at.z);
-    boat.rotation.y = rand() * Math.PI * 2;
-    scene.add(boat);
+    const at = onWater(12);
+    if (at) boats.push(at);
   }
-  // mallards paddling about
-  const duck = { body: new THREE.MeshLambertMaterial({ color: 0x8a6a4a }), head: new THREE.MeshLambertMaterial({ color: 0x2f7d4a }), beak: new THREE.MeshLambertMaterial({ color: 0xf2a531 }) };
-  for (let n = 0; n < 12; n++) {
+  const ducks: { x: number; z: number }[] = [];
+  for (let n = 0; n < 9; n++) {
     const at = onWater(3);
-    if (!at) break;
-    const d = new THREE.Group();
-    const body = new THREE.Mesh(geo.ball, duck.body);
-    body.scale.set(0.32, 0.22, 0.48);
-    body.position.y = 0.12;
-    const head = new THREE.Mesh(geo.ball, duck.head);
-    head.scale.setScalar(0.17);
-    head.position.set(0, 0.38, 0.36);
-    const beak = new THREE.Mesh(geo.cone, duck.beak);
-    beak.scale.set(0.06, 0.16, 0.06);
-    beak.rotation.x = Math.PI / 2;
-    beak.position.set(0, 0.36, 0.55);
-    d.add(body, head, beak);
-    d.position.set(at.x, 0, at.z);
-    d.rotation.y = rand() * Math.PI * 2;
-    scene.add(d);
+    if (at) ducks.push(at);
   }
+  const life = lakeLife(THREE, scene, boats, ducks, rand);
 
   // the boathouse at the middle of the hairpin, on the peninsula it wraps around
   let apex = 0;
   for (let i = 0; i < t.n; i++) if (t.curv[i] > t.curv[apex]) apex = i;
   const mid = pointAt(t, apex * t.step, 1 / t.curv[apex]);
   if (clear(mid.x, mid.z, 3)) {
-    const wood = new THREE.MeshLambertMaterial({ color: 0x9c6b43 });
-    const roofMat = new THREE.MeshLambertMaterial({ color: 0x2f5d3a });
-    const house = makeHall(THREE, geo.box, geo.roof, { stone: wood, tile: roofMat, dark: mats.dark }, 8, 6, 4.5);
-    house.position.set(mid.x, 0, mid.z);
-    house.rotation.y = headingOf(mid.tx, mid.tz);
-    scene.add(house);
-    const pole = new THREE.Mesh(geo.box, new THREE.MeshLambertMaterial({ color: 0xdddddd }));
-    pole.scale.set(0.15, 9, 0.15);
-    pole.position.set(mid.x + 5, 4.5, mid.z);
-    const flag = new THREE.Mesh(geo.box, new THREE.MeshLambertMaterial({ color: 0x8c1515 }));
-    flag.scale.set(0.05, 1.2, 2);
-    flag.position.set(mid.x + 5, 8.2, mid.z + 1);
-    scene.add(pole, flag);
+    const mk = modelKit(THREE);
+    boathouse(THREE, mk, mid.x, mid.z, headingOf(mid.tx, mid.tz) - Math.PI / 2);
+    scene.add(mk.build(new THREE.MeshLambertMaterial({ vertexColors: true }), new THREE.MeshBasicMaterial({ vertexColors: true })));
   }
 
   // oaks all round outside the loop, and a row of palms behind the dam
@@ -1288,8 +1249,7 @@ function lake(c: Scenery) {
     const p = pointAt(t, s - 40, t.edge + 3);
     if (clear(p.x, p.z, 1.5)) palms.push({ x: p.x, z: p.z, hgt: 9 + rand() * 3 });
   }
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.24, 0.38, 1, 7), new THREE.MeshLambertMaterial({ color: 0x9c7b58 }), palms.map((p) => ({ x: p.x, y: p.hgt / 2, z: p.z, sx: 1, sy: p.hgt, sz: 1 })));
-  instances(THREE, scene, dummy, frondGeometry(THREE), new THREE.MeshLambertMaterial({ color: 0x3f8a4c, side: THREE.DoubleSide }), palms.map((p, i) => ({ x: p.x, y: p.hgt + 0.2, z: p.z, sx: 1.1, sy: 1.1, sz: 1.1, ry: i * 1.3 })));
+  palmTrees(THREE, scene, dummy, palms);
 
   // foothills and the Dish, Hoover Tower off across campus, and the sun going down in the west (+x)
   foothills(c, cx, cz, { x: cx + 160, z: cz - 420 });
@@ -1297,13 +1257,7 @@ function lake(c: Scenery) {
   hoover.position.set(cx - 260, 0, cz + 330);
   hoover.scale.setScalar(1.4);
   scene.add(hoover);
-  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(46, 40), new THREE.MeshBasicMaterial({ color: 0xffa45c, fog: false }));
-  sunDisc.position.set(cx + 820, 70, cz + 120);
-  sunDisc.lookAt(cx, 0, cz);
-  const glow = new THREE.Mesh(new THREE.RingGeometry(46, 96, 40), new THREE.MeshBasicMaterial({ color: 0xffc58a, transparent: true, opacity: 0.35, fog: false, depthWrite: false }));
-  glow.position.copy(sunDisc.position);
-  glow.lookAt(cx, 0, cz);
-  scene.add(sunDisc, glow);
+  return (_race: Race, clock: number) => life.tick(clock);
 }
 
 /** The middle and extent of a course's loop. */
@@ -1335,150 +1289,46 @@ function roomiest(t: Track, p: { x: number; z: number }, radius: number) {
   return best;
 }
 
-/** A white post-and-rail fence round a w by d rectangle centered at (x, z), turned ry. */
-function paddock(c: Scenery, x: number, z: number, w: number, d: number, ry: number, mat: T.Material) {
-  const { THREE, scene, geo } = c;
-  const g = new THREE.Group();
-  for (const [len, px, pz, rot] of [[w, 0, d / 2, 0], [w, 0, -d / 2, 0], [d, w / 2, 0, Math.PI / 2], [d, -w / 2, 0, Math.PI / 2]] as const) {
-    for (const y of [0.55, 1.1]) {
-      const rail = new THREE.Mesh(geo.box, mat);
-      rail.scale.set(len, 0.14, 0.08);
-      rail.position.set(px, y, pz);
-      rail.rotation.y = rot;
-      g.add(rail);
-    }
-    for (let k = -len / 2; k <= len / 2 + 0.01; k += 3) {
-      const post = new THREE.Mesh(geo.box, mat);
-      post.scale.set(0.18, 1.35, 0.18);
-      post.position.set(rot ? px : px + k, 0.67, rot ? pz + k : pz);
-      g.add(post);
-    }
-  }
-  g.position.set(x, 0, z);
-  g.rotation.y = ry;
-  scene.add(g);
-}
-
-/** A horse, grazing or with its head up. */
-function horse(c: Scenery, x: number, z: number, ry: number, coat: T.Material, mane: T.Material, grazing: boolean) {
-  const { THREE, scene, geo } = c;
-  const g = new THREE.Group();
-  const body = new THREE.Mesh(geo.box, coat);
-  body.scale.set(0.8, 0.85, 2);
-  body.position.y = 1.45;
-  g.add(body);
-  for (const [lx, lz] of [[-0.28, 0.75], [0.28, 0.75], [-0.28, -0.75], [0.28, -0.75]]) {
-    const leg = new THREE.Mesh(geo.box, coat);
-    leg.scale.set(0.18, 1.1, 0.2);
-    leg.position.set(lx, 0.55, lz);
-    g.add(leg);
-  }
-  const neck = new THREE.Group();
-  const n = new THREE.Mesh(geo.box, coat);
-  n.scale.set(0.38, 1.1, 0.5);
-  n.position.y = 0.5;
-  const head = new THREE.Mesh(geo.box, coat);
-  head.scale.set(0.34, 0.36, 0.8);
-  head.position.set(0, 1.05, 0.25);
-  const m = new THREE.Mesh(geo.box, mane);
-  m.scale.set(0.12, 1.1, 0.2);
-  m.position.set(0, 0.55, -0.22);
-  neck.add(n, head, m);
-  neck.position.set(0, 1.6, 0.95);
-  neck.rotation.x = grazing ? 2.2 : 0.35;
-  const tail = new THREE.Mesh(geo.box, mane);
-  tail.scale.set(0.14, 0.9, 0.14);
-  tail.position.set(0, 1.25, -1.05);
-  tail.rotation.x = 0.35;
-  g.add(neck, tail);
-  g.position.set(x, 0, z);
-  g.rotation.y = ry;
-  scene.add(g);
-}
-
 /**
  * The Red Barn: the big red barn and its silo along the front straight, white-railed paddocks with horses grazing,
  * the riding arena inside the hairpin, a windmill, a tractor, round bales stacked up, eucalyptus windbreaks and the
  * Dish up in the foothills.
  */
-function barn(c: Scenery) {
-  const { THREE, scene, t, geo, mats, rand, clear, dummy } = c;
+function barn(c: Scenery): SceneryTick {
+  const { THREE, scene, t, rand, clear, dummy } = c;
   const { cx, cz, rx, rz } = bounds(t);
   const K = 0.9;
   const at = (e: number, n: number) => fromMap(e * K, n * K);
-  const red = new THREE.MeshLambertMaterial({ color: 0xa3322a });
   const white = new THREE.MeshLambertMaterial({ color: 0xf3efe4 });
-  const shingle = new THREE.MeshLambertMaterial({ color: 0x4a4646 });
-  const straw = new THREE.MeshLambertMaterial({ color: 0xdcb553 });
-  const prism = new THREE.CylinderGeometry(1, 1, 1, 3);
-  prism.rotateY(Math.PI / 2);
-  prism.rotateZ(Math.PI / 2);
+  const vm = vcMats(THREE);
+  const farm = modelKit(THREE);
 
-  // the barn itself, set back from the front straight and facing the road
+  // the barn itself, set back from the front straight and facing the road; the silo beside it (see barn.ts)
   const front = pointAt(t, 110, -(t.edge + 24));
-  const b = new THREE.Group();
-  const walls = new THREE.Mesh(geo.box, red);
-  walls.scale.set(24, 9, 15);
-  walls.position.y = 4.5;
-  const roof = new THREE.Mesh(prism, shingle);
-  roof.scale.set(25, 5.5, 9.4);
-  roof.position.y = 9 + 2.6;
-  b.add(walls, roof);
-  // white trim: corners, the big doors with their cross braces, and the hayloft door above
-  for (const side of [-1, 1]) {
-    const corner = new THREE.Mesh(geo.box, white);
-    corner.scale.set(0.5, 9, 0.5);
-    corner.position.set(side * 12, 4.5, 7.55);
-    b.add(corner);
-  }
-  const door = new THREE.Group();
-  const frame = new THREE.Mesh(geo.box, white);
-  frame.scale.set(8, 6.4, 0.2);
-  const panel = new THREE.Mesh(geo.box, red);
-  panel.scale.set(7.2, 5.8, 0.3);
-  door.add(frame, panel);
-  for (const side of [-1, 1]) {
-    for (const lean of [-1, 1]) {
-      const brace = new THREE.Mesh(geo.box, white);
-      brace.scale.set(0.35, 6.6, 0.4);
-      brace.position.x = side * 1.9;
-      brace.rotation.z = lean * 0.55;
-      door.add(brace);
-    }
-  }
-  door.position.set(0, 3.2, 7.5);
-  const loft = new THREE.Mesh(geo.box, white);
-  loft.scale.set(3.2, 2.4, 0.3);
-  loft.position.set(0, 8.6, 7.5);
-  const loftIn = new THREE.Mesh(geo.box, mats.dark);
-  loftIn.scale.set(2.6, 1.9, 0.35);
-  loftIn.position.set(0, 8.6, 7.5);
-  // a cupola on the ridge with a weathervane
-  const cupola = new THREE.Mesh(geo.box, white);
-  cupola.scale.set(2.4, 2.2, 2.4);
-  cupola.position.y = 15.4;
-  const cap = new THREE.Mesh(geo.roof, shingle);
-  cap.scale.set(2.4, 1.6, 2.4);
-  cap.rotation.y = Math.PI / 4;
-  cap.position.y = 17.3;
-  const vane = new THREE.Mesh(geo.box, mats.dark);
-  vane.scale.set(0.08, 2, 0.08);
-  vane.position.y = 18.6;
-  const arrow = new THREE.Mesh(geo.box, mats.dark);
-  arrow.scale.set(1.6, 0.1, 0.1);
-  arrow.position.y = 19.2;
-  b.add(door, loft, loftIn, cupola, cap, vane, arrow);
-  b.position.set(front.x, 0, front.z);
-  b.rotation.y = headingOf(-front.tz, front.tx);
-  scene.add(b);
-
-  // the silo beside it, and round bales stacked up by the door
+  farm.place(front.x, 0, front.z, headingOf(-front.tz, front.tx));
+  redBarn(THREE, farm);
   const siloAt = pointAt(t, 72, -(t.edge + 22));
-  const silo = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.2, 18, 16), new THREE.MeshLambertMaterial({ color: 0x9fb0b6 }));
-  silo.position.set(siloAt.x, 9, siloAt.z);
-  const dome = new THREE.Mesh(new THREE.SphereGeometry(3.25, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2), new THREE.MeshLambertMaterial({ color: 0xc9d2d4 }));
-  dome.position.set(siloAt.x, 18, siloAt.z);
-  scene.add(silo, dome);
+  silo(farm, siloAt.x, siloAt.z);
+
+  // round bales stacked up by the door, their straw wrapped round
+  const straw = new THREE.MeshLambertMaterial({
+    map: texture(
+      THREE,
+      canvas(64, 64, (g) => {
+        g.fillStyle = '#d8b450';
+        g.fillRect(0, 0, 64, 64);
+        for (let i = 0; i < 90; i++) {
+          g.strokeStyle = i % 3 ? 'rgba(150,110,30,0.45)' : 'rgba(255,240,170,0.6)';
+          g.lineWidth = 1;
+          g.beginPath();
+          const y = Math.random() * 64;
+          g.moveTo(0, y);
+          g.lineTo(64, y + (Math.random() - 0.5) * 6);
+          g.stroke();
+        }
+      }),
+    ),
+  });
   const bales: { x: number; y: number; z: number; sx: number; sy: number; sz: number; rx?: number; ry?: number }[] = [];
   const stack = pointAt(t, 150, -(t.edge + 13));
   const along = headingOf(stack.tx, stack.tz);
@@ -1488,52 +1338,22 @@ function barn(c: Scenery) {
       bales.push({ x: stack.x + stack.tx * off, y: 1.2 + row * 2.1, z: stack.z + stack.tz * off, sx: 1.2, sy: 1.5, sz: 1.2, rx: Math.PI / 2, ry: along + Math.PI / 2 });
     }
   }
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(1, 1, 1, 14), straw, bales);
+  instances(THREE, scene, dummy, new THREE.CylinderGeometry(1, 1, 1, 18), straw, bales);
 
   // a green tractor parked by the barn
   const tractorAt = pointAt(t, 60, -(t.edge + 9));
-  const tractor = new THREE.Group();
-  const green = new THREE.MeshLambertMaterial({ color: 0x2f7a3a });
-  const yellow = new THREE.MeshLambertMaterial({ color: 0xf2c230 });
-  const hood = new THREE.Mesh(geo.box, green);
-  hood.scale.set(1.3, 1.2, 2.6);
-  hood.position.set(0, 1.4, 0.6);
-  const cab = new THREE.Mesh(geo.box, mats.dark);
-  cab.scale.set(1.7, 1.6, 1.5);
-  cab.position.set(0, 2.6, -0.9);
-  const top = new THREE.Mesh(geo.box, green);
-  top.scale.set(1.9, 0.15, 1.7);
-  top.position.set(0, 3.45, -0.9);
-  tractor.add(hood, cab, top);
-  for (const side of [-1, 1]) {
-    const big = new THREE.Mesh(geo.wheel, mats.dark);
-    big.scale.set(1.5, 0.55, 1.5);
-    big.rotation.z = Math.PI / 2;
-    big.position.set(side * 1.25, 1.5, -1);
-    const hub = new THREE.Mesh(geo.wheel, yellow);
-    hub.scale.set(0.8, 0.58, 0.8);
-    hub.rotation.z = Math.PI / 2;
-    hub.position.copy(big.position);
-    const small = new THREE.Mesh(geo.wheel, mats.dark);
-    small.scale.set(0.75, 0.4, 0.75);
-    small.rotation.z = Math.PI / 2;
-    small.position.set(side * 0.95, 0.75, 1.5);
-    tractor.add(big, hub, small);
-  }
-  tractor.position.set(tractorAt.x, 0, tractorAt.z);
-  tractor.rotation.y = headingOf(tractorAt.tx, tractorAt.tz) + 0.4;
-  scene.add(tractor);
+  tractor(farm, tractorAt.x, tractorAt.z, headingOf(tractorAt.tx, tractorAt.tz) + 0.4);
 
   // paddocks inside the loop with horses grazing
-  const coats = [0x7a4a2a, 0xa0522d, 0x2a2420, 0xe8e2d6, 0x5c3a24, 0xb98b5e].map((color) => new THREE.MeshLambertMaterial({ color }));
-  const manes = [new THREE.MeshLambertMaterial({ color: 0x1f1a17 }), new THREE.MeshLambertMaterial({ color: 0xe9dcc0 })];
+  const coats = [0x7a4a2a, 0xa0522d, 0x2a2420, 0xe8e2d6, 0x5c3a24, 0xb98b5e];
+  const manes = [0x1f1a17, 0xe9dcc0];
   const fits = (x: number, z: number, w: number, d: number) => [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]].every(([a, b2]) => clear(x + (a * w) / 2, z + (b2 * d) / 2, 3));
   for (const [e, n, w, d] of [[130, -60, 60, 44], [-110, -50, 70, 50], [-20, -30, 44, 34]] as const) {
     const p = at(e, n);
     if (!fits(p.x, p.z, w, d)) continue;
-    paddock(c, p.x, p.z, w, d, 0, white);
+    paddockFence(farm, p.x, p.z, w, d, 0);
     for (let k = 0; k < 3; k++) {
-      horse(c, p.x + (rand() - 0.5) * (w - 10), p.z + (rand() - 0.5) * (d - 10), rand() * Math.PI * 2, coats[Math.floor(rand() * coats.length)], manes[k % 2], rand() < 0.6);
+      horse(farm, p.x + (rand() - 0.5) * (w - 10), p.z + (rand() - 0.5) * (d - 10), rand() * Math.PI * 2, coats[Math.floor(rand() * coats.length)], manes[k % 2], rand() < 0.6, rand() < 0.4);
     }
   }
 
@@ -1542,66 +1362,36 @@ function barn(c: Scenery) {
   const ar = Math.min(20, arena.room - t.edge - 3);
   if (ar > 9) {
     const az = ar * 0.7;
-    const sand = new THREE.Mesh(new THREE.CircleGeometry(1, 40), new THREE.MeshLambertMaterial({ color: 0xd9c49a }));
+    const sand = new THREE.Mesh(new THREE.CircleGeometry(1, 40), new THREE.MeshLambertMaterial({ map: bunkerTexture(THREE, 5) }));
     sand.rotation.x = -Math.PI / 2;
     sand.scale.set(ar, az, 1);
     sand.position.set(arena.x, 0.03, arena.z);
+    sand.userData.flat = true;
     scene.add(sand);
-    const posts: { x: number; y: number; z: number; sx: number; sy: number; sz: number }[] = [];
-    for (let a = 0; a < Math.PI * 2; a += Math.PI / 18) posts.push({ x: arena.x + Math.cos(a) * ar, y: 0.7, z: arena.z + Math.sin(a) * az, sx: 0.2, sy: 1.4, sz: 0.2 });
-    instances(THREE, scene, dummy, geo.box, white, posts);
+    farm.place();
+    for (let a = 0; a < Math.PI * 2; a += Math.PI / 18) farm.box(0xe8e2d4, arena.x + Math.cos(a) * ar, 0.7, arena.z + Math.sin(a) * az, 0.2, 1.4, 0.2);
     const rail = new THREE.Mesh(new THREE.TorusGeometry(1, 0.012, 4, 48), white);
     rail.rotation.x = Math.PI / 2;
     rail.scale.set(ar, az, 6);
     rail.position.set(arena.x, 1.15, arena.z);
     scene.add(rail);
-    const stripe = new THREE.MeshLambertMaterial({ color: 0xc8352b });
     for (const [ox, oz] of [[-ar * 0.35, 0], [ar * 0.3, az * 0.2]]) {
-      const pole = new THREE.Mesh(geo.box, stripe);
-      pole.scale.set(4, 0.18, 0.18);
-      pole.position.set(arena.x + ox, 1, arena.z + oz);
-      scene.add(pole);
-      for (const side of [-1, 1]) {
-        const stand = new THREE.Mesh(geo.box, white);
-        stand.scale.set(0.25, 1.6, 0.25);
-        stand.position.set(arena.x + ox + side * 2, 0.8, arena.z + oz);
-        scene.add(stand);
-      }
+      for (let k = 0; k < 4; k++) farm.box(k % 2 ? 0xf3efe4 : 0xc8352b, arena.x + ox - 1.5 + k, 1, arena.z + oz, 1, 0.16, 0.16);
+      for (const side of [-1, 1]) farm.box(0xf3efe4, arena.x + ox + side * 2, 0.8, arena.z + oz, 0.25, 1.6, 0.25);
     }
-    horse(c, arena.x + 3, arena.z - 4, 1.2, coats[3], manes[0], false);
+    horse(farm, arena.x + 3, arena.z - 4, 1.2, coats[3], manes[0], false, false);
   }
 
-  // a windmill out in the field
+  // a windmill out in the field, its fan turning
   const mill = at(-175, -10);
+  let fan: T.Group | null = null;
   if (clear(mill.x, mill.z, 6)) {
-    const steel = new THREE.MeshLambertMaterial({ color: 0x8b9196 });
-    const g = new THREE.Group();
-    for (const [a, b2] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
-      const leg = new THREE.Mesh(geo.box, steel);
-      leg.scale.set(0.16, 15, 0.16);
-      leg.position.set(a * 0.9, 7.4, b2 * 0.9);
-      leg.rotation.set(-b2 * 0.1, 0, a * 0.1);
-      g.add(leg);
-    }
-    const wheel = new THREE.Group();
-    for (let k = 0; k < 12; k++) {
-      const blade = new THREE.Mesh(geo.box, steel);
-      blade.scale.set(0.5, 2.6, 0.06);
-      blade.position.y = 1.6;
-      const arm = new THREE.Group();
-      arm.add(blade);
-      arm.rotation.z = (k / 12) * Math.PI * 2;
-      wheel.add(arm);
-    }
-    wheel.position.set(0, 15.2, 0.6);
-    const tail = new THREE.Mesh(geo.box, red);
-    tail.scale.set(0.06, 1.6, 2.6);
-    tail.position.set(0, 15.2, -1.8);
-    g.add(wheel, tail);
-    g.position.set(mill.x, 0, mill.z);
-    g.rotation.y = 2.4;
-    scene.add(g);
+    const wm = windmill(THREE, mill.x, mill.z, 2.4, vm);
+    scene.add(wm.tower, wm.hub);
+    fan = wm.fan;
   }
+  farm.place();
+  scene.add(farm.build(vm.vc, vm.lit));
 
   // eucalyptus windbreaks outside the loop, and oaks further out
   const gums: { x: number; z: number; h: number }[] = [];
@@ -1609,8 +1399,7 @@ function barn(c: Scenery) {
     const p = pointAt(t, s, t.edge + 7 + rand() * 4);
     if (clear(p.x, p.z, 4) && !insideLoop(t, p.x, p.z) && rand() < 0.75) gums.push({ x: p.x, z: p.z, h: 15 + rand() * 9 });
   }
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.28, 0.45, 1, 6), new THREE.MeshLambertMaterial({ color: 0xd9d0c0 }), gums.map((g) => ({ x: g.x, y: g.h / 2, z: g.z, sx: 1, sy: g.h, sz: 1 })));
-  instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 7, 6), new THREE.MeshLambertMaterial({ color: 0x6f8f6a, flatShading: true }), gums.map((g, i) => ({ x: g.x, y: g.h * 0.78, z: g.z, sx: 2.6, sy: g.h * 0.32, sz: 2.6, ry: i })));
+  gumTrees(THREE, scene, dummy, gums);
   const spots: { x: number; z: number; r: number }[] = [];
   for (let n = 0; spots.length < 90 && n < 3000; n++) {
     const a = rand() * Math.PI * 2;
@@ -1623,6 +1412,9 @@ function barn(c: Scenery) {
 
   // the foothills behind, with the Dish up on one of them
   foothills(c, cx, cz, { x: cx + 120, z: cz + 420 });
+  return (_race: Race, clock: number) => {
+    if (fan) fan.rotation.z = clock * 1.6;
+  };
 }
 
 /**
@@ -1633,76 +1425,38 @@ function dish(c: Scenery) {
   const { THREE, scene, t, geo, rand, clear, dummy } = c;
   const { cx, cz, rx, rz } = bounds(t);
   const K = 0.82;
-  const white = new THREE.MeshLambertMaterial({ color: 0xf1f0ea, side: THREE.DoubleSide });
   const steel = new THREE.MeshLambertMaterial({ color: 0xb9bcbf });
-  const concrete = new THREE.MeshLambertMaterial({ color: 0xc9c3b6 });
 
-  // the Dish: a 30 m white bowl tilted to the sky on its yoke, with the feed held out on a tripod
+  // the Dish: the 150-foot telescope on its yoke, its bowl tipped to the sky, the feed held out on four legs (see
+  // landmarks.ts), as big as fits inside the loop
   const big = roomiest(t, fromMap(90 * K, 150 * K), 60);
-  const d = new THREE.Group();
-  const pedestal = new THREE.Mesh(geo.box, concrete);
-  pedestal.scale.set(10, 6, 10);
-  pedestal.position.y = 3;
-  d.add(pedestal);
-  /** A strut from a to b (in its parent's space). */
-  const strut = (mat: T.Material, w: number, a: T.Vector3, b: T.Vector3) => {
-    const m = new THREE.Mesh(geo.box, mat);
-    m.position.copy(a).add(b).multiplyScalar(0.5);
-    m.scale.set(w, a.distanceTo(b), w);
-    m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-    return m;
-  };
-  // the yoke: an arm up from each side of the pedestal to the bowl's pivot
-  for (const side of [-1, 1]) d.add(strut(white, 2, new THREE.Vector3(side * 4, 6, 0), new THREE.Vector3(side * 11, 20, 0)));
-  const reflector = new THREE.Group();
-  const bowl = new THREE.Mesh(new THREE.SphereGeometry(22, 28, 10, 0, Math.PI * 2, 0, 0.75), white);
-  bowl.rotation.x = Math.PI;
-  bowl.position.y = 22;
-  const rim = new THREE.Mesh(new THREE.TorusGeometry(15, 0.5, 6, 40), steel);
-  rim.rotation.x = Math.PI / 2;
-  rim.position.y = 22 - 22 * Math.cos(0.75);
-  reflector.add(bowl, rim);
-  // the feed over the middle of the bowl, held up by three legs from the rim
-  const feed = new THREE.Mesh(geo.box, steel);
-  feed.scale.set(2, 2.4, 2);
-  feed.position.y = rim.position.y + 12;
-  reflector.add(feed);
-  const focus = new THREE.Vector3(0, feed.position.y - 1, 0);
-  for (let k = 0; k < 3; k++) {
-    const a = (k / 3) * Math.PI * 2;
-    reflector.add(strut(steel, 0.4, new THREE.Vector3(Math.cos(a) * 14.6, rim.position.y, Math.sin(a) * 14.6), focus));
+  const vm = vcMats(THREE);
+  {
+    const mk = modelKit(THREE);
+    mk.box(0xc9c3b6, 0, 0.15, 0, 30, 0.3, 30);
+    dishTelescope(THREE, mk, 0.78);
+    const d = mk.build(vm.vc, vm.lit);
+    d.position.set(big.x, 0, big.z);
+    d.rotation.y = 2.2;
+    // (its rim as wide as the old one's was, 15 m out, at most)
+    d.scale.setScalar(Math.min(1, (big.room - t.edge - 6) / 24) * (15 / 23));
+    scene.add(d);
   }
-  reflector.position.y = 18;
-  reflector.rotation.x = -0.75;
-  d.add(reflector);
-  d.position.set(big.x, 0, big.z);
-  d.rotation.y = 2.2;
-  d.scale.setScalar(Math.min(1, (big.room - t.edge - 6) / 24));
-  scene.add(d);
 
   // smaller antennas dotted about the hills outside the loop
-  for (let n = 0, made = 0; made < 4 && n < 200; n++) {
+  const minis: { x: number; z: number; ry: number }[] = [];
+  for (let n = 0; minis.length < 4 && n < 200; n++) {
     const a = rand() * Math.PI * 2;
     const x = cx + Math.cos(a) * (rx + 40 + rand() * 120);
     const z = cz + Math.sin(a) * (rz + 40 + rand() * 120);
-    if (!clear(x, z, 12)) continue;
-    const g = new THREE.Group();
-    const post = new THREE.Mesh(geo.box, white);
-    post.scale.set(1.2, 7, 1.2);
-    post.position.y = 3.5;
-    const small = new THREE.Mesh(new THREE.SphereGeometry(5, 16, 6, 0, Math.PI * 2, 0, 0.8), white);
-    small.rotation.x = Math.PI - 0.9;
-    small.position.y = 9;
-    g.add(post, small);
-    g.position.set(x, 0, z);
-    g.rotation.y = rand() * Math.PI * 2;
-    scene.add(g);
-    made++;
+    if (clear(x, z, 12)) minis.push({ x, z, ry: rand() * Math.PI * 2 });
   }
+  smallDishes(THREE, scene, minis, vm, modelKit);
 
   // rolling golden hills inside the loop and round about, clear of the road
-  const hillMat = new THREE.MeshLambertMaterial({ color: 0xc6ad66, flatShading: true });
-  const hillGeo = new THREE.SphereGeometry(1, 10, 5, 0, Math.PI * 2, 0, Math.PI / 2);
+  // (their grass the ground's own, so they rise out of it: see surfaces.ts)
+  const hillMat = groundMaterial(THREE, GROUNDS.dish!);
+  const hillGeo = knollGeometry(THREE);
   const hills: { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number }[] = [];
   for (let n = 0; hills.length < 26 && n < 600; n++) {
     const a = rand() * Math.PI * 2;
@@ -1711,7 +1465,7 @@ function dish(c: Scenery) {
     const z = cz + Math.sin(a) * dist;
     const size = 16 + rand() * 30;
     if (!clear(x, z, size + 4) || Math.hypot(x - big.x, z - big.z) < 34) continue;
-    hills.push({ x, y: -1, z, sx: size, sy: 4 + rand() * size * 0.35, sz: size * (0.7 + rand() * 0.5), ry: rand() * 3 });
+    hills.push({ x, y: -0.6, z, sx: size, sy: 4 + rand() * size * 0.35, sz: size * (0.7 + rand() * 0.5), ry: rand() * 3 });
   }
   instances(THREE, scene, dummy, hillGeo, hillMat, hills);
 
@@ -1728,22 +1482,19 @@ function dish(c: Scenery) {
   }
   oaks(c, spots);
 
-  // cattle grazing off the road
-  const cowMats = cowMaterials(THREE);
+  // Holstein cattle grazing off the road (all one mesh: see dish.ts)
+  const herd = modelKit(THREE);
   for (let n = 0, made = 0; made < 12 && n < 400; n++) {
     const a = rand() * Math.PI * 2;
     const dist = rand() * (Math.max(rx, rz) + 120);
     const x = cx + Math.cos(a) * dist;
     const z = cz + Math.sin(a) * dist;
     if (!clear(x, z, 5) || Math.hypot(x - big.x, z - big.z) < 30) continue;
-    const { g, head } = makeCow(THREE, geo, cowMats);
-    head.rotation.x = 0.9;
-    head.position.y = 1.2;
-    g.position.set(x, 0, z);
-    g.rotation.y = rand() * Math.PI * 2;
-    scene.add(g);
+    holstein(herd, x, z, rand() * Math.PI * 2, rand() < 0.75, made);
     made++;
   }
+  herd.place();
+  if (herd.count()) scene.add(herd.build(vm.vc, vm.lit));
 
   // barbed wire on wooden posts outside the walls
   const posts: { x: number; y: number; z: number; sx: number; sy: number; sz: number }[] = [];
@@ -1793,20 +1544,21 @@ function dish(c: Scenery) {
  * the football field in the middle with its end zones and goalposts, the scoreboard, light towers, a portal over the
  * tunnel, and tailgate tents and palms out on the plaza.
  */
-function stadium(c: Scenery) {
-  const { THREE, scene, t, geo, mats, rand, clear, dummy } = c;
+function stadium(c: Scenery): SceneryTick {
+  const { THREE, scene, t, geo, rand, clear, dummy } = c;
   const { cx, cz } = bounds(t);
   const K = 0.85;
   const concrete = new THREE.MeshLambertMaterial({ color: 0xbdb6aa });
   const cardinal = new THREE.MeshLambertMaterial({ color: 0x8c1515 });
   const white = new THREE.MeshLambertMaterial({ color: 0xf3f1ec });
-  const gold = new THREE.MeshLambertMaterial({ color: 0xf2c230 });
 
   // the stands: rising tiers on the outside of the bowl, each row with its strip of cardinal seats and a crowd
   type Item = { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry: number };
   const tiers: Item[] = [];
   const seats: Item[] = [];
-  const fans: Item[][] = [[], [], [], []];
+  const fans: { x: number; y: number; z: number; ry: number; color: number }[] = [];
+  const backs: Item[] = [];
+  const aisles: Item[] = [];
   const ROWS = 8;
   const STEP = 5;
   /** A block along the stretch of row `d` from s - STEP/2 to s + STEP/2, sized to that chord so bends leave no gaps. */
@@ -1816,26 +1568,38 @@ function stadium(c: Scenery) {
     return { a, b, x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, len: Math.hypot(b.x - a.x, b.z - a.z), ry: headingOf(b.x - a.x, b.z - a.z) };
   };
   // round from the home straight to the tunnel, so the road runs out through the portal
+  let block = 0;
   for (let s = -60; s <= 395; s += STEP) {
+    // (an aisle of steps down the stands every seventh block)
+    const aisle = block++ % 7 === 3;
     for (let row = 0; row < ROWS; row++) {
       const p = chord(s, t.edge + 3.4 + row * 2.6);
       if (!clear(p.x, p.z, 1.5)) continue;
       const h = 1.1 + row * 1.25;
       tiers.push({ x: p.x, y: h / 2, z: p.z, sx: 2.6, sy: h, sz: p.len + 0.3, ry: p.ry });
       const seat = chord(s, t.edge + 2.6 + row * 2.6);
+      if (aisle) {
+        aisles.push({ x: seat.x, y: h + 0.02, z: seat.z, sx: 2.62, sy: 0.06, sz: 1.2, ry: seat.ry });
+        continue;
+      }
       seats.push({ x: seat.x, y: h + 0.15, z: seat.z, sx: 0.9, sy: 0.3, sz: seat.len + 0.3, ry: seat.ry });
+      // (the back wall along the top of the stands, and its rail)
+      if (row === ROWS - 1) backs.push({ x: p.x + Math.cos(p.ry) * 1.3, y: h + 0.9, z: p.z - Math.sin(p.ry) * 1.3, sx: 0.35, sy: 1.8, sz: p.len + 0.3, ry: p.ry });
       const f = chord(s, t.edge + 2.4 + row * 2.6);
       for (let k = 0; k < 3; k++) {
         if (rand() < 0.15) continue;
         const u = (k + 0.3 + rand() * 0.4) / 3;
         const pick = rand();
-        fans[pick < 0.45 ? 0 : pick < 0.75 ? 1 : pick < 0.88 ? 2 : 3].push({ x: f.a.x + (f.b.x - f.a.x) * u, y: h + 0.75, z: f.a.z + (f.b.z - f.a.z) * u, sx: 0.55, sy: 0.9, sz: 0.45, ry: f.ry });
+        // (sitting facing the field)
+        fans.push({ x: f.a.x + (f.b.x - f.a.x) * u, y: h + 0.75, z: f.a.z + (f.b.z - f.a.z) * u, ry: f.ry + Math.PI / 2, color: pick < 0.45 ? 0x8c1515 : pick < 0.75 ? 0xf6f4ef : pick < 0.88 ? 0x2a2a30 : 0xe8b34a });
       }
     }
   }
   instances(THREE, scene, dummy, geo.box, concrete, tiers);
   instances(THREE, scene, dummy, geo.box, cardinal, seats);
-  [0x8c1515, 0xf6f4ef, 0x2a2a30, 0xe8b34a].forEach((color, i) => instances(THREE, scene, dummy, geo.box, new THREE.MeshLambertMaterial({ color }), fans[i]));
+  instances(THREE, scene, dummy, geo.box, concrete, backs);
+  instances(THREE, scene, dummy, geo.box, new THREE.MeshLambertMaterial({ color: 0xd8d2c6 }), aisles);
+  crowd(THREE, scene, dummy, fans);
 
   // the field in the middle of the bowl, running along the home straight
   const home = pointAt(t, 60, 0);
@@ -1888,39 +1652,19 @@ function stadium(c: Scenery) {
   field.scale.set(len, 44, 1);
   field.position.set(fx, 0.03, fz);
   scene.add(field);
-  // goalposts at both ends
+  // goalposts at both ends (see stadium.ts)
+  const kit = modelKit(THREE);
   for (const end of [-1, 1]) {
     const gx = fx + Math.sin(along) * end * (len / 2 - 1);
     const gz = fz + Math.cos(along) * end * (len / 2 - 1);
-    const post = new THREE.Group();
-    const stem = new THREE.Mesh(geo.box, gold);
-    stem.scale.set(0.3, 3, 0.3);
-    stem.position.y = 1.5;
-    const bar = new THREE.Mesh(geo.box, gold);
-    bar.scale.set(5.6, 0.25, 0.25);
-    bar.position.y = 3;
-    post.add(stem, bar);
-    for (const side of [-1, 1]) {
-      const up = new THREE.Mesh(geo.box, gold);
-      up.scale.set(0.2, 6, 0.2);
-      up.position.set(side * 2.8, 6, 0);
-      post.add(up);
-    }
-    post.position.set(gx, 0, gz);
-    post.rotation.y = along;
-    scene.add(post);
+    goalpost(kit, gx, gz, along + (end > 0 ? 0 : Math.PI));
   }
 
   // the scoreboard over the east end, and light towers round the rim
   const board = pointAt(t, 190, t.edge + 30);
   if (clear(board.x, board.z, 6)) {
     const sb = new THREE.Group();
-    const legs = new THREE.Mesh(geo.box, mats.dark);
-    legs.scale.set(2, 16, 2);
-    legs.position.y = 8;
-    const frame = new THREE.Mesh(geo.box, cardinal);
-    frame.scale.set(26, 11, 1.4);
-    frame.position.y = 21;
+    scoreboard(kit, board.x, board.z, headingOf(board.tz, -board.tx));
     const screen = new THREE.Mesh(
       geo.plane,
       new THREE.MeshBasicMaterial({
@@ -1942,7 +1686,7 @@ function stadium(c: Scenery) {
     );
     screen.scale.set(24, 9.4, 1);
     screen.position.set(0, 21, 0.75);
-    sb.add(legs, frame, screen);
+    sb.add(screen);
     sb.position.set(board.x, 0, board.z);
     sb.rotation.y = headingOf(board.tz, -board.tx);
     scene.add(sb);
@@ -1950,32 +1694,15 @@ function stadium(c: Scenery) {
   for (const s of [-40, 120, 250, 360]) {
     const p = pointAt(t, s, t.edge + 26);
     if (!clear(p.x, p.z, 2)) continue;
-    const pole = new THREE.Mesh(geo.box, mats.dark);
-    pole.scale.set(0.8, 30, 0.8);
-    pole.position.set(p.x, 15, p.z);
-    const lamps = new THREE.Mesh(geo.box, new THREE.MeshBasicMaterial({ color: 0xfff6d8 }));
-    lamps.scale.set(6, 3, 0.6);
-    lamps.position.set(p.x, 30.5, p.z);
-    lamps.rotation.y = headingOf(p.tz, -p.tx);
-    scene.add(pole, lamps);
+    lightTower(kit, p.x, p.z, headingOf(p.tz, -p.tx));
   }
 
   // a portal over the road where it runs out through the tunnel
   const gate = pointAt(t, 392, 0);
-  const portal = new THREE.Group();
-  for (const side of [-1, 1]) {
-    const pillar = new THREE.Mesh(geo.box, concrete);
-    pillar.scale.set(2, 9, 2);
-    pillar.position.set(side * (t.edge + 1), 4.5, 0);
-    portal.add(pillar);
-  }
-  const beam = new THREE.Mesh(geo.box, cardinal);
-  beam.scale.set(t.edge * 2 + 4, 2.4, 1.6);
-  beam.position.y = 9.6;
-  portal.add(beam);
-  portal.position.set(gate.x, 0, gate.z);
-  portal.rotation.y = headingOf(gate.tx, gate.tz);
-  scene.add(portal);
+  portal(THREE, scene, kit, gate.x, gate.z, headingOf(gate.tx, gate.tz), t.edge * 2);
+  kit.place();
+  const vm = vcMats(THREE);
+  scene.add(kit.build(vm.vc, vm.lit));
 
   // tailgate tents and palms out on the plaza
   const legs: Item[] = [];
@@ -2006,8 +1733,7 @@ function stadium(c: Scenery) {
       if (clear(p.x, p.z, 2)) palms.push({ x: p.x, z: p.z, hgt: 9 + rand() * 3 });
     }
   }
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.24, 0.38, 1, 7), new THREE.MeshLambertMaterial({ color: 0x9c7b58 }), palms.map((p) => ({ x: p.x, y: p.hgt / 2, z: p.z, sx: 1, sy: p.hgt, sz: 1 })));
-  instances(THREE, scene, dummy, frondGeometry(THREE), new THREE.MeshLambertMaterial({ color: 0x3f8a4c, side: THREE.DoubleSide }), palms.map((p, i) => ({ x: p.x, y: p.hgt + 0.2, z: p.z, sx: 1.1, sy: 1.1, sz: 1.1, ry: i * 1.3 })));
+  palmTrees(THREE, scene, dummy, palms);
 
   // campus beyond: oaks, Hoover Tower and the foothills with the Dish
   const spots: { x: number; z: number; r: number }[] = [];
@@ -2024,6 +1750,7 @@ function stadium(c: Scenery) {
   hoover.scale.setScalar(1.4);
   scene.add(hoover);
   foothills(c, cx, cz, { x: cx - 200, z: cz - 420 });
+  return (_race: Race, clock: number) => crowdTick(clock);
 }
 
 /** Rodin's Burghers of Calais: six weary bronze figures in long robes, standing together on a low plinth. */
@@ -2064,7 +1791,8 @@ function burghers(c: Scenery, x: number, z: number, ry: number) {
   }
   g.position.set(x, 0, z);
   g.rotation.y = ry;
-  scene.add(g);
+  // (one mesh: it never moves)
+  scene.add(bake(THREE, g, vcMats(THREE)));
 }
 
 /**
@@ -2079,74 +1807,10 @@ function quad(c: Scenery) {
   const K = 1.25;
   const at = (e: number, n: number) => fromMap(e * K, n * K);
   const stone = new THREE.MeshLambertMaterial({ color: 0xe4cfa4 });
-  const tile = new THREE.MeshLambertMaterial({ color: 0xb4553a });
-  // the undersides of the arcade roofs, lit by the light bouncing up off the paving
-  const soffit = new THREE.MeshLambertMaterial({ color: 0xc9ae80, emissive: 0x6b5a40 });
   type Item = { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry?: number };
   const columns: Item[] = [];
   const blocks: Item[] = [];
   const palms: { x: number; z: number; hgt: number }[] = [];
-
-  // the arcade front: a sandstone band with a round arch cut out of each bay, and the windows of the halls behind
-  const arches = texture(
-    THREE,
-    canvas(128, 96, (g) => {
-      g.fillStyle = '#e4cfa4';
-      g.fillRect(0, 0, 128, 96);
-      noise(g, 128, 96, 300, 0.1, false);
-      g.fillStyle = 'rgba(110,80,45,0.3)';
-      g.fillRect(0, 0, 128, 7);
-      g.strokeStyle = '#cfb07c';
-      g.lineWidth = 8;
-      g.beginPath();
-      g.arc(64, 96, 54, Math.PI, 0);
-      g.stroke();
-      g.globalCompositeOperation = 'destination-out';
-      g.beginPath();
-      g.arc(64, 96, 50, Math.PI, 0);
-      g.fill();
-      g.globalCompositeOperation = 'source-over';
-    }),
-  );
-  arches.wrapS = THREE.RepeatWrapping;
-  const archMat = new THREE.MeshLambertMaterial({ map: arches, alphaTest: 0.5, side: THREE.DoubleSide });
-  const windows = texture(
-    THREE,
-    canvas(64, 152, (g) => {
-      g.fillStyle = '#e4cfa4';
-      g.fillRect(0, 0, 64, 152);
-      noise(g, 64, 152, 300, 0.1, false);
-      g.fillStyle = 'rgba(110,80,45,0.35)';
-      g.fillRect(0, 0, 64, 6);
-      g.fillRect(0, 84, 64, 3);
-      // a window upstairs with its sill, and an arched doorway on the ground floor
-      g.fillStyle = '#d2b789';
-      g.fillRect(19, 26, 26, 44);
-      g.fillStyle = '#3a3330';
-      g.fillRect(22, 29, 20, 37);
-      g.fillStyle = '#5d6f7a';
-      g.fillRect(24, 31, 7, 15);
-      g.fillRect(33, 31, 7, 15);
-      g.fillStyle = '#3a2a22';
-      g.beginPath();
-      g.moveTo(20, 152);
-      g.lineTo(20, 112);
-      g.arc(32, 112, 12, Math.PI, 0);
-      g.lineTo(44, 152);
-      g.fill();
-    }),
-  );
-  windows.wrapS = THREE.RepeatWrapping;
-  const hallMat = [stone, stone, stone, stone, new THREE.MeshLambertMaterial({ map: windows }), new THREE.MeshLambertMaterial({ map: windows })];
-  const prism = new THREE.CylinderGeometry(1, 1, 1, 3);
-  prism.rotateY(Math.PI / 2);
-  prism.rotateZ(Math.PI / 2);
-  /** A geometry with its u texture coordinate run over `n` repeats. */
-  const tiled = <G extends T.BufferGeometry>(g: G, n: number) => {
-    const uv = g.getAttribute('uv');
-    for (let i = 0; i < uv.count; i++) uv.setX(i, uv.getX(i) * n);
-    return g;
-  };
 
   const COL = 3.6;
   /**
@@ -2154,6 +1818,7 @@ function quad(c: Scenery) {
    * and a tile roof sloping down to the path. Behind it, unless `deep` is 0, a hall that deep and `tall` high, running
    * on past the ends of the arcade by `past` (at a's end and b's end) to fill a corner.
    */
+  const quadKit = modelKit(THREE);
   const arcade = (a: P2, b: P2, ox: number, oz: number, deep: number, tall: number, past: [number, number] = [0, 0]) => {
     let len = Math.hypot(b.x - a.x, b.z - a.z);
     let [ux, uz] = [(b.x - a.x) / len, (b.z - a.z) / len];
@@ -2162,37 +1827,32 @@ function quad(c: Scenery) {
     len = Math.hypot(b.x - a.x, b.z - a.z);
     const bays = Math.max(2, Math.round(len / 4.2));
     const bay = len / bays;
-    const g = new THREE.Group();
-    g.position.set((a.x + b.x) / 2, 0, (a.z + b.z) / 2);
-    g.rotation.y = Math.atan2(-uz, ux);
+    const ry = Math.atan2(-uz, ux);
+    const g = { x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, ry };
     for (let k = 0; k <= bays; k++) {
       const x = a.x + ux * k * bay;
       const z = a.z + uz * k * bay;
       columns.push({ x, y: COL / 2, z, sx: 0.3, sy: COL, sz: 0.3 });
-      blocks.push({ x, y: COL - 0.15, z, sx: 0.75, sy: 0.3, sz: 0.75, ry: g.rotation.y }, { x, y: 0.15, z, sx: 0.7, sy: 0.3, sz: 0.7, ry: g.rotation.y });
+      blocks.push({ x, y: COL - 0.15, z, sx: 0.75, sy: 0.3, sz: 0.75, ry }, { x, y: 0.15, z, sx: 0.7, sy: 0.3, sz: 0.7, ry });
     }
     const band = 0.75 * bay;
-    const front = new THREE.Mesh(tiled(new THREE.PlaneGeometry(len, band), bays), archMat);
-    front.position.y = COL + band / 2;
     const top = COL + band;
-    const ceiling = new THREE.Mesh(geo.box, soffit);
-    ceiling.scale.set(len, 0.35, 4.2);
-    ceiling.position.set(0, top - 0.17, 2.1);
-    const roof = new THREE.Mesh(geo.box, tile);
-    roof.scale.set(len + 0.6, 0.3, 4.9);
-    roof.position.set(0, top + 0.55, 2.2);
-    roof.rotation.x = -0.25;
-    g.add(front, ceiling, roof);
+    // the front: a sandstone wall with a round arch through it for each bay, springing from the columns' capitals; the
+    // walkway's ceiling behind it, its floor, and the tile roof over it sloping down to the path (see landmarks.ts)
+    quadKit.place(g.x, 0, g.z, ry);
+    quadKit.geo(arcadeWall(THREE, len, top, bays, bay - 0.55, COL, 0.5), 0xe4cfa4, 0, 0, 0);
+    quadKit.box(0xd2b789, 0, top - 0.3, -0.3, len + 0.1, 0.35, 0.2);
+    quadKit.box(0xc9ae80, 0, top - 0.17, 2.1, len, 0.35, 4.2);
+    quadKit.box(0xcdb894, 0, 0.04, 2.1, len, 0.08, 4.2);
+    quadKit.box(0xb4553a, 0, top + 0.55, 2.2, len + 0.6, 0.3, 4.9, -0.25, 0, 0);
+    for (let k = 0; k < Math.round(len / 0.5); k++) quadKit.box(0x9a4530, -len / 2 + 0.25 + k * 0.5, top + 0.72, 2.2, 0.06, 0.12, 4.9, -0.25, 0, 0);
     if (deep > 0) {
       const long = len + past[0] + past[1];
-      const hall = new THREE.Mesh(tiled(new THREE.BoxGeometry(long, tall, deep), Math.max(1, Math.round(long / 4.2))), hallMat);
-      hall.position.set((past[1] - past[0]) / 2, tall / 2, 4.2 + deep / 2);
-      const ridge = new THREE.Mesh(prism, tile);
-      ridge.scale.set(long + 0.4, 3.4, deep * 0.6);
-      ridge.position.set(hall.position.x, tall + 1.55, 4.2 + deep / 2);
-      g.add(hall, ridge);
+      // the hall behind: two floors of framed windows, its doors on the arcade, a tile hip roof (see landmarks.ts)
+      quadKit.place(g.x + Math.cos(ry) * ((past[1] - past[0]) / 2) + Math.sin(ry) * (4.2 + deep / 2), 0, g.z - Math.sin(ry) * ((past[1] - past[0]) / 2) + Math.cos(ry) * (4.2 + deep / 2), ry);
+      hall(THREE, quadKit, long, deep, tall, false);
     }
-    scene.add(g);
+    quadKit.place();
     return { g, top };
   };
 
@@ -2251,16 +1911,15 @@ function quad(c: Scenery) {
     if (!narrow) continue;
     const { g, top } = arcade(front(-half, -out), front(half, -out), -ox, -oz, 0, 0);
     // the roof over the road, from one arcade to the other
-    const ceiling = new THREE.Mesh(geo.box, soffit);
-    ceiling.scale.set(2 * half, 0.45, 2 * off);
-    ceiling.position.set(0, top + 0.1, -off);
-    const cover = new THREE.Mesh(prism, tile);
-    cover.scale.set(2 * half + 0.6, 3.8, off * 1.35);
-    cover.position.set(0, top + 1.8, -off);
-    g.add(ceiling, cover);
+    quadKit.place(g.x, 0, g.z, g.ry);
+    quadKit.box(0xc9ae80, 0, top + 0.1, -off, 2 * half, 0.45, 2 * off);
+    quadKit.geo(gableRoof(THREE, off * 2.7, 2 * half + 0.6, 3.6), 0xb4553a, 0, top + 0.3, -off, 1, 1, 1, 0, Math.PI / 2, 0);
+    quadKit.place();
   }
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(1, 1, 1, 10), stone, columns);
+  instances(THREE, scene, dummy, new THREE.CylinderGeometry(1, 1, 1, 12), stone, columns);
   instances(THREE, scene, dummy, geo.box, stone, blocks);
+  const vm = vcMats(THREE);
+  scene.add(quadKit.build(vm.vc, vm.lit));
 
   // Memorial Church at the head of the quad, its gold mosaic looking down the paths
   const church = makeChurch(THREE, geo.box);
@@ -2297,7 +1956,7 @@ function quad(c: Scenery) {
     palms.push({ x: p.x, z: p.z, hgt: 8 + rand() * 4 });
   }
   instances(THREE, scene, dummy, new THREE.CylinderGeometry(1, 1, 1, 28), stone, curbs);
-  instances(THREE, scene, dummy, new THREE.SphereGeometry(1, 7, 5), new THREE.MeshLambertMaterial({ color: 0x3f7a35, flatShading: true }), shrubs);
+  shrubsOf(THREE, scene, dummy, shrubs.map((b) => ({ x: b.x, z: b.z, r: b.sx * 0.9 })), 0x4f8a3a, 0x1c3a16);
 
   // Memorial Court: two lawns either side of the path in, the Burghers of Calais between them, palms at the corners
   const lawn = new THREE.MeshLambertMaterial({ color: 0x79ad55 });
@@ -2317,6 +1976,9 @@ function quad(c: Scenery) {
   // bikes parked in racks along the court, the way they are outside every building on campus
   const kit = bikeKit(THREE);
   const rack = new THREE.MeshLambertMaterial({ color: 0x8e9398 });
+  // (all of them baked into one mesh: they never move)
+  const parked = new THREE.Group();
+  scene.add(parked);
   for (const [e, n, count] of [[-60, -86, 4], [10, -86, 4], [-27, 56, 3]]) {
     for (let k = 0; k < count; k++) {
       const p = at(e + k, n);
@@ -2324,13 +1986,15 @@ function quad(c: Scenery) {
       const { g } = makeBike(THREE, geo, kit, rand, false);
       g.position.set(p.x, 0, p.z);
       g.rotation.y = (n < 0 ? 0 : Math.PI) + (rand() - 0.5) * 0.15;
-      scene.add(g);
+      parked.add(g);
       const hoop = new THREE.Mesh(geo.box, rack);
       hoop.scale.set(0.06, 0.8, 0.06);
       hoop.position.set(p.x, 0.4, p.z + (n < 0 ? 0.6 : -0.6));
-      scene.add(hoop);
+      parked.add(hoop);
     }
   }
+  scene.add(bake(THREE, parked, vm));
+  scene.remove(parked);
 
   // the Oval out front with palms round it, and Palm Drive running away south
   const oval = at(-14, -170);
@@ -2350,8 +2014,7 @@ function quad(c: Scenery) {
       palms.push({ x: p.x, z: p.z, hgt: 9 + rand() * 3 });
     }
   }
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.24, 0.38, 1, 7), new THREE.MeshLambertMaterial({ color: 0x9c7b58 }), palms.map((p) => ({ x: p.x, y: p.hgt / 2, z: p.z, sx: 1, sy: p.hgt, sz: 1 })));
-  instances(THREE, scene, dummy, frondGeometry(THREE), new THREE.MeshLambertMaterial({ color: 0x3f8a4c, side: THREE.DoubleSide }), palms.map((p, i) => ({ x: p.x, y: p.hgt + 0.2, z: p.z, sx: 1.1, sy: 1.1, sz: 1.1, ry: i * 1.3 })));
+  palmTrees(THREE, scene, dummy, palms);
 
   // campus beyond: oaks, Hoover Tower off to the east, and the foothills with the Dish
   const spots: { x: number; z: number; r: number }[] = [];
@@ -2584,9 +2247,20 @@ function hoover(c: Scenery): SceneryTick {
     (goes ? outHeads : heads).push({ x: head.x, y: 6.2, z: head.z, sx: 0.9, sy: 0.2, sz: 0.5, ry });
     (goes ? outPools : pools).push({ x: pool.x, y: 0.075, z: pool.z, sx: 12, sy: 12, sz: 1, rx: flat });
   }
-  const metal = new THREE.MeshLambertMaterial({ color: 0x30333c });
-  instances(THREE, scene, dummy, geo.box, metal, posts);
-  instances(THREE, scene, dummy, geo.box, metal, arms);
+  // (the poles: a flared cast base, a tapering shaft, the arm out over the road on its bracket; one mesh)
+  const poles = modelKit(THREE);
+  for (const [k, p] of posts.entries()) {
+    const a = arms[k];
+    poles.place(p.x, 0, p.z, 0);
+    poles.cyl(0x2a2d34, 0, 0.35, 0, 0.32, 0.7, 0.32);
+    poles.cyl(0x30333c, 0, 3.4, 0, 0.1, 5.8, 0.1);
+    poles.cyl(0x2a2d34, 0, 6.3, 0, 0.13, 0.25, 0.13);
+    poles.place(a.x, 0, a.z, a.ry ?? 0);
+    poles.box(0x30333c, 0, 6.35, 0, a.sx, 0.1, 0.1);
+    poles.box(0x30333c, 0, 6.0, 0, a.sx * 0.5, 0.06, 0.06, 0, 0, 0.45);
+  }
+  poles.place();
+  if (poles.count()) scene.add(poles.build(new THREE.MeshLambertMaterial({ vertexColors: true }), new THREE.MeshBasicMaterial({ vertexColors: true })));
   const headMat = new THREE.MeshBasicMaterial({ color: 0xfff0c8 });
   const poolMat = new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,222,160', 0.34), transparent: true, depthWrite: false });
   instances(THREE, scene, dummy, geo.box, headMat, heads);
@@ -2605,9 +2279,7 @@ function hoover(c: Scenery): SceneryTick {
     [[-1, -1], [1, -1], [-1, 1], [1, 1], [0, 0]].every(([a, b]) => clear(x + (ax * a * w) / 2 - (az * b * d) / 2, z + (az * a * w) / 2 + (ax * b * d) / 2, 2.5)) && Math.hypot(x - foot.x, z - foot.z) > 30 && Math.hypot(x - craneAt.x, z - craneAt.z) > 14;
   const hall = (x: number, z: number, ry: number, w: number, d: number, h: number) => {
     const g = makeHall(THREE, geo.box, geo.roof, hallMats, w, d, h);
-    g.children.forEach((o) => {
-      if ((o as T.Mesh).material === lit && rand() < 0.3) (o as T.Mesh).material = unlit;
-    });
+    void unlit;
     g.position.set(x, 0, z);
     g.rotation.y = ry;
     scene.add(g);
@@ -2629,8 +2301,7 @@ function hoover(c: Scenery): SceneryTick {
       if (clear(p.x, p.z, 1.5)) palms.push({ x: p.x, z: p.z, hgt: 9 + rand() * 3 });
     }
   }
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.24, 0.38, 1, 7), new THREE.MeshLambertMaterial({ color: 0x6b5440, emissive: 0x2a1c0e }), palms.map((p) => ({ x: p.x, y: p.hgt / 2, z: p.z, sx: 1, sy: p.hgt, sz: 1 })));
-  instances(THREE, scene, dummy, frondGeometry(THREE), new THREE.MeshLambertMaterial({ color: 0x2f5a3a, emissive: 0x0e2414, side: THREE.DoubleSide }), palms.map((p, i) => ({ x: p.x, y: p.hgt + 0.2, z: p.z, sx: 1.1, sy: 1.1, sz: 1.1, ry: i * 1.3 })));
+  palmTrees(THREE, scene, dummy, palms);
   instances(THREE, scene, dummy, geo.plane, new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,214,150', 0.45), transparent: true, depthWrite: false }), palms.map((p) => ({ x: p.x, y: 0.05, z: p.z, sx: 4, sy: 4, sz: 1, rx: flat })));
 
   // oaks in silhouette further out
@@ -2798,6 +2469,9 @@ export function greenTexture(THREE: Three) {
  */
 function golf(c: Scenery): SceneryTick {
   const { THREE, scene, t, r, geo, mats, rand, clear, dummy } = c;
+  // (what is already there: everything this adds that never moves is batched at the end, see landmarks.ts)
+  const before = new Set(scene.children);
+  const moving: T.Object3D[] = [];
   const { cx, cz, rx, rz } = bounds(t);
   type Item = { x: number; y: number; z: number; sx: number; sy: number; sz: number; ry?: number; rx?: number };
   const flat = -Math.PI / 2;
@@ -2822,6 +2496,8 @@ function golf(c: Scenery): SceneryTick {
     scene.add(o);
     return o;
   };
+  /** The decals, mown strips and net panels: textured, so batchStatic leaves them, but merged by material at the end. */
+  const alike: T.Mesh[] = [];
   const decal = (m: T.Material, x: number, z: number, w: number, d: number, y: number, ry = 0, order = 1) => {
     const o = new THREE.Mesh(geo.plane, m);
     o.rotation.set(flat, 0, ry);
@@ -2829,6 +2505,7 @@ function golf(c: Scenery): SceneryTick {
     o.position.set(x, y, z);
     o.renderOrder = order;
     scene.add(o);
+    alike.push(o);
     return o;
   };
 
@@ -2856,6 +2533,7 @@ function golf(c: Scenery): SceneryTick {
     g.computeVertexNormals();
     const o = new THREE.Mesh(g, m);
     scene.add(o);
+    alike.push(o);
     return o;
   };
   const mown = texture(
@@ -2886,6 +2564,7 @@ function golf(c: Scenery): SceneryTick {
     pin.g.position.set(x + off * (rand() - 0.5), 0, z + off * (rand() - 0.5));
     scene.add(pin.g);
     flags.push(pin.flag);
+    moving.push(pin.flag);
     keep(x, z, rad + 2);
   };
 
@@ -2925,6 +2604,7 @@ function golf(c: Scenery): SceneryTick {
     scene.add(ball);
     const dist = Math.hypot(tx - x, tz - z);
     shots.push({ swing: golfer.swing, ball, from: new THREE.Vector3(x, 0.3, z), to: new THREE.Vector3(tx, 0.2, tz), every, phase, flight: 1.6 + dist / 70, high: 10 + dist * 0.18 });
+    moving.push(...golfer.moving, ball);
     keep(x, z, 4);
   };
 
@@ -3131,11 +2811,15 @@ function golf(c: Scenery): SceneryTick {
           }),
         ),
       });
+    // (one material a board, not six: its edges take their green from inside the face's border)
+    const boardGeo = geo.box.clone();
+    const buv = boardGeo.getAttribute('uv');
+    for (let k = 0; k < 16; k++) buv.setXY(k, 0.1, 0.5);
+    boardGeo.clearGroups();
     for (const [s, d, n] of [[14, -38, 100], [14, -62, 150], [14, -86, 200]]) {
       const p = pointAt(t, s, d);
       // facing across the road at the tee line
-      const face = yard(n);
-      mesh(geo.box, [lambert(0x2f6b3a), lambert(0x2f6b3a), lambert(0x2f6b3a), lambert(0x2f6b3a), face, face], p.x, 2.2, p.z, 3.4, 1.7, 0.15, toRoad(s, d));
+      mesh(boardGeo, yard(n), p.x, 2.2, p.z, 3.4, 1.7, 0.15, toRoad(s, d));
       mesh(geo.box, lambert(0x6b4f37), p.x, 0.7, p.z, 0.15, 1.4, 0.15);
     }
     // tall poles along the far side and the end of the range, with the net strung between them
@@ -3162,6 +2846,7 @@ function golf(c: Scenery): SceneryTick {
         panel.position.set((a.x + b.x) / 2, 8.3, (a.z + b.z) / 2);
         panel.rotation.y = Math.atan2(-(b.z - a.z), b.x - a.x);
         scene.add(panel);
+        alike.push(panel);
       }
     };
     along(4, 158, farSide - 4);
@@ -3375,21 +3060,13 @@ function golf(c: Scenery): SceneryTick {
     else spots.push({ x, z, r: 2.4 + rand() * 2.6 });
   }
   oaks(c, spots);
-  instances(THREE, scene, dummy, new THREE.CylinderGeometry(0.25, 0.4, 1, 6), lambert(0x6b4f37), pines.map((p) => ({ x: p.x, y: p.h * 0.2, z: p.z, sx: 1, sy: p.h * 0.4, sz: 1 })));
-  const cone = new THREE.ConeGeometry(1, 1, 8);
-  const needles = new THREE.MeshLambertMaterial({ color: 0x2f5a35, flatShading: true });
-  for (const [lift, width, tall] of [[0.35, 0.34, 0.45], [0.6, 0.26, 0.38], [0.82, 0.16, 0.3]]) {
-    instances(THREE, scene, dummy, cone, needles, pines.map((p, i) => ({ x: p.x, y: p.h * lift, z: p.z, sx: p.h * width, sy: p.h * tall, sz: p.h * width, ry: i })));
-  }
+  pineTrees(THREE, scene, dummy, pines);
   foothills(c, cx, cz, { x: cx + 260, z: cz - 460 });
-  const sunDisc = new THREE.Mesh(new THREE.CircleGeometry(20, 32), new THREE.MeshBasicMaterial({ color: 0xfff4d2, fog: false }));
-  sunDisc.position.set(cx + 600, 170, cz - 760);
-  sunDisc.lookAt(cx, 0, cz);
-  const haze = new THREE.Mesh(geo.plane, new THREE.MeshBasicMaterial({ map: glowTexture(THREE, '255,226,160', 0.55), transparent: true, fog: false, depthWrite: false }));
-  haze.scale.set(150, 150, 1);
-  haze.position.set(cx + 600 * 1.01, 170 * 1.01, cz - 760 * 1.01);
-  haze.lookAt(cx, 0, cz);
-  scene.add(sunDisc, haze);
+
+  // (all that never moves, a handful of meshes; the flags' cloths one more)
+  mergeAlike(THREE, scene, alike);
+  const cloths = flagBatch(THREE, scene, flags);
+  batchStatic(THREE, scene, before, [...moving, ...flags, ...jets]);
 
   // every frame: golfers swing and their balls fly, the flags flutter and the fountain plays
   const at = new THREE.Vector3();
@@ -3412,6 +3089,7 @@ function golf(c: Scenery): SceneryTick {
       f.rotation.y = Math.sin(clock * 2.1 + i * 1.7) * 0.35;
       f.scale.x = 0.9 + Math.sin(clock * 5.3 + i) * 0.1;
     });
+    cloths?.tick();
     jets.forEach((j, k) => {
       const h = (k ? 2.2 : 7) + Math.sin(clock * 3 + k) * (k ? 0.3 : 0.6);
       j.scale.y = h;

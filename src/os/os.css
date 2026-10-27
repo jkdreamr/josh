@@ -231,6 +231,29 @@ kbd {
   transform: translateX(-50%);
   background: radial-gradient(circle at 35% 35%, #3b4a66, #0a0d14 70%);
 }
+/* On the WebGL laptop the notch is the camera housing cut into the panel. macOS makes the menu bar exactly as tall as the
+   notch, so it runs the full height of the bar, and its top corners flare out into the screen edge. */
+.stage-3d .notch {
+  top: 0;
+  width: max(calc(var(--lw) * 0.13), 80px);
+  height: 26px;
+  border-radius: 0 0 8px 8px;
+}
+.stage-3d .notch::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -4px;
+  right: -4px;
+  height: 4px;
+  background:
+    radial-gradient(circle at 0 100%, transparent 3.5px, #0c0c0e 4px) left top / 4px 4px no-repeat,
+    radial-gradient(circle at 100% 100%, transparent 3.5px, #0c0c0e 4px) right top / 4px 4px no-repeat;
+}
+.stage-3d .notch::after {
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
 /* camera in use: the green LED beside the lens */
 .cam-led {
   position: absolute;
@@ -867,10 +890,14 @@ kbd {
   padding: 0 8px;
   color: #fff;
   font-size: 13px;
-  background: rgba(20, 20, 30, 0.22);
-  backdrop-filter: blur(24px) saturate(1.6);
-  -webkit-backdrop-filter: blur(24px) saturate(1.6);
-  text-shadow: 0 0 6px rgba(0, 0, 0, 0.15);
+  /* macOS Tahoe draws the menu bar straight onto the wallpaper; a soft shadow keeps it legible on bright skies */
+  background: linear-gradient(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0));
+  text-shadow:
+    0 0 6px rgba(0, 0, 0, 0.22),
+    0 0.5px 1px rgba(0, 0, 0, 0.18);
+}
+.menubar .mb-item svg {
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.18)) drop-shadow(0 0.5px 0.5px rgba(0, 0, 0, 0.15));
 }
 .mb-left,
 .mb-right {
@@ -910,7 +937,7 @@ kbd {
   left: 0;
   min-width: 220px;
   padding: 5px;
-  border-radius: 10px;
+  border-radius: 12px;
   color: #1d1d1f;
   text-shadow: none;
   background: rgba(246, 246, 248, 0.86);
@@ -1059,9 +1086,13 @@ kbd {
   height: 54%;
 }
 .icon-finder > svg,
-.icon-notes > svg {
+.icon-notes > svg,
+.icon-terminal > svg {
   width: 100%;
   height: 100%;
+}
+.icon-tile.icon-terminal {
+  box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.35);
 }
 .icon-tile.icon-trash {
   overflow: visible;
@@ -1345,6 +1376,52 @@ kbd {
   align-self: stretch;
   margin: 4px 3px;
   background: rgba(255, 255, 255, 0.35);
+}
+/* The Mac Dock as on macOS Tahoe. App icons are drawn on a canvas larger than their artwork, so each icon fills about
+   four fifths of its slot and the Dock breathes between them; running apps get a dark dot beneath, the separator is a
+   dark hairline, and badges hang off the artwork's corner. */
+.desktop:not(.is-mobile) .dock {
+  background: rgba(255, 255, 255, 0.26);
+}
+.desktop:not(.is-mobile) .dock-item > .icon-tile,
+.desktop:not(.is-mobile) .dock-item > .icon-bare {
+  scale: 0.84;
+}
+.desktop:not(.is-mobile) .dock-item > .icon-tile:not(.icon-trash) {
+  box-shadow:
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.25),
+    0 1px 1.5px rgba(0, 0, 0, 0.16),
+    0 3px 8px rgba(0, 0, 0, 0.14);
+}
+.desktop:not(.is-mobile) .dock-item::after {
+  bottom: -3px;
+  width: 10%;
+  height: auto;
+  min-width: 3px;
+  aspect-ratio: 1;
+  margin-left: 0;
+  transform: translateX(-50%);
+  background: rgba(0, 0, 0, 0.8);
+}
+.desktop:not(.is-mobile) .dock-sep {
+  margin: 6px 3px;
+  background: rgba(0, 0, 0, 0.3);
+}
+.desktop:not(.is-mobile) .dock-badge {
+  top: calc(8% - 6px);
+  right: calc(8% - 7px);
+}
+/* Tahoe's icons catch the light: a soft sheen from above and a bright hairline along the top edge */
+.desktop:not(.is-mobile) .icon-tile:not(.icon-trash)::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.16), rgba(255, 255, 255, 0) 46%);
+  box-shadow:
+    inset 0 0.75px 0.5px rgba(255, 255, 255, 0.5),
+    inset 0 0 0 0.5px rgba(255, 255, 255, 0.16);
 }
 
 /* notification */
@@ -4292,18 +4369,6 @@ kbd {
 .l3d-display > .screen {
   border-radius: calc(var(--lw) * 0.0105) calc(var(--lw) * 0.0105) calc(var(--lw) * 0.002) calc(var(--lw) * 0.002);
 }
-/* the faint sheen of the studio's softbox across the display glass */
-.l3d-display::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: 1;
-  border-radius: inherit;
-  pointer-events: none;
-  background:
-    linear-gradient(118deg, rgba(255, 255, 255, 0.07) 0%, rgba(255, 255, 255, 0.025) 34%, rgba(255, 255, 255, 0) 52%),
-    linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(255, 255, 255, 0) 18%);
-}
 .l3d-fs {
   position: fixed;
   inset: 0;
@@ -4726,6 +4791,23 @@ kbd {
     display: none !important;
   }
 }
+/* beside the notch the status items drop the date and their text labels, then pack closer, before anything is
+   hidden (see MenuBar) */
+.desktop .menubar[data-fit] .mb-right .mb-hide-sm {
+  display: none !important;
+}
+.desktop .menubar[data-fit='tight'] .mb-right {
+  gap: 1px;
+}
+.desktop .menubar[data-fit='tight'] .mb-right .mb-item {
+  padding: 0 4px;
+}
+/* File, Edit and View only fit beside the app's own menus on a wide bar */
+@container menubar (max-width: 999px) {
+  .desktop .menubar .mb-hide-md {
+    display: none !important;
+  }
+}
 
 /* ============================== menu bar status menus ============================== */
 /* Stats, Weather, Wi-Fi, Battery and the clock (Notification Center) on the right of the Mac menu bar. */
@@ -4845,6 +4927,157 @@ kbd {
 }
 .sm-switch.is-on i {
   transform: translateX(11px);
+}
+
+/* Control Center: rounded modules on the frosted panel, a blue circle behind whatever is switched on */
+.sm-panel.sm-cc {
+  width: 296px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  border-radius: 20px;
+}
+.cc-mod {
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.62);
+  box-shadow:
+    inset 0 0 0 0.5px rgba(0, 0, 0, 0.07),
+    0 1px 2px rgba(0, 0, 0, 0.06);
+}
+.cc-net {
+  grid-row: span 2;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+  padding: 6px;
+}
+.cc-row,
+.cc-tile {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-width: 0;
+  text-align: left;
+  color: inherit;
+}
+.cc-row {
+  padding: 5px 4px;
+  border-radius: 10px;
+}
+.cc-row:hover {
+  background: rgba(0, 0, 0, 0.05);
+}
+.cc-tile {
+  padding: 10px 9px;
+}
+.cc-tile:hover {
+  background: rgba(255, 255, 255, 0.82);
+}
+.cc-ic {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: #1d1d1f;
+  background: rgba(0, 0, 0, 0.08);
+}
+.is-on > .cc-ic {
+  color: #fff;
+  background: #2f74f5;
+}
+/* Focus lights up in its own indigo */
+.cc-focus.is-on > .cc-ic {
+  background: #5e5ce6;
+}
+.cc-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.25;
+}
+.cc-text b,
+.cc-tile b,
+.cc-wide b {
+  font-size: 12px;
+  font-weight: 600;
+}
+.cc-text small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: rgba(0, 0, 0, 0.5);
+  font-size: 11px;
+}
+.cc-tile b {
+  line-height: 1.2;
+}
+.cc-wide {
+  grid-column: span 2;
+  padding: 9px 11px 11px;
+}
+/* the slider is a thick white-filled track with its icon inside, like macOS */
+.cc-slider {
+  position: relative;
+  display: block;
+  margin-top: 7px;
+  color: rgba(0, 0, 0, 0.55);
+}
+.cc-slider svg {
+  position: absolute;
+  left: 7px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+.cc-slider input {
+  display: block;
+  width: 100%;
+  height: 24px;
+  margin: 0;
+  border-radius: 12px;
+  -webkit-appearance: none;
+  appearance: none;
+  background: linear-gradient(90deg, #fff var(--v), rgba(0, 0, 0, 0.1) var(--v));
+  box-shadow: inset 0 0 0 0.5px rgba(0, 0, 0, 0.1);
+  cursor: pointer;
+}
+.cc-slider input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.12),
+    0 1px 4px rgba(0, 0, 0, 0.25);
+}
+.cc-slider input::-moz-range-thumb {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 50%;
+  background: #fff;
+  box-shadow:
+    0 0 0 0.5px rgba(0, 0, 0, 0.12),
+    0 1px 4px rgba(0, 0, 0, 0.25);
+}
+.cc-slider input:focus-visible {
+  outline: 2px solid rgba(47, 116, 245, 0.55);
+  outline-offset: 2px;
+}
+/* the Display slider dims the whole screen, menu bar and all */
+.desktop[data-dim]::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 100000;
+  background: #000;
+  opacity: var(--cc-dim);
+  pointer-events: none;
 }
 
 /* Weather: a panel styled like the macOS Weather widget */

@@ -1,5 +1,5 @@
 import { ARCADE_API } from './leaderboard.ts';
-import { parseOpenRooms, type OpenRoom } from './online-core.ts';
+import { parseOpenRooms, relayPlan, type OpenRoom } from './online-core.ts';
 
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 /**
@@ -183,23 +183,18 @@ export class RoomLink {
     const recipients = this.seat === 0
       ? options.to === undefined ? this.players.map(({ seat }) => seat).filter((seat) => seat !== 0) : [options.to]
       : this.seat === null ? [] : [0];
-    let relayed = false;
-
-    for (const seat of recipients) {
-      const peer = this.peers.get(seat);
-      const channel = peer?.channels.get(label);
-      if (channel?.readyState === 'open') {
-        channel.send(payload);
-      } else {
-        this.sendSocket({ t: 'msg', to: this.seat === 0 ? seat : 0, d });
-        relayed = true;
-      }
-    }
-    if (!recipients.length && options.to !== undefined) {
-      this.sendSocket({ t: 'msg', to: options.to, d });
-      relayed = true;
-    }
-    if (relayed) this.setTransport('relay');
+    const channels = new Map<number, RTCDataChannel>();
+    const plan = relayPlan(recipients, (seat) => {
+      const channel = this.peers.get(seat)?.channels.get(label);
+      if (channel?.readyState !== 'open') return false;
+      channels.set(seat, channel);
+      return true;
+    }, this.seat === 0 && options.to === undefined);
+    for (const seat of plan.direct) channels.get(seat)?.send(payload);
+    if (plan.relayAll) this.sendSocket({ t: 'msg', d });
+    else for (const seat of plan.relay) this.sendSocket({ t: 'msg', to: this.seat === 0 ? seat : 0, d });
+    if (!recipients.length && options.to !== undefined) this.sendSocket({ t: 'msg', to: options.to, d });
+    if (plan.relay.length || (!recipients.length && options.to !== undefined)) this.setTransport('relay');
     // What the host's game says to everyone, spectators see too, through the room (fast snapshots a few times a second).
     if (this.seat === 0 && options.to === undefined && this.watchers.length) {
       const inner = d && typeof d === 'object' ? ((d as { d?: unknown }).d ?? d) : d;

@@ -729,7 +729,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
           {touch ? (
             <>
               <dt>◀ ▶</dt>
-              <dd>Steer</dd>
+              <dd>Steer: slide your thumb across to switch sides</dd>
               <dt>drift</dt>
               <dd>Hold while turning to drift</dd>
               <dt>item</dt>
@@ -740,6 +740,8 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dd>Slam the kart beside you</dd>
               <dt>coins</dt>
               <dd>Tap your coin counter to cash 5 for a boost</dd>
+              <dt>row</dt>
+              <dd>On the water, drift is your stroke: tap it as it lights up, on the catch; hold it through the bends to carve</dd>
             </>
           ) : (
             <>
@@ -842,8 +844,9 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             seconds and three coins.
           </li>
           <li>
-            <b>Insane, on the water: Redwood Slough.</b> You race a single scull. The water is slick, so carve (drift) through the bends. Tap hop just as the ring closes for a clean
-            catch; ten in a row is a Power Ten. The channel is narrow: leave it and you run aground in the marsh, and the coach&apos;s launch tows you off (about four seconds and
+            <b>Insane, on the water: Redwood Slough.</b> You race a single scull. The water is slick, so carve (drift) through the bends. {touch ? 'Tap row' : 'Tap Space'} on the beat, just as your blades
+            drop in, for a clean catch: the cox-box clicks it and the stroke light by your lap count lights up{touch ? ', as does the row button' : ''}. Ten in a row
+            (the light&apos;s pips) is a Power Ten. The channel is narrow: leave it and you run aground in the marsh, and the coach&apos;s launch tows you off (about four seconds and
             four coins). Whirlpools spin up right on the line out of the bends: when the foam turns, steer round and keep your speed. Wakes, the Bay swell and the wind shove you
             sideways; hop the crest. Mind the rocks in the rapids and the crane&apos;s load swinging across the Port. The current helps
             downstream and fights you upstream, so hug the bank going up. On the last lap the tide turns and the fog comes in.

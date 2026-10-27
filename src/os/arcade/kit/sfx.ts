@@ -53,8 +53,63 @@ let mounted = 0;
 let hidden = typeof document !== 'undefined' && document.hidden;
 
 function settle() {
+  if (mounted === 0 || hidden || muted) playbackSession(false);
   if (!ctx) return;
   if ((mounted === 0 || hidden) && ctx.state === 'running') void ctx.suspend().catch(() => {});
+}
+
+// iOS plays Web Audio in the "ambient" audio session, which the ring/silent switch mutes, so a game is silent on a
+// phone set to vibrate. While a game is mounted, visible and not muted, the page asks for the "playback" session
+// instead, as a video would: through navigator.audioSession (Safari 17 and up) or, before that, by playing a silent
+// looping <audio> element (started from the same gesture that resumes the context). Nowhere but iOS does any of it.
+const IOS =
+  typeof navigator !== 'undefined' && (/iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1));
+let keepAlive: HTMLAudioElement | null = null;
+
+/** A second of silence as a WAV (8 kHz, 8 bit, mono). */
+function silence() {
+  const n = 8000;
+  const b = new Uint8Array(44 + n).fill(0x80);
+  const v = new DataView(b.buffer);
+  const tag = (at: number, s: string) => [...s].forEach((c, i) => v.setUint8(at + i, c.charCodeAt(0)));
+  tag(0, 'RIFF');
+  v.setUint32(4, 36 + n, true);
+  tag(8, 'WAVE');
+  tag(12, 'fmt ');
+  v.setUint32(16, 16, true);
+  v.setUint16(20, 1, true);
+  v.setUint16(22, 1, true);
+  v.setUint32(24, 8000, true);
+  v.setUint32(28, 8000, true);
+  v.setUint16(32, 1, true);
+  v.setUint16(34, 8, true);
+  tag(36, 'data');
+  v.setUint32(40, n, true);
+  let bin = '';
+  for (const x of b) bin += String.fromCharCode(x);
+  return `data:audio/wav;base64,${btoa(bin)}`;
+}
+
+function playbackSession(on: boolean) {
+  if (!IOS) return;
+  const session = (navigator as Navigator & { audioSession?: { type: string } }).audioSession;
+  try {
+    if (session) {
+      session.type = on ? 'playback' : 'auto';
+      return;
+    }
+    if (on) {
+      if (!keepAlive) {
+        keepAlive = new Audio(silence());
+        keepAlive.loop = true;
+        keepAlive.setAttribute('playsinline', '');
+        keepAlive.setAttribute('x-webkit-airplay', 'deny');
+      }
+      if (keepAlive.paused) void keepAlive.play().catch(() => {});
+    } else keepAlive?.pause();
+  } catch {
+    /* ignore: the game just stays as quiet as the switch says */
+  }
 }
 
 if (typeof document !== 'undefined') {
@@ -122,6 +177,7 @@ export const sfx = {
   /** Call from a user gesture (the shell does on Play, taps and keys) so browsers allow audio and the context resumes. */
   unlock() {
     if (muted || mounted === 0 || hidden) return;
+    playbackSession(true);
     const ac = audio();
     if (ac && ac.state === 'suspended') void ac.resume().catch(() => {});
   },
@@ -159,6 +215,7 @@ export const sfx = {
   },
   setMuted(m: boolean) {
     muted = m;
+    settle();
     try {
       window.localStorage.setItem(MUTE_KEY, m ? '1' : '0');
     } catch {

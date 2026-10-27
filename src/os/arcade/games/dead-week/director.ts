@@ -12,7 +12,7 @@ export const INTRO = 2.2;
 export const GRACE = 2.5;
 
 export type Standing = { s: number; l: number; p: number; b: 0 | 1; nm: string; x: 0 | 1 };
-export type GamePacket = { n: number; seed: number; curse: Curse | null; cursed: number[]; sudden: boolean; st: Standing[] };
+export type GamePacket = { n: number; seed: number; at: number; curse: Curse | null; cursed: number[]; sudden: boolean; st: Standing[] };
 export type ResultPacket = { n: number; res: [number, 0 | 1][]; shared: boolean; lost: number[]; elim: number[]; st: Standing[]; sudden: boolean; over: boolean; winner: number | null };
 export type Out = { k: 'G'; g: GamePacket } | { k: 'R'; r: ResultPacket };
 
@@ -66,7 +66,7 @@ function startGame(d: Director, now: number): Out {
   d.phase = 'game';
   d.at = now;
   d.deadline = playEnd(d) + GRACE;
-  return { k: 'G', g: { n: r.n, seed: d.seed, curse: d.curse, cursed: d.cursed, sudden: r.sudden, st: standings(r) } };
+  return { k: 'G', g: { n: r.n, seed: d.seed, at: d.at, curse: d.curse, cursed: d.cursed, sudden: r.sudden, st: standings(r) } };
 }
 
 function finishGame(d: Director, now: number): Out {

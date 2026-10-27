@@ -126,7 +126,7 @@ const KEYS: Record<'p1' | 'p2', Record<keyof Controls | 'hit', string[]>> = {
 };
 
 const LENGTH_LABEL: Record<MatchLength, string> = { quick: 'Quick to 11', game: 'Game to 21', match: 'Best of Three' };
-const DIFFICULTY_LABEL: Record<Difficulty, string> = { easy: 'Easy', normal: 'Normal', hard: 'Hard', pro: 'Pro', olympic: 'Olympic', impossible: 'Impossible' };
+const DIFFICULTY_LABEL: Record<Difficulty, string> = { easy: 'Easy', normal: 'Normal', hard: 'Hard', pro: 'Pro', olympic: 'Olympic', impossible: 'Impossible', nirvaan: 'Nirvaan' };
 
 function loadSettings(): Settings {
   try {
@@ -1130,6 +1130,9 @@ export default function Badminton({ args }: AppProps) {
                 </button>
               ))}
             </div>
+            {settings.mode === 'cpu' && settings.difficulty === 'nirvaan' && (
+              <p className="bd-summary-note">Named after Alex's friend Nirvaan, who has played and beaten this game so many times.</p>
+            )}
           </div>
           <div className="bd-field">
             <span className="bd-field-label">Length</span>

@@ -13,7 +13,7 @@
 .g-lightcycles .g-lightcycles-split {
   position: absolute;
   top: 44px;
-  bottom: 20px;
+  bottom: 26px;
   left: 50%;
   width: 0;
   border-left: 1px dashed rgba(255, 255, 255, 0.14);
@@ -26,8 +26,10 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 14px 26px;
+  gap: calc(4px * var(--g-lightcycles-u, 1));
+  min-width: calc(150px * var(--g-lightcycles-u, 1));
+  max-width: calc(100% - 24px);
+  padding: calc(12px * var(--g-lightcycles-u, 1)) calc(24px * var(--g-lightcycles-u, 1));
   border-radius: 14px;
   background: rgba(14, 16, 26, 0.8);
   box-shadow: inset 0 0 0 0.5px rgba(255, 255, 255, 0.12);
@@ -43,16 +45,115 @@
     transform: translate(-50%, -50%) scale(0.9);
   }
 }
+.g-lightcycles .g-lightcycles-banner.is-toast {
+  top: auto;
+  bottom: calc(34px * var(--g-lightcycles-u, 1));
+  min-width: 0;
+  padding: calc(7px * var(--g-lightcycles-u, 1)) calc(16px * var(--g-lightcycles-u, 1));
+  border-radius: 999px;
+  transform: translate(-50%, 0);
+  animation-name: g-lightcycles-rise;
+}
+@keyframes g-lightcycles-rise {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 6px);
+  }
+}
+/* Someone left: at the top of the arena, clear of the round banners and the Fast Forward toast. */
+.g-lightcycles .g-lightcycles-banner.is-notice {
+  bottom: auto;
+  animation-name: g-lightcycles-drop;
+}
+@keyframes g-lightcycles-drop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -6px);
+  }
+}
+.g-lightcycles .g-lightcycles-banner.is-toast strong {
+  font-size: calc(13px * var(--g-lightcycles-u, 1));
+  font-weight: 600;
+}
+.g-lightcycles .g-lightcycles-banner b {
+  font-size: calc(30px * var(--g-lightcycles-u, 1));
+  font-weight: 700;
+  line-height: 1.05;
+  color: #32d4ff;
+  text-shadow: 0 0 18px rgba(50, 212, 255, 0.55);
+  font-variant-numeric: tabular-nums;
+  animation: g-lightcycles-count 0.6s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes g-lightcycles-count {
+  from {
+    opacity: 0.2;
+    transform: scale(1.35);
+  }
+}
 .g-lightcycles .g-lightcycles-banner strong {
-  font-size: 18px;
+  font-size: calc(18px * var(--g-lightcycles-u, 1));
   font-weight: 700;
   letter-spacing: -0.01em;
   color: #fff;
   white-space: nowrap;
 }
 .g-lightcycles .g-lightcycles-banner span {
-  font-size: 12.5px;
+  font-size: calc(12.5px * var(--g-lightcycles-u, 1));
   font-weight: 500;
-  color: rgba(245, 245, 247, 0.6);
+  color: rgba(245, 245, 247, 0.66);
+  text-align: center;
+}
+/* Short arenas (the framed laptop window): one slim line, so the riders stay in view. */
+.g-lightcycles .g-lightcycles-stage.is-short .g-lightcycles-banner {
+  flex-direction: row;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px 16px;
+  border-radius: 999px;
   white-space: nowrap;
+}
+.g-lightcycles .g-lightcycles-stage.is-short .g-lightcycles-banner strong {
+  font-size: 14px;
+}
+.g-lightcycles .g-lightcycles-stage.is-short .g-lightcycles-banner b {
+  font-size: 18px;
+}
+.g-lightcycles .g-lightcycles-stage.is-short .g-lightcycles-banner span {
+  font-size: 12px;
+  white-space: nowrap;
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-lightcycles .g-lightcycles-banner,
+  .g-lightcycles .g-lightcycles-banner b {
+    animation: none;
+  }
+}
+/* Touch: finger-sized shell controls and cards, grown by --g-lightcycles-u (1 / the phone or iPad frame scale). */
+@media (pointer: coarse) {
+  .g-lightcycles .arcade-ctrl button {
+    width: calc(42px * var(--g-lightcycles-u, 1));
+    height: calc(42px * var(--g-lightcycles-u, 1));
+  }
+  .g-lightcycles .arcade-ctrl svg {
+    width: calc(16px * var(--g-lightcycles-u, 1));
+    height: calc(16px * var(--g-lightcycles-u, 1));
+  }
+  .g-lightcycles .arcade-score {
+    font-size: calc(13px * var(--g-lightcycles-u, 1));
+    padding: calc(6px * var(--g-lightcycles-u, 1)) calc(12px * var(--g-lightcycles-u, 1));
+  }
+  .g-lightcycles .arcade-ov > .arcade-card {
+    zoom: var(--g-lightcycles-u, 1);
+  }
+  .g-lightcycles .arcade-ov > .arcade-card .arcade-btn,
+  .g-lightcycles .arcade-ov > .arcade-card .arcade-seg > button,
+  .g-lightcycles .arcade-ov > .arcade-card .arcade-input {
+    min-height: 42px;
+  }
+  /* Portrait: a tall card (the online Game Over) spans the width, so start it below the enlarged control pill. */
+  @container arcade-ov (orientation: portrait) {
+    .g-lightcycles .arcade-ov > .arcade-card {
+      margin-top: calc(8px / var(--g-lightcycles-u, 1) + 42px);
+    }
+  }
 }

@@ -24,6 +24,8 @@ export type Seg = {
   gate?: { loop: number; half: 'in' | 'out' };
   /** Drawing hint ('wood' | 'metal'); physics treats them all the same. */
   kind?: string;
+  /** A crumbling bridge plank: index into world.crumbles. */
+  crumble?: number;
 };
 
 /** A spinning blade; touching it with any part of the bike is a crash. */
@@ -31,7 +33,7 @@ export type Seg = {
  * A hazard circle: a spinning saw blade, or a mine (`kind: 'mine'`) sitting on the ground. A saw with
  * `mx`/`my` swings that far either side of its rest spot, once every `period` seconds.
  */
-export type Saw = { x: number; y: number; r: number; kind?: 'saw' | 'mine'; mx?: number; my?: number; period?: number; phase?: number };
+export type Saw = { x: number; y: number; r: number; kind?: 'saw' | 'mine' | 'tnt'; mx?: number; my?: number; period?: number; phase?: number };
 
 /** Where a saw is at world clock `t`. Still saws ignore the clock. */
 export function sawAt(s: Saw, t: number): { x: number; y: number } {
@@ -58,7 +60,12 @@ export type PhysWorld = {
   killY: number;
   /** Segment index by 4 m column for cheap queries. */
   grid: Map<number, number[]>;
+  /** Per crumbling plank: world clock when a wheel first touched it, -1 while untouched. */
+  crumbles: number[];
 };
+
+/** Seconds a touched bridge plank holds before it drops. */
+export const CRUMBLE_DELAY = 0.35;
 
 export type Wheel = {
   p: Vec;
@@ -146,7 +153,13 @@ export function buildWorld(segs: Seg[], saws: Saw[], loops: LoopGate[], killY: n
       else grid.set(g, [i]);
     }
   });
-  return { segs, saws, loops, killY, grid, clock: 0 };
+  const planks = segs.reduce((n, s) => (s.crumble === undefined ? n : Math.max(n, s.crumble + 1)), 0);
+  return { segs, saws, loops, killY, grid, clock: 0, crumbles: new Array(planks).fill(-1) };
+}
+
+/** Puts every fallen plank back, for a respawn. */
+export function resetCrumbles(world: PhysWorld) {
+  world.crumbles.fill(-1);
 }
 
 /** Segment ids that could touch a circle at x with radius pad. */
@@ -165,6 +178,10 @@ const gateOn = (loop: LoopGate | undefined, half: 'in' | 'out') =>
   !loop || loop.phase === 'over' || (loop.phase === 'approach' && half === 'in') || (loop.phase === 'leaving' && half === 'out');
 
 export function segActive(world: PhysWorld, s: Seg): boolean {
+  if (s.crumble !== undefined) {
+    const t = world.crumbles[s.crumble];
+    if (t >= 0 && world.clock - t > CRUMBLE_DELAY) return false;
+  }
   return !s.gate || gateOn(world.loops[s.gate.loop], s.gate.half);
 }
 
@@ -368,6 +385,16 @@ export function step(bike: Bike, world: PhysWorld, input: Input, dt: number): St
     substep(bike, world, input, h);
   }
   updateLoops(world, bike);
+  // wheels on a bridge plank start its fall
+  for (const wh of [bike.fw, bike.rw]) {
+    if (!wh.on) continue;
+    for (const i of segsNear(world, wh.p.x, 0.5)) {
+      const sg = world.segs[i];
+      if (sg.crumble === undefined || world.crumbles[sg.crumble] >= 0) continue;
+      if (wh.p.x < Math.min(sg.ax, sg.bx) - 0.1 || wh.p.x > Math.max(sg.ax, sg.bx) + 0.1) continue;
+      if ((wh.p.x - sg.ax) * sg.nx + (wh.p.y - sg.ay) * sg.ny < WHEEL_R + 0.15) world.crumbles[sg.crumble] = world.clock;
+    }
+  }
 
   // head against any segment face
   const c = Math.cos(bike.a);

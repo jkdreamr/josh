@@ -94,7 +94,7 @@ export function stepCpuBody(
               }
             }
           }
-          mind.predictAt = clock + 120;
+          mind.predictAt = clock + (profile.predictionMs ?? 120);
         }
         target = mind.target;
         const racketX = body.x + direction * 0.5;
@@ -125,7 +125,8 @@ export function stepCpuBody(
     const speed = clock < body.recoverUntil ? profile.speed * 0.5 : profile.speed;
     const gap = target - body.x;
     const desired = Math.abs(gap) > 0.08 ? Math.sign(gap) * Math.min(speed, Math.abs(gap) * 7) : 0;
-    body.vx += Math.max(-28 * step, Math.min(28 * step, desired - body.vx));
+    const acceleration = profile.acceleration ?? 28;
+    body.vx += Math.max(-acceleration * step, Math.min(acceleration * step, desired - body.vx));
   }
   body.x = clampToHalf(body.x + body.vx * step, direction);
   if (body.jumpRequested) {

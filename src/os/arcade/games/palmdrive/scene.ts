@@ -10,6 +10,13 @@ import { BOULDER, COUNTDOWN, FALL_CARRY, FALL_SINK, HAMMER, PIRANHA_GAP, PIRANHA
 import { buildRiver, marshMaterial } from './water';
 import { buildScull, deckStripe, hullSkin, poseScull, scullKit, strokeBody, tintTips, type Scull, type ScullKit } from './shell';
 import { buildFairway, mowerGaps, onPath } from './fairway';
+import { SKIES, buildAtmosphere, qualityOf } from './sky';
+import { skyWater, waterTick } from './skywater';
+import { floraTick } from './flora';
+import { kartDetail, mergeByMaterial } from './kart';
+import { knollGeometry } from './dish';
+import { bake, bakeInPlace, vcMats } from './landmarks';
+import { GROUNDS, asphaltTexture, curbTexture, glassDeck, glassTick, grassTufts, groundMaterial, lawnMaterial, roadMaterial, wallTexture } from './surfaces';
 import { FLAME_COLORS, PLAIN_GEAR, WHEEL_TIPS, type Finish, type Flame, type Gear, type Wheel } from './garage';
 
 type Three = typeof import('three');
@@ -570,6 +577,8 @@ function makeKart(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats): KartV
   add(body, geo.ball, white, 0, 1.3, -0.26, 0.34, 0.32, 0.34);
   add(body, geo.box, trim, 0, 1.36, -0.26, 0.1, 0.36, 0.7);
   add(body, geo.ring, dark, 0, 1.0, 0.3, 0.24, 0.24, 0.24).rotation.x = -0.9;
+  // (its frame, engine, the driver's arms and the rest: see kart.ts)
+  body.add(kartDetail(THREE, shared, k.color));
   // the flames finish: flames down the outside of both side pods and over the nose, licking back toward the driver (the
   // decal's tongues are at its right-hand edge, so it is mirrored on the left)
   const decals = new THREE.Group();
@@ -700,6 +709,8 @@ function makeKart(THREE: Three, geo: KartGeo, k: Dress, shared: KartMats): KartV
   add(boo, geo.cone, shared.boo, 0, 0.02, -0.5, 0.18, 0.3, 0.18).rotation.x = -Math.PI / 2;
   boo.visible = false;
   root.add(boo);
+  // (its static parts merged by material, the same materials so a refinish still applies: see kart.ts)
+  mergeByMaterial(THREE, body, new Set<T.Object3D>([...sparks, ice]));
   body.scale.setScalar(0.85);
   const shadow = new THREE.Mesh(geo.plane, shared.shadow);
   shadow.rotation.x = -Math.PI / 2;
@@ -974,6 +985,35 @@ const dampAngle = (a: number, b: number, k: number, dt: number) => {
   return a + d * (1 - Math.exp(-k * dt));
 };
 
+/** Yellow painted steel: the plate, its bracing in diagonals, rows of rivets and a little rust and grime. */
+function girder(THREE: Three) {
+  return texture(
+    THREE,
+    canvas(64, 64, (g) => {
+      g.fillStyle = '#f2b705';
+      g.fillRect(0, 0, 64, 64);
+      g.strokeStyle = 'rgba(120,80,0,0.55)';
+      g.lineWidth = 3;
+      g.strokeRect(2, 2, 60, 60);
+      g.beginPath();
+      g.moveTo(4, 4);
+      g.lineTo(60, 60);
+      g.moveTo(60, 4);
+      g.lineTo(4, 60);
+      g.stroke();
+      g.fillStyle = 'rgba(80,50,0,0.6)';
+      for (let k = 6; k < 64; k += 8) for (const y of [5, 59]) g.fillRect(k - 1, y - 1, 2, 2);
+      for (let k = 0; k < 40; k++) {
+        g.fillStyle = `rgba(${Math.random() < 0.5 ? '120,60,20' : '60,50,40'},${0.05 + Math.random() * 0.15})`;
+        g.fillRect(Math.random() * 64, Math.random() * 64, 2 + Math.random() * 6, 1 + Math.random() * 3);
+      }
+    }),
+  );
+}
+
+/** The most pixels the low quality tier draws a frame at (a phone at twice its size fits; an iPad draws a little under). */
+const LOW_PIXELS = 1.7e6;
+
 export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null {
   const gl = createGL(THREE, host, { alpha: true });
   if (!gl) return null;
@@ -987,6 +1027,10 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const sun = new THREE.DirectionalLight(...look.sun);
   sun.position.set(...(look.sunAt ?? [160, 260, -220]));
   scene.add(sun);
+  // (on the road: the time of day's sky, the hills on the horizon, and the light and shadows to match: see sky.ts)
+  const quality = qualityOf(host);
+  const atmos = r.boat ? null : buildAtmosphere(THREE, scene, gl.renderer, r.course, t, { hemi, sun }, quality);
+  const surf = r.boat ? undefined : GROUNDS[r.course];
 
   const dummy = new THREE.Object3D();
   const geo = {
@@ -1003,6 +1047,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     tile: new THREE.MeshLambertMaterial({ color: 0xb4553a }),
     dark: new THREE.MeshLambertMaterial({ color: 0x3e3128 }),
   };
+  /** For set pieces that never move, baked into one mesh each (see landmarks.ts). */
+  const bakeMats = vcMats(THREE);
   const kartShared: KartMats = {
     dark: new THREE.MeshLambertMaterial({ color: 0x1b1c22 }),
     skin: new THREE.MeshLambertMaterial({ color: 0xf2c7a0 }),
@@ -1061,6 +1107,11 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   ground.position.y = -0.05;
   // (a road in the sky has no ground under it: see skyway() for campus far below; on the water, the marsh all round)
   if (!look.glass) scene.add(ground);
+  if (surf) {
+    (ground.material as T.Material).dispose();
+    field.dispose();
+    ground.material = groundMaterial(THREE, surf);
+  }
   if (r.boat) {
     (ground.material as T.Material).dispose();
     field.dispose();
@@ -1078,7 +1129,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     }),
   );
   lawn.wrapS = lawn.wrapT = THREE.RepeatWrapping;
-  const lawnMat = new THREE.MeshLambertMaterial({ map: lawn });
+  const lawnMat = surf ? lawnMaterial(THREE, surf) : new THREE.MeshLambertMaterial({ map: lawn });
   // (on the water the channel runs right out to its banks: see water.ts)
   const boat = r.boat;
   if (!look.glass && !boat) {
@@ -1087,7 +1138,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   }
 
   // the road, curbs, walls and the start
-  const asphalt = texture(
+  const asphalt = surf ? asphaltTexture(THREE, look, surf) : texture(
     THREE,
     canvas(256, 256, (g) => {
       g.fillStyle = look.road;
@@ -1139,7 +1190,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         }),
       )
     : null;
-  const glassMat = glassTex ? new THREE.MeshBasicMaterial({ map: glassTex }) : null;
+  // (the night sky mirrored in it and a sheen sliding across it: see surfaces.ts)
+  const glassMat = glassTex ? (SKIES[r.course] ? glassDeck(THREE, new THREE.MeshBasicMaterial({ map: glassTex }), SKIES[r.course]!) : new THREE.MeshBasicMaterial({ map: glassTex })) : null;
   if (glassTex) glassTex.wrapS = glassTex.wrapT = THREE.RepeatWrapping;
   /** Where the glass road has no glass of its own: the Gap, and the panes of the Blink. */
   const gaps: [number, number][] = [];
@@ -1153,8 +1205,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       if (a > from + 0.1) scene.add(new THREE.Mesh(strip(THREE, t, from, a, lo, hi, 0.04, 6), glassMat));
       from = b;
     }
-  } else if (!boat) scene.add(new THREE.Mesh(ribbon(THREE, t, -t.half, t.half, 0.04, roadLen), new THREE.MeshLambertMaterial({ map: asphalt })));
-  const curbTex = texture(
+  } else if (!boat) scene.add(new THREE.Mesh(ribbon(THREE, t, -t.half, t.half, 0.04, roadLen), surf ? roadMaterial(THREE, look, asphalt) : new THREE.MeshLambertMaterial({ map: asphalt })));
+  const curbTex = surf ? curbTexture(THREE, look) : texture(
     THREE,
     canvas(16, 64, (g) => {
       g.fillStyle = look.curb[0];
@@ -1183,7 +1235,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     scene.add(new THREE.Mesh(ribbon(THREE, t, -t.half - CURB, -t.half, 0.07, curbLen), curbMat));
   }
   // sandstone walls with a cardinal red band, so the edge of the course always reads
-  const wallTex = texture(
+  const wallTex = surf ? wallTexture(THREE, look) : texture(
     THREE,
     canvas(64, 32, (g) => {
       g.fillStyle = look.wall;
@@ -1242,7 +1294,30 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const posts: { x: number; z: number; ry: number }[] = [];
   const open = runs.filter((run) => run[3] !== 'wall');
   // (in the sky: brushed steel decking out to glass rails, wherever they stand)
-  const deckMat = look.glass ? new THREE.MeshLambertMaterial({ color: 0x5d6270, emissive: 0x23262e }) : null;
+  const deckMat = look.glass
+    ? new THREE.MeshLambertMaterial({
+        color: 0x5d6270,
+        emissive: 0x23262e,
+        // (brushed steel plates, their seams and bolts)
+        map: texture(
+          THREE,
+          canvas(64, 64, (g) => {
+            g.fillStyle = '#9aa0aa';
+            g.fillRect(0, 0, 64, 64);
+            for (let y = 0; y < 64; y += 2) {
+              g.fillStyle = `rgba(${y % 4 ? '255,255,255' : '0,0,0'},0.05)`;
+              g.fillRect(0, y, 64, 1);
+            }
+            g.fillStyle = 'rgba(20,22,28,0.6)';
+            g.fillRect(0, 0, 64, 2);
+            g.fillRect(0, 0, 2, 64);
+            g.fillStyle = 'rgba(230,235,245,0.7)';
+            for (const [x, y] of [[6, 6], [58, 6], [6, 58], [58, 58]]) g.fillRect(x - 1, y - 1, 3, 3);
+          }),
+          [1, 1],
+        ),
+      })
+    : null;
   const railMat = look.glass ? new THREE.MeshBasicMaterial({ color: 0x9fe8ff, transparent: true, opacity: 0.28, side: THREE.DoubleSide, depthWrite: false }) : null;
   const railTop = look.glass ? new THREE.MeshBasicMaterial({ color: 0xdff8ff }) : null;
   // (the walls open for the side streets the traffic comes and goes by, and for the golf course's mower path, drawn but
@@ -1370,7 +1445,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const fencePosts: { x: number; z: number; ry: number; lean: number; len: number }[] = [];
   const leanOf = scatter(5);
   const pondTex = look.edge === 'stakes' ? null : waterTexture(THREE, true);
-  const pondMat = pondTex ? new THREE.MeshBasicMaterial({ map: pondTex, color: 0x9fe6f0 }) : null;
+  const sky = surf ? SKIES[r.course] : undefined;
+  const pondMat = pondTex ? (sky ? skyWater(THREE, sky, look.night ? 0x0a1a2c : 0x1d4458, look.night ? 0x1a3a4c : 0x3c7078) : new THREE.MeshBasicMaterial({ map: pondTex, color: 0x9fe6f0 })) : null;
   const copingMat = new THREE.MeshLambertMaterial({ color: 0xcdb48a, ...(look.night ? { emissive: 0x2a2214 } : {}) });
   const netting: { x: number; z: number; ry: number; len: number }[] = [];
   // (over the sky: a neon lip from the edge of the glass to the brink, lit posts along it and a dark edge under it)
@@ -1807,6 +1883,16 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   // reflective, so they still show up at night
   const chevronMat = look.night ? new THREE.MeshBasicMaterial({ map: chevron, side: THREE.DoubleSide }) : new THREE.MeshLambertMaterial({ map: chevron, side: THREE.DoubleSide });
   const boardPosts: { x: number; z: number; h: number }[] = [];
+  /** Every board, drawn in two batches (those whose arrow points left are mirrored): a draw call each, not one a board. */
+  const boards: T.Matrix4[][] = [[], []];
+  const board = (x: number, y: number, z: number, h: number, size: number, mirror: boolean) => {
+    dummy.position.set(x, y, z);
+    dummy.rotation.set(0, h, 0);
+    dummy.scale.set(mirror ? -size : size, size, 1);
+    dummy.updateMatrix();
+    // (a mirrored board goes in a batch mirrored itself, so three.js still knows its front face from its back)
+    boards[mirror ? 1 : 0].push(mirror ? new THREE.Matrix4().makeScale(-1, 1, 1).multiply(dummy.matrix) : dummy.matrix.clone());
+  };
   for (let s = 0; s < t.length; s += 9) {
     const i = Math.floor(s / t.step) % t.n;
     const c = t.curv[i];
@@ -1816,16 +1902,12 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     const open = dropAt(t, i, out);
     if (open && look.edge === 'stakes') continue;
     const p = pointAt(t, s, open ? out * (look.glass ? edgeAt(t, s, out).lim + 0.7 : (out > 0 ? beyond.hi : beyond.lo)[i] + 0.6) : out * (look.glass ? edgeAt(t, s, out).lim - 0.4 : t.edge - 0.4));
-    const sign = new THREE.Mesh(geo.plane, chevronMat);
-    sign.scale.set(1.6, 1.6, 1);
-    sign.position.set(p.x, 1.9, p.z);
     // face the karts coming at it; the arrow points the way the road turns
-    sign.rotation.y = headingOf(p.tx, p.tz) + Math.PI;
+    board(p.x, 1.9, p.z, headingOf(p.tx, p.tz) + Math.PI, 1.6, c < 0);
     // (on the water each board stands on a pair of piles in the marsh)
     if (boat) boardPosts.push({ x: p.x, z: p.z, h: headingOf(p.tx, p.tz) });
-    if (c < 0) sign.scale.x = -1.6;
-    scene.add(sign);
   }
+  dummy.rotation.set(0, 0, 0);
   if (boardPosts.length) {
     const m = new THREE.InstancedMesh(geo.wheel, new THREE.MeshLambertMaterial({ color: 0x4a3a2c }), boardPosts.length * 2);
     boardPosts.forEach((p, k) => {
@@ -1841,14 +1923,19 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   }
   for (const { s, side } of startBoards) {
     const p = pointAt(t, s, side * t.edge);
-    const sign = new THREE.Mesh(geo.plane, chevronMat);
-    sign.scale.set(1.5, 1.5, 1);
-    sign.position.set(p.x, 2.7, p.z);
-    sign.rotation.y = headingOf(p.tx, p.tz) + Math.PI;
     // the arrow points back in, away from the drop
-    if (side > 0) sign.scale.x = -1.5;
-    scene.add(sign);
+    board(p.x, 2.7, p.z, headingOf(p.tx, p.tz) + Math.PI, 1.5, side > 0);
   }
+  boards.forEach((list, mirror) => {
+    if (!list.length) return;
+    const m = new THREE.InstancedMesh(geo.plane, chevronMat, list.length);
+    list.forEach((mat, k) => m.setMatrixAt(k, mat));
+    if (mirror) m.scale.x = -1;
+    m.computeBoundingSphere();
+    scene.add(m);
+  });
+  dummy.rotation.set(0, 0, 0);
+  dummy.scale.setScalar(1);
 
   // the course's own scenery
   const rand = scatter(7);
@@ -1861,6 +1948,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     return Math.abs(at.d) > out + margin && !onStreet(t, streets, at.s, at.d, margin + 1) && !onPath(t, r, at.s, at.d, margin + 1);
   };
   const sceneryTick = SCENERY[r.course]({ THREE, scene, t, r, geo, mats, rand, clear, dummy }) || null;
+  // (and the grass along the verges and out across the ground)
+  const tufts = surf ? grassTufts(THREE, scene, t, surf, dummy, clear, quality, !look.joints) : null;
 
   // what the course leaves on the road: mud and oil lie flat, bales, boulders and planters stand in the way, cows
   // and cyclists cross it and buses drive their rounds
@@ -2036,7 +2125,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   // hazState for the lap this screen's kart is on, the state it collides with; before their lap they stand by asleep
   // (the hammer parked high and dark, the bollards flush with green lamps, the sprinkler capped), so the first lap
   // shows where they are.
-  const rigMat = new THREE.MeshLambertMaterial({ color: 0xf2b705, emissive: 0x3a2a00 });
+  // (the yellow steelwork: painted plate with its bracing, rivets and grime, see girder below)
+  const rigMat = new THREE.MeshLambertMaterial({ color: 0xffffff, emissive: 0x3a2a00, map: girder(THREE) });
   const steelMat = new THREE.MeshLambertMaterial({ color: 0x3a3d46, emissive: 0x0b0c10 });
   const ironMat = new THREE.MeshLambertMaterial({ color: 0x2a2c31, emissive: 0x08090c });
   const chevronTex = stripe('#ffcf1f', '#141414', 3);
@@ -2372,8 +2462,9 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     }),
   );
   const screeMat = new THREE.MeshLambertMaterial({ map: screeTex, transparent: true, depthWrite: false });
-  const knollMat = new THREE.MeshLambertMaterial({ color: 0xbfa463, flatShading: true });
-  const knollGeo = new THREE.SphereGeometry(1, 9, 5, 0, Math.PI * 2, 0, Math.PI / 2);
+  // (smooth, and grassed like the ground round them)
+  const knollMat = surf ? groundMaterial(THREE, surf) : new THREE.MeshLambertMaterial({ color: 0xbfa463, flatShading: true });
+  const knollGeo = surf ? knollGeometry(THREE) : new THREE.SphereGeometry(1, 9, 5, 0, Math.PI * 2, 0, Math.PI / 2);
   const rockSign = new THREE.MeshBasicMaterial({
     map: texture(
       THREE,
@@ -2424,7 +2515,7 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       const p = pointAt(t, h.s + ds, side * (t.edge + dd));
       const k = new THREE.Mesh(knollGeo, knollMat);
       k.position.set(p.x, -0.4, p.z);
-      k.scale.set(sx, sy, sz);
+      k.scale.set(sx * (surf ? 1.25 : 1), sy, sz * (surf ? 1.25 : 1));
       k.rotation.y = headingOf(p.tx, p.tz);
       scene.add(k);
     }
@@ -2517,7 +2608,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       const g = makeStatue(THREE, geo, h.r);
       g.position.set(h.x, 0, h.z);
       g.rotation.y = headingOf(h.tx, h.tz) + Math.PI;
-      scene.add(g);
+      // (one mesh: it never moves, and it is made of many pieces)
+      scene.add(bake(THREE, g, bakeMats));
       return;
     }
     if (h.kind === 'trench') {
@@ -2550,6 +2642,9 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     if (h.kind === 'golfer') {
       golfKit ??= golferKit(THREE);
       const v = makeGolfer(THREE, geo, golfKit, rand, 'walk');
+      // (each limb baked into one mesh, the rest of them another: see landmarks.ts)
+      for (const limb of [...v.legs, ...v.arms]) bakeInPlace(THREE, limb);
+      bakeInPlace(THREE, v.g, [...v.legs, ...v.arms]);
       v.g.scale.setScalar(1.15);
       v.g.position.set(h.x, 0, h.z);
       scene.add(v.g);
@@ -2560,10 +2655,15 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     if (h.kind === 'cart') {
       golfKit ??= golferKit(THREE);
       const v = makeCart(THREE, geo, golfKit, rand);
+      // (all of it one mesh, the wheels too: plain round tyres and hubcaps turning on their axles look the same standing
+      // still, and on a grid of eight karts every draw counts)
+      v.g.updateMatrixWorld(true);
+      for (const w of v.wheels) for (const cap of [...w.children]) v.g.attach(cap);
+      bakeInPlace(THREE, v.g);
       v.g.position.set(h.x, 0, h.z);
       scene.add(v.g);
       const at = pointAt(t, h.along, h.at);
-      carts.push({ ...v, i, h: h.drive ? headingOf(h.tx, h.tz) : headingOf(-at.tz * h.walk, at.tx * h.walk), roll: 0 });
+      carts.push({ ...v, wheels: [], i, h: h.drive ? headingOf(h.tx, h.tz) : headingOf(-at.tz * h.walk, at.tx * h.walk), roll: 0 });
       return;
     }
     if (h.kind === 'ball') {
@@ -2574,19 +2674,23 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       const dist = Math.hypot(land.x - tee.x, land.z - tee.z);
       const ux = (land.x - tee.x) / dist;
       const uz = (land.z - tee.z) / dist;
-      // the tee: a box of mown grass, its markers, the golfer side-on to the shot and the bag stood beside
+      // the tee: a box of mown grass, its markers, the golfer side-on to the shot and the bag stood beside (the box, the
+      // markers and the bag baked into one mesh)
+      const still = new THREE.Group();
       const box = new THREE.Mesh(geo.plane, new THREE.MeshLambertMaterial({ color: 0x7cc255 }));
       box.rotation.set(-Math.PI / 2, 0, -Math.atan2(uz, ux));
       box.scale.set(5, 4, 1);
       box.position.set(tee.x, 0.035, tee.z);
-      scene.add(box);
+      still.add(box);
       for (const side of [-1, 1]) {
         const marker = new THREE.Mesh(geo.ball, kartShared.red);
         marker.scale.setScalar(0.16);
         marker.position.set(tee.x - uz * side * 2 + ux * 1.2, 0.15, tee.z + ux * side * 2 + uz * 1.2);
-        scene.add(marker);
+        still.add(marker);
       }
       const golfer = makeGolfer(THREE, geo, golfKit, rand, 'swing');
+      for (const o of golfer.moving) if (o.children.length) bakeInPlace(THREE, o);
+      bakeInPlace(THREE, golfer.g, golfer.moving);
       const ry = Math.atan2(-uz, ux);
       golfer.g.rotation.y = ry;
       golfer.g.position.set(tee.x - Math.sin(ry) * 0.85, 0, tee.z - Math.cos(ry) * 0.85);
@@ -2595,7 +2699,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       const bag = golfBag(THREE, geo, golfKit, golfKit.bags[i % golfKit.bags.length]);
       bag.position.set(tee.x - Math.sin(ry) * 2 - ux * 1.2, 0, tee.z - Math.cos(ry) * 2 - uz * 1.2);
       bag.rotation.z = 0.15;
-      scene.add(bag);
+      still.add(bag);
+      scene.add(bakeInPlace(THREE, still));
       const ball = new THREE.Mesh(ballGeo, ballMat);
       ball.visible = false;
       const streak = new THREE.Mesh(streakGeo, streakMat);
@@ -2643,11 +2748,15 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       const planter = makePlanter(THREE, geo, h.r, rand);
       planter.position.set(h.x, 0, h.z);
       planter.rotation.y = rand() * Math.PI * 2;
-      scene.add(planter);
+      scene.add(bake(THREE, planter, bakeMats));
     } else if (h.kind === 'bike') {
       // a cyclist on the way to class, a little bigger than life so it reads at speed
       kit ??= bikeKit(THREE);
-      const { g, wheels, pedal } = makeBike(THREE, geo, kit, rand);
+      const { g, wheels, pedal, cranks, legs } = makeBike(THREE, geo, kit, rand);
+      // (each part that turns baked into one mesh, and the rest of it into another: a few draws, not dozens)
+      for (const w of wheels) bakeInPlace(THREE, w);
+      bakeInPlace(THREE, cranks);
+      bakeInPlace(THREE, g, [...wheels, cranks, ...legs]);
       const at = pointAt(t, h.along, h.at);
       const face = headingOf(-at.tz * h.walk, at.tx * h.walk);
       g.scale.setScalar(1.15);
@@ -2657,6 +2766,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       bikes.push({ view: { g, wheels, pedal, h: face, crank: 0 }, i });
     } else if (h.kind === 'bus') {
       const bus = makeBus(THREE, geo, BUS_LEN, h.r);
+      // (its body one mesh or three, the wheels still turning: see landmarks.ts)
+      bakeInPlace(THREE, bus.g, bus.wheels);
       bus.g.position.set(h.x, 0, h.z);
       bus.g.rotation.y = headingOf(h.tx, h.tz);
       scene.add(bus.g);
@@ -2767,7 +2878,8 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const waterTex = ponds.length ? waterTexture(THREE) : null;
   if (waterTex) {
     waterTex.repeat.set(1, 1);
-    const waterMat = new THREE.MeshPhongMaterial({ color: 0xffffff, map: waterTex, shininess: 90, specular: 0x6688aa });
+    // (on the road courses the sky mirrored in it, see skywater.ts)
+    const waterMat = sky ? skyWater(THREE, sky, 0x1d4a50, 0x3e7a70) : new THREE.MeshPhongMaterial({ color: 0xffffff, map: waterTex, shininess: 90, specular: 0x6688aa });
     ponds.forEach((p, k) => {
       const disc = new THREE.CircleGeometry(p.r, Math.max(48, Math.round(p.r * 3)));
       disc.rotateX(-Math.PI / 2);
@@ -2807,11 +2919,28 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const boxTex = texture(
     THREE,
     canvas(128, 128, (g) => {
-      g.fillStyle = 'rgba(255,255,255,0.5)';
+      // a glassy face: clearer in the middle, frosted toward its bevelled rim, a glint across one corner
+      const core = g.createRadialGradient(64, 64, 10, 64, 64, 80);
+      core.addColorStop(0, 'rgba(255,255,255,0.32)');
+      core.addColorStop(1, 'rgba(255,255,255,0.62)');
+      g.fillStyle = core;
       g.fillRect(0, 0, 128, 128);
       g.strokeStyle = '#fff';
       g.lineWidth = 12;
       g.strokeRect(6, 6, 116, 116);
+      g.strokeStyle = 'rgba(255,255,255,0.55)';
+      g.lineWidth = 3;
+      g.strokeRect(16, 16, 96, 96);
+      const glint = g.createLinearGradient(14, 14, 60, 60);
+      glint.addColorStop(0, 'rgba(255,255,255,0.75)');
+      glint.addColorStop(1, 'rgba(255,255,255,0)');
+      g.fillStyle = glint;
+      g.beginPath();
+      g.moveTo(12, 12);
+      g.lineTo(70, 12);
+      g.lineTo(12, 70);
+      g.closePath();
+      g.fill();
       g.font = 'bold 86px Inter, Arial, sans-serif';
       g.textAlign = 'center';
       g.textBaseline = 'middle';
@@ -2832,9 +2961,10 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   const boxAge = r.boxes.map(() => 1);
   // (on the water, in the low dawn light, they shine a little brighter, with a rim and a stamped face, or they read as
   // dull brown discs)
-  const coinFace = boat
+  // (and on the road a stamped face too, now)
+  const coinFace = boat || surf
     ? new THREE.MeshLambertMaterial({
-        emissive: 0x7a4c00,
+        emissive: boat ? 0x7a4c00 : 0x5a3800,
         map: texture(
           THREE,
           canvas(64, 64, (g) => {
@@ -3212,11 +3342,28 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
   let fovBase = 68;
   let back = 6.6;
 
+  // (everything that stands up casts the sun's shadow, where the screen can afford it; of a kart, only its body, its
+  // detail and the driver's helmet, which are most of its shadow for a fraction of the draws)
+  for (const v of karts) {
+    // (with real shadows the painted blob under each kart is not drawn: the camera never sees layer 2)
+    if (atmos?.shadows) v.shadow.layers.set(2);
+    v.root.traverse((o) => (o.userData.noCast = true));
+    for (const o of v.body.children) {
+      const m = o as T.Mesh;
+      if (o.userData.kartBody || o.name === 'detail' || (m.geometry === geo.ball && m.material === kartShared.white)) o.userData.noCast = false;
+    }
+  }
+  atmos?.shade(scene);
+  let reflTick = 0;
   const view: View = {
     gl,
     camera,
     resize(w, h) {
       if (w <= 0 || h <= 0) return;
+      // (a phone or iPad draws at most LOW_PIXELS: an iPad's retina screen at full resolution is three times a phone's,
+      // for little you can see at speed)
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      gl.renderer.setPixelRatio(quality === 'low' ? Math.max(1, Math.min(dpr, Math.sqrt(LOW_PIXELS / (w * h)))) : dpr);
       gl.renderer.setSize(w, h, false);
       camera.aspect = w / h;
       fovBase = camera.aspect < 0.8 ? 84 : camera.aspect < 1.2 ? 74 : 66;
@@ -4047,6 +4194,11 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
         camera.position.set(cx + jx, cy + jy, cz);
       }
       camera.lookAt(focusX + Math.sin(camYaw + flip) * 4, 1.15 + (pose ? Math.max(-0.5, pose.y) * 0.6 : k.y * 0.3), focusZ + Math.cos(camYaw + flip) * 4);
+      atmos?.tick(camera, { x: focusX + Math.sin(camYaw + flip) * 22, z: focusZ + Math.cos(camYaw + flip) * 22 }, clock, Math.max(dim * 0.55, dark * 0.5));
+      tufts?.tick(clock, camera);
+      floraTick(clock);
+      waterTick(clock);
+      glassTick(clock);
       const fov = fovBase + (k.boost > 0 ? 9 : 0) + Math.min(5, Math.max(0, k.v - 15) * 0.3);
       if (Math.abs(camera.fov - fov) > 0.05) {
         camera.fov = damp(camera.fov, fov, 4, dt);
@@ -4222,8 +4374,9 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
     },
     render() {
       if (gl.lost()) return;
-      // (on the water, what it mirrors first)
-      river?.reflect(gl.renderer, scene, camera);
+      // (on the water, what it mirrors first: on a phone every other frame, which the ripples hide, as the mirror holds
+      // a second pass of everything on the banks)
+      if (river && (quality === 'high' || (reflTick++ & 1) === 0)) river.reflect(gl.renderer, scene, camera);
       gl.renderer.render(scene, camera);
     },
     dispose() {

@@ -19,8 +19,10 @@ Run from the repo root:
   python3 scripts/grand-prix-commentary.py --engine kokoro --models <dir with the two files> [--force]
   python3 scripts/grand-prix-commentary.py --check <whisper dir>      # check what is recorded, record nothing
 
-Chatterbox speaks from scripts/grand-prix-voices/<speaker>.wav, reference clips made with the Kokoro voices in
-lines.ts, so no real person's voice is cloned. Chatterbox is MIT licensed (https://github.com/resemble-ai/chatterbox);
+Chatterbox speaks from scripts/grand-prix-voices/<speaker>.wav, so no real person's voice is cloned: James is
+Chatterbox's own built-in voice; Sophie is a clip of the Kokoro voice blend in lines.ts. (After changing a reference,
+clear that speaker's entries from manifest.json so their lines are recorded again.)
+Chatterbox is MIT licensed (https://github.com/resemble-ai/chatterbox);
 Kokoro is Apache 2.0 (https://huggingface.co/hexgrad/Kokoro-82M).
 """
 
@@ -31,7 +33,7 @@ import soundfile as sf
 
 OUT = 'public/sounds/grand-prix/commentary'
 # bump when the processing below changes, so every clip is recorded again
-PROCESS = 'booth-1'
+PROCESS = 'booth-2'
 
 
 def load_lines():
