@@ -1507,10 +1507,10 @@ function Play({ mode }: { mode: StageMode }) {
       const text = `${k.n}|${k.level === 0 ? far : e.off ? `${far} ${k.level > 0 ? 'up' : 'down'}` : k.level > 0 ? 'above' : 'below'}|${k.color}`;
       if (el.dataset.k !== text) {
         el.dataset.k = text;
-        const [num, far] = text.split('|');
+        const [num, said] = text.split('|');
         el.style.setProperty('--mate', k.color);
         el.children[1].textContent = num;
-        el.children[2].textContent = far;
+        el.children[2].textContent = said;
       }
       el.classList.toggle('is-down', k.down);
       el.classList.toggle('is-help', k.help);

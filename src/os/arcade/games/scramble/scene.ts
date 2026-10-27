@@ -4532,7 +4532,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       v.ring.scale.setScalar(0.85 - ((clock * 1.4) % 1) * 0.25);
     }
     v.ghost.visible = (focus || mate >= 0) && f.phase === 'ground';
-    v.ghost.material = focus ? M.ghost : mateGhosts[mate % mateGhosts.length];
+    v.ghost.material = focus || mate < 0 ? M.ghost : mateGhosts[mate % mateGhosts.length];
     return true;
   }
 
