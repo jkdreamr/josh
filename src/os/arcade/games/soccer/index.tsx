@@ -3,14 +3,14 @@ import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useThree, useOnli
 import type { LevelName } from '../../kit/controls';
 import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
-import { chargePower, IDENTITY_BASIS, keyboardInput, screenToWorld } from './input.ts';
-import { cloneSnapshot, commandFromPacket, movePacket, parsePacket } from './net.ts';
-import { createWorld, distance, FIELD, findReceiver, matchClock, stepWorld, STEP, teamDir, teamOf, type Command, type Team, type World } from './logic.ts';
+import { chargePower, IDENTITY_BASIS, screenToWorld, gamepadInput, keyboardInput, reconcileControllers, type ControlCommand, type GamepadHistory } from './input.ts';
+import { cloneSnapshot, commandFromPacket, consumeCommand, mergeRemoteCommand, movePacket, parsePacket } from './net.ts';
+import { createWorld, distance, FIELD, teamOf, TEAM_SIZE, findReceiver, matchClock, nearestCarrier, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { goalRoar, kickThump, netSwish, startCrowd, whistle } from './audio.ts';
 import { createScene, type CameraMode, type SoccerView, type TimeMode } from './scene.ts';
-import { Hud } from './hud.tsx';
-import { playerForSeat, seatForPlayer, type Mode } from './seats.ts';
+import { Hud, PowerMeter } from './hud.tsx';
+import { playerForSeat, type Mode } from './seats.ts';
 import './soccer.css';
 import QRCode from 'qrcode';
 
@@ -30,7 +30,7 @@ const phoneModeOptions = [['cpu', 'vs CPU'], ['versus', '2 players'], ['coop', '
 const halfOptions = [['2', '2 min'], ['4', '4 min'], ['6', '6 min']] as const;
 const cameraOptions = [['broadcast', 'Broadcast'], ['end', 'End to end']] as const;
 const timeOptions = [['night', 'Night'], ['golden', 'Golden hour']] as const;
-const commandKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyJ', 'KeyK', 'KeyL', 'KeyI', 'KeyU', 'Period', 'Slash', 'Semicolon', 'Quote', 'Comma', 'ShiftLeft', 'ShiftRight'];
+const commandKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyJ', 'KeyK', 'KeyL', 'KeyI', 'KeyU', 'KeyQ', 'KeyE', 'Space', 'Period', 'Slash', 'Semicolon', 'Quote', 'Comma', 'ShiftLeft', 'ShiftRight'];
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
 function Settings({ online = false }: { online?: boolean }) {
@@ -231,6 +231,8 @@ function Play() {
   const [cameraChoice] = useSetting(CAMERA);
   const [timeChoice] = useSetting(TIME);
   const [power, setPower] = useState<number | null>(null);
+  const [hudPower, setHudPower] = useState<number | null>(null);
+  const [containing, setContaining] = useState(false);
   const [replayActive, setReplayActive] = useState(false);
   const [targetId, setTargetId] = useState<number | null>(null);
   const [selectedId, setSelectedId] = useState(1);
@@ -281,8 +283,8 @@ function Play() {
   const crowdIntensity = useRef(0.12);
   const renderDirty = useRef(true);
   const guestRenderTimer = useRef(0);
-  const gamepadPrevious = useRef<Record<number, boolean[]>>({});
-  const gamepadFlick = useRef<Record<number, boolean>>({});
+  const gamepadPrevious = useRef<Record<number, GamepadHistory>>({});
+  const controllerPlayers = useRef(new Map<number, number>());
   const powerUiTimer = useRef(0);
   const displayOnlyRoom = useRef(getSetting(DISPLAY_ONLY) === 'on');
   shellRef.current = shell;
@@ -300,12 +302,13 @@ function Play() {
   }
   if (!replayWorld.current) replayWorld.current = createReplayWorld(worldRef.current);
   const world = worldRef.current!;
-  const localPlayerIds = online ? online.seat < 0 || (online.isHost && displayOnlyRoom.current) ? [] : [playerForSeat(online.seat, displayOnlyRoom.current, currentMode)] : currentMode === 'versus' ? [6, 17] : currentMode === 'coop' ? [6, 9] : [world.controlled[0]];
+  const localPlayerIds = online ? online.seat < 0 || (online.isHost && displayOnlyRoom.current) ? [] : [controllerPlayers.current.get(online.seat) ?? playerForSeat(online.seat, displayOnlyRoom.current, currentMode)] : currentMode === 'versus' ? [world.controlled[0], world.controlled[1]] : currentMode === 'coop' ? [controllerPlayers.current.get(0) ?? 6, controllerPlayers.current.get(1) ?? 9] : [world.controlled[0]];
   const localTeam = localPlayerIds.length ? teamOf(localPlayerIds[0]!) : 0;
 
   useEffect(() => {
     if (shell.status !== 'ready') return;
     const fresh = createWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
+    controllerPlayers.current.clear();
     setupHumans(fresh, currentMode, online);
     worldRef.current = fresh;
     setHudWorld(fresh);
@@ -364,12 +367,13 @@ function Play() {
         if (displayOnlyRoom.current) {
           const basis = viewRef.current?.viewBasis() ?? IDENTITY_BASIS;
           command.move = screenToWorld(command.move, basis);
+          if (command.switchDir) command.switchDir = screenToWorld(command.switchDir, basis);
           const aim = screenToWorld(command.aim ?? { x: 0, z: 0 }, basis);
           command.aim = Math.hypot(aim.x, aim.z) > 0.05
             ? aim
             : { x: teamDir(player.team, current.endsSwapped), z: 0 };
         }
-        remoteCommands.current.set(player.id, command);
+        remoteCommands.current.set(player.id, mergeRemoteCommand(remoteCommands.current.get(player.id), command));
         return;
       }
       if (!room.isHost && from === 0 && packet.k === 's') {
@@ -429,39 +433,31 @@ function Play() {
     lastScore.current = [...current.score];
   };
 
-  const makeCommand = (id: number, p2: boolean, dt: number): Command => {
+  const makeCommand = (id: number, p2: boolean, dt: number): ControlCommand => {
     const state = keyboardInput(keys, p2, !p2 && !online && currentMode === 'cpu');
+    const current = worldRef.current!;
+    const player = current.players[id]!;
+    const defending = nearestCarrier(current)?.team !== player.team;
+    state.autoJockey ||= shell.touch;
     const padIndex = p2 ? 1 : 0;
     const pad = typeof navigator !== 'undefined' ? navigator.getGamepads?.()[padIndex] : null;
-    let padFinesse = false;
     if (pad) {
-      const previous = gamepadPrevious.current[padIndex] ?? (gamepadPrevious.current[padIndex] = []);
-      const down = (index: number) => !!pad.buttons[index]?.pressed;
-      const edge = (index: number) => down(index) && !previous[index];
-      const stickX = Math.abs(pad.axes[0] ?? 0) > 0.14 ? pad.axes[0]! : 0;
-      const stickZ = Math.abs(pad.axes[1] ?? 0) > 0.14 ? pad.axes[1]! : 0;
-      if (Math.hypot(stickX, stickZ) > 0.14) state.move = { x: clamp(stickX, -1, 1), z: clamp(stickZ, -1, 1) };
-      const padAction = edge(0) ? 'pass' : edge(1) ? 'shoot' : edge(3) ? 'lob' : edge(2) ? 'through' : null;
-      const heldPad = down(0) ? 'pass' : down(1) ? 'shoot' : down(3) ? 'lob' : down(2) ? 'through' : null;
-      if (padAction) { state.action = padAction; state.pressed = true; }
-      state.heldAction = heldPad;
-      state.sprint = down(7);
-      padFinesse = down(5);
-      const flickX = pad.axes[2] ?? 0;
-      const flickZ = pad.axes[3] ?? 0;
-      if (edge(4)) { state.action = 'pass'; state.pressed = true; }
-      const flicked = Math.hypot(flickX, flickZ) > 0.8;
-      if (flicked && !gamepadFlick.current[padIndex]) { state.action = 'skill'; state.pressed = true; state.heldAction = null; }
-      gamepadFlick.current[padIndex] = flicked;
-      for (let i = 0; i < pad.buttons.length; i++) previous[i] = pad.buttons[i]!.pressed;
-      previous.length = pad.buttons.length;
+      const mapped = gamepadInput(pad, gamepadPrevious.current[padIndex], defending);
+      gamepadPrevious.current[padIndex] = mapped.previous;
+      const input = mapped.state;
+      if (Math.hypot(input.move.x, input.move.z) > 0.14) state.move = input.move;
+      if (input.action) { state.action = input.action; state.pressed = input.pressed; }
+      state.heldAction ||= input.heldAction;
+      state.sprint ||= input.sprint; state.jockey ||= input.jockey;
+      state.finesseHeld ||= input.finesseHeld; state.press ||= input.press;
+      state.contain ||= input.contain; state.switchNearest ||= input.switchNearest; state.switchDir = input.switchDir;
     }
     if (!p2 && Math.hypot(movement.current.x, movement.current.z) > 0.05 && shell.touch) {
       state.move = { ...movement.current };
     }
-    const current = worldRef.current!;
-    const player = current.players[id]!;
-    state.move = screenToWorld(state.move, viewRef.current?.viewBasis() ?? IDENTITY_BASIS);
+    const basis = viewRef.current?.viewBasis() ?? IDENTITY_BASIS;
+    state.move = screenToWorld(state.move, basis);
+    if (state.switchDir) state.switchDir = screenToWorld(state.switchDir, basis);
     const aim = Math.hypot(state.move.x, state.move.z) > 0.05
       ? { ...state.move }
       : { x: teamDir(player.team, current.endsSwapped), z: 0 };
@@ -469,7 +465,8 @@ function Play() {
     let action = state.action;
     let pressed = state.pressed;
     let shotPower = 0.1;
-    if (state.heldAction && !charge.holding) {
+    const defensiveAction = defending && nearestCarrier(current) && ['shoot', 'lob', 'through'].includes(state.heldAction ?? '');
+    if (state.heldAction && !defensiveAction && !charge.holding) {
       charge.holding = true;
       charge.action = state.heldAction;
       charge.seconds = 0;
@@ -478,14 +475,14 @@ function Play() {
       charge.seconds = Math.min(1, charge.seconds + dt);
       action = null;
       pressed = false;
-      shotPower = charge.seconds;
+      shotPower = chargePower(charge.seconds);
       powerUiTimer.current += dt;
       if (powerUiTimer.current >= 1 / 30) {
         powerUiTimer.current %= 1 / 30;
-        setPower(charge.seconds);
+        setPower(chargePower(charge.seconds));
       }
     } else if (charge.holding) {
-      action = charge.action === 'shoot' && (keys.down(p2 ? 'Comma' : 'KeyU') || padFinesse) ? 'finesse' : charge.action;
+      action = charge.action === 'shoot' && state.finesseHeld ? 'finesse' : charge.action;
       pressed = true;
       shotPower = chargePower(charge.seconds);
       charge.holding = false;
@@ -497,7 +494,7 @@ function Play() {
       shotPower = 0.1;
     }
     charging.current.set(id, charge);
-    return { move: state.move, sprint: state.sprint, action, heldAction: charge.holding ? state.heldAction : null, pressed, power: shotPower, aim };
+    return { ...state, action, heldAction: charge.holding ? state.heldAction : null, contain: defending && state.heldAction === 'pass', pressed, power: shotPower, aim };
   };
 
   const finishMatch = (current: World) => {
@@ -529,16 +526,27 @@ function Play() {
       ? 1
       : 0.08 + Math.min(0.82, Math.max(0, (Math.abs(current.ball.x) - FIELD.penaltyDepth * 0.42) / (FIELD.length / 2 - FIELD.penaltyDepth * 0.42)) * 0.75);
     const isOnlineGuest = !!room && !room.isHost;
+    controllerPlayers.current = reconcileControllers(current, controllerPlayers.current);
     if (room) {
-      for (const player of current.players) {
-        const seat = seatForPlayer(player.id, room.isHost && displayOnlyRoom.current, currentMode);
-        let active = false;
-        for (const entry of room.players) if (entry.seat === seat) { active = true; break; }
-        const hostDisplay = room.isHost && displayOnlyRoom.current && seat === 0;
-        player.human = active && !hostDisplay;
-        player.controlled = active && !hostDisplay;
-        if (!active) remoteCommands.current.delete(player.id);
+      for (const [seat, id] of controllerPlayers.current) {
+        if (room.players.some((entry) => entry.seat === seat)) continue;
+        const player = current.players[id];
+        if (player) { player.human = false; player.controlled = false; }
+        controllerPlayers.current.delete(seat); remoteCommands.current.delete(id);
       }
+      for (const entry of room.players) {
+        if (entry.seat === 0 && displayOnlyRoom.current || entry.seat < 0) continue;
+        if (!controllerPlayers.current.has(entry.seat)) {
+          const preferred = playerForSeat(entry.seat, displayOnlyRoom.current, currentMode);
+          const occupied = [...controllerPlayers.current.values()];
+          const id = occupied.includes(preferred) ? current.players.find((p) => p.team === teamForPlayer(preferred, current.players) && !occupied.includes(p.id))?.id : preferred;
+          if (id !== undefined) controllerPlayers.current.set(entry.seat, id);
+        }
+        const player = current.players[controllerPlayers.current.get(entry.seat)!];
+        if (player) { player.human = true; player.controlled = true; }
+      }
+    } else if (currentMode === 'coop' && controllerPlayers.current.size === 0) {
+      controllerPlayers.current.set(0, 1); controllerPlayers.current.set(1, 2);
     }
 
     if (current.phase === 'goal' && !replaySkipped.current && keys.pressed(...commandKeys)) replaySkipped.current = true;
@@ -546,22 +554,23 @@ function Play() {
     const commandsForUsers = userCommands.current;
     commandsForUsers.clear();
     if (current.phase !== 'goal' && room && !room.watching) {
-      const id = localPlayerIds[0];
+      const id = controllerPlayers.current.get(room.seat) ?? localPlayerIds[0];
       if (id !== undefined) commandsForUsers.set(id, makeCommand(id, false, dt));
     } else if (current.phase !== 'goal' && !room) {
       for (let i = 0; i < localPlayerIds.length; i++) {
-        const id = localPlayerIds[i]!;
+        const id = controllerPlayers.current.get(i) ?? localPlayerIds[i]!;
         commandsForUsers.set(id, makeCommand(id, i === 1, dt));
       }
     }
 
     if (isOnlineGuest && room && localPlayerIds.length) {
       const command = commandsForUsers.get(localPlayerIds[0]!)!;
-      if (command.action && command.pressed || command.press) pendingNetworkAction.current = command;
+      if (command.action && command.pressed || command.switchNearest || command.switchDir) pendingNetworkAction.current = command;
       inputTimer.current += dt;
       if (inputTimer.current >= 1 / 30) {
         inputTimer.current %= 1 / 30;
-        const moveOnly = { ...command, ...(pendingNetworkAction.current ?? {}), move: command.move, sprint: command.sprint };
+        const pending = pendingNetworkAction.current;
+        const moveOnly = { ...command, ...(pending ? { action: pending.action, pressed: pending.pressed, power: pending.power, aim: pending.aim, switchNearest: pending.switchNearest, switchDir: pending.switchDir } : {}) };
         room.send(movePacket(room.round || 1, inputSequence.current++, room.seat, moveOnly));
         pendingNetworkAction.current = null;
       }
@@ -583,10 +592,7 @@ function Play() {
         if (room?.isHost) {
           for (const [id, command] of remoteCommands.current) {
             commands.set(id, { ...command });
-            command.action = null;
-            command.pressed = false;
-            command.switchNearest = false;
-            command.switchDir = null;
+            Object.assign(command, consumeCommand(command));
           }
         }
         const previousPhase = current.phase;
@@ -594,6 +600,15 @@ function Play() {
         const previousScore1 = current.score[1];
         const previousEvent = current.event;
         stepWorld(current, STEP, commands, debugConfig.clockScale);
+        const assignments = reconcileControllers(current, controllerPlayers.current);
+        for (const [seat, id] of assignments) {
+          const old = controllerPlayers.current.get(seat);
+          if (old === undefined || old === id) continue;
+          const heldCommand = remoteCommands.current.get(old);
+          remoteCommands.current.delete(old);
+          if (heldCommand) remoteCommands.current.set(id, heldCommand);
+        }
+        controllerPlayers.current = assignments;
         accumulator.current -= STEP;
         if (current.kickEvent || current.phase !== previousPhase || current.score[0] !== previousScore0 || current.score[1] !== previousScore1 || current.event !== previousEvent) soundForWorld(current);
         if (current.phase === 'goal' && replayStartedAt.current === null) replayStartedAt.current = simulationTime.current;
@@ -602,10 +617,7 @@ function Play() {
           soundTime.current = simulationTime.current;
         }
         for (const command of commands.values()) {
-          command.action = null;
-          command.pressed = false;
-          command.switchNearest = false;
-          command.switchDir = null;
+          Object.assign(command, consumeCommand(command));
         }
       }
       if (stepped) renderDirty.current = true;
@@ -656,7 +668,7 @@ function Play() {
         camera = 'replay';
       }
     }
-    const selectedPlayerId = localPlayerIds[0] ?? current.controlled[0];
+    const selectedPlayerId = controllerPlayers.current.get(room?.seat ?? 0) ?? localPlayerIds[0] ?? current.controlled[0];
     const selected = current.players[selectedPlayerId]!;
     const aiming = charging.current.get(selectedPlayerId);
     const selectedCommand = commandsForUsers.get(selectedPlayerId);
@@ -676,11 +688,15 @@ function Play() {
       }
       target = nearest?.id ?? null;
     }
-    viewRef.current?.update(renderWorld, dt, performance.now() / 1000, localTeam, camera, target, power);
+    const remote = remoteCommands.current.get(selectedPlayerId);
+    const indicatorPower = power ?? (remote?.heldAction ? remote.power ?? null : null);
+    viewRef.current?.update(renderWorld, dt, performance.now() / 1000, localTeam, camera, target, indicatorPower);
     hudTimer.current += dt;
     if (hudTimer.current > 0.09) {
       hudTimer.current = 0;
       setHudWorld(structuredClone(current));
+      setHudPower(indicatorPower);
+      setContaining(!!(selectedCommand?.contain || remote?.contain));
       setSelectedId(selectedPlayerId);
       setTargetId(target);
       setReplayActive(current.phase === 'goal' && !replaySkipped.current);
@@ -697,14 +713,17 @@ function Play() {
   return (
     <div className="g-soccer-stage">
       <div className="g-soccer-canvas" ref={ref} />
-      <Hud world={hudWorld} targetId={targetId} selectedId={selectedId} watching={!!online?.watching} replaying={replayActive} />
+      <Hud world={hudWorld} targetId={targetId} selectedId={selectedId} power={power ?? hudPower} contain={containing} watching={!!online?.watching} replaying={replayActive} />
       {shell.touch && shell.status === 'playing' && !online?.watching && <Stick movement={movement} />}
       {shell.touch && shell.status === 'playing' && !online?.watching && <TouchControls buttons={[
-        { key: 'KeyJ', label: 'pass / switch' },
+        { key: 'KeyJ', label: 'pass / contain' },
         { key: 'KeyK', label: 'shoot / tackle' },
-        { key: 'KeyL', label: 'through / slide' },
-        { key: 'KeyI', label: 'lob / press' },
-        { key: 'KeyU', label: 'skill' },
+        { key: 'KeyL', label: 'through' },
+        { key: 'KeyI', label: 'lob / slide' },
+        { key: 'KeyU', label: 'skill / finesse' },
+        { key: 'KeyQ', label: 'switch' },
+        { key: 'KeyE', label: 'press' },
+        { key: 'Space', label: 'jockey' },
         { key: 'ShiftLeft', label: 'sprint' },
       ]} />}
     </div>
@@ -718,7 +737,7 @@ function PhoneController() {
   const sprint = useRef(false);
   const sequence = useRef(0);
   const phoneWorld = useRef<World | null>(null);
-  const specialAction = useRef<Command['action']>('pass');
+  const shoulder = useRef(false);
   const [score, setScore] = useState<[number, number]>([0, 0]);
   const previousScore = useRef<[number, number]>([0, 0]);
   const [displayOnly, setDisplayOnly] = useState(true);
@@ -798,19 +817,32 @@ function PhoneController() {
       }
     };
   }, []);
-  const send = (action: Command['action'] = null, pressed = false) => {
+  const phoneHasBall = () => {
+    const snapshot = phoneWorld.current;
+    return !!snapshot && nearestCarrier(snapshot)?.team === teamForPlayer(playerForSeat(online?.seat ?? 0, displayOnly, mode), snapshot.players);
+  };
+  const send = (action: Command['action'] = null, pressed = false, power = chargePower(chargeStartedAt.current === null ? 0 : (performance.now() - chargeStartedAt.current) / 1000), switchNearest = false) => {
     if (!online) return;
     online.send(movePacket(online.round || 1, sequence.current++, online.seat, {
       move: movement.current,
       sprint: sprint.current,
-      action,
+      action: action === 'shoot' && shoulder.current && phoneHasBall() ? 'finesse' : action,
       heldAction: held.current,
       pressed,
-      power: pressed ? 0.1 : 0.5,
+      power,
+      autoJockey: true,
+      contain: !phoneHasBall() && held.current === 'pass',
+      finesseHeld: shoulder.current,
+      press: shoulder.current,
+      switchNearest,
       aim: movement.current,
     }), { fast: true });
   };
   const beginCharge = (action: Command['action']) => {
+    if (!phoneHasBall() && phoneWorld.current && nearestCarrier(phoneWorld.current) && action !== 'pass') {
+      send(action, true);
+      return;
+    }
     held.current = action;
     chargeStartedAt.current = performance.now();
     setChargingAction(action);
@@ -818,11 +850,13 @@ function PhoneController() {
     send(null, false);
   };
   const releaseCharge = (action: Command['action'], vibrate = true) => {
+    const started = chargeStartedAt.current;
+    const power = chargePower(started === null ? 0 : (performance.now() - started) / 1000);
     held.current = null;
     chargeStartedAt.current = null;
     setChargingAction(null);
     setChargeProgress(0);
-    send(action, true);
+    send(started !== null && vibrate ? action : null, started !== null && vibrate, power);
     if (vibrate) navigator.vibrate?.(18);
   };
   useEffect(() => {
@@ -845,16 +879,17 @@ function PhoneController() {
       if (chargeStartedAt.current !== null) setChargeProgress(Math.min(1, (performance.now() - chargeStartedAt.current) / 1000));
     }, 1000 / 30);
     return () => { off(); window.clearInterval(timer); };
-  }, [online]);
+  }, [online, mode, displayOnly]);
   if (!online) return null;
   const phonePlayer = playerForSeat(online.seat, displayOnly, mode);
+  const attacking = phoneHasBall();
   if (showGame) return <><Play key={`phone-game-${online.round ?? 0}`} /><button className="g-soccer-phone-show" type="button" onClick={() => setShowGame(false)}>Controller</button></>;
   const button = (action: Command['action'], key: string, label: string, className: string) => (
     <button
       type="button"
       className={`g-soccer-phone-button ${className}`}
       aria-label={`${label} (${key})`}
-      onPointerDown={(event) => { event.preventDefault(); beginCharge(action); }}
+      onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); beginCharge(action); }}
       onPointerUp={(event) => { event.preventDefault(); releaseCharge(action); }}
       onPointerCancel={() => releaseCharge(action, false)}
       onContextMenu={(event) => event.preventDefault()}
@@ -870,24 +905,22 @@ function PhoneController() {
       </header>
       <div className="g-soccer-phone-charge" role="progressbar" aria-label={`${chargeName} power`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(chargeProgress * 100)}>
         <span>{chargingAction ? `${chargeName} · ${Math.round(chargeProgress * 100)}%` : 'HOLD AN ACTION TO CHARGE'}</span>
-        <div><i style={{ width: `${chargeProgress * 100}%` }} /></div>
+        <PowerMeter power={chargeProgress} />
       </div>
       <Stick movement={movement} />
       <div className="g-soccer-phone-buttons">
         <div className="g-soccer-phone-utilities">
           <button type="button" className="g-soccer-phone-action" onPointerDown={(event) => {
-            event.preventDefault();
-            const player = phoneWorld.current?.players[phonePlayer];
-            specialAction.current = player && distance(player, phoneWorld.current!.ball) < 0.8 ? 'skill' : 'pass';
-            beginCharge(specialAction.current);
-          }} onPointerUp={(event) => { event.preventDefault(); releaseCharge(specialAction.current); }} onPointerCancel={() => releaseCharge(specialAction.current, false)}>Switch / Skill</button>
-          <button type="button" className="g-soccer-phone-action is-sprint" onPointerDown={(event) => { event.preventDefault(); sprint.current = true; send(); }} onPointerUp={(event) => { event.preventDefault(); sprint.current = false; send(); }}>Sprint (hold)</button>
+            event.preventDefault(); send(attacking ? 'skill' : null, attacking, 0.1, !attacking);
+          }}>LB · {attacking ? 'Skill' : 'Switch'}</button>
+          <button type="button" className="g-soccer-phone-action" onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); shoulder.current = true; send(); }} onPointerUp={() => { shoulder.current = false; send(); }} onPointerCancel={() => { shoulder.current = false; send(); }}>RB · {attacking ? 'Finesse' : 'Press'}</button>
+          <button type="button" className="g-soccer-phone-action is-sprint" onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); sprint.current = true; send(); }} onPointerUp={(event) => { event.preventDefault(); sprint.current = false; send(); }} onPointerCancel={() => { sprint.current = false; send(); }}>Sprint (hold)</button>
         </div>
         <div className="g-soccer-phone-diamond">
-          {button('lob', 'X', 'Lob', 'is-x')}
+          {button('lob', 'X', attacking ? 'Lob·Cross' : 'Slide', 'is-x')}
           {button('through', 'Y', 'Through', 'is-y')}
-          {button('pass', 'A', 'Pass', 'is-a')}
-          {button('shoot', 'B', 'Shoot', 'is-b')}
+          {button('pass', 'A', attacking ? 'Pass' : 'Switch · hold Contain', 'is-a')}
+          {button('shoot', 'B', attacking ? 'Shoot' : 'Tackle', 'is-b')}
         </div>
       </div>
     </div>

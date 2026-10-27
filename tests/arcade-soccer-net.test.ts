@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { commandFromPacket, movePacket, parsePacket } from '../src/os/arcade/games/soccer/net.ts';
+import { commandFromPacket, consumeCommand, mergeRemoteCommand, movePacket, parsePacket } from '../src/os/arcade/games/soccer/net.ts';
 import { chargePower } from '../src/os/arcade/games/soccer/input.ts';
 
 test('online move packets round-trip validated inputs', () => {
@@ -28,8 +28,40 @@ test('malformed, non-finite, and out-of-range packet fields are rejected', () =>
   const packet = movePacket(1, 1, 0, { move: { x: 0, z: 0 } });
   for (const bad of [
     { ...packet, x: Number.NaN }, { ...packet, z: 1.1 }, { ...packet, seq: -1 }, { ...packet, seat: 4 },
-    { ...packet, buttons: 1024 }, { ...packet, t: 'other' }, { ...packet, k: 'admin' },
+    { ...packet, buttons: 32768 }, { ...packet, buttons: 2 ** 32 }, { ...packet, held: 1024 },
+    { ...packet, sx: 0.2 }, { ...packet, sx: 0.123, sz: 0 }, { ...packet, sx: 0, sz: Infinity },
+    { ...packet, t: 'other' }, { ...packet, k: 'admin' },
   ]) assert.equal(parsePacket(bad), null);
+});
+
+test('all held control flags and directional switch round-trip, with legacy flick fields optional', () => {
+  for (const flag of ['jockey', 'autoJockey', 'contain', 'switchNearest', 'finesseHeld', 'press'] as const) {
+    const packet = movePacket(1, 1, 0, { move: { x: 0, z: 0 }, [flag]: true });
+    assert.deepEqual(parsePacket(packet), packet);
+    assert.equal(commandFromPacket(packet)[flag], true);
+  }
+  const packet = movePacket(1, 1, 0, { move: { x: 0, z: 0 }, switchDir: { x: 0.436, z: -0.901 } });
+  assert.deepEqual(parsePacket(packet), packet);
+  assert.deepEqual(commandFromPacket(packet).switchDir, { x: 0.44, z: -0.9 });
+  const { sx, sz, ...legacy } = packet;
+  assert.ok(parsePacket(legacy));
+  assert.equal(commandFromPacket(legacy).switchDir, null);
+});
+
+test('remote updates retain pending one-shots but refresh held flags, then consume only once', () => {
+  const initial = { move: { x: 0, z: 0 }, action: 'shoot' as const, pressed: true, power: 0.7, switchNearest: true, switchDir: { x: 1, z: 0 } };
+  const held = { move: { x: 0.5, z: 0 }, heldAction: 'pass' as const, jockey: true, autoJockey: true, contain: true, press: true, finesseHeld: true, sprint: true };
+  const merged = mergeRemoteCommand(initial, held);
+  assert.equal(merged.action, 'shoot'); assert.equal(merged.power, 0.7);
+  assert.equal(merged.switchNearest, true); assert.deepEqual(merged.switchDir, { x: 1, z: 0 });
+  const consumed = consumeCommand(merged);
+  assert.equal(consumed.action, null); assert.equal(consumed.pressed, false);
+  assert.equal(consumed.switchNearest, false); assert.equal(consumed.switchDir, null);
+  for (const flag of ['jockey', 'autoJockey', 'contain', 'press', 'finesseHeld', 'sprint'] as const) assert.equal(consumed[flag], true);
+  assert.equal(consumed.heldAction, 'pass');
+  const next = mergeRemoteCommand(consumed, { move: { x: 0, z: 0 } });
+  assert.ok(!next.action && !next.switchNearest && !next.switchDir && !next.press);
+  assert.equal(initial.pressed, true, 'helpers must not mutate their inputs');
 });
 
 test('online configuration is constrained to supported match options', () => {

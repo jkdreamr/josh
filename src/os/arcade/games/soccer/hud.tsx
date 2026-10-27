@@ -1,8 +1,10 @@
 import { FIELD, jerseyNumber, matchClock, type World } from './logic.ts';
 
-export function Hud({ world, targetId, selectedId, watching, replaying }: { world: World; targetId: number | null; selectedId?: number; watching: boolean; replaying: boolean }) {
+export function Hud({ world, targetId, selectedId, watching, replaying, power, contain }: { world: World; targetId: number | null; selectedId?: number; watching: boolean; replaying: boolean; power?: number | null; contain?: boolean }) {
   const clock = matchClock(world);
   const selected = world.players[selectedId ?? world.controlled[0]];
+  const state = selected?.action === 'jockey' ? contain ? 'CONTAIN' : 'JOCKEY' : selected?.action === 'shield' ? 'SHIELD'
+    : selected?.slide ? 'SLIDE' : selected && Math.hypot(selected.vx, selected.vz) > 6.1 ? 'SPRINT' : null;
   return (
     <div className="g-soccer-hud">
       <div className="g-soccer-scoreboard">
@@ -24,12 +26,20 @@ export function Hud({ world, targetId, selectedId, watching, replaying }: { worl
         <b>NO. {selected ? jerseyNumber(selected.id) : 8}</b>
         <span>{selected?.slot === 'ST' ? 'M. RIVERA' : selected?.slot === 'GK' ? 'A. MORGAN' : selected?.slot === 'CM' ? 'J. KIM' : 'D. PARK'}</span>
         <small>stamina</small><i><em style={{ width: `${(selected?.stamina ?? 1) * 100}%` }} /></i>
+        {state && <strong className="g-soccer-state">{state}</strong>}
+        {power != null && <PowerMeter power={power} />}
       </div>
       <Radar world={world} targetId={targetId} />
       {replaying && <div className="g-soccer-replay">REPLAY</div>}
       {watching && <div className="g-soccer-watching">watching</div>}
     </div>
   );
+}
+
+export function PowerMeter({ power }: { power: number }) {
+  return <div className={`g-soccer-power${power > 0.85 ? ' is-over' : ''}`} role="progressbar" aria-label="Kick power" aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(power * 100)}>
+    <i style={{ width: `${power * 100}%` }} /><span>85%</span>
+  </div>;
 }
 
 function Radar({ world, targetId }: { world: World; targetId: number | null }) {
