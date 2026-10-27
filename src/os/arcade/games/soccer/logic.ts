@@ -307,9 +307,11 @@ export function separatePlayers(players: Player[], dt: number, carrier?: Player)
       } else { dx /= gap; dz /= gap; }
       if (carrier && a.team === b.team && a.team !== carrier.team && distance(a, carrier) < 3 && distance(b, carrier) < 3) {
         const mx = (a.x + b.x) / 2 - carrier.x, mz = (a.z + b.z) / 2 - carrier.z;
-        const radius = Math.hypot(mx, mz) || 1;
-        const sign = -mz * dx + mx * dz < 0 ? -1 : 1;
-        dx = -mz / radius * sign; dz = mx / radius * sign;
+        const radius = Math.hypot(mx, mz);
+        if (radius > 1e-6) {
+          const sign = -mz * dx + mx * dz < 0 ? -1 : 1;
+          dx = -mz / radius * sign; dz = mx / radius * sign;
+        }
       }
       const push = (0.7 - gap) * strength / 2;
       a.x = clamp(a.x - dx * push, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3);

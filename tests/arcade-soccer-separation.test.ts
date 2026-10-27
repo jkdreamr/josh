@@ -20,6 +20,12 @@ test('soft separation is deterministic, symmetric, bounded and leaves distant pl
   separatePlayers(pair, STEP);
   assert.ok(pair.every((p) => Math.abs(p.x) <= FIELD.length / 2 - 0.3 && Math.abs(p.z) <= FIELD.width / 2 - 0.3));
   separatePlayers([], STEP);
+  const markerPair = createWorld(254).players.slice(1, 3);
+  const carrier = createWorld(254).players[12]!;
+  carrier.x = carrier.z = 0;
+  for (const p of markerPair) { p.x = 0; p.z = 0; }
+  separatePlayers(markerPair, STEP, carrier);
+  assert.ok(distance(markerPair[0]!, markerPair[1]!) > 0.5);
 });
 
 test('soft separation prevents players clipping within 0.15 metres over a simulated match', () => {
