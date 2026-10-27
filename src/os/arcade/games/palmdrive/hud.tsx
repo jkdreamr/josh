@@ -461,7 +461,11 @@ function WheelShape({ wheel, r }: { wheel: Wheel; r: number }) {
       return (
         <>
           <circle r={r} fill="#1b1c22" />
-          <circle r={r * 0.36} fill="#ddd" />
+          <circle r={r * 0.62} fill="#c5cad1" stroke="#8d929a" strokeWidth={r * 0.05} />
+          {[0, 60, 120].map((a) => (
+            <rect key={a} x={-r * 0.07} y={-r * 0.5} width={r * 0.14} height={r} fill="#8d929a" transform={`rotate(${a})`} />
+          ))}
+          <circle r={r * 0.2} fill="#e0e2e6" />
         </>
       );
     case 'gold':
@@ -485,7 +489,8 @@ function WheelShape({ wheel, r }: { wheel: Wheel; r: number }) {
         <>
           <circle r={r * 1.08} fill="#1b1c22" />
           <circle r={r * 1.0} fill="none" stroke="#3a3b44" strokeWidth={r * 0.2} strokeDasharray={`${r * 0.36} ${r * 0.28}`} />
-          <circle r={r * 0.5} fill="#e0c49a" stroke="#9c7b58" strokeWidth={r * 0.06} />
+          <circle r={r * 0.56} fill="#5d6168" stroke="#3a3c42" strokeWidth={r * 0.06} />
+          <circle r={r * 0.2} fill="#8d929a" />
         </>
       );
     case 'spoke':
@@ -597,47 +602,90 @@ export const HatIcon = ({ hat, paint = '#e53935', size = 34 }: { hat: Hat; paint
   </Svg>
 );
 
-/** Your kart as the Garage shows it: paint (and its finish), hat, wheels and the boost trail out the back. */
+/**
+ * Your kart as the Garage shows it, side on (facing right, like the race kart): the nose and the rear bumper in the paint
+ * (and its finish), the side pod and the front fairing in the trim, the driver in a suit of the paint and a white helmet
+ * with your hat on it, the wheels, and the boost trail out of the tail pipe.
+ */
 export function KartPreview({ paint: id, hat, wheel, flame }: { paint: PaintId; hat: Hat; wheel: Wheel; flame: Flame }) {
   const uid = useId().replace(/:/g, '');
   const p = paintOf(id);
-  const trim = p.trim ?? p.color;
+  const duo = p.finish === 'duo';
+  const trim = duo ? (p.trim ?? p.color) : p.color;
   const [fire, fireDef] = useFlameFill(flame);
-  const body = p.finish === 'metal' || p.finish === 'pearl' ? `url(#${uid}b)` : p.color;
+  const shine = p.finish === 'metal' || p.finish === 'pearl';
+  const body = shine ? `url(#${uid}b)` : p.color;
+  const pod = shine ? `url(#${uid}b)` : trim;
+  const nose = 'M44 31.5h14.5c2.6 0 3.8-1.6 3.4-3.2-.4-1.4-2-2-4.4-2.3l-11-1.3c-1.6-.2-2.5.8-2.5 2.2z';
+  const bumper = 'M1.5 31.5h7.5v-5.6l-6.6.7c-1.2.1-1.6.8-1.6 1.8z';
   return (
     <svg viewBox="-6 -8 70 48" width="184" height="126" aria-hidden="true">
       <defs>
         {fireDef}
         <linearGradient id={`${uid}b`} x1="0" y1="0" x2={p.finish === 'pearl' ? '1' : '0'} y2="1">
           <stop offset="0" stopColor={p.finish === 'pearl' ? p.color : '#fff'} stopOpacity={p.finish === 'pearl' ? 1 : 0.9} />
-          <stop offset="0.35" stopColor={p.finish === 'pearl' ? trim : p.color} />
-          <stop offset="1" stopColor={p.finish === 'pearl' ? p.color : p.color} />
+          <stop offset="0.35" stopColor={p.finish === 'pearl' ? (p.trim ?? p.color) : p.color} />
+          <stop offset="1" stopColor={p.color} />
         </linearGradient>
-        <clipPath id={`${uid}c`}>
-          <path d="M8 29h48l-3-6H35l-3-5h-9l-3 5H11z" />
+        <clipPath id={`${uid}n`}>
+          <path d={nose} />
+        </clipPath>
+        <clipPath id={`${uid}p`}>
+          <path d="M22 31.6h17.5c.9 0 1.4-.6 1.4-1.4v-3.3c0-1-.6-1.5-1.6-1.5l-15.2-1.2c-1.3-.1-2.1.7-2.1 1.9z" />
         </clipPath>
       </defs>
-      <ellipse cx="32" cy="36" rx="25" ry="3" fill="rgba(0,0,0,0.25)" />
-      {/* the boost trail out of the exhaust */}
-      <path d="M8.5 24.5c-4-1.6-9-1-13.5 1.5 4.5 2.5 9.5 3.1 13.5 1.5z" fill={fire} stroke="rgba(0,0,0,0.2)" strokeWidth="0.5" />
-      <path d="M8.5 25c-2-.6-4.4-.4-6.5.75 2.1 1.15 4.5 1.35 6.5.75z" fill={flame === 'stanford' ? '#fff' : 'rgba(255,255,255,0.7)'} />
-      <path d="M8 29h48l-3-6H35l-3-5h-9l-3 5H11z" fill={body} stroke="rgba(0,0,0,0.35)" strokeLinejoin="round" />
-      <g clipPath={`url(#${uid}c)`}>
-        {p.finish === 'duo' && <path d="M35 18h30v12H38z" fill={trim} />}
-        {p.finish === 'stripe' && <rect x="0" y="22.2" width="64" height="2" fill={trim} />}
-        {p.finish === 'flames' && <path d="M56 29c-6-1-14-1-20-3 5 .2 9-.4 12-1.4-4 .2-7-.2-10-1 4-.4 8-1 11-2.6 2 1.6 4.5 4 7 8z" fill="#ff8a1a" stroke="#ffe14d" strokeWidth="0.6" />}
+      <ellipse cx="32" cy="36" rx="29" ry="2.6" fill="rgba(0,0,0,0.25)" />
+      {/* the boost trail out of the tail pipe */}
+      <path d="M4.5 22.5c-3.6-1.4-7.6-1-10.5 1.2 2.9 2.2 6.9 2.6 10.5 1.2z" fill={fire} stroke="rgba(0,0,0,0.2)" strokeWidth="0.5" />
+      <path d="M4.5 23.1c-1.8-.6-3.8-.4-5.6.65 1.8 1.05 3.8 1.25 5.6.65z" fill={flame === 'stanford' ? '#fff' : 'rgba(255,255,255,0.7)'} />
+      {/* the chassis tubes, the exhaust round behind the seat, the engine with its fins and the seat */}
+      <path d="M6 32.4h48" stroke="#aeb4bc" strokeWidth="1.1" strokeLinecap="round" />
+      <path d="M4.4 23.8h6.6c1.6 0 2.6-.8 3-2.2" fill="none" stroke="#b9bec4" strokeWidth="1.5" strokeLinecap="round" />
+      <rect x="11.5" y="20.5" width="7" height="8.5" rx="1" fill="#b3b8bf" stroke="rgba(0,0,0,0.3)" strokeWidth="0.4" />
+      {[22, 23.6, 25.2].map((y) => (
+        <path key={y} d={`M11.2 ${y}h7.6`} stroke="#8d929a" strokeWidth="0.6" />
+      ))}
+      <path d="M17.6 28.8l2.4-14.4c.2-1 1-1.5 1.9-1.2l1 .4-1.2 15.4z" fill="#1b1c22" />
+      {/* the driver: legs in the suit out to the pedals, the torso leaning back, the arm out to the wheel */}
+      <path d="M22.5 27.6l11.5-4.2 10.2 2.8" fill="none" stroke={p.color} strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M43.4 23.6l2.2-1.1 1 3.2-2.4.8z" fill="#f6f6f8" stroke="rgba(0,0,0,0.3)" strokeWidth="0.3" />
+      <path d="M23.4 27.6l1.6-10.4" stroke={p.color} strokeWidth="5" strokeLinecap="round" />
+      <path d="M26 18.2l5.4 4.2 4.4-2.2" fill="none" stroke={p.color} strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M36.2 15.8l2.4 7.8" stroke="#1b1c22" strokeWidth="1.3" strokeLinecap="round" />
+      <path d="M38.8 23.2l3.8 5.6" stroke="#b9bec4" strokeWidth="0.8" />
+      <circle cx="35.9" cy="20.3" r="1.1" fill="#1b1c22" />
+      {/* the bodywork: rear bumper and nose in the paint, the side pod and fairing in the trim */}
+      <path d={bumper} fill={body} stroke="rgba(0,0,0,0.35)" strokeWidth="0.5" strokeLinejoin="round" />
+      <path d="M22 31.6h17.5c.9 0 1.4-.6 1.4-1.4v-3.3c0-1-.6-1.5-1.6-1.5l-15.2-1.2c-1.3-.1-2.1.7-2.1 1.9z" fill={pod} stroke="rgba(0,0,0,0.35)" strokeWidth="0.5" strokeLinejoin="round" />
+      <path d="M45.6 26.3l1.6-6.2c.2-.8.9-1.2 1.6-1l2.2.6-1.6 6.9z" fill={pod} stroke="rgba(0,0,0,0.35)" strokeWidth="0.5" strokeLinejoin="round" />
+      <path d={nose} fill={body} stroke="rgba(0,0,0,0.35)" strokeWidth="0.5" strokeLinejoin="round" />
+      <g clipPath={`url(#${uid}n)`}>
+        {p.finish === 'stripe' && <rect x="40" y="25.6" width="24" height="1.4" fill={p.trim ?? '#fff'} />}
+        {p.finish === 'flames' && <path d="M60 30c-4-.6-8-.3-12-1.6 3-.1 5.4-.6 7.2-1.3-2.6-.1-4.4-.3-6.4-.8 2.8-.3 5-.8 7-1.6 1.6 1.2 3.4 3 4.2 5.3z" fill="#ff8a1a" stroke="#ffe14d" strokeWidth="0.5" />}
       </g>
-      <rect x="22" y="15" width="7" height="9" rx="2" fill="#1b1c22" />
+      <g clipPath={`url(#${uid}p)`}>
+        {p.finish === 'flames' && <path d="M40 30.6c-5-.6-10-.4-15-1.8 3.6-.1 6.4-.6 8.6-1.4-3-.1-5.4-.4-7.6-1 3.4-.3 6-.9 8.4-1.8 2 1.4 4.2 3.6 5.6 6z" fill="#ff8a1a" stroke="#ffe14d" strokeWidth="0.5" />}
+        {p.finish === 'stripe' && <rect x="20" y="27.4" width="24" height="1.2" fill={p.trim ?? '#fff'} />}
+      </g>
+      {/* the number on the side pod and the fairing's plate */}
+      <circle cx="27" cy="28.2" r="2" fill="#f6f6f2" stroke="rgba(0,0,0,0.25)" strokeWidth="0.3" />
+      <text x="27" y="29.3" textAnchor="middle" fontSize="2.8" fontWeight="700" fontFamily="Arial, sans-serif" fill="#111">
+        8
+      </text>
+      <rect x="31.2" y="27.1" width="6.4" height="1.6" fill="#8c1515" />
+      <path d="M46.6 24.3l.8-3 1.7.45-.8 3z" fill="#f2d23a" />
+      {/* the helmet: white, its visor and a stripe in the paint; the hats are drawn for a head at (12, 17), this one is at (26, 12) */}
       <circle cx="26" cy="12" r="5" fill="#f6f6f8" stroke="rgba(0,0,0,0.25)" />
-      {/* the hats are drawn for a head at (12, 17); this one is at (26, 12) */}
+      <path d="M27.6 10.6h3.2c.4 0 .6.3.5.7-.2 1-.5 1.9-1 2.6h-2.7c-.5 0-.8-.4-.7-.9z" fill="#1a2433" />
+      <path d="M21.4 10.4c.8-2.4 2.8-3.8 5.2-3.6" fill="none" stroke={duo || p.finish === 'stripe' ? (p.trim ?? p.color) : p.color} strokeWidth="1.3" strokeLinecap="round" />
       <g transform="translate(14 -5)">
         <HatShape hat={hat} paint={p.color} />
       </g>
-      <g transform="translate(16 30)">
-        <WheelShape wheel={wheel} r={5.5} />
+      <g transform="translate(14 30)">
+        <WheelShape wheel={wheel} r={5.8} />
       </g>
-      <g transform="translate(48 30)">
-        <WheelShape wheel={wheel} r={5.5} />
+      <g transform="translate(51 30.8)">
+        <WheelShape wheel={wheel} r={5} />
       </g>
     </svg>
   );
