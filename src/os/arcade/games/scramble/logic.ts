@@ -1512,8 +1512,9 @@ export function endMatch(m: Match, winner: number, places: [number, number, numb
     if (!f) continue;
     f.place = place;
     f.kills = kills;
-    // the host's word is final, even if the news of how an egg went out is still on its way (the winners stand)
-    if (place !== 1 && f.phase !== 'out') {
+    // the host's word is final, even if the news of how an egg went out is still on its way (the winners stand, and
+    // so does a knocked egg of another team, as the host has it: still bleeding when it ended, so second)
+    if (place !== 1 && f.phase !== 'out' && !f.down) {
       f.phase = 'out';
       f.outAt = m.time;
     }
