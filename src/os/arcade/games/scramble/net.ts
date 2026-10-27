@@ -15,8 +15,9 @@
 // In duos and squads, the host's reliable reports carry the mode and everyone's team. A knocked egg's owner says so
 // (its state says it too, for anyone who missed the news), a reviver says when it starts and stops, a guest asks the
 // host to stand the teammate up once it's done, and the host says when it stands. Pings go to everyone (only the team
-// shows them).
-import { MATS, MAT_SPECS, MAX_ARMOR, MAX_RARITY, MAX_SCOPE, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
+// shows them), and so do emotes and the team's calls (only the team shows a call): the host turns away an egg's that
+// come too quickly (see emoteReady) and passes on no more of them.
+import { AMMO_TYPES, MATS, MAT_SPECS, MAX_ARMOR, MAX_RARITY, MAX_SCOPE, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
 import { HALF, opens, topX } from './map.ts';
 import { meta } from './meta.ts';
 import {
@@ -24,6 +25,7 @@ import {
   CELL_B,
   DOOR_R,
   DOOR_STATES,
+  EMOTE_IDS,
   F_ALL,
   HELD,
   LEVEL_H,
@@ -37,6 +39,7 @@ import {
   addWall,
   applyCalled,
   applyEdit,
+  applyEmote,
   applyKnock,
   applyOut,
   applyPing,
@@ -91,7 +94,8 @@ export type State = { x: number; z: number; y: number; aim: number; vx: number; 
 /**
  * `h` is the level a shot was fired from, `y0` and `ly` how high a throw starts and comes down (left out when 0). A
  * built piece goes as its id, its builder, where and what it is in one number (`p`, see packPiece), its health and the
- * tenths of a second it has still to build up (`t`); an edit as the wall and its edit.
+ * tenths of a second it has still to build up (`t`); an edit as the wall and its edit. An emote goes as its place in
+ * EMOTE_IDS (`k`), the ammo asked for as its place in AMMO_TYPES (`a`), and the spot an enemy was seen.
  */
 export type NetEv =
   | { y: 's'; f: number; w: WeaponId; r: number; x: number; z: number; a: number; s: number; k: number; h?: number }
@@ -118,7 +122,8 @@ export type NetEv =
   | { y: 'rv'; f: number; to: number }
   | { y: 'rq'; f: number; to: number }
   | { y: 'rvd'; f: number; by: number }
-  | { y: 'pg'; f: number; x: number; z: number };
+  | { y: 'pg'; f: number; x: number; z: number }
+  | { y: 'em'; f: number; k: number; a?: number; x?: number; z?: number };
 
 /** Events grouped by the seat they came from, in the order the host applied them. */
 export type Group = [origin: number, events: NetEv[]];
@@ -406,6 +411,8 @@ export function toNet(e: Ev): NetEv | null {
       return { y: 'rvd', f: e.f, by: e.by };
     case 'ping':
       return { y: 'pg', f: e.f, x: e.x, z: e.z };
+    case 'emote':
+      return { y: 'em', f: e.f, k: EMOTE_IDS.indexOf(e.k), ...(e.a ? { a: AMMO_TYPES.indexOf(e.a) } : {}), ...(e.k === 'enemy' ? { x: e.x, z: e.z } : {}) };
     default:
       return null;
   }
@@ -497,6 +504,14 @@ function parseEv(v: unknown): NetEv | null {
       return fid(e.f) && fid(e.by) && e.by !== e.f ? { y: 'rvd', f: e.f, by: e.by } : null;
     case 'pg':
       return fid(e.f) && onLand(e.x, e.z) ? { y: 'pg', f: e.f, x: e.x as number, z: e.z as number } : null;
+    case 'em': {
+      // ammo only with an ask for it, and a spot only with an enemy (and always then)
+      if (!fid(e.f) || !int(e.k) || e.k < 0 || e.k >= EMOTE_IDS.length) return null;
+      const k = EMOTE_IDS[e.k];
+      if (e.a !== undefined && !(k === 'ammo' && int(e.a) && e.a >= 0 && e.a < AMMO_TYPES.length)) return null;
+      if (k === 'enemy' ? !onLand(e.x, e.z) : e.x !== undefined || e.z !== undefined) return null;
+      return { y: 'em', f: e.f, k: e.k, ...(e.a !== undefined ? { a: e.a as number } : {}), ...(k === 'enemy' ? { x: e.x as number, z: e.z as number } : {}) };
+    }
     default:
       return null;
   }
@@ -607,6 +622,8 @@ export function applyNet(m: Match, e: NetEv): boolean {
       return true;
     case 'pg':
       return applyPing(m, e.f, e.x, e.z);
+    case 'em':
+      return applyEmote(m, e.f, EMOTE_IDS[e.k], e.a === undefined ? null : AMMO_TYPES[e.a], e.x ?? 0, e.z ?? 0);
   }
 }
 

@@ -242,6 +242,25 @@ export const REVIVE_HP = 30;
 export const PING_T = 8;
 export const PING_COOL = 0.6;
 /**
+ * Emotes and quick chat: faces anyone nearby sees over the egg, and (in duos and squads) calls only its team sees: asks
+ * for meds, a shield, ammo (the kind it's lowest on) or a gun, help, follow me, an enemy where it points (a ping there
+ * too) and on my way. Each shows for EMOTE_T seconds; an egg emotes EMOTE_GAP apart at most, and EMOTE_BURST times in
+ * EMOTE_SPAN seconds.
+ */
+export const EMOTE_IDS = ['happy', 'sad', 'thumbs', 'angry', 'gg', 'meds', 'shield', 'ammo', 'gun', 'help', 'follow', 'enemy', 'omw'] as const;
+export type EmoteId = (typeof EMOTE_IDS)[number];
+export const FACE_EMOTES: readonly EmoteId[] = ['happy', 'sad', 'thumbs', 'angry', 'gg'];
+export const TEAM_EMOTES: readonly EmoteId[] = ['meds', 'shield', 'ammo', 'gun', 'help', 'follow', 'enemy', 'omw'];
+export const isTeamEmote = (k: EmoteId) => TEAM_EMOTES.includes(k);
+export const EMOTE_T = 3.5;
+export const EMOTE_GAP = 0.8;
+export const EMOTE_BURST = 3;
+export const EMOTE_SPAN = 6;
+/** How long a computer egg keeps at what a teammate asked of it: bringing something, following, looking somewhere. */
+export const ASK_T = 25;
+export const FOLLOW_T = 60;
+export const LOOK_T = 6;
+/**
  * The ring and name tags of the eggs on your team, and each one's own color (by its place on the team) for its pings
  * and on the team panel.
  */
@@ -308,8 +327,10 @@ export type Input = {
   drop: Drop | null;
   /** 1 for the next scope we carry, -1 for the one before, or a level plus 10 to look through that one. */
   scope: number;
+  /** An emote or a call for the team, and (for an enemy) the spot it points at. */
+  emote: { k: EmoteId; x: number; z: number } | null;
 };
-export const noInput = (): Input => ({ mx: 0, mz: 0, aim: 0, fire: false, reload: false, slot: -1, cycle: 0, interact: false, build: false, piece: null, mat: 0, edit: false, use: null, jump: false, reach: 0, pick: null, hold: false, ping: null, drop: null, scope: 0 });
+export const noInput = (): Input => ({ mx: 0, mz: 0, aim: 0, fire: false, reload: false, slot: -1, cycle: 0, interact: false, build: false, piece: null, mat: 0, edit: false, use: null, jump: false, reach: 0, pick: null, hold: false, ping: null, drop: null, scope: 0, emote: null });
 
 /** One position report for an egg another client owns. `at` is our clock when it arrived. */
 export type Snap = { at: number; x: number; z: number; y: number; aim: number; vx: number; vz: number };
@@ -408,6 +429,24 @@ export type Ai = {
   /** In teams: the wait before we next ping a target for the team, and before we next put something down for one. */
   pingCool: number;
   shareCool: number;
+  /**
+   * In teams, what a teammate asked of us (see heard): to bring it what it called for (`askK`, `askA` the ammo, `askN`
+   * how many to put down) until `askUntil`, to follow it until `followUntil` (both match time), and to look where it
+   * saw an enemy until `lookUntil` (our clock).
+   */
+  askK: EmoteId | null;
+  askA: Ammo | null;
+  askN: number;
+  askTo: number;
+  askUntil: number;
+  followTo: number;
+  followUntil: number;
+  lookX: number;
+  lookZ: number;
+  lookUntil: number;
+  /** The knock we last called for help in (its downAt), and the kills we've had our say about. */
+  cried: number;
+  cheered: number;
   /** The basements we've been down to (or given up on), not to go back down. */
   below: number[];
   /** The stairway we're making for this step (see head), or -1: we keep off any other (see steer). */
@@ -541,6 +580,11 @@ export type Fighter = {
   pingX: number;
   pingZ: number;
   pingAt: number;
+  /** Its emote showing (see EMOTE_T), the ammo it asks for, our clock when it went up, and when its last few did. */
+  emote: EmoteId | null;
+  emoteA: Ammo | null;
+  emoteAt: number;
+  emotes: number[];
 };
 
 /**
@@ -575,7 +619,8 @@ export type Thud = 'tree' | 'rock' | 'wall' | 'window' | 'door' | 'bars' | 'crat
  * an egg going down a stairway (or up one), which nobody needs to hear of: its position says so. In teams:
  * `knock` an egg knocked down, `revive` one starting to revive a knocked teammate (`to` -1: it stopped), `ask` a guest
  * done reviving asking the host to stand the teammate up, `revived` the host's word that it stands, `ping` a spot marked
- * for the team. An `out` that was `down` finished off a knocked egg.
+ * for the team, `emote` an emote or a call for the team (see EMOTE_IDS). An `out` that was `down` finished off a
+ * knocked egg.
  */
 export type Ev = (
   | { t: 'beep' }
@@ -615,6 +660,7 @@ export type Ev = (
   | { t: 'ask'; f: number; to: number }
   | { t: 'revived'; f: number; by: number }
   | { t: 'ping'; f: number; x: number; z: number }
+  | { t: 'emote'; f: number; k: EmoteId; a: Ammo | null; x: number; z: number }
   | { t: 'drop'; item: LootItem }
   | { t: 'take'; f: number; id: number }
   | { t: 'took'; f: number; id: number; def: LootDef }
@@ -1087,6 +1133,10 @@ function newFighter(id: number, e: Entrant, x: number, z: number, team: number):
     pingX: 0,
     pingZ: 0,
     pingAt: -99,
+    emote: null,
+    emoteA: null,
+    emoteAt: -99,
+    emotes: [],
   };
 }
 
@@ -1172,6 +1222,18 @@ function newAi(m: Match, f: Fighter): Ai {
     editA: NaN,
     pingCool: 0,
     shareCool: 8 + (f.id % 5) * 2,
+    askK: null,
+    askA: null,
+    askN: 0,
+    askTo: -1,
+    askUntil: 0,
+    followTo: -1,
+    followUntil: 0,
+    lookX: 0,
+    lookZ: 0,
+    lookUntil: -99,
+    cried: -99,
+    cheered: 0,
     below: [],
     steps: -1,
   };
@@ -1417,6 +1479,7 @@ function clearOneShots(inp: Input) {
   inp.ping = null;
   inp.drop = null;
   inp.scope = 0;
+  inp.emote = null;
 }
 
 /**
@@ -1436,6 +1499,8 @@ function settle(m: Match) {
   const won = team >= 0 ? teamOf(m, team) : [];
   m.winner = won.find(upright)?.id ?? -1;
   for (const f of won) f.place = 1;
+  // and a computer egg that won says so
+  for (const f of won) if (f.ai && upright(f)) emote(m, f, 'gg', f.x, f.z);
   for (let t = 0; t < m.teams.length; t++) if (t !== team && teamOf(m, t).some(alive)) for (const f of teamOf(m, t)) f.place = 2;
   emit(m, { t: 'end', winner: m.winner });
 }
@@ -1501,6 +1566,7 @@ function act(m: Match, f: Fighter, dt: number) {
     f.y -= FALL * dt;
     if (len > 0.1) f.aim = Math.atan2(inp.mx, inp.mz);
     if (inp.ping) ping(m, f, inp.ping.x, inp.ping.z);
+    if (inp.emote) emote(m, f, inp.emote.k, inp.emote.x, inp.emote.z);
     // down on the ground, or on a floor or a ramp someone built
     const under = m.walls.size ? surfaceAt(m, f.x, f.z, f.y + 0.2) : null;
     if (f.y <= (under?.y ?? 0)) {
@@ -1525,6 +1591,7 @@ function act(m: Match, f: Fighter, dt: number) {
   f.aim = inp.aim;
   if (!usable(f, f.slot)) f.slot = SLOT_MELEE;
   if (inp.ping) ping(m, f, inp.ping.x, inp.ping.z);
+  if (inp.emote) emote(m, f, inp.emote.k, inp.emote.x, inp.emote.z);
   if (inp.scope) switchScope(f, inp.scope);
   if (m.mode !== 'solo') reviveStep(m, f);
   // knocked down (it crawls) or reviving a teammate (it stands still), it does nothing else
@@ -2322,6 +2389,69 @@ export function applyPing(m: Match, fid: number, x: number, z: number) {
 
 /** The spot an egg has marked for its team while it shows (PING_T seconds), and how long ago, or null. */
 export const pingOf = (m: Match, f: Fighter) => (m.clock - f.pingAt < PING_T ? { x: f.pingX, z: f.pingZ, age: m.clock - f.pingAt } : null);
+
+/**
+ * Whether an egg may emote now: EMOTE_GAP since its last, and no more than EMOTE_BURST in EMOTE_SPAN seconds. The host
+ * gives news of another client's a little `slack` (what the network bunches up).
+ */
+export function emoteReady(f: Fighter, clock: number, slack = 1) {
+  const n = f.emotes.length;
+  if (n && clock - f.emotes[n - 1] < EMOTE_GAP * slack) return false;
+  return n < EMOTE_BURST || clock - f.emotes[n - EMOTE_BURST] >= EMOTE_SPAN * slack;
+}
+
+/** Whether an egg can say this at all: off the bus and still in (knocked down too), and calls only in teams. */
+const canEmote = (m: Match, f: Fighter, k: EmoteId) => (f.phase === 'ground' || f.phase === 'drop') && (m.mode !== 'solo' || !isTeamEmote(k));
+
+/** The ammo an egg asking for some wants: the kind its guns take that it has least of for what it carries, or null. */
+export function ammoAsk(f: Fighter): Ammo | null {
+  let best: Ammo | null = null;
+  let bestK = Infinity;
+  for (const g of f.guns) {
+    if (!g || WEAPONS[g.w].call) continue;
+    const a = WEAPONS[g.w].ammo;
+    const k = f.ammo[a] / ammoCap(a, f.pack);
+    if (k < bestK) {
+      best = a;
+      bestK = k;
+    }
+  }
+  return best;
+}
+
+/** An emote or a call for the team, at most as often as emoteReady says. Computer eggs on the team answer a call. */
+function emote(m: Match, f: Fighter, k: EmoteId, x: number, z: number) {
+  if (!canEmote(m, f, k) || !emoteReady(f, m.clock)) return;
+  setEmote(m, f, k, k === 'ammo' ? ammoAsk(f) : null, x, z);
+  emit(m, { t: 'emote', f: f.id, k, a: f.emoteA, x: k === 'enemy' ? f.pingX : 0, z: k === 'enemy' ? f.pingZ : 0 });
+  if (m.world) heard(m, f, k);
+}
+
+function setEmote(m: Match, f: Fighter, k: EmoteId, a: Ammo | null, x: number, z: number) {
+  f.emote = k;
+  f.emoteA = k === 'ammo' ? a : null;
+  f.emoteAt = m.clock;
+  f.emotes.push(m.clock);
+  if (f.emotes.length > EMOTE_BURST) f.emotes.shift();
+  // an enemy spotted is pinged there for the team too
+  if (k === 'enemy') setPing(m, f, x, z);
+}
+
+/**
+ * Someone else's egg emotes. The host turns away one too soon after its last (see emoteReady) and passes on no more of
+ * it; its computer eggs answer a call.
+ */
+export function applyEmote(m: Match, fid: number, k: EmoteId, a: Ammo | null, x: number, z: number) {
+  const f = m.fighters[fid];
+  if (!f || owned(f) || !canEmote(m, f, k) || (m.world && !emoteReady(f, m.clock, 0.6))) return false;
+  setEmote(m, f, k, a, x, z);
+  emit(m, { t: 'emote', f: fid, k, a: f.emoteA, x: k === 'enemy' ? f.pingX : 0, z: k === 'enemy' ? f.pingZ : 0, net: true });
+  if (m.world) heard(m, f, k);
+  return true;
+}
+
+/** The emote an egg shows (for EMOTE_T seconds), the ammo it asks for and how long ago it went up, or null. */
+export const emoteOf = (m: Match, f: Fighter) => (f.emote && m.clock - f.emoteAt < EMOTE_T ? { k: f.emote, a: f.emoteA, age: m.clock - f.emoteAt } : null);
 
 /**
  * Puts something down at an egg's feet for a teammate to pick up (it never goes straight back up itself): a gun or the
@@ -4108,8 +4238,19 @@ function think(m: Match, f: Fighter, dt: number) {
   ai.pingCool -= dt;
   ai.shareCool -= dt;
   ai.steps = -1;
-  // knocked down: crawl to the team, never shoot
-  if (f.down) return crawlTo(m, f, ai, dt);
+  // knocked down: call for help (once a knock), crawl to the team, never shoot
+  if (f.down) {
+    if (ai.cried !== f.downAt) {
+      ai.cried = f.downAt;
+      inp.emote = { k: 'help', x: f.x, z: f.z };
+    }
+    return crawlTo(m, f, ai, dt);
+  }
+  // pleased with the first kill, and every other one after
+  if (f.kills > ai.cheered) {
+    if (f.kills % 2) inp.emote = { k: 'happy', x: f.x, z: f.z };
+    ai.cheered = f.kills;
+  }
   // who has been hitting us: two eggs at once is a crossfire
   if (f.lastBy >= 0 && f.lastByAt > ai.foeAt) {
     if (f.lastBy !== ai.foe) {
@@ -4335,8 +4476,9 @@ function think(m: Match, f: Fighter, dt: number) {
     // stand still behind cover while it takes (or out of our box, see goOut)
   } else if (hiding) head(m, f, ai, ai.hideX, ai.hideZ, dt, 0.5);
   else if (via) head(m, f, ai, via.x, via.z, dt, 0);
-  else head(m, f, ai, ai.gx, ai.gz, dt, ai.goal === 'roam' ? 2 : ai.goal === 'smash' ? 1.4 : ai.goal === 'vault' ? 0.6 : ai.goal === 'revive' ? REVIVE_R - 0.8 : ai.goal === 'mate' ? 6 : 0.4);
-  inp.aim = Math.hypot(f.vx, f.vz) > 0.5 ? Math.atan2(f.vx, f.vz) : f.aim;
+  else head(m, f, ai, ai.gx, ai.gz, dt, ai.goal === 'roam' ? 2 : ai.goal === 'smash' ? 1.4 : ai.goal === 'vault' ? 0.6 : ai.goal === 'revive' ? REVIVE_R - 0.8 : ai.goal === 'mate' ? (ai.askK ? 1.8 : m.time < ai.followUntil ? 3 : 6) : 0.4);
+  // facing the way we go, or where a teammate saw an enemy
+  inp.aim = m.clock < ai.lookUntil ? Math.atan2(ai.lookX - topX(f.x), ai.lookZ - f.z) : Math.hypot(f.vx, f.vz) > 0.5 ? Math.atan2(f.vx, f.vz) : f.aim;
   if (!Number.isNaN(ai.editA)) {
     // a doorway in our own wall that stood in the way (see steer)
     inp.aim = ai.editA;
@@ -4409,7 +4551,7 @@ function think(m: Match, f: Fighter, dt: number) {
       if (Math.hypot(o.x - f.x, o.z - f.z) < REVIVE_R - 0.4) inp.hold = true;
     }
   }
-  if (m.mode !== 'solo' && !inp.hold && !f.using) share(m, f, ai);
+  if (m.mode !== 'solo' && !inp.hold && !f.using && !bring(m, f, ai)) share(m, f, ai);
 }
 
 /** In teams, the egg on ours a computer egg follows: the first one on the team a person plays, still in, or null. */
@@ -4485,6 +4627,101 @@ function share(m: Match, f: Fighter, ai: Ai) {
     ai.shareCool = 20 + m.rng() * 15;
     return;
   }
+}
+
+/**
+ * Computer eggs on a team hear a teammate's call: the nearest with one to spare brings what it asked for and says it's
+ * on its way (or the nearest says it has none), all of them follow it a while (or come to it when it needs help), and
+ * they look where it saw an enemy.
+ */
+function heard(m: Match, from: Fighter, k: EmoteId) {
+  if (m.mode === 'solo' || !isTeamEmote(k)) return;
+  const bots = (m.teams[from.team] ?? []).map((id) => m.fighters[id]).filter((o) => o !== from && !!o.ai && upright(o) && o.phase !== 'bus');
+  if (!bots.length) return;
+  const dist = (o: Fighter) => Math.hypot(topX(o.x) - topX(from.x), o.z - from.z);
+  bots.sort((a, b) => dist(a) - dist(b));
+  const say = (o: Fighter, e: EmoteId) => (o.input.emote = { k: e, x: o.x, z: o.z });
+  switch (k) {
+    case 'meds':
+    case 'shield':
+    case 'ammo':
+    case 'gun': {
+      const a = k === 'ammo' ? from.emoteA : null;
+      const giver = bots.find((o) => spare(o, k, a) !== null);
+      if (!giver) return void say(bots[0], 'sad');
+      const ai = giver.ai!;
+      ai.askK = k;
+      ai.askA = a;
+      ai.askN = k === 'gun' ? 1 : 2;
+      ai.askTo = from.id;
+      ai.askUntil = m.time + ASK_T;
+      say(giver, 'omw');
+      return;
+    }
+    case 'follow':
+    case 'help':
+      for (const o of bots) {
+        o.ai!.followTo = from.id;
+        o.ai!.followUntil = m.time + (k === 'help' ? ASK_T : FOLLOW_T);
+      }
+      say(bots[0], k === 'help' ? 'omw' : 'thumbs');
+      return;
+    case 'enemy':
+      for (const o of bots) {
+        o.ai!.lookX = from.pingX;
+        o.ai!.lookZ = from.pingZ;
+        o.ai!.lookUntil = m.clock + LOOK_T;
+      }
+      return;
+  }
+}
+
+/** What a computer egg can spare a teammate who asks for it (see heard), or null: it keeps enough to patch itself up. */
+function spare(f: Fighter, k: EmoteId, a: Ammo | null): Drop | null {
+  const it = f.items;
+  switch (k) {
+    case 'meds':
+      return it.medkit >= 2 ? 'medkit' : it.bandage >= 3 ? 'bandage' : it.medkit && it.bandage ? 'medkit' : null;
+    case 'shield':
+      return it.shield >= 2 ? 'shield' : it.mini >= 2 ? 'mini' : it.shield && it.mini ? 'shield' : null;
+    case 'ammo': {
+      // keeping a box for a gun of ours that takes it
+      if (!a) return null;
+      const ours = f.guns.some((g) => g && !WEAPONS[g.w].call && WEAPONS[g.w].ammo === a);
+      return f.ammo[a] >= AMMO_BOX[a] * (ours ? 2 : 1) ? a : null;
+    }
+    case 'gun':
+      // the weaker of two, and never with a flare gun for one (the other is all we'd have left)
+      if (!f.guns[0] || !f.guns[1] || f.guns.some((g) => g && WEAPONS[g.w].call)) return null;
+      return gunValue(f.guns[0]) <= gunValue(f.guns[1]) ? 0 : 1;
+    default:
+      return null;
+  }
+}
+
+/**
+ * A computer egg asked for something puts it down once it's by the teammate who asked (with nobody to fight), facing
+ * them, one a frame until it has put down what it meant to or has no more to spare. True while it does.
+ */
+function bring(m: Match, f: Fighter, ai: Ai) {
+  if (!ai.askK) return false;
+  const o = m.fighters[ai.askTo];
+  if (m.time > ai.askUntil || !o || !upright(o)) {
+    ai.askK = null;
+    return false;
+  }
+  if (ai.target >= 0 || f.y > 1 || Math.hypot(o.x - f.x, o.z - f.z) > 3.5) return false;
+  const what = spare(f, ai.askK, ai.askA);
+  if (what === null) {
+    ai.askK = null;
+    return false;
+  }
+  f.input.aim = Math.atan2(o.x - f.x, o.z - f.z);
+  f.input.drop = what;
+  if (--ai.askN <= 0) ai.askK = null;
+  // and nothing else put down for a while after
+  ai.shareCool = Math.max(ai.shareCool, 5);
+  return true;
 }
 
 /** The newest throw of a kind by an egg still in the air (or on the ground, ticking). */
@@ -4580,7 +4817,9 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     if (o === f || o.team === f.team || !fighting(o)) continue;
     const d = Math.hypot(o.x - f.x, o.z - f.z);
     const hitMe = o.id === f.lastBy && m.clock - f.lastByAt < 3;
-    if (d > sight + 15 || !canSee(m, f, o, hitMe ? sight + 15 : sight)) continue;
+    // (or one by where a teammate saw an enemy)
+    const told = m.clock < ai.lookUntil && Math.hypot(topX(o.x) - ai.lookX, o.z - ai.lookZ) < 15;
+    if (d > sight + 15 || !canSee(m, f, o, hitMe || told ? sight + 15 : sight)) continue;
     // rather one nobody else is on than piling onto one already in a fight; the kill leader is worth going after; a
     // knocked egg can't shoot back, so it waits for the ones that can (unless it's right there)
     const others = hunted[o.id] - (o.id === ai.target ? 1 : 0);
@@ -4642,6 +4881,19 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     ai.gz = attacker.z;
     return;
   }
+  // a teammate who asked us for something, or to follow or come and help: to them (see bring), and while we follow,
+  // nothing far off
+  const asked = ai.askK && m.time < ai.askUntil ? m.fighters[ai.askTo] : undefined;
+  const followed = m.time < ai.followUntil ? m.fighters[ai.followTo] : undefined;
+  const to = asked ?? followed;
+  const tethered = !!to && upright(to) && to.phase === 'ground';
+  if (to && !tethered && !asked) ai.followUntil = 0;
+  if (to && tethered && Math.hypot(to.x - f.x, to.z - f.z) > (asked ? 2.5 : ai.goal === 'mate' ? 4 : 8)) {
+    ai.goal = 'mate';
+    ai.gx = to.x;
+    ai.gz = to.z;
+    return;
+  }
   // too far from the team: catch up (with a person who leads it, sooner, and down the stairs after them; a computer
   // egg in the basement under us, or over us, is near enough)
   if (m.mode !== 'solo') {
@@ -4687,7 +4939,7 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   // the gun a find would take the place of, when both hands are full
   const weakest = f.guns[0] && f.guns[1] ? f.guns[gunValue(f.guns[0]) <= gunValue(f.guns[1]) ? 0 : 1] : null;
   let item = null as LootItem | null;
-  let itemD = 70;
+  let itemD = tethered ? 15 : 70;
   if (ai.goal === 'loot' && m.time > ai.until) ai.lost = ai.item;
   lootNear(m, f.x, f.z, itemD, (l) => {
     const d = Math.hypot(l.x - f.x, l.z - f.z);
@@ -4727,7 +4979,7 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     itemD = d;
   });
   let chest = -1;
-  let chestD = armed ? 30 : 45;
+  let chestD = tethered ? 15 : armed ? 30 : 45;
   const tryChest = (c: Container) => {
     if (!openable(m, c) || !inSafe(c.x, c.z) || lockedIn(m, c) || c.id === ai.tried) return;
     // a supply drop is worth the walk from farther off
@@ -4758,7 +5010,7 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   let down = -1;
   let downD = Infinity;
   const led = m.mode === 'solo' ? null : leadOf(m, f);
-  if (!deep && m.map.stairs.length && !(led && upright(led) && led.phase === 'ground' && !isDeep(led.x))) {
+  if (!deep && !tethered && m.map.stairs.length && !(led && upright(led) && led.phase === 'ground' && !isDeep(led.x))) {
     if (ai.goal === 'stairs' && m.time > ai.until && m.map.stairs[ai.chest]) ai.below.push(m.map.stairs[ai.chest].u);
     const quiet = !s.shrinking && s.timer > 25;
     for (const st of m.map.stairs) {
@@ -4827,6 +5079,13 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     ai.chest = smash;
     ai.gx = c.x;
     ai.gz = c.z;
+    return;
+  }
+  // following: nothing else to do but stay by them
+  if (to && tethered) {
+    ai.goal = 'mate';
+    ai.gx = to.x;
+    ai.gz = to.z;
     return;
   }
   // low on building material, with nothing better to do: a few swings at a tree, a rock or a car for some
