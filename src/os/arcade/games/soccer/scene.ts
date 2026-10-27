@@ -252,10 +252,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
 
   const stadium = buildStadium(THREE, { renderer, scene, hemi, key }, {
     lite,
-    kits: [
-      { shirt: teamKit[0].shirt, trim: teamKit[0].trim, shorts: teamKit[0].shorts },
-      { shirt: teamKit[1].shirt, trim: teamKit[1].trim, shorts: teamKit[1].shorts },
-    ],
+    kits: defaultKits,
     conditions: timeMode,
     pattern,
   });

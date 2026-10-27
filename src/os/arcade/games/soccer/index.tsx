@@ -10,6 +10,7 @@ import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } 
 import { SoccerSound, type CommentaryMode } from './audio.ts';
 import type { CameraMode, SoccerView, TimeMode } from './scene.ts';
 import { markShadersReady, parkSoccerView, takeSoccerView, useSoccerStadium } from './load.ts';
+import { LoadProgress } from './loading.tsx';
 import { Hud, type HudState, type RadarHandle } from './hud.tsx';
 import { broadcastClock, createStatsObserver, possessionShare } from './broadcast.ts';
 import { IntroCard, MatchContext, PausePanel, StatsScreen, type MatchData, type Presentation } from './presentation.tsx';

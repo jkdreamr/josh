@@ -2,6 +2,7 @@ import { createBall, stepBall, type BallState } from './physics.ts';
 import { FIELD } from './field.ts';
 import { arrangeSetPiece, stepSetPiece, setPieceCommands, stepSetPieceRun, startShootout, resolveShootoutKick, stepShootout, type SetPiece, type SetPieceRun, type Shootout } from './setpieces.ts';
 import { worldMultipliers } from './ratings.ts';
+import { clubById } from './teams.ts';
 export { FIELD } from './field.ts';
 
 export const STEP = 1 / 60;
