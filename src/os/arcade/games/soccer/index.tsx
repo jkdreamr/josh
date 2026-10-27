@@ -718,12 +718,12 @@ function Play() {
         for (const command of commands.values()) {
           Object.assign(command, consumeCommand(command));
         }
-        if (current.phase === 'half-time') {
+        if (current.phase === 'half-time' && previousPhase !== 'half-time') {
           showPresentation('half-time');
           accumulator.current = 0;
           break;
         }
-        if (current.phase === 'full-time') {
+        if (current.phase === 'full-time' && previousPhase !== 'full-time') {
           showPresentation('full-time');
           accumulator.current = 0;
           break;
