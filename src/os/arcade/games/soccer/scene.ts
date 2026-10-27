@@ -5,6 +5,7 @@ import { disposeTree, damp } from './gl.ts';
 import { adTexture, ballNumberTexture, ballTexture, markingsTexture, pitchTextures } from './textures.ts';
 import { IDENTITY_BASIS, type ViewBasis } from './input.ts';
 import { approachAngle, bindSoccerRig, bodyFrameVelocity, createSoccerAnimationInput, createSoccerAnimator, kickingFoot, playSoccerClip, preferredFoot, soccerClipActive, soccerDribbleOffset, updateSoccerAnimator, type SoccerAnimator, type SoccerClip } from './player.ts';
+import { createFxLayer, type FxDirector } from './fx.ts';
 
 type Three = typeof import('three');
 export type CameraMode = 'broadcast' | 'end' | 'replay';
@@ -24,6 +25,7 @@ export type SoccerView = {
   viewBasis(): ViewBasis;
   getCameraNdc(): SoccerCameraNdc;
   update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId?: number | null, power?: number | null): void;
+  setFx(director: FxDirector | null): void;
   render(): void;
   setTime(mode: TimeMode): void;
   goal(): void;
@@ -305,6 +307,7 @@ function buildGoal(THREE: Three, scene: T.Scene, sign: number, white: T.Material
   group.add(net);
   group.userData.netGeometry = netGeometry;
   group.userData.netBase = new Float32Array(vertices);
+  group.userData.goalSign = sign;
   scene.add(group);
   return group;
 }
@@ -336,6 +339,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const projected = new THREE.Vector3();
 
   const scene = new THREE.Scene();
+  const fxLayer = createFxLayer(THREE, scene);
+  let fxDirector: FxDirector | null = null;
   const night = timeMode === 'night';
   const skyCanvas = document.createElement('canvas');
   skyCanvas.width = 16; skyCanvas.height = 256;
@@ -897,6 +902,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     ball.rotation.z += world.ball.vx * dt / 0.11;
     ball.rotation.x += world.ball.vz * dt / 0.11;
     ballShadow.position.set(ball.position.x, 0.028, ball.position.z);
+    if (fxDirector) fxLayer.update(fxDirector, ball.position, world.ball, camera, dt);
     const shadowScale = Math.max(0.25, 1.1 - world.ball.y * 0.2);
     ballShadow.scale.set(shadowScale, shadowScale, 1);
     if (controlled) {
@@ -976,7 +982,12 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       }
     }
     quality.lastRender = now;
-    renderer.render(scene, camera);
+    fxLayer.applyCamera(camera);
+    try {
+      renderer.render(scene, camera);
+    } finally {
+      fxLayer.restoreCamera(camera);
+    }
     if (debug && now >= quality.nextLog) {
       quality.nextLog = now + 3000;
       console.info('[soccerdebug]', {
@@ -1002,12 +1013,14 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       return cameraNdc;
     },
     update,
+    setFx(director) { fxDirector = director; },
     render,
     setTime,
     goal() { crowdRoar = 1.3; },
     dispose() {
       disposed = true;
       canvas.removeEventListener('webglcontextlost', onLost);
+      fxLayer.dispose();
       disposeTree(scene);
       indicator.remove();
       mark.dispose();

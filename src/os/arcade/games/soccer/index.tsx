@@ -9,6 +9,7 @@ import { createWorld, distance, FIELD, teamOf, findReceiver, matchClock, nearest
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { goalRoar, kickThump, netSwish, startCrowd, whistle } from './audio.ts';
 import { createScene, type CameraMode, type SoccerView, type TimeMode } from './scene.ts';
+import { createFxDirector, haptic, phoneFx, type FxDirector } from './fx.ts';
 import { Hud, PowerMeter } from './hud.tsx';
 import { playerForSeat, type Mode } from './seats.ts';
 import './soccer.css';
@@ -240,6 +241,12 @@ function Play() {
   const movement = useRef({ x: 0, z: 0 });
   const worldRef = useRef<World | null>(null);
   const viewRef = useRef<SoccerView | null>(null);
+  const fxDirectorRef = useRef<FxDirector | null>(null);
+  if (!fxDirectorRef.current) {
+    fxDirectorRef.current = createFxDirector({
+      reducedMotion: typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+    });
+  }
   const shellRef = useRef(shell);
   const onlineRef = useRef(online);
   const levelRef = useRef<Level>(online?.quick ? 'normal' : levelChoice);
@@ -306,11 +313,25 @@ function Play() {
   const localTeam = localPlayerIds.length ? teamOf(localPlayerIds[0]!) : 0;
 
   useEffect(() => {
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const updatePreference = () => {
+      fxDirectorRef.current?.setReducedMotion(preference.matches);
+      renderDirty.current = true;
+      shell.invalidate();
+    };
+    updatePreference();
+    preference.addEventListener('change', updatePreference);
+    return () => preference.removeEventListener('change', updatePreference);
+  }, [shell.invalidate]);
+
+  useEffect(() => {
     if (shell.status !== 'ready') return;
     const fresh = createWorld(Math.floor(Date.now() % 0xffff_ffff), halfMinutes * 60, currentMode === 'coop' ? 2 : 1);
     controllerPlayers.current.clear();
     setupHumans(fresh, currentMode, online);
     worldRef.current = fresh;
+    fxDirectorRef.current?.reset();
+    fxDirectorRef.current?.observe(fresh, simulationTime.current);
     setHudWorld(fresh);
   }, [shell.status, modeChoice, halfMinutes, online?.round, online?.seat, online?.players]);
 
@@ -327,6 +348,7 @@ function Play() {
     const view = createScene(THREE, host, shell.touch, timeRef.current);
     if (!view) return;
     viewRef.current = view;
+    view.setFx(fxDirectorRef.current);
     view.resize(size.w, size.h);
     view.update(world, 0, performance.now() / 1000, localTeam, cameraRef.current);
     renderDirty.current = true;
@@ -336,6 +358,26 @@ function Play() {
       viewRef.current = null;
     };
   }, [THREE, shell.touch]);
+
+  useEffect(() => {
+    if (!debugConfig.enabled) return;
+    const target = window as Window & { __soccerFx?: { trigger: (kind: string) => void } };
+    const debugFx = {
+      trigger(kind: string) {
+        const current = worldRef.current;
+        if (!current) return;
+        fxDirectorRef.current?.trigger(kind, current, simulationTime.current);
+        renderDirty.current = true;
+        viewRef.current?.update(current, 0, performance.now() / 1000, localTeam, cameraRef.current);
+        viewRef.current?.render();
+        shell.invalidate();
+      },
+    };
+    target.__soccerFx = debugFx;
+    return () => {
+      if (target.__soccerFx === debugFx) delete target.__soccerFx;
+    };
+  }, [debugConfig.enabled, shell.invalidate]);
 
   useEffect(() => {
     viewRef.current?.resize(size.w, size.h);
@@ -385,6 +427,7 @@ function Play() {
           replaySkipped.current = false;
         }
         appendReplayFrame(replayFrames.current, packet.state, now);
+        fxDirectorRef.current?.observe(packet.state, now);
         guestSnapshots.current.push({ time: now, world: packet.state });
         guestSnapshots.current = guestSnapshots.current.slice(-12);
         worldRef.current = packet.state;
@@ -522,6 +565,8 @@ function Play() {
     const current = worldRef.current;
     const room = onlineRef.current;
     if (!current || shellRef.current.status !== 'playing') return;
+    const fxDirector = fxDirectorRef.current!;
+    fxDirector.tick(dt);
     crowdIntensity.current = current.phase === 'goal'
       ? 1
       : 0.08 + Math.min(0.82, Math.max(0, (Math.abs(current.ball.x) - FIELD.penaltyDepth * 0.42) / (FIELD.length / 2 - FIELD.penaltyDepth * 0.42)) * 0.75);
@@ -551,6 +596,7 @@ function Play() {
 
     if (current.phase === 'goal' && !replaySkipped.current && keys.pressed(...commandKeys)) replaySkipped.current = true;
     if (current.phase === 'goal' && Math.hypot(movement.current.x, movement.current.z) > 0.2) replaySkipped.current = true;
+    if (current.phase === 'goal' && replaySkipped.current && fxDirector.goalPending) fxDirector.goalImpact();
     const commandsForUsers = userCommands.current;
     commandsForUsers.clear();
     if (current.phase !== 'goal' && room && !room.watching) {
@@ -600,6 +646,7 @@ function Play() {
         const previousScore1 = current.score[1];
         const previousEvent = current.event;
         stepWorld(current, STEP, commands, debugConfig.clockScale);
+        fxDirector.observe(current, simulationTime.current);
         const assignments = reconcileControllers(current, controllerPlayers.current);
         for (const [seat, id] of assignments) {
           const old = controllerPlayers.current.get(seat);
@@ -660,13 +707,18 @@ function Play() {
     let renderWorld = isOnlineGuest ? onlineRenderState(guestSnapshots.current, performance.now() / 1000, current) : current;
     let camera: CameraMode = cameraRef.current;
     const replayClock = isOnlineGuest ? performance.now() / 1000 : simulationTime.current;
+    const replaying = !replaySkipped.current && replayStartedAt.current !== null && current.phase === 'goal';
     if (!replaySkipped.current && replayStartedAt.current !== null && current.phase === 'goal') {
       if (!replaySkipped.current) {
         const from = replayStartedAt.current - 2.4;
-        const progress = clamp((replayClock - replayStartedAt.current) / 3, 0, 1);
+        const progress = fxDirector.replayProgress(clamp((replayClock - replayStartedAt.current) / 3, 0, 1));
         renderWorld = sampleReplay(replayFrames.current, from + progress * 2.4, current, replayWorld.current) ?? current;
         camera = 'replay';
       }
+    }
+    if (!replaying && !isOnlineGuest) {
+      if (current.phase !== 'goal' && fxDirector.goalPending) fxDirector.goalImpact();
+      renderWorld = fxDirector.renderWorld(renderWorld);
     }
     const selectedPlayerId = controllerPlayers.current.get(room?.seat ?? 0) ?? localPlayerIds[0] ?? current.controlled[0];
     const selected = current.players[selectedPlayerId]!;
@@ -690,7 +742,7 @@ function Play() {
     }
     const remote = remoteCommands.current.get(selectedPlayerId);
     const indicatorPower = power ?? (remote?.heldAction ? remote.power ?? null : null);
-    viewRef.current?.update(renderWorld, dt, performance.now() / 1000, localTeam, camera, target, indicatorPower);
+    viewRef.current?.update(renderWorld, dt * fxDirector.animScale, performance.now() / 1000, localTeam, camera, target, indicatorPower);
     hudTimer.current += dt;
     if (hudTimer.current > 0.09) {
       hudTimer.current = 0;
@@ -740,6 +792,10 @@ function PhoneController() {
   const shoulder = useRef(false);
   const [score, setScore] = useState<[number, number]>([0, 0]);
   const previousScore = useRef<[number, number]>([0, 0]);
+  const previousKickKey = useRef<string | null>(null);
+  const reducedMotion = useRef(typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+  const phoneFlashId = useRef(0);
+  const [phoneFlash, setPhoneFlash] = useState<{ id: number; kind: 'goal' | 'shot' } | null>(null);
   const [displayOnly, setDisplayOnly] = useState(true);
   const [mode, setMode] = useState<Mode>('cpu');
   const [showGame, setShowGame] = useState(false);
@@ -817,6 +873,27 @@ function PhoneController() {
       }
     };
   }, []);
+  useEffect(() => {
+    const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
+    const updatePreference = () => { reducedMotion.current = preference.matches; };
+    updatePreference();
+    preference.addEventListener('change', updatePreference);
+    const target = window as Window & { __soccerFx?: { trigger: (kind: string) => void } };
+    if (!new URLSearchParams(location.search).has('soccerdebug')) {
+      return () => preference.removeEventListener('change', updatePreference);
+    }
+    const debugFx = {
+      trigger(kind: string) {
+        if (reducedMotion.current) return;
+        setPhoneFlash({ id: ++phoneFlashId.current, kind: kind.includes('shot') || kind === 'power-shot' ? 'shot' : 'goal' });
+      },
+    };
+    target.__soccerFx = debugFx;
+    return () => {
+      preference.removeEventListener('change', updatePreference);
+      if (target.__soccerFx === debugFx) delete target.__soccerFx;
+    };
+  }, []);
   const phoneHasBall = () => {
     const snapshot = phoneWorld.current;
     return !!snapshot && nearestCarrier(snapshot)?.team === teamOf(playerForSeat(online?.seat ?? 0, displayOnly, mode));
@@ -866,7 +943,18 @@ function PhoneController() {
       const packet = parsePacket(data);
       if (packet?.k === 's') {
         phoneWorld.current = packet.state;
-        if (packet.state.score.some((value, index) => value !== previousScore.current[index])) navigator.vibrate?.([70, 40, 120]);
+        const phoneTeam = teamOf(playerForSeat(online.seat, displayOnly, mode));
+        const feedback = phoneFx(previousScore.current, previousKickKey.current, packet.state, phoneTeam);
+        if (feedback) {
+          if (feedback === 'goal-for') haptic([70, 40, 120]);
+          else if (feedback === 'goal-against') haptic([40]);
+          else haptic([22]);
+          if (!reducedMotion.current) {
+            setPhoneFlash({ id: ++phoneFlashId.current, kind: feedback === 'shot' ? 'shot' : 'goal' });
+          }
+        }
+        const kick = packet.state.kickEvent;
+        previousKickKey.current = kick ? `${kick.playerId}:${kick.time}:${kick.action}` : null;
         previousScore.current = [...packet.state.score];
         setScore(packet.state.score);
       } else if (packet?.k === 'cfg') {
@@ -898,6 +986,7 @@ function PhoneController() {
   const chargeName = chargingAction === 'pass' ? 'Pass' : chargingAction === 'shoot' ? 'Shoot' : chargingAction === 'through' ? 'Through' : chargingAction === 'lob' ? 'Lob' : chargingAction === 'skill' ? 'Skill' : 'Hold to charge';
   return (
     <div className="g-soccer-phone-controller">
+      {phoneFlash && <div key={phoneFlash.id} className={`g-soccer-phone-flash is-${phoneFlash.kind}`} aria-hidden="true" onAnimationEnd={() => setPhoneFlash(null)} />}
       <header>
         <b>{teamOf(phonePlayer) === 1 ? 'NORTHSHORE' : 'BAY CITY'}</b>
         <strong>{score[0]} · {score[1]}</strong>
