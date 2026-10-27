@@ -2,7 +2,7 @@
 // effects. It reads a Match every frame and never changes it. Only classes kit/three-lib.ts exports are used.
 import type { T } from './gl';
 import { createGL, damp, disposeTree, type GL } from './gl';
-import { BARREL_R, BEACH, BRIDGE_HALF, BUSH_R, BUS_Y, CAMP, CHEST_HD, CHEST_HW, CRATE_HALF, FENCE_T, FRIDGE_HD, FRIDGE_HW, HALF, HAY_HD, HAY_HW, LAMP_R, LOG_R, PAD, RIVER_HALF, ROAD_HALF, STASH, SUPPLY_FALL, SUPPLY_HALF, TABLE_HD, TABLE_HW, TOILET_R, WALL_T, bridgeAt, busAt, fieldAt, isStash, padAt, peekAt, riverDist2, roadAt, type Building, type BuildingKind, type Container } from './map';
+import { BARREL_R, BEACH, BRIDGE_HALF, BUSH_R, BUS_Y, CAMP, CHEST_HD, CHEST_HW, CRATE_HALF, DEEP, DEEP_H, FENCE_T, FRIDGE_HD, FRIDGE_HW, HALF, HAY_HD, HAY_HW, LAMP_R, LOG_R, PAD, RIVER_HALF, ROAD_HALF, STASH, SUPPLY_FALL, SUPPLY_HALF, TABLE_HD, TABLE_HW, TOILET_R, WALL_T, bridgeAt, busAt, fieldAt, isDeep, isStash, padAt, peekAt, riverDist2, roadAt, type Building, type BuildingKind, type Container } from './map';
 import { BARREL, BUILD_START, CELL_B, CRATE_HP, DIR_X, DIR_Z, DOOR_GONE, DOOR_IN, DOOR_OPENING, DOOR_OUT, F_DRINKING, F_GHILLIE, F_HEALING, F_PAN, F_RELOAD, F_REVIVE, F_SHIELDING, F_SMOOTHIE, F_SPIN, F_STUN, F_TART, GAP, HAY_HP, LEVEL_H, MATE_COLORS, PING_T, TEAM_COLOR, TOILET_HP, clearLine, concealed, editable, gridOf, held, levelOf, makePiece, mateIndex, owned, pieceIn, pingOf, planPiece, reviveShare, revivedBy, roofOver, shut, tossAt, viewOf, type Ev, type Fighter, type Held, type LootItem, type Match, type Plan, type Toss, type Wall, type Zone } from './logic';
 import { MATS, MAT_SPECS, MELEE, RARITY_COLORS, THROWS, WEAPONS, isMelee, isThrow, isWeapon, legendary, type LootDef, type Mat, type UseId } from './items';
 
@@ -85,9 +85,13 @@ const DRESS: Record<BuildingKind, { frame: number; porch: number; mat: number; a
   mill: { frame: 0x6b4426, porch: 0xb98250, mat: 0x8a5a2b, awning: 0x7a4a2a, edge: 0xffcf4a, trim: 0xe9e1cf },
   police: { frame: 0x2b3f66, porch: 0xb7bcc2, mat: 0x2b3f66, awning: 0x2b3f66, edge: 0xffffff, trim: 0xf4f6f8 },
   bank: { frame: 0x6b4426, porch: 0xd9cfb8, mat: 0x7a1f1f, awning: 0x2f5d3a, edge: 0xffd23d, trim: 0xf1ead8 },
+  cellar: { frame: 0, porch: 0, mat: 0, awning: 0, edge: 0, trim: 0 },
+  bunker: { frame: 0, porch: 0, mat: 0, awning: 0, edge: 0, trim: 0 },
 };
 /** The stone footing along each kind's outer walls. */
-const FOOTINGS: Record<BuildingKind, number> = { house: 0x8f8a80, farm: 0x7d766c, shed: 0x6e6a62, warehouse: 0x6c747c, container: 0, ruin: 0, coop: 0xb08a4a, diner: 0x9aa3a8, mill: 0x8a8378, police: 0x5b6470, bank: 0x9a8f78 };
+const FOOTINGS: Record<BuildingKind, number> = { house: 0x8f8a80, farm: 0x7d766c, shed: 0x6e6a62, warehouse: 0x6c747c, container: 0, ruin: 0, coop: 0xb08a4a, diner: 0x9aa3a8, mill: 0x8a8378, police: 0x5b6470, bank: 0x9a8f78, cellar: 0, bunker: 0 };
+/** A cellar or a bunker: underground, under the island (see map.ts DEEP), and drawn its own way. */
+const below = (b: Building) => b.kind === 'cellar' || b.kind === 'bunker';
 /** What each kind's doors are painted (a house's by its look). */
 const DOOR_PAINT: Partial<Record<BuildingKind, number>> = { farm: 0xf6f1e4, shed: 0x8a5a2b, diner: 0x3fb8af, police: 0x2b3f66, bank: 0x5a3a1e, coop: 0xc0392b, mill: 0x6b4426, warehouse: 0x8d9aa6 };
 const HOUSE_DOORS = [0x7a4a2a, 0x3f6f9e, 0xb0473a, 0x4f8a4a];
@@ -452,6 +456,27 @@ function checkTexture(THREE: Three) {
           g.fillStyle = (x + y) % 2 ? '#2b2d33' : '#f4f1ea';
           g.fillRect(x * 16, y * 16, 16, 16);
         }
+    }),
+    [1, 1],
+  );
+}
+
+/** A cellar's flagstones: rows of worn stones, each a shade of its own, between dark joints. */
+function flagTexture(THREE: Three) {
+  return texture(
+    THREE,
+    canvas(128, 128, (g) => {
+      g.fillStyle = '#3a332b';
+      g.fillRect(0, 0, 128, 128);
+      const rnd = scatter(71);
+      for (let row = 0; row < 4; row++) {
+        const off = row % 2 ? 16 : 0;
+        for (let k = -1; k < 4; k++) {
+          const v = Math.round(150 + rnd() * 50);
+          g.fillStyle = `rgb(${v}, ${v - 12}, ${v - 26})`;
+          g.fillRect(off + k * 32 + 2, row * 32 + 2, 28, 28);
+        }
+      }
     }),
     [1, 1],
   );
@@ -1050,7 +1075,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   scene.fog = new THREE.Fog(water, 160, 520);
   const camera = new THREE.PerspectiveCamera(FOV, 1, 0.5, 1200);
   // a warm afternoon sun from the south west, and a cool sky filling the shade, so lit and shaded sides read apart
-  scene.add(new THREE.HemisphereLight(0xd6ebff, 0x6f8748, 1.2));
+  const sky = new THREE.HemisphereLight(0xd6ebff, 0x6f8748, 1.2);
+  scene.add(sky);
   const sun = new THREE.DirectionalLight(0xffe0b0, 1.6);
   sun.position.set(SUN.x * -100, 100, SUN.z * -100);
   scene.add(sun);
@@ -1383,6 +1409,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   }
   const dummy = new THREE.Object3D();
   const color = new THREE.Color();
+  const color2 = new THREE.Color();
   const shade = (rnd: () => number, base: number, spread: number) => color.setHex(base).offsetHSL((rnd() - 0.5) * spread * 0.2, 0, (rnd() - 0.5) * spread * 0.2);
   const stalks = many(G.stalk, sway(lambert(0xffffff, { flatShading: true }), -1.15, 0.05), stalkSpots.length);
   stalkSpots.forEach((p, i) => {
@@ -1435,6 +1462,16 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const dirt = lambert(0xb9ad93);
   // a shipping container is dark inside, so its open end shows from afar
   const hold = lambert(0x3a3e44);
+  // underground: a cellar's flagstones and a bunker's painted concrete
+  const cellarFloor = (() => {
+    const tex = keep(flagTexture(THREE));
+    tex.repeat.set(4, 4);
+    tex.wrapS = THREE.RepeatWrapping;
+    tex.wrapT = THREE.RepeatWrapping;
+    tex.needsUpdate = true;
+    return lambert(0xb0a08a, { map: tex });
+  })();
+  const bunkerFloor = lambert(0x5d666e);
   const wallColor = (b: Building, rnd: () => number) => {
     switch (b.kind) {
       case 'house':
@@ -1459,6 +1496,10 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         return color.setHex(0xc9d6e6);
       case 'bank':
         return color.setHex(0xe8dcc0);
+      case 'cellar':
+        return shade(rnd, 0x8c7c68, 0.25);
+      case 'bunker':
+        return shade(rnd, 0x737c84, 0.2);
     }
   };
   const roofColor = (b: Building) => {
@@ -1506,7 +1547,11 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const lamps: { x: number; y: number; z: number; sx: number; sz: number }[] = [];
   map.buildings.forEach((b, bi) => {
     const floorMat =
-      b.kind === 'container'
+      b.kind === 'cellar'
+        ? cellarFloor
+        : b.kind === 'bunker'
+          ? bunkerFloor
+          : b.kind === 'container'
         ? hold
         : b.kind === 'warehouse' || b.kind === 'police'
           ? concrete
@@ -1537,7 +1582,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       wi++;
       // a cap along the top of every wall, a shade darker, so the rooms read from above with the roof off
       trims.push({ x: w.x, y: b.h + 0.04, z: w.z, sx: w.hw * 2 + 0.06, sy: 0.1, sz: w.hd * 2 + 0.06, c: darker(wc, 0.82) });
-      if (b.kind === 'container') continue;
+      if (b.kind === 'container' || below(b)) continue;
       // the outside of the outer walls: a stone footing, and windows with sills (shutters on houses and farms)
       const alongX = w.hw >= w.hd;
       const off = alongX ? w.z - b.z : w.x - b.x;
@@ -1659,7 +1704,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       for (const o of [2.2, 3.05]) put(WALL_T / 2 + o, (doorRnd() - 0.5) * 0.5, 0.03, 0.6, 0.85, 0.06, shade(doorRnd, 0xcbc3ae, 0.5).getHex());
     }
 
-    if (!b.roof) return;
+    // nothing over a basement: it's underground, and lit by its own lamps (see below)
+    if (!b.roof || below(b)) return;
     // the roof: one merged mesh of eaves, a gable (flat on a container), a ridge cap and something over each door
     const parts: RoofPart[] = [];
     const piece = (g: T.BufferGeometry, x: number, y: number, z: number, c: number, turn = 0) => {
@@ -1784,6 +1830,95 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     roofs.push({ mesh: roof, mats, fade: 1, at: bi });
   });
   scene.add(buildingWalls);
+
+  // Underground: every basement lies far off east of the island (see map.ts DEEP), on a floor of dark earth. Each of
+  // its rooms has a lamp hanging over a warm pool of light, and its stairs climb at one end toward the daylight at
+  // their top. Up top a stairway is a well of steps that go dark as they go down, behind rails (a hatch out in the
+  // open has a concrete rim striped yellow and black, and its lid stands open). All of it instanced.
+  const earth = new THREE.Mesh(G.plane, basic(0x0f0c0a));
+  earth.rotation.x = -Math.PI / 2;
+  earth.position.set(DEEP, -0.05, 0);
+  earth.scale.set(2 * HALF + 160, 2 * HALF + 160, 1);
+  scene.add(earth);
+  const poolMat = basic(0xffffff, { map: keep(glowTexture(THREE)), transparent: true, opacity: 0.5, depthWrite: false, blending: ADDITIVE });
+  const pools: Part[] = [];
+  const bulbs: Part[] = [];
+  const mix = (a: number, b: number, k: number) => color.setHex(a).lerp(color2.setHex(b), k).getHex();
+  for (const b of map.buildings) {
+    if (!below(b)) continue;
+    for (const r of b.rooms) {
+      const big = Math.min(6, Math.max(r.hw, r.hd) * 1.3);
+      pools.push({ x: r.x, y: 0.05, z: r.z, sx: big, sy: big, sz: 1, c: 0xff9a40 }, { x: r.x, y: 0.06, z: r.z, sx: big * 0.45, sy: big * 0.45, sz: 1, c: 0xffd9a0 });
+      bulbs.push({ x: r.x, y: DEEP_H - 0.45, z: r.z, sx: 0.16, sy: 0.2, sz: 0.16, c: 0xffe6b0 }, { x: r.x, y: DEEP_H - 0.2, z: r.z, sx: 0.04, sy: 0.5, sz: 0.04, c: 0x222222 });
+    }
+  }
+  for (const s of map.stairs) {
+    const ax = s.dx !== 0;
+    const run = ax ? s.hw : s.hd;
+    const half = ax ? s.hd : s.hw;
+    const metal = s.b < 0 || map.buildings[s.b]?.kind !== 'house';
+    const railC = metal ? 0x59636d : 0x6b4426;
+    /** A box `a` along the way down from the middle and `c` across it, `sa` long and `sc` wide, `ox` east of the stairs. */
+    const put = (ox: number, a: number, c: number, y: number, sa: number, sy: number, sc: number, col: number) =>
+      bits.push({ x: s.x + ox + s.dx * a + (ax ? 0 : c), y, z: s.z + s.dz * a + (ax ? c : 0), sx: ax ? sa : sc, sy, sz: ax ? sc : sa, ry: 0, c: col });
+    const N = 6;
+    const step = (2 * run) / N;
+    // up top: a dark well, and steps fading into it
+    put(0, 0, 0, 0.02, 2 * run, 0.03, 2 * half - 0.04, 0x0b0a09);
+    for (let k = 0; k < N; k++) put(0, -run + (k + 0.5) * step, 0, 0.035, step - 0.07, 0.04, 2 * half - 0.16, mix(0x9a9084, 0x16130f, k / (N - 1)));
+    // below: steps climbing to the top end, lighter as they go up, with the daylight on the top one
+    for (let k = 0; k < N; k++) {
+      const h = ((k + 1) * (DEEP_H - 0.3)) / N;
+      put(DEEP, run - (k + 0.5) * step, 0, h / 2, step + 0.01, h, 2 * half - 0.16, mix(0x55524c, 0xb7b0a2, k / (N - 1)));
+    }
+    const lx = s.x + DEEP - s.dx * (run - step / 2);
+    const lz = s.z - s.dz * (run - step / 2);
+    pools.push({ x: lx, y: DEEP_H - 0.25, z: lz, sx: 2.6, sy: 2.6, sz: 1, c: 0xbfe2ff });
+    // the rails: posts and a bar along the top
+    for (const r of [...s.rails, ...s.deepRails]) {
+        const along = r.hw >= r.hd;
+        const len = 2 * (along ? r.hw : r.hd);
+        bits.push({ x: r.x, y: 0.95, z: r.z, sx: along ? len : 0.1, sy: 0.08, sz: along ? 0.1 : len, ry: 0, c: railC });
+        const n = Math.max(2, Math.round(len / 0.7) + 1);
+        for (let k = 0; k < n; k++) {
+          const u = -len / 2 + 0.05 + (k * (len - 0.1)) / (n - 1);
+          bits.push({ x: r.x + (along ? u : 0), y: 0.47, z: r.z + (along ? 0 : u), sx: 0.08, sy: 0.94, sz: 0.08, ry: 0, c: railC });
+        }
+    }
+    if (s.b >= 0) continue;
+    // a hatch out in the open: a concrete apron, a rim striped yellow and black round three sides of the hole, and
+    // the steel lid laid open flat beside it
+    put(0, 0, 0.5, 0.015, 2 * run + 1.6, 0.03, 2 * half + 2.6, 0x8d949a);
+    for (const k of [-1, 1]) {
+      put(0, 0, k * (half + 0.15), 0.12, 2 * run + 0.6, 0.24, 0.3, 0x2b2d33);
+      for (let u = -run - 0.15; u < run + 0.1; u += 0.5) put(0, u + 0.125, k * (half + 0.15), 0.245, 0.25, 0.02, 0.3, 0xf2c230);
+    }
+    put(0, run + 0.15, 0, 0.12, 0.3, 0.24, 2 * half, 0x2b2d33);
+    for (let c = -half + 0.25; c < half; c += 0.5) put(0, run + 0.15, c, 0.245, 0.3, 0.02, 0.25, 0xf2c230);
+    put(0, -run - 0.15, 0, 0.06, 0.3, 0.12, 2 * half, 0x9aa1a6);
+    put(0, 0, half + 0.95, 0.06, 2 * run - 0.2, 0.08, 1.1, 0x4a5058);
+    for (let u = -run + 0.45; u < run - 0.2; u += 0.7) put(0, u, half + 0.95, 0.105, 0.3, 0.01, 0.9, 0xf2c230);
+  }
+  const deepPools = many(G.disc, poolMat, pools.length);
+  pools.forEach((p, i) => {
+    dummy.position.set(p.x, p.y, p.z);
+    dummy.rotation.set(-Math.PI / 2, 0, 0);
+    dummy.scale.set(p.sx, p.sy, 1);
+    dummy.updateMatrix();
+    deepPools.setMatrixAt(i, dummy.matrix);
+    deepPools.setColorAt(i, color.setHex(p.c));
+  });
+  deepPools.renderOrder = 2;
+  const deepBulbs = many(G.ball, basic(0xffffff), bulbs.length);
+  bulbs.forEach((p, i) => {
+    dummy.position.set(p.x, p.y, p.z);
+    dummy.rotation.set(0, 0, 0);
+    dummy.scale.set(p.sx, p.sy, p.sz);
+    dummy.updateMatrix();
+    deepBulbs.setMatrixAt(i, dummy.matrix);
+    deepBulbs.setColorAt(i, color.setHex(p.c));
+  });
+  scene.add(deepPools, deepBulbs);
   // a jail cell's bars: rods close together between a rail along the floor, one halfway up and one up top
   const barRods: Part[] = [];
   const barRails: Part[] = [];
@@ -2468,7 +2603,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       furnished[k].instanceMatrix.needsUpdate = true;
     }
   };
-  map.buildings.forEach((b, i) => b.roof && showFurniture(i, false));
+  map.buildings.forEach((b, i) => b.roof && !below(b) && showFurniture(i, false));
 
   // ground detail: tufts of grass, flowers and pebbles, merged into one mesh per 40 m square so only the squares in
   // view are drawn, and none at all from up high, where they'd only be specks
@@ -4236,6 +4371,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
 
   let shake = 0;
   let now = 0;
+  /** How far the view has gone underground (0 up top, 1 below), and what the lights were last set for. */
+  let gloom = 0;
+  let shownGloom = 0;
   const fog = scene.fog as T.Fog;
   const cam = { x: 0, z: 0, view: OVERVIEW, ready: false };
   const vec = new THREE.Vector3();
@@ -4559,10 +4697,11 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           want = focus.phase === 'drop' ? DROP_VIEW + (focus.y / BUS_Y) * 20 : GROUND_VIEW + viewOf(focus);
         }
       }
-      if (!cam.ready) {
+      // first, and down the stairs or up them (from the island to underground is a long way off): straight there
+      if (!cam.ready || Math.abs(tx - cam.x) > 200) {
         cam.x = tx;
         cam.z = tz;
-        cam.view = want;
+        cam.view = cam.ready ? cam.view : want;
         cam.ready = true;
       }
       cam.x = damp(cam.x, tx, 9, dt);
@@ -4579,6 +4718,16 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       // haze only far past what's in frame
       fog.near = dist + 80;
       fog.far = dist + 560;
+      // underground the daylight fades to a lamplit gloom, the sky and the haze to black
+      gloom = damp(gloom, isDeep(cam.x) ? 1 : 0, 6, dt);
+      if (Math.abs(gloom - shownGloom) > 0.002) {
+        shownGloom = gloom;
+        sky.intensity = 1.2 * (1 - 0.7 * gloom);
+        sun.intensity = 1.6 * (1 - 0.82 * gloom);
+        (scene.background as T.Color).setHex(water).lerp(color2.setHex(0x050404), gloom);
+        fog.color.copy(scene.background as T.Color);
+      }
+      if (gloom > 0.01) poolMat.opacity = 0.46 + Math.sin(clock * 7.3) * 0.025 + Math.sin(clock * 17.9) * 0.015;
 
       // the bus flies its route and away
       const busT = m.time;

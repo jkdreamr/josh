@@ -33,6 +33,7 @@ import {
   owned,
   prompt,
   pingOf,
+  scopesOf,
   reviveShare,
   revivedBy,
   scoreOf,
@@ -56,8 +57,8 @@ import {
 import { configOf, parsePacket, teamAsk, type Bots } from './net';
 import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, namesOf, newSession, nextTeam, offscreen, pinTeam, receive, resultCard, share, teamsFor, tick, winnersOf, type Session } from './session';
 import { ARMOR_NAMES, MATS, MAT_MAX, MELEE, PIECE_COST, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, ammoCap, isMelee, isThrow, isWeapon, legendary, lootName, reloadOf, type Ammo, type LootDef, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
-import { HALF, SUPPLY_FALL, placeAt, type ContainerKind } from './map';
-import { AMMO_FILL, AmmoIcon, ArmorIcon, CrownIcon, DROP_KEY, EDIT_KEY, EditIcon, EggIcon, GhillieIcon, HowToPlay, IslandArt, MAT_KEY, MatIcon, PIECE_KEYS, PIECE_NAMES, PING_KEY, PackIcon, PieceIcon, PingIcon, PlaceNames, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, keyCode } from './hud';
+import { DEEP, HALF, SUPPLY_FALL, basementAt, isDeep, placeAt, topX, type ContainerKind } from './map';
+import { AMMO_FILL, AmmoIcon, ArmorIcon, BasementArt, CrownIcon, DROP_KEY, EDIT_KEY, EditIcon, EggIcon, GhillieIcon, HowToPlay, IslandArt, MAT_KEY, MatIcon, PIECE_KEYS, PIECE_NAMES, PING_KEY, PackIcon, PieceIcon, PingIcon, PlaceNames, SCOPE_KEY, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, keyCode } from './hud';
 import { meta } from './meta';
 import './scramble.css';
 
@@ -371,7 +372,9 @@ type Hud = {
   high: number;
   /** Consumables by kind, or null when it's someone else's egg. */
   items: Record<UseId, number> | null;
+  /** The scope looked through, and the ones carried (a bit each for 2x, 4x and 8x), someone else's egg's too. */
   scope: number;
+  scopes: number;
   pack: number;
   /** Helmet and vest levels (shown for someone else's egg too, as its owner reports them). */
   helmet: number;
@@ -411,11 +414,13 @@ type Hud = {
   marks: string;
   /** The prompt is to revive a teammate (the button is held down for it). */
   reviving: boolean;
+  /** The basement the egg we see is down in (its building), or -1. */
+  deep: number;
 };
 type Mate = { id: number; name: string; color: string; hp: number; shield: number; down: boolean; out: boolean; revive: number };
 const deep = new Set<keyof Hud>(['slots', 'toss', 'items', 'mats', 'leader', 'mates', 'down']);
 const sameHud = (a: Hud, b: Hud) => (Object.keys(a) as (keyof Hud)[]).every((k) => (deep.has(k) ? JSON.stringify(a[k]) === JSON.stringify(b[k]) : a[k] === b[k]));
-const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, mats: null, mat: 0, piece: 'wall', edit: false, high: 0, items: null, scope: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, hidden: false, ghillie: false, leader: null, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false, teams: 0, mates: null, down: null, marks: '', reviving: false });
+const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, mats: null, mat: 0, piece: 'wall', edit: false, high: 0, items: null, scope: 0, scopes: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, hidden: false, ghillie: false, leader: null, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, out: null, mine: false, teams: 0, mates: null, down: null, marks: '', reviving: false, deep: -1 });
 
 type Stick = { id: number; ox: number; oy: number; x: number; y: number };
 /** A kill feed line; it fades out at `until` on the game clock (so a paused game keeps it up). */
@@ -425,8 +430,8 @@ type Pop = { el: HTMLDivElement | null; x: number; y: number; z: number; age: nu
  * `toss` is how far a touch throw goes, `tossAim` which way, and `tossBy` the match clock it gives up at if it can't go
  * yet. `piece`, `mat` and `edit` are the build menu's (as Input has them).
  */
-type Taps = { build: boolean; piece: Plan | null; mat: number; edit: boolean; reload: boolean; use: Input['use']; interact: boolean; jump: boolean; cycle: number; slot: number; watch: number; toss: number; tossAim: number; tossBy: number; ping: boolean; pingAt: { x: number; z: number } | null; drop: Input['drop'] };
-const noTaps = (): Taps => ({ build: false, piece: null, mat: 0, edit: false, reload: false, use: null, interact: false, jump: false, cycle: 0, slot: -1, watch: 0, toss: 0, tossAim: 0, tossBy: 0, ping: false, pingAt: null, drop: null });
+type Taps = { build: boolean; piece: Plan | null; mat: number; edit: boolean; reload: boolean; use: Input['use']; interact: boolean; jump: boolean; cycle: number; slot: number; watch: number; toss: number; tossAim: number; tossBy: number; ping: boolean; pingAt: { x: number; z: number } | null; drop: Input['drop']; scope: number };
+const noTaps = (): Taps => ({ build: false, piece: null, mat: 0, edit: false, reload: false, use: null, interact: false, jump: false, cycle: 0, slot: -1, watch: 0, toss: 0, tossAim: 0, tossBy: 0, ping: false, pingAt: null, drop: null, scope: 0 });
 /** How long the build key's blueprint stays up after a build key, and the edit key's mark after an edit. */
 const PREVIEW = 2.5;
 const EDIT_PREVIEW = 1.5;
@@ -466,7 +471,8 @@ function Play({ mode }: { mode: StageMode }) {
   const view = useRef<View | null>(null);
   const match = useRef<Match | null>(null);
   const net = useRef<Session>(null as unknown as Session);
-  net.current ??= newSession(!live || online!.isHost);  if (!match.current) {
+  net.current ??= newSession(!live || online!.isHost);
+  if (!match.current) {
     if (mode === 'idle') match.current = soloMatch(randomSeed(), level);
     else if (!live) match.current = soloMatch(randomSeed(), level, 'you', FIGHTER_COLORS[0], teamMode);
     else if (online!.isHost) {
@@ -529,6 +535,10 @@ function Play({ mode }: { mode: StageMode }) {
   const marks = useRef<Pop[]>(Array.from({ length: 6 }, () => ({ el: null, x: 0, y: 0, z: 0, age: 9, live: false })));
   const markAt = useRef(0);
   const labels = useRef<(HTMLDivElement | null)[]>([]);
+  /** The name over the stairs by our egg, the black that fades in and out going down or up them, and the level we saw last. */
+  const stairEl = useRef<HTMLDivElement | null>(null);
+  const fadeEl = useRef<HTMLDivElement | null>(null);
+  const belowRef = useRef(false);
   const dazeEl = useRef<HTMLDivElement | null>(null);
   /** Meters each egg has walked since its last footstep, and how long until the next one may sound. */
   const strides = useRef(new Map<number, number>());
@@ -564,16 +574,18 @@ function Play({ mode }: { mode: StageMode }) {
     view.current?.resize(size.w, size.h);
   }, [size.w, size.h, THREE, viewKey]);
 
-  // the mouse wheel cycles weapons (a native listener, so it can keep the page from scrolling)
+  // the mouse wheel cycles weapons, and with Shift held the scopes (a native listener, so it can keep the page from
+  // scrolling; with Shift some browsers scroll sideways instead)
   useEffect(() => {
     const host = ref.current;
     if (!host) return;
     let acc = 0;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      acc += e.deltaY;
+      acc += e.deltaY || e.deltaX;
       if (Math.abs(acc) >= 40) {
-        taps.current.cycle = acc > 0 ? 1 : -1;
+        if (e.shiftKey) taps.current.scope = acc > 0 ? -1 : 1;
+        else taps.current.cycle = acc > 0 ? 1 : -1;
         acc = 0;
       }
     };
@@ -775,6 +787,8 @@ function Play({ mode }: { mode: StageMode }) {
     if (t.slot >= 0) inp.slot = t.slot;
     if (keys.pressed('KeyQ')) inp.cycle = 1;
     if (t.cycle) inp.cycle = t.cycle;
+    if (keys.pressed(keyCode(SCOPE_KEY))) inp.scope = 1;
+    if (t.scope) inp.scope = t.scope;
     if (keys.pressed('KeyR') || t.reload) inp.reload = true;
     if (keys.pressed('KeyE') || t.interact) inp.interact = true;
     // held down by a knocked teammate, it revives them (a button let go of once the prompt has moved on lets go too)
@@ -866,8 +880,15 @@ function Play({ mode }: { mode: StageMode }) {
         if (live && o) share(n, e, o.seat);
       }
       footsteps(m, focus, dt);
+      // down the stairs or up them (ours or the egg we watch): a moment of black as the view goes over
+      const eye = m.fighters[focus];
+      const down = !!eye && eye.phase === 'ground' && isDeep(eye.x);
+      if (down !== belowRef.current) {
+        belowRef.current = down;
+        fadeEl.current?.animate?.([{ opacity: 1 }, { opacity: 0 }], { duration: calmMotion() ? 200 : 480, easing: 'ease-out' });
+      }
       // the name goes up on walking or landing into a named place (not again for one we only just stepped out of)
-      const here = me && me.phase === 'ground' ? placeAt(m.map, me.x, me.z) : -1;
+      const here = me && me.phase === 'ground' ? placeAt(m.map, topX(me.x), me.z) : -1;
       const pl = placeRef.current;
       if (here !== pl.in) {
         pl.in = here;
@@ -1122,6 +1143,14 @@ function Play({ mode }: { mode: StageMode }) {
         break;
       case 'land':
         if (mine) sfx.noise(0.12, 0.12);
+        break;
+      case 'stairs':
+        // footsteps on the stairs, going down (or up) the scale
+        if (mine || e.f === focus)
+          for (let k = 0; k < 4; k++) {
+            sfx.noise(0.03, 0.05, k * 0.09);
+            sfx.tone({ freq: e.down ? 150 - k * 18 : 96 + k * 18, dur: 0.05, type: 'sine', vol: 0.07, delay: k * 0.09 });
+          }
         break;
       case 'shot': {
         if (!f) break;
@@ -1495,6 +1524,19 @@ function Play({ mode }: { mode: StageMode }) {
       el.style.opacity = '1';
       el.style.transform = `translate(${at.x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;
     });
+    // the stairs by our egg, on its level: down to the basement, or back up
+    const sl = stairEl.current;
+    if (sl) {
+      const st = me && me.phase === 'ground' && eye === me ? nearStairs(m, me) : null;
+      const at = st ? v.project(st.x, 1.3, st.z) : null;
+      if (!st || !at) {
+        if (sl.style.opacity !== '0') sl.style.opacity = '0';
+      } else {
+        if (sl.textContent !== st.text) sl.textContent = st.text;
+        sl.style.opacity = '1';
+        sl.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -100%)`;
+      }
+    }
     // dazed by a stun grenade: the screen washes out white and blurs, clearing as it wears off
     const daze = !eye || eye.phase !== 'ground' ? 0 : eye.kind === 'remote' ? ((eye.show.flags & F_STUN) !== 0 ? 0.8 : 0) : Math.min(0.9, eye.stunT / 2);
     if (dazeEl.current) dazeEl.current.style.opacity = daze.toFixed(2);
@@ -1547,7 +1589,7 @@ function Play({ mode }: { mode: StageMode }) {
     const toss = own && kinds > 0 ? { w: focus.throws[focus.pick] > 0 ? focus.pick : THROW_IDS.find((k) => focus.throws[k] > 0)!, n: 0, kinds } : !own && isThrow(h.w) ? { w: h.w, n: -1, kinds: 1 } : null;
     if (toss && own) toss.n = focus.throws[toss.w];
     const s = m.storm;
-    const outside = Math.hypot(focus.x - s.x, focus.z - s.z) > s.r && focus.phase === 'ground';
+    const outside = Math.hypot(topX(focus.x) - s.x, focus.z - s.z) > s.r && focus.phase === 'ground';
     let storm = '';
     if (m.time >= 0) {
       if (s.shrinking) storm = `storm closing ${fmtClock(s.timer)}`;
@@ -1638,7 +1680,8 @@ function Play({ mode }: { mode: StageMode }) {
       edit: own && focus.phase === 'ground' && !!editable(m, focus),
       high: focus.phase === 'ground' ? levelOf(focus.y) : 0,
       items: own ? { ...focus.items } : null,
-      scope: own ? focus.scope : 0,
+      scope: focus.scope,
+      scopes: focus.scopes,
       pack: own ? focus.pack : 0,
       helmet: focus.helmet,
       vest: focus.vest,
@@ -1653,7 +1696,7 @@ function Play({ mode }: { mode: StageMode }) {
       ghillie: focus.ghillie,
       leader: m.fighters[m.leader] ? { name: m.leader === m.me ? 'you' : m.fighters[m.leader].name, kills: m.fighters[m.leader].kills, mine: m.leader === m.me } : null,
       arrive: clock.current < placeRef.current.until && placeRef.current.said >= 0 ? m.map.places[placeRef.current.said]?.name ?? null : null,
-      where: focus.phase === 'ground' ? (m.map.places[placeAt(m.map, focus.x, focus.z)]?.name ?? null) : null,
+      where: focus.phase === 'ground' ? (m.map.places[placeAt(m.map, topX(focus.x), focus.z)]?.name ?? null) : null,
       banner,
       prompt: promptText,
       jump: !!me && me === focus && me.phase === 'bus' && m.time >= m.map.bus.on,
@@ -1665,6 +1708,7 @@ function Play({ mode }: { mode: StageMode }) {
       down: focus.down && focus.phase === 'ground' ? { left: Math.round(Math.max(0, focus.hp / DOWN_HP) * 50) / 50, revive: reviver ? Math.round(reviveShare(m, reviver) * 30) / 30 : -1, by: reviver ? (reviver.id === m.me ? 'you' : reviver.name) : null } : null,
       marks,
       reviving,
+      deep: focus.phase === 'ground' ? basementAt(m.map, focus.x, focus.z) : -1,
     };
     setHud((prev) => (sameHud(prev, next) ? prev : next));
   }
@@ -1860,17 +1904,23 @@ function Play({ mode }: { mode: StageMode }) {
   const leader = m.fighters[m.leader];
   // in duos and squads, the rest of the team, and every ping it has up
   const team = m.mode !== 'solo' && focusFighter ? teamOf(m, focusFighter.team) : [];
-  const mapMarks = (big: boolean) => (
+  // the basement the egg we see is down in: the little map shows it close up, the big map in a corner
+  const under = hud.deep >= 0 ? map.buildings[hud.deep] : undefined;
+  const underBox = under ? `${(under.x - DEEP - Math.max(under.w, under.d) / 2 - 5).toFixed(1)} ${(under.z - Math.max(under.w, under.d) / 2 - 5).toFixed(1)} ${(Math.max(under.w, under.d) + 10).toFixed(1)} ${(Math.max(under.w, under.d) + 10).toFixed(1)}` : '';
+  // (the big map's close up of it goes in the corner farthest from it)
+  const inset = { x: under && under.x - DEEP < 0 ? HALF - 75 : -HALF + 75, z: under && under.z < 0 ? HALF - 75 : -HALF + 75 };
+  /** Marks on the maps (over the ground above anyone underground), `k` as big as on the whole island. */
+  const mapMarks = (big: boolean, k = 1) => (
     <>
       <path d={stormPath} fill="rgba(122, 60, 240, 0.45)" fillRule="evenodd" />
-      {(s.shrinking || s.next.r < s.r - 0.5) && s.next.r > 0.3 && <circle cx={s.next.x} cy={s.next.z} r={s.next.r} fill="none" stroke="#fff" strokeWidth={big ? 1.6 : 3} />}
+      {(s.shrinking || s.next.r < s.r - 0.5) && s.next.r > 0.3 && <circle cx={s.next.x} cy={s.next.z} r={s.next.r} fill="none" stroke="#fff" strokeWidth={(big ? 1.6 : 3) * k} />}
       {big && focusFighter?.phase === 'bus' && <line x1={map.bus.x0} y1={map.bus.z0} x2={map.bus.x1} y2={map.bus.z1} stroke="#fff" strokeWidth="2" strokeDasharray="5 4" />}
       {drops.map((c) => (
         <rect key={c.id} x={c.x - (big ? 5 : 8)} y={c.z - (big ? 5 : 8)} width={big ? 10 : 16} height={big ? 10 : 16} rx="2" fill="#2f7de1" stroke="#fff" strokeWidth={big ? 1.6 : 2.6} />
       ))}
       {big && leader && leader.phase === 'ground' && leader !== focusFighter && (
         // the kill leader, wherever it is
-        <g transform={`translate(${leader.x.toFixed(1)} ${leader.z.toFixed(1)})`}>
+        <g transform={`translate(${topX(leader.x).toFixed(1)} ${leader.z.toFixed(1)})`}>
           <circle r="7.5" fill="rgba(20, 16, 4, 0.55)" stroke="#ffd23d" strokeWidth="1.4" />
           <path d="M-5 3l-1-6 3.2 2.6L0 -4.5l2.8 5.1L6 -3l-1 6z" fill="#ffd23d" stroke="#7a4a00" strokeWidth="0.8" strokeLinejoin="round" />
         </g>
@@ -1878,7 +1928,7 @@ function Play({ mode }: { mode: StageMode }) {
       {team.map((o) => {
         const at = pingOf(m, o);
         return at ? (
-          <g key={`p${o.id}`} transform={`translate(${at.x} ${at.z}) scale(${big ? 0.55 : 1})`} className="g-scramble-mapping">
+          <g key={`p${o.id}`} transform={`translate(${at.x} ${at.z}) scale(${(big ? 0.55 : 1) * k})`} className="g-scramble-mapping">
             <circle r={9} fill="none" stroke={mateColor(m, o)} strokeWidth="2.4" />
             <path d="M0 6L-5.5 -3a6.5 6.5 0 1 1 11 0z" fill={mateColor(m, o)} stroke="#fff" strokeWidth="1.8" strokeLinejoin="round" />
           </g>
@@ -1886,11 +1936,11 @@ function Play({ mode }: { mode: StageMode }) {
       })}
       {team.map((o) =>
         o === focusFighter || o.phase === 'out' || o.phase === 'bus' ? null : (
-          <circle key={`m${o.id}`} cx={o.x.toFixed(1)} cy={o.z.toFixed(1)} r={big ? 4 : 7} fill={o.down ? '#ff4d4d' : mateColor(m, o)} stroke="#fff" strokeWidth={big ? 1.4 : 2.4} className={o.down ? 'is-down' : undefined} />
+          <circle key={`m${o.id}`} cx={topX(o.x).toFixed(1)} cy={o.z.toFixed(1)} r={(big ? 4 : 7) * k} fill={o.down ? '#ff4d4d' : mateColor(m, o)} stroke="#fff" strokeWidth={(big ? 1.4 : 2.4) * k} className={o.down ? 'is-down' : undefined} />
         ),
       )}
       {focusFighter && focusFighter.phase !== 'out' && (
-        <g transform={`translate(${focusFighter.x.toFixed(1)} ${focusFighter.z.toFixed(1)}) rotate(${((-focusFighter.aim * 180) / Math.PI + 180).toFixed(0)})`}>
+        <g transform={`translate(${topX(focusFighter.x).toFixed(2)} ${focusFighter.z.toFixed(2)}) rotate(${((-focusFighter.aim * 180) / Math.PI + 180).toFixed(0)}) scale(${k})`}>
           <path d={big ? 'M0 -7L5 5L0 2.5L-5 5Z' : 'M0 -13L9.5 9.5L0 4.6L-9.5 9.5Z'} fill={focusFighter.color} stroke="#fff" strokeWidth={big ? 1.2 : 2.2} strokeLinejoin="round" />
         </g>
       )}
@@ -1927,6 +1977,7 @@ function Play({ mode }: { mode: StageMode }) {
           </div>
         ),
       )}
+      <div ref={fadeEl} className="g-scramble-fade" aria-hidden="true" />
       <div className="g-scramble-pops" aria-hidden="true">
         <div ref={dazeEl} className="g-scramble-daze" style={{ opacity: 0 }} />
         {marks.current.map((p, i) => (
@@ -1939,6 +1990,7 @@ function Play({ mode }: { mode: StageMode }) {
             style={{ opacity: 0 }}
           />
         ))}
+        <div ref={stairEl} className="g-scramble-loot is-stairs" style={{ opacity: 0 }} />
         {Array.from({ length: LABELS }, (_, i) => (
           <div
             key={`l${i}`}
@@ -1962,6 +2014,7 @@ function Play({ mode }: { mode: StageMode }) {
       </div>
       {shell.status !== 'ready' && !shell.compact && (
         <div className={`g-scramble-hud${touchMode ? ' is-touch' : ''}${live ? ' is-online' : ''}`}>
+          {hud.deep >= 0 && <div className="g-scramble-underfx" aria-hidden="true" />}
           {hud.outside && <div className="g-scramble-stormfx" aria-hidden="true" />}
           {hud.low && !hud.outside && <div className="g-scramble-lowfx" aria-hidden="true" />}
           <div className="g-scramble-top">
@@ -1980,10 +2033,32 @@ function Play({ mode }: { mode: StageMode }) {
               </svg>
               <b>{hud.kills}</b>
             </span>
-            {hud.scope > 0 && (
-              <span className="g-scramble-pill is-gear" aria-label={`${SCOPES[hud.scope]} scope`}>
+            {hud.scopes > 0 && (
+              // every scope carried, the one looked through lit: a click or a tap looks through another (holding it or
+              // a right click on the one in use puts it down for a teammate). Underground, those past 2x are dimmed:
+              // they see no farther than it down there
+              <span className="g-scramble-pill is-gear is-scopes" role="group" aria-label={`Scopes: looking through ${SCOPES[hud.scope]}${hud.deep >= 0 && hud.scope > 1 ? ', which sees no farther than 2x underground' : ''}`}>
                 <ScopeIcon size={15} />
-                <b>{SCOPES[hud.scope]}</b>
+                {scopesOf(hud).map((lv) =>
+                  hud.mine ? (
+                    <button
+                      key={lv}
+                      type="button"
+                      tabIndex={-1}
+                      className={[hud.scope === lv ? 'is-on' : '', hud.deep >= 0 && lv > 1 ? 'is-dim' : ''].join(' ').trim() || undefined}
+                      aria-label={`Look through the ${SCOPES[lv]} scope`}
+                      aria-pressed={hud.scope === lv}
+                      {...(lv > 0 && lv === hud.scope ? tapOrDrop('scope', () => {}) : tap((t) => (t.scope = 10 + lv)))}
+                    >
+                      {SCOPES[lv]}
+                    </button>
+                  ) : (
+                    <b key={lv} className={[hud.scope === lv ? 'is-on' : '', hud.deep >= 0 && lv > 1 ? 'is-dim' : ''].join(' ').trim() || undefined}>
+                      {SCOPES[lv]}
+                    </b>
+                  ),
+                )}
+                {!touchMode && hud.mine && <kbd>{SCOPE_KEY}</kbd>}
               </span>
             )}
             {hud.pack > 0 && (
@@ -2015,6 +2090,14 @@ function Play({ mode }: { mode: StageMode }) {
             {hud.ghillie && (
               <span className="g-scramble-pill is-gear" aria-label="ghillie suit">
                 <GhillieIcon size={15} />
+              </span>
+            )}
+            {hud.deep >= 0 && (
+              <span className="g-scramble-pill is-deep" role="status">
+                <svg viewBox="0 0 24 24" width="14" height="14" aria-hidden="true">
+                  <path d="M3 5h5v5h5v5h5v5h3" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinejoin="round" />
+                </svg>
+                {m.map.buildings[hud.deep]?.kind === 'cellar' ? 'in a cellar' : 'in a bunker'}
               </span>
             )}
             {hud.hidden && (
@@ -2073,12 +2156,18 @@ function Play({ mode }: { mode: StageMode }) {
               setBigMap((b) => !b);
             }}
           >
-            <svg viewBox={box} aria-hidden="true">
+            <svg viewBox={under ? underBox : box} aria-hidden="true">
               {islandArt}
+              {under && (
+                <>
+                  <rect x={-HALF - 40} y={-HALF - 40} width={2 * HALF + 80} height={2 * HALF + 80} fill="rgba(8, 7, 6, 0.72)" />
+                  <BasementArt map={map} b={under} opened={m.opened} />
+                </>
+              )}
             </svg>
             {/* the storm and the arrow on a layer of their own, so the island under them isn't drawn again as they move */}
-            <svg viewBox={box} aria-hidden="true" className="is-marks">
-              {mapMarks(false)}
+            <svg viewBox={under ? underBox : box} aria-hidden="true" className="is-marks">
+              {mapMarks(false, under ? (Math.max(under.w, under.d) + 10) / (2 * HALF + 16) : 1)}
             </svg>
             {hud.where && <span>{hud.where}</span>}
           </div>
@@ -2308,6 +2397,19 @@ function Play({ mode }: { mode: StageMode }) {
             {islandArt}
             <PlaceNames map={map} />
             {mapMarks(true)}
+            {under && focusFighter && (
+              // down in a basement: where it is, and its rooms close up in the corner across the island from it
+              <>
+                <rect x={under.x - DEEP - under.w / 2 - 2} y={under.z - under.d / 2 - 2} width={under.w + 4} height={under.d + 4} fill="none" stroke="#f2c230" strokeWidth="1.6" strokeDasharray="4 3" />
+                <rect x={inset.x - 77} y={inset.z - 77} width={154} height={154} rx="4" fill="#0f0c0a" stroke="#f2c230" strokeWidth="1.6" />
+                <g transform={`translate(${inset.x} ${inset.z}) scale(${(150 / (Math.max(under.w, under.d) + 10)).toFixed(3)}) translate(${(-(under.x - DEEP)).toFixed(1)} ${(-under.z).toFixed(1)})`}>
+                  <BasementArt map={map} b={under} opened={m.opened} />
+                  <g transform={`translate(${topX(focusFighter.x).toFixed(2)} ${focusFighter.z.toFixed(2)}) rotate(${((-focusFighter.aim * 180) / Math.PI + 180).toFixed(0)}) scale(0.12)`}>
+                    <path d="M0 -13L9.5 9.5L0 4.6L-9.5 9.5Z" fill={focusFighter.color} stroke="#fff" strokeWidth="2.2" strokeLinejoin="round" />
+                  </g>
+                </g>
+              </>
+            )}
           </svg>
           <small>{pingable(m.fighters[m.me]) ? (touchMode ? 'tap the island to ping it for your team, or here to close' : 'click the island to ping it for your team, M or here to close') : touchMode ? 'tap to close' : 'M or click to close'}</small>
         </div>
@@ -2373,6 +2475,23 @@ function Play({ mode }: { mode: StageMode }) {
       )}
     </>
   );
+}
+
+/**
+ * The stairway near an egg on its level (within a few steps of the end it walks onto) and what it leads to, for the
+ * name over it, or null.
+ */
+function nearStairs(m: Match, f: Fighter) {
+  const deep = isDeep(f.x);
+  const x = topX(f.x);
+  // (below, only the basement's own: another's may lie under the ground nearby)
+  const u = deep ? basementAt(m.map, f.x, f.z) : -1;
+  for (const st of m.map.stairs) {
+    if (Math.hypot(st.x - x, st.z - f.z) > 6 || (deep && st.u !== u)) continue;
+    const kind = m.map.buildings[st.u]?.kind;
+    return { x: st.x + (deep ? DEEP : 0), z: st.z, text: deep ? 'stairs up' : kind === 'cellar' ? 'stairs down to a cellar' : 'stairs down to a bunker' };
+  }
+  return null;
 }
 
 /** A thumbstick: the base where the thumb came down, the knob moved on the DOM (see drawStick). */

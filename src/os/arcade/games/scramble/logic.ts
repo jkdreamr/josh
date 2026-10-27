@@ -10,6 +10,10 @@
 // it breaks it on their own screen and tells the host, who tells everyone (glass only ever breaks, so nobody can
 // disagree about it). Doors are the host's to open and shut (a guest asks), and to knock off their hinges.
 //
+// Underground (see map.ts DEEP), each basement lies far off east of the ground over it, so nothing up top and nothing
+// below can see, shoot, throw at or hurt each other: the stairs are the only way between, for eggs on foot and nothing
+// else. The storm bites below as it does over the ground above.
+//
 // In duos and squads, eggs play in teams that can't hurt each other. An egg's owner knocks it down (rather than
 // cracking it) while a teammate still stands, bleeds it out, and cracks it once nobody on its team is standing. A
 // teammate reviving it says so as it goes, and the host stands it back up once the revive is done.
@@ -70,16 +74,21 @@ import {
   SUPPLY_FALL,
   TOILET_R,
   WALL_T,
+  DEEP,
+  basementAt,
   bridgeAt,
   buildingAt,
   busAt,
+  clampX,
   coverAt,
   dropFits,
   fireAt,
   furnitureSolid,
   generateMap,
   grassAt,
+  isDeep,
   low,
+  offStairs,
   opens,
   padAt,
   placeDrop,
@@ -95,7 +104,11 @@ import {
   roomAt,
   solidsAlong,
   solidsNear,
+  stairAt,
+  stairOf,
+  stairOut,
   stormAt,
+  topX,
   waterAt,
   yardAt,
   type Box,
@@ -106,6 +119,7 @@ import {
   type GameMap,
   type Obb,
   type Solid,
+  type Stair,
   type StormNow,
 } from './map.ts';
 
@@ -242,8 +256,11 @@ export type Kind = 'player' | 'bot' | 'remote';
  */
 export type Cause = WeaponId | MeleeId | 'grenade' | 'mirv' | 'impulse' | 'sauce' | 'barrel' | 'storm' | 'left' | 'bleed';
 export const CAUSES: readonly Cause[] = [...WEAPON_IDS, ...MELEE_IDS, 'grenade', 'mirv', 'impulse', 'sauce', 'barrel', 'storm', 'left', 'bleed'];
-/** What the drop key puts down: a slot's gun, melee weapon or one throwable, a consumable, a box of ammo or material. */
-export type Drop = number | UseId | Ammo | Mat;
+/**
+ * What the drop key puts down: a slot's gun, melee weapon or one throwable, a consumable, a box of ammo or material, or
+ * the scope in use.
+ */
+export type Drop = number | UseId | Ammo | Mat | 'scope';
 /** How much of a material one drop puts down. */
 export const MAT_DROP = 30;
 /** What an egg can have in hand. */
@@ -289,8 +306,10 @@ export type Input = {
   ping: { x: number; z: number } | null;
   /** Put this down at our feet, for a teammate (see Drop). */
   drop: Drop | null;
+  /** 1 for the next scope we carry, -1 for the one before, or a level plus 10 to look through that one. */
+  scope: number;
 };
-export const noInput = (): Input => ({ mx: 0, mz: 0, aim: 0, fire: false, reload: false, slot: -1, cycle: 0, interact: false, build: false, piece: null, mat: 0, edit: false, use: null, jump: false, reach: 0, pick: null, hold: false, ping: null, drop: null });
+export const noInput = (): Input => ({ mx: 0, mz: 0, aim: 0, fire: false, reload: false, slot: -1, cycle: 0, interact: false, build: false, piece: null, mat: 0, edit: false, use: null, jump: false, reach: 0, pick: null, hold: false, ping: null, drop: null, scope: 0 });
 
 /** One position report for an egg another client owns. `at` is our clock when it arrived. */
 export type Snap = { at: number; x: number; z: number; y: number; aim: number; vx: number; vz: number };
@@ -298,10 +317,11 @@ export type Snap = { at: number; x: number; z: number; y: number; aim: number; v
 export type Ai = {
   /**
    * Where we're off to: loot, a chest (or fridge, or locker) to open, a crate (or toilet, or hay bale) to smash, a
-   * campfire to warm up at, a bank vault's door to open, a tree, rock or car to harvest; in teams, a knocked teammate
-   * to revive (its id in `item`) or the team to catch up with.
+   * campfire to warm up at, a bank vault's door to open, a tree, rock or car to harvest, a stairway down to a basement
+   * to loot (its index in `chest`); in teams, a knocked teammate to revive (its id in `item`) or the team to catch up
+   * with.
    */
-  goal: 'drop' | 'loot' | 'chest' | 'smash' | 'fire' | 'zone' | 'roam' | 'chase' | 'harvest' | 'vault' | 'revive' | 'mate';
+  goal: 'drop' | 'loot' | 'chest' | 'smash' | 'fire' | 'zone' | 'roam' | 'chase' | 'harvest' | 'vault' | 'revive' | 'mate' | 'stairs';
   gx: number;
   gz: number;
   item: number;
@@ -313,7 +333,7 @@ export type Ai = {
   bridge: number;
   /** When to give up on a crate, a campfire or something on the ground. */
   until: number;
-  /** The last container we gave up smashing. */
+  /** The last container we gave up smashing or opening. */
   tried: number;
   /** The last thing on the ground we gave up walking to (it lay somewhere we couldn't reach). */
   lost: number;
@@ -388,6 +408,10 @@ export type Ai = {
   /** In teams: the wait before we next ping a target for the team, and before we next put something down for one. */
   pingCool: number;
   shareCool: number;
+  /** The basements we've been down to (or given up on), not to go back down. */
+  below: number[];
+  /** The stairway we're making for this step (see head), or -1: we keep off any other (see steer). */
+  steps: number;
 };
 
 export type Fighter = {
@@ -418,8 +442,9 @@ export type Fighter = {
   items: Record<UseId, number>;
   /** 0..100: health over time and a quicker step while it lasts. */
   boost: number;
-  /** Scope level 0..3 (1x, 2x, 4x, 8x). */
+  /** The scope in use, level 0..3 (1x, 2x, 4x, 8x), and the ones it carries: a bit each for 2x, 4x and 8x (see hasScope). */
   scope: number;
+  scopes: number;
   /** Backpack level 0..3. */
   pack: number;
   /** Helmet and vest levels 0..3: each takes a cut of bullets, swings and blasts. */
@@ -546,7 +571,8 @@ export type Zone = { k: 'flour' | 'sauce' | 'jam' | 'bush'; x: number; z: number
 export type Thud = 'tree' | 'rock' | 'wall' | 'window' | 'door' | 'bars' | 'crate' | 'chest' | 'barrel' | 'car' | 'fence' | 'table' | 'post' | 'fire' | 'log' | 'shelf' | 'seat' | 'built' | 'egg' | 'pan' | 'ground';
 
 /**
- * Things that happened this frame, for sounds, effects and the network. `net` marks news that came from it. In teams:
+ * Things that happened this frame, for sounds, effects and the network. `net` marks news that came from it. `stairs` is
+ * an egg going down a stairway (or up one), which nobody needs to hear of: its position says so. In teams:
  * `knock` an egg knocked down, `revive` one starting to revive a knocked teammate (`to` -1: it stopped), `ask` a guest
  * done reviving asking the host to stand the teammate up, `revived` the host's word that it stands, `ping` a spot marked
  * for the team. An `out` that was `down` finished off a knocked egg.
@@ -559,6 +585,7 @@ export type Ev = (
   | { t: 'jump'; f: number }
   | { t: 'bounce'; f: number }
   | { t: 'land'; f: number }
+  | { t: 'stairs'; f: number; down: boolean }
   | { t: 'shot'; f: number; w: WeaponId; r: number; x: number; z: number; a: number; s: number; k: number; h: number }
   | { t: 'swing'; f: number }
   | { t: 'throw'; f: number; k: ThrowId; x: number; z: number; lx: number; lz: number; ft: number; y0: number; ly: number }
@@ -991,6 +1018,7 @@ function newFighter(id: number, e: Entrant, x: number, z: number, team: number):
     items: none(USE_IDS),
     boost: 0,
     scope: 0,
+    scopes: 0,
     pack: 0,
     helmet: 0,
     vest: 0,
@@ -1066,7 +1094,7 @@ function newAi(m: Match, f: Fighter): Ai {
   const rng = m.rng;
   const bus = m.map.bus;
   // aim for a building or loot spot near the bus route and jump about when the bus passes it
-  const spots = [...m.map.buildings.map((b) => ({ x: b.x, z: b.z })), ...m.map.floor.map((s) => ({ x: s.x, z: s.z }))];
+  const spots = [...m.map.buildings, ...m.map.floor].filter((p) => !isDeep(p.x)).map((p) => ({ x: p.x, z: p.z }));
   const dx = bus.x1 - bus.x0;
   const dz = bus.z1 - bus.z0;
   const along = (p: { x: number; z: number }) => clamp(((p.x - bus.x0) * dx + (p.z - bus.z0) * dz) / (bus.len * bus.len), 0.08, 0.92);
@@ -1144,6 +1172,8 @@ function newAi(m: Match, f: Fighter): Ai {
     editA: NaN,
     pingCool: 0,
     shareCool: 8 + (f.id % 5) * 2,
+    below: [],
+    steps: -1,
   };
 }
 
@@ -1265,10 +1295,31 @@ export function heldGun(f: Fighter): WeaponId | null {
   return isWeapon(w) ? w : null;
 }
 
-/** Meters of view past the usual: the better of the scope and the gun in hand, and more up high. */
+/** Underground, a scope or a gun's sights see no farther than this (the lamps only light so far). */
+export const DEEP_VIEW = SCOPE_VIEW[1];
+
+/** Meters of view past the usual: the better of the scope and the gun in hand, and more up high (less underground). */
 export function viewOf(f: Fighter) {
   const g = heldGun(f);
-  return Math.max(SCOPE_VIEW[clamp(f.scope, 0, 3)] ?? 0, g ? WEAPONS[g].zoom : 0) + (f.phase === 'ground' ? levelOf(f.y) * HIGH_VIEW : 0);
+  const far = Math.max(SCOPE_VIEW[clamp(f.scope, 0, 3)] ?? 0, g ? WEAPONS[g].zoom : 0);
+  return (isDeep(f.x) ? Math.min(DEEP_VIEW, far) : far) + (f.phase === 'ground' ? levelOf(f.y) * HIGH_VIEW : 0);
+}
+
+/** Does an egg carry the scope of this level? 1x (level 0) it always has. */
+export const hasScope = (f: { scopes: number }, lv: number) => lv === 0 || (lv > 0 && lv <= 3 && (f.scopes & (1 << (lv - 1))) !== 0);
+
+/** The best scope an egg carries (0 for none). */
+export const bestScope = (f: { scopes: number }) => (hasScope(f, 3) ? 3 : hasScope(f, 2) ? 2 : hasScope(f, 1) ? 1 : 0);
+
+/** The scopes an egg carries, from 1x up. */
+export const scopesOf = (f: { scopes: number }) => [0, 1, 2, 3].filter((lv) => hasScope(f, lv));
+
+/** Looks through another scope we carry: the next (1) or the one before (-1) round and round, or a level plus 10. */
+function switchScope(f: Fighter, want: number) {
+  const have = scopesOf(f);
+  const at = Math.max(0, have.indexOf(f.scope));
+  const lv = want >= 10 ? want - 10 : have[(at + (want > 0 ? 1 : -1) + have.length) % have.length];
+  if (hasScope(f, lv)) f.scope = lv;
 }
 
 /** Is a crate, barrel, chest, supply drop or shut door there to bump into right now? */
@@ -1365,6 +1416,7 @@ function clearOneShots(inp: Input) {
   inp.pick = null;
   inp.ping = null;
   inp.drop = null;
+  inp.scope = 0;
 }
 
 /**
@@ -1473,6 +1525,7 @@ function act(m: Match, f: Fighter, dt: number) {
   f.aim = inp.aim;
   if (!usable(f, f.slot)) f.slot = SLOT_MELEE;
   if (inp.ping) ping(m, f, inp.ping.x, inp.ping.z);
+  if (inp.scope) switchScope(f, inp.scope);
   if (m.mode !== 'solo') reviveStep(m, f);
   // knocked down (it crawls) or reviving a teammate (it stands still), it does nothing else
   if (f.down || f.reviving >= 0) {
@@ -1531,6 +1584,12 @@ function act(m: Match, f: Fighter, dt: number) {
     }
   }
 
+  // onto a stairway: down to its basement, or back up
+  if (m.map.stairs.length && f.y < 0.5) {
+    const st = stairAt(m.map, f.x, f.z);
+    if (st >= 0) takeStairs(m, f, m.map.stairs[st]);
+  }
+
   if (!f.down) autoPickup(m, f);
   f.stillT = Math.hypot(f.vx, f.vz) < 0.4 ? f.stillT + dt : 0;
 
@@ -1578,8 +1637,9 @@ function act(m: Match, f: Fighter, dt: number) {
     return;
   }
 
+  // (underground, by the ground over us)
   const s = m.storm;
-  const sx = f.x - s.x;
+  const sx = topX(f.x) - s.x;
   const sz = f.z - s.z;
   if (s.dps > 0 && sx * sx + sz * sz > s.r * s.r) {
     f.stormT += dt;
@@ -1702,6 +1762,23 @@ function climb(m: Match, f: Fighter, dt: number) {
   f.on = under.y >= f.y - 0.01 ? under.id : -1;
 }
 
+/**
+ * Down a stairway, or up one: out past its other end, still walking the same way (whatever we were doing goes on, but a
+ * revive: the teammate stays where it is).
+ */
+function takeStairs(m: Match, f: Fighter, s: Stair) {
+  const down = !isDeep(f.x);
+  const p = stairOut(s, down);
+  f.x = p.x;
+  f.z = p.z;
+  f.on = -1;
+  f.bush = -1;
+  f.stillT = 0;
+  if (f.reviving >= 0) stopReviving(m, f);
+  if (f.ai && down && !f.ai.below.includes(s.u)) f.ai.below.push(s.u);
+  emit(m, { t: 'stairs', f: f.id, down });
+}
+
 /** Cover hiding a point: a bush or a cornfield on the island, or a bush grown from a can (GROWN), else -1. */
 export function coverOf(m: Match, x: number, z: number) {
   const c = coverAt(m.map, x, z);
@@ -1763,7 +1840,7 @@ function resolve(m: Match, f: Fighter) {
         f.z += p.z * 0.5;
       }
     }
-    f.x = clamp(f.x, -EDGE, EDGE);
+    f.x = clampX(f.x);
     f.z = clamp(f.z, -EDGE, EDGE);
     // nothing in the way: a second look would find nothing either
     if (f.x === ox && f.z === oz) break;
@@ -2120,15 +2197,18 @@ function standUp(m: Match, f: Fighter) {
   for (const o of m.fighters) if (o.reviving === f.id) o.reviving = -1;
 }
 
-/** The nearest knocked teammate on the ground within reach of an egg (to revive), or null. */
-export function downMate(m: Match, f: Fighter, reach = REVIVE_R): Fighter | null {
+/**
+ * The nearest knocked teammate on the ground within reach of an egg (to revive), or null: on its level, or (`over`)
+ * going by the ground over anyone underground.
+ */
+export function downMate(m: Match, f: Fighter, reach = REVIVE_R, over = false): Fighter | null {
   if (m.mode === 'solo') return null;
   let best: Fighter | null = null;
   let bestD = reach;
   for (const id of m.teams[f.team] ?? []) {
     const o = m.fighters[id];
     if (o === f || !o.down || !fighting(o) || Math.abs(o.y - f.y) > 1.2) continue;
-    const d = Math.hypot(o.x - f.x, o.z - f.z);
+    const d = over ? Math.hypot(topX(o.x) - topX(f.x), o.z - f.z) : Math.hypot(o.x - f.x, o.z - f.z);
     if (d <= bestD) {
       best = o;
       bestD = d;
@@ -2225,7 +2305,8 @@ function ping(m: Match, f: Fighter, x: number, z: number) {
 }
 
 function setPing(m: Match, f: Fighter, x: number, z: number) {
-  f.pingX = r1(clamp(x, -EDGE, EDGE));
+  // a spot marked underground marks the ground over it
+  f.pingX = r1(clamp(topX(x), -EDGE, EDGE));
   f.pingZ = r1(clamp(z, -EDGE, EDGE));
   f.pingAt = m.clock;
 }
@@ -2244,8 +2325,8 @@ export const pingOf = (m: Match, f: Fighter) => (m.clock - f.pingAt < PING_T ? {
 
 /**
  * Puts something down at an egg's feet for a teammate to pick up (it never goes straight back up itself): a gun or the
- * melee weapon from its slot (not the spatula), one of the throwable in hand, one consumable, a box of ammo or MAT_DROP
- * of a material. False when there was nothing to put down.
+ * melee weapon from its slot (not the spatula), one of the throwable in hand, one consumable, a box of ammo, MAT_DROP
+ * of a material, or the scope in use (not 1x). False when there was nothing to put down.
  */
 export function dropOut(m: Match, f: Fighter, what: Drop) {
   if (f.phase !== 'ground' || f.down || f.y > 1) return false;
@@ -2268,7 +2349,14 @@ export function dropOut(m: Match, f: Fighter, what: Drop) {
       f.throws[f.pick]--;
     }
   } else if (typeof what === 'number') return false;
-  else if (isUse(what)) {
+  else if (what === 'scope') {
+    // the scope in use, and the next best we carry goes up to the eye
+    if (f.scope > 0) {
+      def = { kind: 'scope', lv: f.scope };
+      f.scopes &= ~(1 << (f.scope - 1));
+      f.scope = bestScope(f);
+    }
+  } else if (isUse(what)) {
     if (f.items[what] > 0) {
       def = { kind: 'use', w: what, n: 1 };
       f.items[what]--;
@@ -2291,7 +2379,7 @@ export function dropOut(m: Match, f: Fighter, what: Drop) {
   // a step ahead, short of anything solid
   const hit = castRay(m, f.x, f.z, Math.sin(f.aim), Math.cos(f.aim), 1.2, -1, false, true, levelOf(f.y));
   const r = hit ? Math.max(0, hit.t - 0.4) : 0.8;
-  dropItem(m, f, def, clamp(f.x + Math.sin(f.aim) * r, -EDGE, EDGE), clamp(f.z + Math.cos(f.aim) * r, -EDGE, EDGE));
+  dropItem(m, f, def, clampX(f.x + Math.sin(f.aim) * r), clamp(f.z + Math.cos(f.aim) * r, -EDGE, EDGE));
   return true;
 }
 
@@ -2334,7 +2422,7 @@ function crack(m: Match, f: Fighter, by: number, w: Cause) {
   for (const a of Object.keys(f.ammo) as Ammo[]) if (f.ammo[a] > 0) spill.push({ kind: 'ammo', a, n: f.ammo[a] });
   for (const u of Object.keys(f.items) as UseId[]) if (f.items[u] > 0) spill.push({ kind: 'use', w: u, n: f.items[u] });
   for (const k of THROW_IDS) if (f.throws[k] > 0) spill.push({ kind: 'throw', w: k, n: f.throws[k] });
-  if (f.scope > 0) spill.push({ kind: 'scope', lv: f.scope });
+  for (let lv = 1; lv <= 3; lv++) if (hasScope(f, lv) || f.scope === lv) spill.push({ kind: 'scope', lv });
   if (f.pack > 0) spill.push({ kind: 'pack', lv: f.pack });
   if (f.helmet > 0) spill.push({ kind: 'helmet', lv: f.helmet });
   if (f.vest > 0) spill.push({ kind: 'vest', lv: f.vest });
@@ -2346,6 +2434,7 @@ function crack(m: Match, f: Fighter, by: number, w: Cause) {
   f.items = none(USE_IDS);
   f.throws = none(THROW_IDS);
   f.scope = 0;
+  f.scopes = 0;
   f.pack = 0;
   f.helmet = 0;
   f.vest = 0;
@@ -2360,7 +2449,7 @@ function crack(m: Match, f: Fighter, by: number, w: Cause) {
     // in a ring round the egg, short of anything solid (never through a wall, or under a bed out of reach)
     const hit = rad > 0 ? castRay(m, f.x, f.z, Math.sin(a), Math.cos(a), rad + 0.4, -1, false, true, levelOf(f.y)) : null;
     const r = hit ? Math.max(0, hit.t - 0.4) : rad;
-    dropItem(m, f, def, clamp(f.x + Math.sin(a) * r, -EDGE, EDGE), clamp(f.z + Math.cos(a) * r, -EDGE, EDGE));
+    dropItem(m, f, def, clampX(f.x + Math.sin(a) * r), clamp(f.z + Math.cos(a) * r, -EDGE, EDGE));
   });
   emit(m, down ? { t: 'out', f: f.id, by, w, place, down } : { t: 'out', f: f.id, by, w, place });
 }
@@ -2837,7 +2926,8 @@ export function callDrop(m: Match, fid: number, x: number, z: number) {
   const last = m.calls.get(fid);
   if (last !== undefined && m.time - last < 10) return -1;
   const id = m.map.flares.find((c) => m.map.containers[c].at === Infinity);
-  const spot = id === undefined ? null : dropSpot(m, x, z);
+  // fired underground, the drop comes down on the ground over it
+  const spot = id === undefined ? null : dropSpot(m, topX(x), z);
   if (id === undefined || !spot) return -1;
   m.calls.set(fid, m.time);
   const at = r1(m.time + FLARE_WAIT);
@@ -2873,7 +2963,7 @@ function toss(m: Match, f: Fighter) {
   let reach = hit ? Math.max(0, hit.t - 0.6) : dist;
   // a roof we aren't under turns it away: it lands short, off the roof's edge
   if (m.walls.size) reach = offRoofs(m, f, x, z, dx, dz, reach);
-  const lx = r2(clamp(x + dx * reach, -EDGE, EDGE));
+  const lx = r2(clampX(x + dx * reach));
   const lz = r2(clamp(z + dz * reach, -EDGE, EDGE));
   const ft = r2(Math.max(0.25, reach / THROW.speed));
   // it comes down on a floor or a ramp no higher than us, else the ground
@@ -2979,7 +3069,7 @@ function bomblets(m: Match, t: Toss): Toss[] {
     const hit = castRay(m, t.lx, t.lz, dx, dz, want, -1, false, false, levelOf(t.ly));
     const go = hit ? Math.max(0, hit.t - 0.4) : want;
     const ft = r2(0.35 + rng() * 0.3);
-    out.push({ f: t.f, k: 'mirv', x: t.lx, z: t.lz, lx: r2(clamp(t.lx + dx * go, -EDGE, EDGE)), lz: r2(clamp(t.lz + dz * go, -EDGE, EDGE)), t0: m.time, ft, fuse: m.time + ft + 0.15 + rng() * 0.45, local: t.local, landed: false, y0: t.ly, ly: t.ly, small: true });
+    out.push({ f: t.f, k: 'mirv', x: t.lx, z: t.lz, lx: r2(clampX(t.lx + dx * go)), lz: r2(clamp(t.lz + dz * go, -EDGE, EDGE)), t0: m.time, ft, fuse: m.time + ft + 0.15 + rng() * 0.45, local: t.local, landed: false, y0: t.ly, ly: t.ly, small: true });
   }
   return out;
 }
@@ -3034,7 +3124,7 @@ function pulse(m: Match, fid: number, x: number, z: number, y = 0) {
     const hit = castRay(m, l.x, l.z, ux, uz, want + 0.4, -1, false, true);
     const go = hit ? Math.max(0, hit.t - 0.4) : want;
     if (go < 0.2) continue;
-    moveLoot(m, l.id, clamp(l.x + ux * go, -EDGE, EDGE), clamp(l.z + uz * go, -EDGE, EDGE), true);
+    moveLoot(m, l.id, clampX(l.x + ux * go), clamp(l.z + uz * go, -EDGE, EDGE), true);
   }
 }
 
@@ -3043,8 +3133,9 @@ export function moveLoot(m: Match, id: number, x: number, z: number, announce: b
   const l = m.loot.get(id);
   if (!l) return;
   takeLoot(m, id);
-  l.x = r1(x);
-  l.z = r1(z);
+  const p = m.map.stairs.length ? offStairs(m.map, x, z) : { x, z };
+  l.x = r1(p.x);
+  l.z = r1(p.z);
   putLoot(m, l);
   emit(m, announce ? { t: 'moved', id, x: l.x, z: l.z } : { t: 'moved', id, x: l.x, z: l.z, net: true });
 }
@@ -3124,6 +3215,8 @@ export function makeWall(id: number, f: number, x: number, z: number, a: number,
  * on), a floor lies there too but never lower than the first level. Empty where there's no room up there.
  */
 export function planPiece(m: Match, f: Fighter, k: Plan, aim = f.aim): Slot[] {
+  // nothing is built underground: the grid doesn't reach down there
+  if (isDeep(f.x)) return [];
   const q = dirOf(aim);
   const cx = gridOf(f.x);
   const cz = gridOf(f.z);
@@ -3363,8 +3456,8 @@ function adrift(m: Match, w: Wall): Wall[] | null {
 
 /**
  * Would an egg take this? Guns need an empty slot, and a melee weapon in place of anything but the spatula, unless
- * it's a swap the player asked for. A scope or backpack only if it's better than the one we have; a helmet or vest
- * too, unless the player asks for a worse one.
+ * it's a swap the player asked for. A scope we don't carry yet (we keep every one); a backpack only if it's better
+ * than the one we have, and a helmet or vest too, unless the player asks for a worse one.
  */
 export function wants(f: Fighter, def: LootDef, manual: boolean) {
   switch (def.kind) {
@@ -3383,7 +3476,7 @@ export function wants(f: Fighter, def: LootDef, manual: boolean) {
     case 'use':
       return f.items[def.w] < useCap(def.w, f.pack);
     case 'scope':
-      return def.lv > f.scope;
+      return !hasScope(f, def.lv);
     case 'pack':
       return def.lv > f.pack;
     case 'ghillie':
@@ -3438,6 +3531,8 @@ function inReach(m: Match, f: Fighter, c: Container) {
 const SPOT = 16;
 const SPOTS = Math.ceil((2 * HALF) / SPOT);
 const spotOf = (v: number) => Math.max(0, Math.min(SPOTS - 1, Math.floor((v + HALF) / SPOT)));
+/** The cell along x a point lies in: underground, the ground over it's (the distance tells the two apart). */
+const spotX = (x: number) => spotOf(topX(x));
 const lootCells = new WeakMap<Match, { seen: number; cells: LootItem[][] }>();
 
 /**
@@ -3449,7 +3544,7 @@ function lootGrid(m: Match) {
   const changes = m.loot instanceof LootMap ? m.loot.changes : -1;
   if (!got || changes < 0 || got.seen !== changes) {
     got = { seen: changes, cells: Array.from({ length: SPOTS * SPOTS }, () => []) };
-    for (const l of m.loot.values()) got.cells[spotOf(l.x) + spotOf(l.z) * SPOTS].push(l);
+    for (const l of m.loot.values()) got.cells[spotX(l.x) + spotOf(l.z) * SPOTS].push(l);
     lootCells.set(m, got);
   }
   return got;
@@ -3465,7 +3560,7 @@ function putLoot(m: Match, l: LootItem) {
   const follow = inStep(m, got);
   m.loot.set(l.id, l);
   if (!follow) return;
-  got.cells[spotOf(l.x) + spotOf(l.z) * SPOTS].push(l);
+  got.cells[spotX(l.x) + spotOf(l.z) * SPOTS].push(l);
   got.seen++;
 }
 
@@ -3477,7 +3572,7 @@ function takeLoot(m: Match, id: number) {
   const follow = inStep(m, got);
   m.loot.delete(id);
   if (!follow) return;
-  const cell = got.cells[spotOf(l.x) + spotOf(l.z) * SPOTS];
+  const cell = got.cells[spotX(l.x) + spotOf(l.z) * SPOTS];
   const at = cell.indexOf(l);
   if (at >= 0) cell.splice(at, 1);
   got.seen++;
@@ -3486,8 +3581,9 @@ function takeLoot(m: Match, id: number) {
 /** Each piece of loot in the cells within `r` of a point: what an egg walks over, and what a computer egg looks for. */
 function lootNear(m: Match, x: number, z: number, r: number, visit: (l: LootItem) => void) {
   const { cells } = lootGrid(m);
+  const tx = topX(x);
   for (let cz = spotOf(z - r); cz <= spotOf(z + r); cz++)
-    for (let cx = spotOf(x - r); cx <= spotOf(x + r); cx++) {
+    for (let cx = spotOf(tx - r); cx <= spotOf(tx + r); cx++) {
       const cell = cells[cx + cz * SPOTS];
       // backwards, so a pickup taken along the way doesn't skip the next
       for (let i = cell.length - 1; i >= 0; i--) if (i < cell.length) visit(cell[i]);
@@ -3500,11 +3596,12 @@ function containersNear(map: GameMap, x: number, z: number, r: number, visit: (c
   let got = boxCells.get(map);
   if (!got || got.of !== map.containers || got.n !== map.containers.length) {
     const cells: number[][] = Array.from({ length: SPOTS * SPOTS }, () => []);
-    for (const c of map.containers) if (c.kind !== 'supply') cells[spotOf(c.x) + spotOf(c.z) * SPOTS].push(c.id);
+    for (const c of map.containers) if (c.kind !== 'supply') cells[spotX(c.x) + spotOf(c.z) * SPOTS].push(c.id);
     got = { of: map.containers, n: map.containers.length, cells };
     boxCells.set(map, got);
   }
-  for (let cz = spotOf(z - r); cz <= spotOf(z + r); cz++) for (let cx = spotOf(x - r); cx <= spotOf(x + r); cx++) for (const id of got.cells[cx + cz * SPOTS]) visit(map.containers[id]);
+  const tx = topX(x);
+  for (let cz = spotOf(z - r); cz <= spotOf(z + r); cz++) for (let cx = spotOf(tx - r); cx <= spotOf(tx + r); cx++) for (const id of got.cells[cx + cz * SPOTS]) visit(map.containers[id]);
 }
 
 /**
@@ -3645,12 +3742,17 @@ function give(m: Match, f: Fighter, def: LootDef, key: boolean) {
     case 'use':
       f.items[def.w] = fill(f.items[def.w], useCap(def.w, f.pack), def.n, (n) => ({ kind: 'use', w: def.w, n }));
       break;
-    case 'scope':
-      if (def.lv > f.scope) {
-        if (f.scope > 0) dropItem(m, f, { kind: 'scope', lv: f.scope }, f.x, f.z);
-        f.scope = def.lv;
-      } else dropItem(m, f, def, f.x, f.z);
+    case 'scope': {
+      // kept with the rest, and looked through at once when it's the best yet
+      if (hasScope(f, def.lv)) {
+        dropItem(m, f, def, f.x, f.z);
+        break;
+      }
+      const best = bestScope(f);
+      f.scopes |= 1 << (def.lv - 1);
+      if (def.lv > best) f.scope = def.lv;
       break;
+    }
     case 'pack':
       if (def.lv > f.pack) {
         if (f.pack > 0) dropItem(m, f, { kind: 'pack', lv: f.pack }, f.x, f.z);
@@ -3684,7 +3786,9 @@ function give(m: Match, f: Fighter, def: LootDef, key: boolean) {
 
 /** Puts something an egg owned here dropped on the ground, numbered from that egg's own range. */
 function dropItem(m: Match, f: Fighter, def: LootDef, x: number, z: number) {
-  const item: LootItem = { id: dropId(f.id, f.dropSeq++), def, x: r1(x), z: r1(z), by: f.id, at: m.time };
+  // never down a stairway, where stepping in to pick it up would take us to the other level
+  const p = m.map.stairs.length ? offStairs(m.map, x, z) : { x, z };
+  const item: LootItem = { id: dropId(f.id, f.dropSeq++), def, x: r1(p.x), z: r1(p.z), by: f.id, at: m.time };
   putLoot(m, item);
   emit(m, { t: 'drop', item });
 }
@@ -3722,7 +3826,7 @@ export function flagsOf(f: Fighter) {
 }
 
 /** A position report for an egg another client owns. */
-export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: Held | null; r: number; flags: number; helmet: number; vest: number }) {
+export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: number; aim: number; vx: number; vz: number; phase: Phase; hp: number; shield: number; w: Held | null; r: number; flags: number; helmet: number; vest: number; scope?: number; scopes?: number }) {
   if (f.kind !== 'remote') return;
   if (f.phase === 'out') return;
   if (s.phase === 'out') {
@@ -3733,6 +3837,12 @@ export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: n
   }
   f.outSeen = -1;
   const snaps = f.snaps;
+  // down a stairway or up one: from here on, not on the way from there
+  const last = snaps[snaps.length - 1];
+  if (last && isDeep(last.x) !== isDeep(s.x) && f.phase === s.phase) {
+    snaps.length = 0;
+    emit(m, { t: 'stairs', f: f.id, down: isDeep(s.x), net: true });
+  }
   if (f.phase !== s.phase) {
     snaps.length = 0;
     if (s.phase === 'drop') {
@@ -3746,6 +3856,9 @@ export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: n
   f.shield = s.shield;
   f.helmet = s.helmet;
   f.vest = s.vest;
+  // the scopes it carries and the one it looks through, so whoever watches it sees what it sees
+  f.scopes = s.scopes ?? 0;
+  f.scope = hasScope(f, s.scope ?? 0) ? (s.scope ?? 0) : 0;
   f.ghillie = (s.flags & F_GHILLIE) !== 0;
   // knocked down, or back up (the news of how may still be on its way, or have just come ahead of this report), and
   // reviving or done (a report from before the news it started may still come in; one with no news of it, for someone
@@ -3814,7 +3927,7 @@ function follow(m: Match, f: Fighter, dt: number) {
 }
 
 function place(f: Fighter, speed: Snap, x: number, z: number, y: number, aim: number) {
-  f.x = clamp(x, -EDGE - 30, EDGE + 30);
+  f.x = clampX(x, 30);
   f.z = clamp(z, -EDGE - 30, EDGE + 30);
   f.y = y;
   f.aim = aim;
@@ -3994,6 +4107,7 @@ function think(m: Match, f: Fighter, dt: number) {
   ai.harvestCool -= dt;
   ai.pingCool -= dt;
   ai.shareCool -= dt;
+  ai.steps = -1;
   // knocked down: crawl to the team, never shoot
   if (f.down) return crawlTo(m, f, ai, dt);
   // who has been hitting us: two eggs at once is a crossfire
@@ -4022,7 +4136,7 @@ function think(m: Match, f: Fighter, dt: number) {
   }
 
   const s = m.storm;
-  const outside = Math.hypot(f.x - s.x, f.z - s.z) > s.r - 1;
+  const outside = Math.hypot(topX(f.x) - s.x, f.z - s.z) > s.r - 1;
   if (outside) ai.hideT = 0;
   // hot sauce or jam underfoot: out of it the shortest way
   const burn = m.zones.length ? (zoneAt(m, 'sauce', f.x, f.z) ?? zoneAt(m, 'jam', f.x, f.z)) : null;
@@ -4276,7 +4390,11 @@ function think(m: Match, f: Fighter, dt: number) {
   } else if (ai.goal === 'chest') {
     const c = m.map.containers[ai.chest];
     if (!openable(m, c)) ai.think = 0;
-    else if (Math.hypot(c.x - f.x, c.z - f.z) < CHEST_R - 0.3 && inReach(m, f, c)) {
+    else if (m.time > ai.until) {
+      // taking too long (it's somewhere we can't get at): leave it be
+      ai.tried = c.id;
+      ai.think = 0;
+    } else if (Math.hypot(c.x - f.x, c.z - f.z) < CHEST_R - 0.3 && inReach(m, f, c)) {
       // straight for it (the key might take a door that happens to be nearer)
       requestOpen(m, f, c.id);
       ai.think = 0;
@@ -4303,14 +4421,17 @@ function leadOf(m: Match, f: Fighter): Fighter | null {
   return null;
 }
 
-/** The nearest egg on our team that's in and on its feet (on the ground), and how far, or null. */
-function nearestMate(m: Match, f: Fighter) {
+/**
+ * The nearest egg on our team that's in and on its feet (on the ground), and how far, or null: on our level, or
+ * (`over`) going by the ground over anyone underground.
+ */
+function nearestMate(m: Match, f: Fighter, over = false) {
   let best: Fighter | null = null;
   let bestD = Infinity;
   for (const id of m.teams[f.team] ?? []) {
     const o = m.fighters[id];
     if (o === f || !upright(o) || o.phase !== 'ground') continue;
-    const d = Math.hypot(o.x - f.x, o.z - f.z);
+    const d = over ? Math.hypot(topX(o.x) - topX(f.x), o.z - f.z) : Math.hypot(o.x - f.x, o.z - f.z);
     if (d < bestD) {
       best = o;
       bestD = d;
@@ -4329,7 +4450,7 @@ function crawlTo(m: Match, f: Fighter, ai: Ai, dt: number) {
   const s = m.storm;
   const pal = nearestMate(m, f);
   const foe = f.lastBy >= 0 ? m.fighters[f.lastBy] : undefined;
-  if (Math.hypot(f.x - s.x, f.z - s.z) > s.r - 1) head(m, f, ai, s.x, s.z, dt, 1);
+  if (Math.hypot(topX(f.x) - s.x, f.z - s.z) > s.r - 1) head(m, f, ai, s.x, s.z, dt, 1);
   else if (pal && pal.d < 80) head(m, f, ai, pal.o.x, pal.o.z, dt, 1.4);
   else if (foe && fighting(foe) && m.clock - f.lastByAt < 6) {
     const d = Math.max(0.1, Math.hypot(f.x - foe.x, f.z - foe.z));
@@ -4386,6 +4507,8 @@ const MELEE_VALUE: Record<MeleeId, number> = { spatula: 0, whisk: 2, knife: 4, c
 /** Picks what to do, then whether a bounce pad on the way would get us somewhere far quicker. */
 function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   pickGoal(m, f, ai, L);
+  const lv = scopeFor(m, f, ai);
+  if (lv !== f.scope) f.input.scope = 10 + lv;
   ai.pad = -1;
   if (ai.target >= 0 || ai.goal === 'fire' || ai.goal === 'smash' || ai.goal === 'chase') return;
   const far = Math.hypot(ai.gx - f.x, ai.gz - f.z);
@@ -4404,6 +4527,25 @@ function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     ai.pad = i;
     best = walk;
   });
+}
+
+/** About how far a scope lets an egg see (the view's half height), by level. */
+const SCOPE_SEES = SCOPE_VIEW.map((v) => 14 + v);
+
+/**
+ * The scope a computer egg looks through: in a fight the least that still takes in the target with room to spare (a
+ * close fight wants the wide view of none), indoors no more than 2x, out in the open the best it carries.
+ */
+function scopeFor(m: Match, f: Fighter, ai: Ai) {
+  const best = bestScope(f);
+  const t = ai.target >= 0 ? m.fighters[ai.target] : undefined;
+  if (t) {
+    const d = Math.hypot(t.x - f.x, t.z - f.z);
+    for (let lv = 0; lv < best; lv++) if (hasScope(f, lv) && SCOPE_SEES[lv] >= d + 5) return lv;
+    return best;
+  }
+  for (let lv = f.inside >= 0 ? Math.min(best, 1) : best; lv > 0; lv--) if (hasScope(f, lv)) return lv;
+  return 0;
 }
 
 /** The widest a computer egg's aim strays (radians), however far off and quick the target. */
@@ -4430,7 +4572,7 @@ function huntersOf(m: Match) {
 function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   // a target: the nearest egg we can see, sticking with the one we have, and turning on whoever just shot us
   const far = f.guns.some((x) => x && WEAPONS[x.w].cls === 'sniper' && hasAmmo(f, x));
-  const sight = L.sight + (far ? 20 : 0) + SCOPE_VIEW[f.scope] + levelOf(f.y) * HIGH_VIEW;
+  const sight = L.sight + (isDeep(f.x) ? 0 : (far ? 20 : 0) + SCOPE_VIEW[f.scope]) + levelOf(f.y) * HIGH_VIEW;
   let best: Fighter | null = null;
   let bestScore = Infinity;
   const hunted = huntersOf(m);
@@ -4451,8 +4593,9 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   const armed = f.guns.some((x) => fightGun(f, x));
   // unarmed eggs only fight what is right in front of them (not through a window)
   if (best && !armed && (Math.hypot(best.x - f.x, best.z - f.z) > 6 || inWindow(m, f.x, f.z, best.x, best.z))) best = null;
-  // a knocked teammate close by matters more than an egg far off
-  const downed = m.mode === 'solo' ? null : downMate(m, f, 45);
+  // a knocked teammate close by matters more than an egg far off (one in the basement under us, or over us, we go
+  // down, or up, the stairs to)
+  const downed = m.mode === 'solo' ? null : downMate(m, f, 45, true);
   if (best && downed && Math.hypot(downed.x - f.x, downed.z - f.z) < 12 && Math.hypot(best.x - f.x, best.z - f.z) > 25 && best.id !== f.lastBy) best = null;
   if ((best?.id ?? -1) !== ai.target) {
     ai.react = best ? L.react * (0.7 + m.rng() * 0.6) : 0;
@@ -4482,11 +4625,13 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   // somebody shot us from out of sight: go and look
   const s = m.storm;
   const safe = s.shrinking || s.timer < 20 ? s.next : { x: s.x, z: s.z, r: s.r };
-  const fromSafe = Math.hypot(f.x - safe.x, f.z - safe.z);
-  if (fromSafe > safe.r - 4) {
+  // (underground, by the ground over us, and in good time: it's a way up to the stairs)
+  const deep = isDeep(f.x);
+  const fromSafe = Math.hypot(topX(f.x) - safe.x, f.z - safe.z);
+  if (fromSafe > safe.r - (deep ? 14 : 4)) {
     const k = safe.r > 6 ? (safe.r * 0.45) / Math.max(1, fromSafe) : 0;
     ai.goal = 'zone';
-    ai.gx = safe.x + (f.x - safe.x) * k;
+    ai.gx = safe.x + (topX(f.x) - safe.x) * k;
     ai.gz = safe.z + (f.z - safe.z) * k;
     return;
   }
@@ -4497,10 +4642,11 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     ai.gz = attacker.z;
     return;
   }
-  // too far from the team: catch up (with a person who leads it, sooner)
+  // too far from the team: catch up (with a person who leads it, sooner, and down the stairs after them; a computer
+  // egg in the basement under us, or over us, is near enough)
   if (m.mode !== 'solo') {
     const lead = leadOf(m, f);
-    const pal = lead && upright(lead) && lead.phase === 'ground' ? { o: lead, d: Math.hypot(lead.x - f.x, lead.z - f.z) } : nearestMate(m, f);
+    const pal = lead && upright(lead) && lead.phase === 'ground' ? { o: lead, d: Math.hypot(lead.x - f.x, lead.z - f.z) } : nearestMate(m, f, true);
     if (pal && pal.d > (ai.goal === 'mate' ? 10 : pal.o === lead ? 28 : 50)) {
       ai.goal = 'mate';
       ai.gx = pal.o.x;
@@ -4509,7 +4655,7 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     }
   }
 
-  const inSafe = (x: number, z: number) => Math.hypot(x - safe.x, z - safe.z) < safe.r - 2;
+  const inSafe = (x: number, z: number) => Math.hypot(topX(x) - safe.x, z - safe.z) < safe.r - 2;
   // hurt, with nobody about: warm up at a campfire nearby, when we have nothing to patch up with or it's right there
   if (ai.goal === 'fire') {
     const c = m.map.fires[ai.chest];
@@ -4583,7 +4729,7 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   let chest = -1;
   let chestD = armed ? 30 : 45;
   const tryChest = (c: Container) => {
-    if (!openable(m, c) || !inSafe(c.x, c.z) || lockedIn(m, c)) return;
+    if (!openable(m, c) || !inSafe(c.x, c.z) || lockedIn(m, c) || c.id === ai.tried) return;
     // a supply drop is worth the walk from farther off
     const d = Math.hypot(c.x - f.x, c.z - f.z) - (c.kind === 'supply' ? 40 : 0);
     if (d < chestD) {
@@ -4607,6 +4753,35 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
       chest = -1;
     }
   }
+  // a stairway down to a basement nobody has emptied yet (and we haven't been down), with the storm a good way off (not
+  // while a person we follow stays up top: they'd only call us straight back up)
+  let down = -1;
+  let downD = Infinity;
+  const led = m.mode === 'solo' ? null : leadOf(m, f);
+  if (!deep && m.map.stairs.length && !(led && upright(led) && led.phase === 'ground' && !isDeep(led.x))) {
+    if (ai.goal === 'stairs' && m.time > ai.until && m.map.stairs[ai.chest]) ai.below.push(m.map.stairs[ai.chest].u);
+    const quiet = !s.shrinking && s.timer > 25;
+    for (const st of m.map.stairs) {
+      if (ai.below.includes(st.u) || !quiet || Math.hypot(st.x - safe.x, st.z - safe.z) > safe.r - 18 || !stocked(m, st.u)) continue;
+      // worth the walk from farther off than a chest, a bunker out in the open most of all
+      const d = Math.hypot(st.x - f.x, st.z - f.z) - (st.b < 0 ? 25 : 12);
+      if (d < downD && d < (armed ? 30 : 40)) {
+        down = st.i;
+        downD = d;
+      }
+    }
+  }
+  if (down >= 0 && (!item || itemD > downD + 6) && (chest < 0 || chestD > downD) && vault < 0) {
+    const st = m.map.stairs[down];
+    const u = m.map.buildings[st.u];
+    if (ai.goal !== 'stairs' || ai.chest !== down) ai.until = m.time + 30;
+    // into its first room, by the stairs (see head)
+    ai.goal = 'stairs';
+    ai.chest = down;
+    ai.gx = u.rooms[0]?.x ?? u.x;
+    ai.gz = u.rooms[0]?.z ?? u.z;
+    return;
+  }
   if (item && (chest < 0 || itemD < chestD + 6)) {
     if (ai.goal !== 'loot' || ai.item !== item.id) ai.until = m.time + 20;
     ai.goal = 'loot';
@@ -4627,6 +4802,7 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   if (chest >= 0) {
     const c = m.map.containers[chest];
     const ahead = c.kind === 'supply' ? 1.5 : 1.1;
+    if (ai.goal !== 'chest' || ai.chest !== chest) ai.until = m.time + 25;
     ai.goal = 'chest';
     ai.chest = chest;
     ai.gx = c.x + (c.ax ? c.face * ahead : 0);
@@ -4668,6 +4844,19 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
       break;
     }
   }
+}
+
+/** Whether a basement still has something in it: a container nobody has opened or broken, or loot on its floor. */
+function stocked(m: Match, u: number) {
+  const b = m.map.buildings[u];
+  if (!b) return false;
+  const inside = (x: number, z: number) => Math.abs(x - b.x) < b.w / 2 && Math.abs(z - b.z) < b.d / 2;
+  for (const c of m.map.containers) if (!m.opened[c.id] && c.kind !== 'supply' && inside(c.x, c.z)) return true;
+  let any = false;
+  lootNear(m, b.x, b.z, Math.max(b.w, b.d) / 2, (l) => {
+    if (inside(l.x, l.z)) any = true;
+  });
+  return any;
 }
 
 /** Where a wall in a slot stands. */
@@ -4880,6 +5069,20 @@ function harvestSpot(m: Match, f: Fighter, ai: Ai, inSafe: (x: number, z: number
  * river in the way, it's over a bridge first, unless wading across is quicker.
  */
 function head(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, stop: number) {
+  // somewhere on another level (or down another basement): by the stairs between, up ours from underground, else
+  // down the one to there
+  const here = m.map.stairs.length && isDeep(f.x) ? basementAt(m.map, f.x, f.z) : -1;
+  const there = m.map.stairs.length && isDeep(tx) ? basementAt(m.map, tx, tz) : -1;
+  if (here !== there) {
+    const st = m.map.stairs[stairOf(m.map, here >= 0 ? here : there)];
+    if (st) {
+      const p = onto(st, f);
+      tx = p.x;
+      tz = p.z;
+      stop = 0;
+      ai.steps = st.i;
+    }
+  }
   const b = f.inside >= 0 ? m.map.buildings[f.inside] : undefined;
   const yard = b ? -1 : yardAt(m.map, f.x, f.z);
   const ways = b ? b.doors : yard >= 0 ? m.map.yards[yard].gates : null;
@@ -4947,6 +5150,23 @@ function head(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number, 
   const r = b && (via || door || Math.hypot(px - f.x, pz - f.z) > stop) ? roundFurniture(m, f.inside, f.x, f.z, wx, wz) : null;
   if (r) return steer(m, f, ai, r.x, r.z, dt, 0);
   steer(m, f, ai, wx, wz, dt, via || door || over ? 0 : stop);
+}
+
+/**
+ * Where to make for to take a stairway from an egg's level: lined up with it (up top, by its top end; below, by its
+ * foot), then on along it, between the rails.
+ */
+function onto(st: Stair, f: Fighter) {
+  const deep = isDeep(f.x);
+  const sx = deep ? st.x + DEEP : st.x;
+  const run = st.dx ? st.hw : st.hd;
+  const half = st.dx ? st.hd : st.hw;
+  const k = deep ? 1 : -1;
+  const along = ((f.x - sx) * st.dx + (f.z - st.z) * st.dz) * k;
+  const across = Math.abs((f.x - sx) * st.dz - (f.z - st.z) * st.dx);
+  if (across < half - 0.45 && along < run + 1.2) return { x: sx, z: st.z };
+  const out = stairOut(st, deep);
+  return { x: out.x - st.dx * k * 0.4, z: out.z - st.dz * k * 0.4 };
 }
 
 /** The room of a building a point is in (a little past its walls, so a doorway counts), or -1. */
@@ -5205,13 +5425,16 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
   const ahead = castRay(m, f.x, f.z, dx / d, dz / d, Math.min(d, 2), f.id, false, true, levelOf(f.y));
   if (ahead?.what === 'door' && m.doors[ahead.ref] === DOOR_SHUT) requestDoor(m, f, ahead.ref);
   let a = Math.atan2(dx, dz);
+  // nor down (or up) a stairway we aren't making for: it would take us to the other level
+  const look = Math.min(2.4, d);
+  const offStairs = (b: number) => !m.map.stairs.length || !ontoStairs(m, f, Math.sin(b), Math.cos(b), look, ai.steps);
+  if (ai.detourT > 0 && !offStairs(ai.detourA)) ai.detourT = 0;
   if (ai.detourT > 0) {
     ai.detourT -= dt;
     a = ai.detourA;
   } else {
     // try straight on, then ever wider either side, and never into a building (doorways too) or a fenced yard the
     // point isn't in, nor over a bounce pad we aren't making for
-    const look = Math.min(2.4, d);
     const into = roomAt(m.map, tx, tz);
     const intoYard = yardAt(m.map, tx, tz);
     const fromYard = yardAt(m.map, f.x, f.z);
@@ -5224,6 +5447,7 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
       const room = roomAt(m.map, f.x + ex * look, f.z + ez * look);
       const yard = yardAt(m.map, f.x + ex * look, f.z + ez * look);
       const blocked =
+        !offStairs(b) ||
         (room >= 0 && room !== f.inside && room !== into) ||
         (yard >= 0 && yard !== fromYard && yard !== intoYard) ||
         m.map.pads.some((p, i) => i !== onPad && rayCircle(f.x, f.z, ex, ez, look, p.x, p.z, PAD.r + FIGHTER_R * 0.5) < Infinity) ||
@@ -5236,8 +5460,10 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
       }
     }
   }
-  inp.mx = Math.sin(a);
-  inp.mz = Math.cos(a);
+  // no way but onto the stairs: wait for one to open up
+  const wait = !offStairs(a);
+  inp.mx = wait ? 0 : Math.sin(a);
+  inp.mz = wait ? 0 : Math.cos(a);
   // stuck on something: wander off a different way for a moment
   ai.stuckT += dt;
   if (ai.stuckT > 0.8) {
@@ -5251,7 +5477,7 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
       const ahead = Math.atan2(dx, dz);
       const lv = levelOf(f.y);
       const breaks = (h: ReturnType<typeof castRay>) => !!h && (h.what === 'built' || h.what === 'crate');
-      const hit = castRay(m, f.x, f.z, inp.mx, inp.mz, 1.8, f.id, false, true, lv);
+      const hit = castRay(m, f.x, f.z, Math.sin(a), Math.cos(a), 1.8, f.id, false, true, lv);
       const front = breaks(hit) ? null : castRay(m, f.x, f.z, Math.sin(ahead), Math.cos(ahead), Math.min(1.8, d), f.id, false, true, lv);
       const wall = breaks(hit) ? hit : breaks(front) ? front : null;
       const ours = wall?.what === 'built' ? m.walls.get(wall.ref) : undefined;
@@ -5268,6 +5494,23 @@ function steer(m: Match, f: Fighter, ai: Ai, tx: number, tz: number, dt: number,
       }
     }
   }
+}
+
+/**
+ * Whether the way `len` along (ex, ez) from an egg takes it onto a stairway on its level (other than `but`): into its
+ * box from outside it, or on in from the end it was stepped onto (up top its top, below its foot).
+ */
+function ontoStairs(m: Match, f: Fighter, ex: number, ez: number, len: number, but: number) {
+  const deep = isDeep(f.x);
+  const ox = deep ? DEEP : 0;
+  for (const s of m.map.stairs) {
+    const sx = s.x + ox;
+    if (s.i === but || Math.abs(f.x - sx) > s.hw + len + 1 || Math.abs(f.z - s.z) > s.hd + len + 1) continue;
+    const t = rayBox(f.x, f.z, ex, ez, len, sx, s.z, s.hw - 0.1, s.hd - 0.1);
+    if (t === Infinity) continue;
+    if (t > 0 || (ex * s.dx + ez * s.dz) * (deep ? -1 : 1) > 0) return true;
+  }
+  return false;
 }
 
 /** The way to the nearest built wall within a swing round an egg, on its level, or -1. */
