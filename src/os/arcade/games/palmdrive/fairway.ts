@@ -5,6 +5,7 @@
 import type { T } from './gl';
 import { deltaS, headingOf, lengthOf, pointAt, type Track } from './track';
 import { canvas, texture } from './scenery';
+import { bakeInPlace } from './landmarks';
 import { hazState, mowerRun, type LiveHazard, type Race } from './logic';
 
 type Three = typeof import('three');
@@ -334,8 +335,10 @@ export function buildFairway(THREE: Three, scene: T.Scene, r: Race, geo: Geo): F
       if (z > front - 11) box(g, steel, 0, 0.5, z - 1.35, 0.12, 0.12, 1.6);
     }
     g.visible = true;
+    // (the rig baked into a mesh or two, its plain wheels too, which look the same turning; the striped reels still spin)
+    bakeInPlace(THREE, g, [beacon, flare, ...reels]);
     scene.add(g);
-    mowers.push({ i, g, reels, wheels, beacon, flare, litMat, offMat, roll: 0, face: 1 });
+    mowers.push({ i, g, reels, wheels: [], beacon, flare, litMat, offMat, roll: 0, face: 1 });
   });
 
   const ease = (u: number) => u * u * (3 - 2 * u);
