@@ -9,7 +9,7 @@ export function Hud({ world, power, targetId, selectedId, watching }: { world: W
         <div className="g-soccer-club g-soccer-home"><i />BAY</div>
         <strong>{world.score[0]} <span>:</span> {world.score[1]}</strong>
         <div className="g-soccer-club g-soccer-away">NSU<i /></div>
-        <div className="g-soccer-clock"><b>{String(clock).padStart(2, '0')}:00</b><span>{world.half === 1 ? '1ST HALF' : '2ND HALF'}</span></div>
+        <div className="g-soccer-clock"><b>{clock}'</b><span>{world.half === 1 ? '1ST HALF' : '2ND HALF'}</span></div>
       </div>
       {world.eventTime > 0 && world.event && (
         <div className={`g-soccer-banner ${world.phase === 'goal' ? 'is-goal' : ''}`}>
@@ -29,7 +29,6 @@ export function Hud({ world, power, targetId, selectedId, watching }: { world: W
       </div>
       <Radar world={world} targetId={targetId} />
       {watching && <div className="g-soccer-watching">watching</div>}
-      <div className="g-soccer-live"><i />LIVE MATCH ENGINE</div>
     </div>
   );
 }

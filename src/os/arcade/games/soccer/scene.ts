@@ -3,11 +3,12 @@ import type { World, Player, Team } from './logic.ts';
 import { FIELD, teamDir } from './logic.ts';
 import { disposeTree, damp } from './gl.ts';
 import { adTexture, ballNumberTexture, ballTexture, markingsTexture, pitchTextures } from './textures.ts';
+import { animateSoccerSkeleton } from './player.ts';
 
 type Three = typeof import('three');
 export type CameraMode = 'broadcast' | 'end' | 'replay';
 export type TimeMode = 'night' | 'golden';
-type Actor = { root: T.Group; body: T.Group; legs: [T.Mesh, T.Mesh]; fallback: T.Group; marker: T.Mesh; number: T.Mesh; phase: number; loaded: boolean };
+type Actor = { root: T.Group; body: T.Group; legs: [T.Mesh, T.Mesh]; fallback: T.Group; marker: T.Mesh; number: T.Mesh; phase: number; loaded: boolean; skinned: T.Object3D | null };
 type Crowd = { mesh: T.InstancedMesh; phases: number[]; baseY: number[] };
 
 export type SoccerView = {
@@ -117,7 +118,7 @@ function createPlayer(THREE: Three, player: Player, lite: boolean): Actor {
   root.add(model);
   void boots;
   void digit;
-  return { root, body: fallback, legs, fallback, marker, number, phase: player.id * 0.83, loaded: false };
+  return { root, body: fallback, legs, fallback, marker, number, phase: player.id * 0.83, loaded: false, skinned: null };
 }
 
 function makeCrowd(THREE: Three, parent: T.Object3D, lite: boolean): Crowd {
@@ -137,8 +138,8 @@ function makeCrowd(THREE: Three, parent: T.Object3D, lite: boolean): Crowd {
     const side = random() > 0.5 ? 1 : -1;
     const x = endStand ? side * (24 + random() * 3.7) : (random() - 0.5) * 48;
     const z = endStand ? (random() - 0.5) * 29 : side * (16.4 + random() * 5.6);
-    const row = Math.floor(random() * 15);
-    const y = 2.2 + row * 0.48 + random() * 0.15;
+    const row = side < 0 ? Math.floor(random() * 5) : Math.floor(random() * 15);
+    const y = side < 0 ? 1.35 + row * 0.38 + random() * 0.1 : 2.2 + row * 0.48 + random() * 0.15;
     temp.position.set(x, y, z);
     temp.rotation.set((random() - 0.5) * 0.09, (random() - 0.5) * 0.45, 0);
     temp.scale.set(0.83 + random() * 0.38, 0.82 + random() * 0.45, 0.83 + random() * 0.38);
@@ -158,16 +159,18 @@ function createStands(THREE: Three, scene: T.Scene, lite: boolean) {
   const seat = standard(THREE, '#455567', 0.72);
   const roof = standard(THREE, '#101c29', 0.55, 0.18);
   for (const side of [-1, 1]) {
-    for (let tier = 0; tier < 2; tier++) {
-      const centerY = tier ? 8.5 : 4.4;
-      const height = tier ? 7.2 : 6.5;
-      const depth = tier ? 6.3 : 5.6;
-      const z = side * (15 + tier * 6);
+    const near = side < 0;
+    if (near) continue;
+    for (let tier = 0; tier < (near ? 1 : 2); tier++) {
+      const centerY = near ? 2.1 : tier ? 8.5 : 4.4;
+      const height = near ? 3.2 : tier ? 7.2 : 6.5;
+      const depth = near ? 3.8 : tier ? 6.3 : 5.6;
+      const z = side * (near ? 16.2 : 15 + tier * 6);
       const block = box(THREE, scene, [51, height, depth], [0, centerY, z], concrete, false, true);
       block.rotation.x = -side * 0.1;
-      for (let row = 0; row < 10; row++) {
-        const y = 2.3 + row * 0.54 + tier * 6.6;
-        const rowDepth = 14.9 + tier * 6 + row * 0.09;
+      for (let row = 0; row < (near ? 5 : 10); row++) {
+        const y = near ? 1.25 + row * 0.4 : 2.3 + row * 0.54 + tier * 6.6;
+        const rowDepth = near ? 15.1 + row * 0.08 : 14.9 + tier * 6 + row * 0.09;
         box(THREE, scene, [50 - row * 0.12, 0.12, 0.15], [0, y, side * rowDepth], seat, false, false);
       }
     }
@@ -180,7 +183,7 @@ function createStands(THREE: Three, scene: T.Scene, lite: boolean) {
     }
   }
   box(THREE, scene, [54, 0.55, 1.3], [0, 16.2, 21.7], roof);
-  box(THREE, scene, [54, 0.55, 1.3], [0, 16.2, -21.7], roof);
+  box(THREE, scene, [54, 0.55, 1.3], [0, 12.2, -19.2], roof);
   box(THREE, scene, [1.3, 0.55, 35], [28, 16.2, 0], roof);
   box(THREE, scene, [1.3, 0.55, 35], [-28, 16.2, 0], roof);
   const crowd = makeCrowd(THREE, scene, lite);
@@ -250,11 +253,11 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const night = timeMode === 'night';
   scene.background = new THREE.Color(night ? '#071322' : '#f1a36e');
   scene.fog = new THREE.Fog(night ? '#142438' : '#d99a71', 65, 130);
-  const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 180);
+  const camera = new THREE.PerspectiveCamera(31, 1, 0.1, 180);
   const hemi = new THREE.HemisphereLight(night ? '#93b8e5' : '#fff0d4', '#162b22', night ? 1.0 : 1.75);
   scene.add(hemi);
-  const key = new THREE.DirectionalLight(night ? '#bbd9ff' : '#ffd1a0', night ? 3.2 : 3.6);
-  key.position.set(-20, 34, 13);
+  const key = new THREE.DirectionalLight(night ? '#bbd9ff' : '#ffc27d', night ? 3.2 : 2.7);
+  key.position.set(-20, night ? 34 : 14, night ? 13 : -24);
   key.castShadow = true;
   key.shadow.mapSize.set(lite ? 1024 : 2048, lite ? 1024 : 2048);
   key.shadow.camera.left = -30; key.shadow.camera.right = 30;
@@ -371,6 +374,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       });
       actor.fallback.visible = false;
       actor.root.add(body);
+      actor.skinned = body;
       actor.loaded = true;
     }).catch(() => {
       if (import.meta.env.DEV) console.warn(`Soccer player model unavailable: ${url}; using procedural player`);
@@ -397,6 +401,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     width = Math.max(1, w); height = Math.max(1, h);
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
+    camera.fov = height > width ? 41 : 31;
     camera.updateProjectionMatrix();
   }
 
@@ -423,6 +428,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       const arrow = actor.root.children.find((child) => child instanceof THREE.Mesh && child !== actor.marker && child.position.y > 2);
       if (arrow) arrow.visible = player.controlled;
       actor.root.scale.y = currentCarrier?.id === player.id && player.action === 'kick' ? 1.05 + Math.sin(elapsed * 24) * 0.03 : 1;
+      if (actor.skinned) animateSoccerSkeleton(actor.skinned, actor.phase, speed, player.action);
     }
     ball.position.set(world.ball.x, world.ball.y, world.ball.z);
     ball.rotation.z += world.ball.vx * dt / 0.11;
@@ -452,12 +458,12 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     if (world.ball.inNet) for (const goal of goals) goal.rotation.z = Math.sin(elapsed * 8) * 0.035;
     else goals.forEach((goal) => { goal.rotation.z *= Math.exp(-dt * 4); });
 
-    target.set(world.ball.x * (cameraMode === 'broadcast' ? 0.43 : 0.35), 0.2, world.ball.z * 0.22);
+    target.set(world.ball.x * (cameraMode === 'broadcast' ? 0.52 : 0.35), 0.55, world.ball.z * 0.3);
     const attackDir = teamDir(humanTeam, world.endsSwapped);
     const desired = cameraMode === 'replay'
       ? new THREE.Vector3(world.ball.x - attackDir * 8, 5.2, world.ball.z + 13)
       : cameraMode === 'broadcast'
-        ? new THREE.Vector3(target.x, 24 + Math.abs(world.ball.z) * 0.18, target.z + 31)
+        ? new THREE.Vector3(target.x, 18.5 + Math.abs(world.ball.z) * 0.12, target.z - 29)
         : new THREE.Vector3(target.x - attackDir * 23, 14.5, target.z);
     if (!cameraReady) {
       camera.position.copy(desired);

@@ -17,9 +17,9 @@ export function pitchTextures(THREE: Three, lite: boolean) {
   grass.addColorStop(0, '#1c6848'); grass.addColorStop(0.5, '#267c52'); grass.addColorStop(1, '#1b6846');
   ctx.fillStyle = grass;
   ctx.fillRect(0, 0, size, size);
-  for (let i = 0; i < 10; i++) {
-    ctx.fillStyle = i % 2 ? 'rgba(210,240,204,.025)' : 'rgba(5,34,24,.04)';
-    ctx.fillRect(i * size / 10, 0, size / 20, size);
+  for (let i = 0; i < 12; i++) {
+    ctx.fillStyle = i % 2 ? 'rgba(210,240,204,.085)' : 'rgba(5,34,24,.075)';
+    ctx.fillRect(i * size / 12, 0, size / 24, size);
   }
   ctx.strokeStyle = 'rgba(9,57,39,.045)';
   ctx.lineWidth = Math.max(2, size / 180);

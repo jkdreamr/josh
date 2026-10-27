@@ -29,7 +29,12 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
   const goalDistance = Math.hypot(goalX - player.x, player.z);
   const opponents = world.players.filter((p) => p.team !== player.team);
   const pressure = Math.min(...opponents.map((p) => distance(p, player)));
-  if (goalDistance < 17 && Math.abs(player.z) < 8 && pressure > 2.1) {
+  const angle = Math.max(0, 1 - Math.abs(player.z) / 9);
+  const xg = clamp((17 - goalDistance) / 17, 0, 1) * angle;
+  if (pressure < 0.9 && player.x * dir < -7) {
+    return { move: { x: -dir, z: player.z > 0 ? -0.7 : 0.7 }, action: 'lob', pressed: true, power: 0.78, aim: { x: dir, z: player.z > 0 ? -0.7 : 0.7 } };
+  }
+  if (xg > 0.34 && goalDistance < 17 && Math.abs(player.z) < 8 && pressure > 2.1) {
     const corner = Math.sign(player.z || 1) * 0.72;
     return { move: { x: 0, z: 0 }, action: 'shoot', pressed: true, power: clamp(0.7 + (17 - goalDistance) * 0.012, 0.64, 0.88), aim: { x: dir, z: corner } };
   }
@@ -37,6 +42,10 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
     const teammates = world.players.filter((p) => p.team === player.team && p.id !== player.id);
     const target = teammates.sort((a, b) => (laneScore(world, player, a) - (a.x - player.x) * dir * 0.15) - (laneScore(world, player, b) - (b.x - player.x) * dir * 0.15))[0];
     if (target && laneScore(world, player, target) < 1.6) {
+      const lead = target.slot === 'FWD' || target.slot === 'LM' || target.slot === 'RM';
+      if (lead && Math.abs(target.x - player.x) > 3) {
+        return { move: { x: 0, z: 0 }, action: 'through', pressed: true, power: 0.66, aim: { x: target.x - player.x + dir * 2, z: target.z - player.z } };
+      }
       return { move: { x: 0, z: 0 }, action: 'pass', pressed: true, power: 0.55, aim: { x: target.x - player.x, z: target.z - player.z } };
     }
   }
@@ -62,8 +71,13 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
     }
     if (p.slot === 'GK') {
       const direction = teamDir(p.team, world.endsSwapped);
-      const target = { x: -direction * 18.7, z: clamp(world.ball.z * 0.55, -4.4, 4.4) };
-      commands.set(p.id, { move: { x: target.x - p.x, z: target.z - p.z }, sprint: distance(p, target) > 2.5 });
+      const goalX = -direction * (FIELD.length / 2 - 0.35);
+      const oneOnOne = Math.abs(world.ball.x - goalX) < 10 && Math.abs(world.ball.z) < 6;
+      const target = {
+        x: goalX + (world.ball.x - goalX) * (oneOnOne ? 0.22 : 0.08),
+        z: clamp(world.ball.z * (oneOnOne ? 0.72 : 0.55), -4.4, 4.4),
+      };
+      commands.set(p.id, { move: { x: target.x - p.x, z: target.z - p.z }, sprint: oneOnOne || distance(p, target) > 2.5 });
       continue;
     }
     if (carrier?.id === p.id) {

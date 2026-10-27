@@ -32,8 +32,7 @@
 .g-soccer-scoreboard {
   position: absolute;
   top: calc(14px * var(--g-soccer-u));
-  left: 50%;
-  transform: translateX(-50%);
+  left: calc(16px * var(--g-soccer-u));
   display: grid;
   grid-template-columns: auto auto auto;
   align-items: center;
@@ -87,7 +86,7 @@
 
 .g-soccer-banner {
   position: absolute;
-  top: 24%;
+  top: 52%;
   left: 50%;
   transform: translate(-50%, -8px);
   display: flex;
@@ -147,8 +146,6 @@
 .g-soccer-radar-dot.is-controlled { outline: 1px solid #fff; outline-offset: 1px; }
 .g-soccer-radar-dot.is-target { transform: scale(1.5); background: #ffe67d; }
 .g-soccer-radar-ball { width: 4px; height: 4px; background: #f7efcd; box-shadow: 0 0 5px #fff; z-index: 2; }
-.g-soccer-live { position: absolute; top: calc(16px * var(--g-soccer-u)); right: calc(17px * var(--g-soccer-u)); color: #f3f7edba; font-size: calc(8px * var(--g-soccer-u)); font-weight: 700; letter-spacing: .17em; text-shadow: 0 1px 5px #000; }
-.g-soccer-live i { display: inline-block; width: 6px; height: 6px; margin-right: 5px; border-radius: 50%; background: #e63b48; box-shadow: 0 0 8px #e63b48; }
 .g-soccer-watching { position: absolute; top: 21px; left: 18px; color: #d9e1df; font-size: 9px; letter-spacing: .16em; text-transform: uppercase; }
 
 .g-soccer-power {
@@ -225,7 +222,7 @@
   .g-soccer-scoreboard { gap: 8px; min-width: 190px; padding: 7px 10px 6px; }
   .g-soccer-scoreboard > strong { font-size: 19px; }
   .g-soccer-club { font-size: 9px; }
-  .g-soccer-radar { display: none; }
+  .g-soccer-radar { display: block; width: 96px; height: 56px; bottom: 140px; }
   .g-soccer-player-tag { width: 114px; }
   .g-soccer-live { top: 61px; right: 12px; font-size: 7px; }
   .g-soccer-stick { left: 13px; bottom: 24px; width: 106px; height: 106px; }
