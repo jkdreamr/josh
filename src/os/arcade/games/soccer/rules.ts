@@ -1,5 +1,5 @@
 import {
-  distance, FIELD, FORMATION, matchClock, nearestCarrier, setRestart, teamDir, transferControl,
+  distance, FIELD, FORMATION, jerseyNumber, matchClock, nearestCarrier, setRestart, teamDir, transferControl,
   type Player, type Point, type Team, type World,
 } from './logic.ts';
 
@@ -11,9 +11,8 @@ export type RulesState = {
   advantage: { team: Team; at: Point; offenderId: number; victimId: number; card: Card | null; t: number } | null;
   pendingCard: { playerId: number; card: Card } | null;
   yellows: number[];
-  banner: { kind: 'offside' | 'advantage' | Card; team: Team; playerId: number; x: number; t: number } | null;
+  flag: { team: Team; x: number; t: number } | null;
   added: number;
-  board: { minutes: number; t: number } | null;
   stoppage: { minutes: number; left: number; elapsed: number; hold: number } | null;
   stats: { fouls: [number, number]; yellows: [number, number]; reds: [number, number]; offsides: [number, number] };
 };
@@ -27,7 +26,7 @@ const validCard = (v: unknown): v is Card => v === 'yellow' || v === 'red' || v 
 export function createRules(): RulesState {
   return {
     offside: true, snapshot: null, indirect: null, advantage: null, pendingCard: null, yellows: [],
-    banner: null, added: 0, board: null, stoppage: null,
+    flag: null, added: 0, stoppage: null,
     stats: { fouls: [0, 0], yellows: [0, 0], reds: [0, 0], offsides: [0, 0] },
   };
 }
@@ -79,11 +78,11 @@ export function validRules(value: unknown): value is RulesState | undefined {
       || !finite(advantage.t) || advantage.t < 0 || advantage.t > 3) return false;
   }
   if (!validCardRecord(r.pendingCard)) return false;
-  if (r.banner !== null) {
-    const banner = r.banner as RulesState['banner'];
-    if (!banner || !validTeam(banner.team) || !validId(banner.playerId) || !finite(banner.x)
-      || Math.abs(banner.x) > FIELD.length / 2 + 2 || !finite(banner.t) || banner.t < 0 || banner.t > 3
-      || !(['offside', 'advantage', 'yellow', 'red', 'second-yellow'] as unknown[]).includes(banner.kind)) return false;
+  if ('banner' in r || 'board' in r) return false;
+  if (r.flag !== null) {
+    const flag = r.flag as RulesState['flag'];
+    if (!flag || !validTeam(flag.team) || !finite(flag.x) || Math.abs(flag.x) > FIELD.length / 2 + 2
+      || !finite(flag.t) || flag.t < 0 || flag.t > 2.6) return false;
   }
   if (r.stoppage !== null) {
     const stoppage = r.stoppage as RulesState['stoppage'];
@@ -91,11 +90,6 @@ export function validRules(value: unknown): value is RulesState | undefined {
       || !finite(stoppage.left) || stoppage.left < -100 || stoppage.left > 100
       || !finite(stoppage.elapsed) || stoppage.elapsed < 0 || stoppage.elapsed > 100
       || !finite(stoppage.hold) || stoppage.hold < 0 || stoppage.hold > 8) return false;
-  }
-  if (r.board !== null) {
-    const board = r.board as RulesState['board'];
-    if (!board || !Number.isInteger(board.minutes) || board.minutes < 1 || board.minutes > 5
-      || !finite(board.t) || board.t < 0 || board.t > 4) return false;
   }
   return true;
 }
@@ -126,6 +120,7 @@ export function offsidePosition(world: World, player: Player) {
 
 export function noteKick(world: World, player: Player, _action: string) {
   const rules = state(world);
+  if (rules.indirect?.takerId === null && player.team === rules.indirect.team) rules.indirect.takerId = player.id;
   const restart = world.restart;
   if (!rules.offside || restart === 'kick-in' || restart === 'goal-kick' || restart === 'corner'
     || restart === 'penalty' || restart === 'kickoff') {
@@ -142,11 +137,10 @@ export function noteKick(world: World, player: Player, _action: string) {
 function callOffside(world: World, player: Player, team: Team) {
   const rules = state(world);
   const defending = team === 0 ? 1 : 0;
-  setRestart(world, defending, 'free-kick', player);
+  setRestart(world, defending, 'free-kick', player, true);
   world.event = 'offside';
   world.eventTime = 2;
-  rules.indirect = { team: defending, takerId: null };
-  rules.banner = { kind: 'offside', team, playerId: player.id, x: player.x, t: 2.6 };
+  rules.flag = { team, x: player.x, t: 2.6 };
   rules.stats.offsides[team]++;
   addTime(world, 0.15);
 }
@@ -200,11 +194,6 @@ export function indirectBlocksGoal(world: World) {
   return !!indirect && indirect.takerId !== null && indirect.takerId === world.lastToucherId;
 }
 
-export function noteIndirectKick(world: World, restart: World['restart'], team: Team, takerId: number) {
-  const indirect = state(world).indirect;
-  if (restart === 'free-kick' && indirect?.team === team) indirect.takerId = takerId;
-}
-
 export function approachAngle(offender: Player, victim: Player) {
   const from = Math.atan2(offender.x - victim.x, offender.z - victim.z);
   return Math.abs(Math.atan2(Math.sin(victim.facing - from), Math.cos(victim.facing - from)));
@@ -255,7 +244,8 @@ export function onFoul(world: World, offender: Player, victim: Player, kind: 'ta
   rules.stats.fouls[offender.team]++;
   if (canPlayAdvantage(world, offender, victim, grade.dogso)) {
     rules.advantage = { team: victim.team, at: { x: victim.x, z: victim.z }, offenderId: offender.id, victimId: victim.id, card: grade.card, t: 3 };
-    rules.banner = { kind: 'advantage', team: victim.team, playerId: victim.id, x: victim.x, t: 3 };
+    world.event = 'advantage';
+    world.eventTime = 3;
     world.lastTouch = victim.team;
     world.lastToucherId = victim.id;
     return 'advantage';
@@ -279,7 +269,9 @@ export function applyStoppageCard(world: World) {
   }
   if (card !== 'yellow') rules.stats.reds[player.team]++;
   addTime(world, card === 'yellow' ? 0.5 : 0.75);
-  rules.banner = { kind, team: player.team, playerId: player.id, x: player.x, t: 2.6 };
+  const label = kind === 'yellow' ? 'yellow card' : kind === 'red' ? 'red card' : 'second yellow';
+  world.event = `${label} · no. ${jerseyNumber(player.id)}`;
+  world.eventTime = 2.4;
   if (card !== 'yellow') sendOff(world, player);
 }
 
@@ -347,16 +339,19 @@ export function finishAdvantage(world: World, apply = false) {
   const advantage = rules.advantage;
   if (!advantage) return;
   rules.advantage = null;
-  if (rules.banner?.kind === 'advantage') rules.banner = null;
+  if (world.event === 'advantage') {
+    world.event = '';
+    world.eventTime = 0;
+  }
   if (advantage.card) rules.pendingCard = { playerId: advantage.offenderId, card: advantage.card };
   if (apply) applyStoppageCard(world);
 }
 
 export function rulesStep(world: World, dt: number) {
   const rules = state(world);
-  if (rules.board) {
-    rules.board.t = Math.max(0, rules.board.t - dt);
-    if (rules.board.t <= 0) rules.board = null;
+  if (rules.flag) {
+    rules.flag.t = Math.max(0, rules.flag.t - dt);
+    if (rules.flag.t <= 0) rules.flag = null;
   }
   const advantage = rules.advantage;
   if (advantage) {
@@ -365,23 +360,16 @@ export function rulesStep(world: World, dt: number) {
       || world.phase === 'restart' && world.restartTeam !== advantage.team;
     if (fizzled) {
       rules.advantage = null;
-      if (rules.banner?.kind === 'advantage') rules.banner = null;
-      if (advantage.card) rules.pendingCard = { playerId: advantage.offenderId, card: advantage.card };
       setRestart(world, advantage.team, 'free-kick', advantage.at);
       world.event = 'foul';
       world.eventTime = 2;
+      if (advantage.card) rules.pendingCard = { playerId: advantage.offenderId, card: advantage.card };
       applyStoppageCard(world);
       return;
     }
     if (advantage.t <= 0 || world.phase !== 'live') {
       finishAdvantage(world, world.phase !== 'live');
-    } else if (rules.banner?.kind === 'advantage') rules.banner.t = advantage.t;
-  }
-  if (rules.banner && rules.banner.kind !== 'advantage') {
-    rules.banner.t = Math.max(0, rules.banner.t - dt);
-    if (rules.banner.t <= 0) rules.banner = null;
-  } else if (rules.banner?.kind === 'advantage' && !rules.advantage) {
-    rules.banner = null;
+    }
   }
 }
 
@@ -391,11 +379,11 @@ export function halfOver(world: World, clockStep: number) {
     const minutes = clamp(Math.round(rules.added), 0, 5);
     if (!minutes) {
       rules.added = 0;
-      rules.board = null;
       return true;
     }
     rules.stoppage = { minutes, left: minutes * world.halfLength / 45, elapsed: 0, hold: 0 };
-    rules.board = { minutes, t: 4 };
+    world.event = `+${minutes} min added time`;
+    world.eventTime = 3;
     return false;
   }
   const stoppage = rules.stoppage;
@@ -412,7 +400,6 @@ export function halfOver(world: World, clockStep: number) {
   }
   rules.added = 0;
   rules.stoppage = null;
-  rules.board = null;
   return true;
 }
 

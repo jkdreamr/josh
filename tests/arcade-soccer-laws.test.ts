@@ -5,7 +5,7 @@ import { createWorld, FIELD, findReceiver, nearestCarrier, restartTaker, setRest
 import { parsePacket } from '../src/os/arcade/games/soccer/net.ts';
 import {
   applyStoppageCard, checkOffside, clockLabel, cpuMayTackle, gradeFoul, indirectBlocksGoal,
-  noteGoal, noteIndirectKick, noteKick, noteRestart, noteTouch, offsidePosition, onFoul,
+  noteGoal, noteKick, noteRestart, noteTouch, offsidePosition, onFoul,
   onsideProgress, rulesStep, sendOff, stepUpLine,
 } from '../src/os/arcade/games/soccer/rules.ts';
 
@@ -44,6 +44,7 @@ test('offside uses the kick-time ball and second-last defender line with strict 
   assert.equal(world.event, 'offside');
   assert.equal(world.rules!.stats.offsides[0], 1);
   assert.equal(world.rules!.indirect?.team, 1);
+  assert.deepEqual(world.rules!.flag, { team: 0, x: 12.12, t: 2.6 });
 });
 
 test('offside snapshots respect restart exceptions and clear on onside or opponent receptions', () => {
@@ -135,11 +136,13 @@ test('an offside snapshot survives a goalkeeper save but penalizes a flagged reb
 
 test('indirect free kicks block a direct goal until another player touches the ball', () => {
   const world = liveWorld();
-  world.rules!.indirect = { team: 0, takerId: null };
-  noteIndirectKick(world, 'free-kick', 0, 6);
-  world.lastToucherId = 6;
+  const taker = world.players[6]!;
+  setRestart(world, taker.team, 'free-kick', taker, true);
+  noteKick(world, taker, 'pass');
+  world.lastToucherId = taker.id;
+  assert.equal(world.rules!.indirect?.takerId, taker.id);
   assert.equal(indirectBlocksGoal(world), true);
-  noteTouch(world, 6);
+  noteTouch(world, taker.id);
   assert.equal(indirectBlocksGoal(world), true);
   noteTouch(world, 8);
   assert.equal(indirectBlocksGoal(world), false);
@@ -163,10 +166,17 @@ test('a direct goal from an indirect free kick is disallowed, but a second touch
   const shoot = (secondTouch: boolean) => {
     const world = liveWorld();
     for (const player of world.players) { player.x = 0; player.z = 20; }
+    const taker = world.players[6]!;
+    setRestart(world, taker.team, 'free-kick', { x: FIELD.length / 2 - 0.2, z: 0 }, true);
+    noteKick(world, taker, 'shoot');
+    world.phase = 'live';
+    world.restart = null;
+    world.lastToucherId = taker.id;
+    if (secondTouch) {
+      noteTouch(world, 8);
+      world.lastToucherId = 8;
+    }
     world.ball = { x: FIELD.length / 2 - 0.2, y: 0.11, z: 0, vx: 30, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false };
-    world.rules!.indirect = { team: 0, takerId: 6 };
-    world.lastToucherId = 6;
-    if (secondTouch) noteTouch(world, 8);
     stepWorld(world, STEP);
     return world;
   };
@@ -207,6 +217,8 @@ test('foul grading applies approach, speed, ball-contact, DOGSO and second-yello
   setRestart(world, victim.team, 'penalty', victim);
   assert.equal(world.restart, 'penalty');
   assert.equal(world.rules!.stats.yellows[offender.team], 1);
+  assert.equal(world.event, 'yellow card · no. 7');
+  assert.equal(world.eventTime, 2.4);
   victim.x = FIELD.length / 2 - 20;
   world.ball.x = victim.x;
   assert.equal(gradeFoul(world, offender, victim, 'tackle', false).card, 'red');
@@ -214,7 +226,22 @@ test('foul grading applies approach, speed, ball-contact, DOGSO and second-yello
   assert.equal(onFoul(world, offender, victim, 'tackle', false), 'stop');
   setRestart(world, victim.team, 'free-kick', victim);
   assert.equal(offender.sentOff, true);
+  assert.equal(world.event, 'red card · no. 7');
   assert.equal(world.players.filter((player) => player.team === offender.team && !player.sentOff).length, 10);
+});
+
+test('cards surface their type and player number through match events', () => {
+  for (const [card, label] of [
+    ['yellow', 'yellow card'],
+    ['red', 'red card'],
+    ['second-yellow', 'second yellow'],
+  ] as const) {
+    const world = liveWorld();
+    world.rules!.pendingCard = { playerId: 6, card };
+    applyStoppageCard(world);
+    assert.equal(world.event, `${label} · no. 7`);
+    assert.equal(world.eventTime, 2.4);
+  }
 });
 
 test('sending off removes a player from control, carrier and CPU command selection', () => {
@@ -261,12 +288,14 @@ test('advantage is played only with possession and space, then whistles at the f
   world.lastTouch = victim.team;
   assert.equal(onFoul(world, offender, victim, 'tackle', false), 'advantage');
   assert.ok(world.rules!.advantage);
+  assert.equal(world.event, 'advantage');
+  assert.equal(world.eventTime, 3);
   world.lastTouch = offender.team;
   rulesStep(world, STEP);
   assert.equal(world.phase, 'restart');
   assert.equal(world.restartTeam, victim.team);
   assert.deepEqual(world.restartAt, { x: victim.x, z: victim.z });
-  assert.equal(world.event, 'foul');
+  assert.match(world.event, /^yellow card · no. \d+$/);
 
   const crowded = liveWorld();
   separateTeams(crowded);
@@ -289,13 +318,17 @@ test('retained advantage defers the card to the next stoppage', () => {
   world.ball.x = victim.x; world.ball.z = victim.z; world.lastTouch = victim.team;
   offender.x = -2; offender.z = 0; offender.vx = 8;
   assert.equal(onFoul(world, offender, victim, 'tackle', false), 'advantage');
+  assert.equal(world.event, 'advantage');
   rulesStep(world, 3);
   assert.equal(world.rules!.advantage, null);
+  assert.equal(world.event, '');
+  assert.equal(world.eventTime, 0);
   assert.equal(world.rules!.pendingCard?.playerId, offender.id);
   setRestart(world, victim.team, 'free-kick', victim);
   assert.equal(offender.sentOff, undefined);
   assert.equal(world.rules!.stats.yellows[offender.team], 1);
   assert.equal(world.rules!.pendingCard, null);
+  assert.equal(world.event, 'yellow card · no. 7');
 });
 
 test('AI holds the onside line and steps its defensive line up on a back pass', () => {
@@ -366,7 +399,8 @@ test('added time extends full time and holds for an attack in the penalty area',
   stepWorld(world, STEP);
   assert.equal(world.phase, 'live');
   assert.equal(world.rules!.stoppage?.minutes, 2);
-  assert.equal(world.rules!.board?.minutes, 2);
+  assert.equal(world.event, '+2 min added time');
+  assert.equal(world.eventTime, 3);
   assert.equal(clockLabel(world), '45+1');
   for (let tick = 0; tick < 61; tick++) stepWorld(world, STEP);
   assert.equal(world.phase, 'live');
@@ -374,7 +408,6 @@ test('added time extends full time and holds for an attack in the penalty area',
   for (let tick = 0; tick < 61; tick++) stepWorld(world, STEP);
   assert.ok(world.rules!.stoppage!.hold > 0);
   for (let tick = 0; tick < 120; tick++) stepWorld(world, STEP);
-  assert.equal(world.rules!.board, null);
   for (let tick = 0; tick < 8 * 60 + 30 && world.phase === 'live'; tick++) stepWorld(world, STEP);
   assert.equal(world.phase, 'half-time');
   assert.ok(world.rules!.stoppage === null);

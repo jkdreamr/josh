@@ -2,7 +2,7 @@ import { createBall, stepBall, type BallState } from './physics.ts';
 import { FIELD } from './field.ts';
 import {
   applyStoppageCard, checkOffside, clearOffside, createRules, finishAdvantage, halfOver, indirectBlocksGoal,
-  noteGoal, noteIndirectKick, noteKick, noteRestart, noteTouch, onFoul, approachAngle, offsidePosition, rulesStep,
+  noteGoal, noteKick, noteRestart, noteTouch, onFoul, approachAngle, offsidePosition, rulesStep,
   type RulesState,
 } from './rules.ts';
 export { FIELD } from './field.ts';
@@ -547,7 +547,7 @@ function applyAction(world: World, player: Player, command: Command) {
   kick(world, player, command.action, command);
 }
 
-export function setRestart(world: World, team: Team, restart: Exclude<Restart, null>, at: Point) {
+export function setRestart(world: World, team: Team, restart: Exclude<Restart, null>, at: Point, indirect = false) {
   world.phase = 'restart';
   world.restart = restart;
   world.restartTeam = team;
@@ -570,7 +570,7 @@ export function setRestart(world: World, team: Team, restart: Exclude<Restart, n
   for (const p of world.players) { p.buffer = null; p.slide = null; }
   world.switchWait = [0, 0];
   clearOffside(world);
-  if (world.rules) world.rules.indirect = null;
+  if (world.rules) world.rules.indirect = indirect ? { team, takerId: null } : null;
   noteRestart(world, restart);
   applyStoppageCard(world);
 }
@@ -798,12 +798,9 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
       && !player.sentOff
       && Math.hypot(commands.get(player.id)?.move.x ?? 0, commands.get(player.id)?.move.z ?? 0) > 0.05);
     if ((action?.pressed && action.action) || moved || world.restartClock >= 10) {
-      const takenRestart = world.restart;
-      const restartTeam = world.restartTeam;
       world.phase = 'live';
       world.ball.x = world.restartAt.x; world.ball.z = world.restartAt.z; world.ball.y = 0.11;
       if (action?.action) kick(world, taker, action.action, action);
-      noteIndirectKick(world, takenRestart, restartTeam, taker.id);
       world.restart = null;
     }
     return;

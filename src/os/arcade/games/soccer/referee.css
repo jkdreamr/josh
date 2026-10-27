@@ -7,10 +7,7 @@
   font-family: Inter, ui-sans-serif, system-ui, sans-serif;
 }
 
-.g-soccer-ref-card,
-.g-soccer-ref-offside,
-.g-soccer-ref-advantage,
-.g-soccer-ref-board {
+.g-soccer-ref-offside {
   position: absolute;
   display: flex;
   align-items: center;
@@ -22,7 +19,6 @@
   animation: g-soccer-ref-enter .24s ease-out both;
 }
 
-.g-soccer-ref-card,
 .g-soccer-ref-offside {
   top: 92px;
   left: 50%;
@@ -30,27 +26,13 @@
   transform: translateX(-50%);
 }
 
-.g-soccer-ref-card > i {
-  width: 17px;
-  height: 24px;
-  border-radius: 3px;
-  background: #f6c431;
-  box-shadow: inset 0 0 0 1px #fff7;
-}
-
-.g-soccer-ref-card.is-red > i,
-.g-soccer-ref-card.is-second-yellow > i { background: #e83b49; }
-
-.g-soccer-ref-card span,
 .g-soccer-ref-offside span {
   display: grid;
   gap: 3px;
 }
 
-.g-soccer-ref-card b,
 .g-soccer-ref-offside b { font-size: 12px; letter-spacing: .11em; }
 
-.g-soccer-ref-card small,
 .g-soccer-ref-offside small {
   color: #bac8d0;
   font-size: 9px;
@@ -82,49 +64,6 @@
 .g-soccer-ref-offside.is-left { left: 14px; transform: none; transform-origin: left; }
 .g-soccer-ref-offside.is-right { right: 14px; left: auto; transform: none; transform-origin: right; }
 
-.g-soccer-ref-advantage {
-  top: 78px;
-  left: 50%;
-  display: grid;
-  gap: 6px;
-  min-width: 142px;
-  padding: 8px 13px;
-  color: #16220c;
-  background: #d4f044;
-  border-color: #f2ffaf;
-  transform: translateX(-50%);
-}
-
-.g-soccer-ref-advantage > b { font-size: 11px; letter-spacing: .13em; text-align: center; }
-.g-soccer-ref-advantage > span { height: 3px; overflow: hidden; border-radius: 2px; background: #52632a66; }
-.g-soccer-ref-advantage > span > i {
-  display: block;
-  width: 100%;
-  height: 100%;
-  transform-origin: left;
-  background: #263815;
-  transition: transform .08s linear;
-}
-
-.g-soccer-ref-board {
-  top: 18%;
-  right: 4%;
-  display: grid;
-  justify-items: center;
-  gap: 2px;
-  min-width: 76px;
-  padding: 7px 12px;
-  border: 2px solid #ffdf55;
-  border-radius: 5px;
-  color: #ffe766;
-  background: #07101deF;
-  box-shadow: 0 0 22px #ffc83a55, inset 0 0 12px #ffda4422;
-  font-variant-numeric: tabular-nums;
-}
-
-.g-soccer-ref-board small { font-size: 8px; font-weight: 850; letter-spacing: .1em; }
-.g-soccer-ref-board b { font-size: 29px; line-height: 1; }
-
 @keyframes g-soccer-ref-enter {
   from { opacity: 0; translate: 0 -7px; }
   to { opacity: 1; translate: 0 0; }
@@ -136,11 +75,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .g-soccer-ref-card,
-  .g-soccer-ref-offside,
-  .g-soccer-ref-advantage,
-  .g-soccer-ref-board { animation: none; }
+  .g-soccer-ref-offside { animation: none; }
 
   .g-soccer-ref-offside > i::before { animation: none; }
-  .g-soccer-ref-advantage > span > i { transition: none; }
 }

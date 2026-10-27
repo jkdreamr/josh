@@ -440,7 +440,7 @@ function Play() {
       replayStartedAt.current = simulationTime.current;
       replaySkipped.current = false;
     }
-    if (current.event !== lastEvent.current && /kick off|kickoff|foul|offside|half time|full time|kick-in|corner|goal kick|free kick|penalty|second half/i.test(current.event)) {
+    if (current.event !== lastEvent.current && /kick off|kickoff|foul|offside|half time|full time|kick-in|corner|goal kick|free kick|penalty|second half|card|second yellow/i.test(current.event)) {
       whistle();
     }
     lastEvent.current = current.event;
