@@ -91,19 +91,16 @@
   transform: translate(-50%, -8px);
   display: flex;
   flex-direction: column;
-  gap: 3px;
   min-width: 180px;
   padding: 10px 19px;
   border-left: 3px solid #d7ff70;
   background: linear-gradient(90deg, #091a27ee, #091a2799);
   box-shadow: 0 8px 30px #0006;
   text-align: center;
-  animation: g-soccer-banner-in .28s ease-out both;
+  animation: g-soccer-banner-in 1.35s ease-out both;
 }
-.g-soccer-banner > span { color: #d7ff70; font-size: 8px; font-weight: 850; letter-spacing: .24em; }
 .g-soccer-banner > b { text-transform: uppercase; font-size: clamp(13px, 2vw, 23px); letter-spacing: .06em; }
 .g-soccer-banner.is-goal { border-color: #f5ca60; background: linear-gradient(90deg, #321019ee, #38111b99); }
-.g-soccer-banner.is-goal > span { color: #ffcf68; }
 
 .g-soccer-player-tag {
   position: absolute;
@@ -207,8 +204,10 @@
 .g-soccer button.arcade-tbtn:active { transform: scale(.93); background: #385267; }
 
 @keyframes g-soccer-banner-in {
-  from { opacity: 0; transform: translate(-50%, -12px); }
-  to { opacity: 1; transform: translate(-50%, 0); }
+  0% { opacity: 0; transform: translate(-50%, -12px); }
+  18% { opacity: 1; transform: translate(-50%, 0); }
+  76% { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, -4px); }
 }
 
 @media (pointer: coarse) {

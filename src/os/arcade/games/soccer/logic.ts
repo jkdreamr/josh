@@ -67,7 +67,7 @@ export function createWorld(seed = 71423, halfLength = 120, humans: 1 | 2 = 1): 
     players, ball: { x: 0, y: 0.11, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false },
     score: [0, 0], clock: halfLength, halfLength, half: 1, endsSwapped: false,
     phase: 'restart', restart: 'kickoff', restartTeam: 0, restartAt: { x: 0, z: 0 },
-    lastTouch: 0, seed: seed >>> 0 || 1, event: 'kick off', eventTime: 2, restartClock: 0, controlled: [1, 6], kickEvent: null,
+    lastTouch: 0, seed: seed >>> 0 || 1, event: 'kick off', eventTime: 1.35, restartClock: 0, controlled: [1, 6], kickEvent: null,
   };
   return world;
 }
@@ -357,7 +357,8 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
       ?? world.players.filter((p) => p.team === world.restartTeam).sort((a, b) => distance(a, world.restartAt) - distance(b, world.restartAt))[0]!;
     const action = commands.get(taker.id);
     world.clock = Math.max(0, world.clock - t);
-    if ((action?.pressed && action.action) || world.restartClock >= 10) {
+    const moved = Math.hypot(action?.move.x ?? 0, action?.move.z ?? 0) > 0.05;
+    if ((action?.pressed && action.action) || moved || world.restartClock >= 10) {
       world.phase = 'live';
       world.ball.x = world.restartAt.x; world.ball.z = world.restartAt.z; world.ball.y = 0.11;
       if (action?.action) kick(world, taker, action.action, action);

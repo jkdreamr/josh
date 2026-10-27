@@ -14,12 +14,12 @@ export function pitchTextures(THREE: Three, lite: boolean) {
   canvas.width = size; canvas.height = size;
   const ctx = canvas.getContext('2d')!;
   const grass = ctx.createLinearGradient(0, 0, size, 0);
-  grass.addColorStop(0, '#1c6848'); grass.addColorStop(0.5, '#267c52'); grass.addColorStop(1, '#1b6846');
+  grass.addColorStop(0, '#16843b'); grass.addColorStop(0.5, '#2b9b4a'); grass.addColorStop(1, '#197e38');
   ctx.fillStyle = grass;
   ctx.fillRect(0, 0, size, size);
   for (let i = 0; i < 12; i++) {
-    ctx.fillStyle = i % 2 ? 'rgba(210,240,204,.085)' : 'rgba(5,34,24,.075)';
-    ctx.fillRect(i * size / 12, 0, size / 24, size);
+    ctx.fillStyle = i % 2 ? 'rgba(220,250,214,.22)' : 'rgba(4,28,16,.16)';
+    ctx.fillRect(i * size / 12, 0, size / 12, size);
   }
   ctx.strokeStyle = 'rgba(9,57,39,.045)';
   ctx.lineWidth = Math.max(2, size / 180);
@@ -63,8 +63,8 @@ export function markingsTexture(THREE: Three) {
   const canvas = document.createElement('canvas');
   canvas.width = 1680; canvas.height = 1040;
   const ctx = canvas.getContext('2d')!;
-  ctx.strokeStyle = 'rgba(247,250,232,.94)';
-  ctx.lineWidth = 5;
+  ctx.strokeStyle = 'rgba(255,255,247,.98)';
+  ctx.lineWidth = 3.5;
   ctx.strokeRect(4, 4, 1672, 1032);
   ctx.beginPath(); ctx.moveTo(840, 4); ctx.lineTo(840, 1036); ctx.stroke();
   ctx.beginPath(); ctx.arc(840, 520, 160, 0, Math.PI * 2); ctx.stroke();

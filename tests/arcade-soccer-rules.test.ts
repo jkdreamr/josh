@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createWorld, resolveBoundary, stepWorld, type World } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, matchClock, resolveBoundary, stepWorld, type World } from '../src/os/arcade/games/soccer/logic.ts';
 
 const world = () => {
   const g = createWorld(12, 120);
@@ -30,6 +30,29 @@ test('kickoff starts centered and opponents are kept at distance', () => {
   opponent.x = 0.4;
   stepWorld(g, 1 / 60);
   assert.ok(Math.hypot(opponent.x, opponent.z) >= 3.99);
+});
+
+test('kickoff movement starts play immediately and moves the selected player', () => {
+  const g = createWorld(22, 120);
+  const player = g.players[1]!;
+  const startX = player.x;
+  stepWorld(g, 1 / 60, new Map([[player.id, { move: { x: 1, z: 0 }, sprint: true }]]));
+  assert.equal(g.phase, 'live');
+  assert.ok(player.x > startX);
+});
+
+test('match clock advances and maps each half to 45 minutes', () => {
+  const g = createWorld(23, 240);
+  assert.equal(matchClock(g), 0);
+  for (let i = 0; i < 360; i++) stepWorld(g, 1 / 60);
+  assert.equal(matchClock(g), 1);
+  g.clock = 0;
+  assert.equal(matchClock(g), 45);
+  g.half = 2;
+  g.clock = g.halfLength;
+  assert.equal(matchClock(g), 45);
+  g.clock = 0;
+  assert.equal(matchClock(g), 90);
 });
 
 test('a goal kick is always taken by the goalkeeper', () => {

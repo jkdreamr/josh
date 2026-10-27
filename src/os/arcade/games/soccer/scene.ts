@@ -50,6 +50,7 @@ function cylinderBetween(THREE: Three, parent: T.Object3D, from: T.Vector3, to: 
 
 function createPlayer(THREE: Three, player: Player, lite: boolean): Actor {
   const root = new THREE.Group();
+  root.scale.setScalar(1.14);
   const fallback = new THREE.Group();
   const model = new THREE.Group();
   root.add(fallback);
@@ -109,6 +110,10 @@ function createPlayer(THREE: Three, player: Player, lite: boolean): Actor {
   number.position.set(0, 1.25, -0.255);
   number.rotation.y = Math.PI;
   fallback.add(number);
+  const contact = new THREE.Mesh(new THREE.CircleGeometry(0.36, 20), new THREE.MeshBasicMaterial({ color: '#08140f', transparent: true, opacity: 0.28, depthWrite: false }));
+  contact.rotation.x = -Math.PI / 2;
+  contact.position.y = 0.02;
+  root.add(contact);
   const marker = new THREE.Mesh(new THREE.RingGeometry(0.43, 0.54, 28), new THREE.MeshBasicMaterial({ color: player.team === 0 ? '#ffe782' : '#73defa', side: THREE.DoubleSide, transparent: true, opacity: 0.92 }));
   marker.rotation.x = -Math.PI / 2; marker.position.y = 0.035;
   root.add(marker);
@@ -123,8 +128,8 @@ function createPlayer(THREE: Three, player: Player, lite: boolean): Actor {
 
 function makeCrowd(THREE: Three, parent: T.Object3D, lite: boolean): Crowd {
   const count = lite ? 1500 : 4000;
-  const geometry = new THREE.CapsuleGeometry(0.11, 0.22, 2, 5);
-  const material = new THREE.MeshStandardMaterial({ color: '#fff', roughness: 0.9, vertexColors: true });
+  const geometry = new THREE.CapsuleGeometry(0.12, 0.34, 2, 6);
+  const material = new THREE.MeshBasicMaterial({ color: '#ef6672' });
   const mesh = new THREE.InstancedMesh(geometry, material, count);
   mesh.castShadow = false; mesh.receiveShadow = false;
   const phases: number[] = [];
@@ -132,14 +137,14 @@ function makeCrowd(THREE: Three, parent: T.Object3D, lite: boolean): Crowd {
   const temp = new THREE.Object3D();
   let seed = 94831;
   const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
-  const palette = ['#d8484d', '#f1f1e7', '#18283b', '#66b9dc', '#d7b66c', '#414a55', '#8a5b80', '#5c866e'];
+  const palette = ['#f14b55', '#fff8dc', '#1d3150', '#64c8f4', '#e7c264', '#a8b6c4', '#db80a1', '#69ba82'];
   for (let i = 0; i < count; i++) {
     const endStand = random() > 0.62;
-    const side = random() > 0.5 ? 1 : -1;
+    const side = endStand ? 1 : 1;
     const x = endStand ? side * (24 + random() * 3.7) : (random() - 0.5) * 48;
-    const z = endStand ? (random() - 0.5) * 29 : side * (16.4 + random() * 5.6);
-    const row = side < 0 ? Math.floor(random() * 5) : Math.floor(random() * 15);
-    const y = side < 0 ? 1.35 + row * 0.38 + random() * 0.1 : 2.2 + row * 0.48 + random() * 0.15;
+    const z = endStand ? (random() - 0.5) * 29 : 16.2 + random() * 8.2;
+    const row = Math.floor(random() * 10);
+    const y = 1.35 + row * 0.46 + random() * 0.12;
     temp.position.set(x, y, z);
     temp.rotation.set((random() - 0.5) * 0.09, (random() - 0.5) * 0.45, 0);
     temp.scale.set(0.83 + random() * 0.38, 0.82 + random() * 0.45, 0.83 + random() * 0.38);
@@ -150,51 +155,52 @@ function makeCrowd(THREE: Three, parent: T.Object3D, lite: boolean): Crowd {
     baseY.push(y);
   }
   mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   parent.add(mesh);
   return { mesh, phases, baseY, fixtures: [] };
 }
 
 function createStands(THREE: Three, scene: T.Scene, lite: boolean) {
-  const concrete = standard(THREE, '#253242', 0.85);
-  const seat = standard(THREE, '#455567', 0.72);
+  const concrete = standard(THREE, '#27384b', 0.82);
+  const seat = standard(THREE, '#aab7c3', 0.62, 0.08);
   const roof = standard(THREE, '#101c29', 0.55, 0.18);
-  for (const side of [-1, 1]) {
-    const near = side < 0;
-    if (near) continue;
-    for (let tier = 0; tier < (near ? 1 : 2); tier++) {
-      const centerY = near ? 2.1 : tier ? 8.5 : 4.4;
-      const height = near ? 3.2 : tier ? 7.2 : 6.5;
-      const depth = near ? 3.8 : tier ? 6.3 : 5.6;
-      const z = side * (near ? 16.2 : 15 + tier * 6);
-      const block = box(THREE, scene, [51, height, depth], [0, centerY, z], concrete, false, true);
-      block.rotation.x = -side * 0.1;
-      for (let row = 0; row < (near ? 5 : 10); row++) {
-        const y = near ? 1.25 + row * 0.4 : 2.3 + row * 0.54 + tier * 6.6;
-        const rowDepth = near ? 15.1 + row * 0.08 : 14.9 + tier * 6 + row * 0.09;
-        box(THREE, scene, [50 - row * 0.12, 0.12, 0.15], [0, y, side * rowDepth], seat, false, false);
-      }
+  for (let tier = 0; tier < 2; tier++) {
+    for (let row = 0; row < 9; row++) {
+      const y = 1.15 + row * 0.4 + tier * 4.05;
+      const z = 15.2 + row * 0.55 + tier * 5.2;
+      box(THREE, scene, [50 - row * 0.18, 0.16, 0.34], [0, y, z], row % 2 ? seat : concrete, false, false);
     }
+  }
+  for (const side of [1]) {
     for (let tier = 0; tier < 2; tier++) {
-      const x = side * (24 + tier * 4);
-      box(THREE, scene, [6, 13 + tier * 2, 31], [x, 7 + tier * 4, 0], concrete);
-      for (let row = 0; row < 10; row++) {
-        box(THREE, scene, [0.18, 0.1, 29], [side * (21 + tier * 6 + row * 0.2), 2.4 + row * 0.56 + tier * 6.6, 0], seat, false, false);
+      for (let row = 0; row < 9; row++) {
+        const x = side * (21.4 + row * 0.48 + tier * 4.6);
+        const y = 1.2 + row * 0.4 + tier * 4.05;
+        box(THREE, scene, [0.3, 0.16, 29 - row * 0.18], [x, y, 0], row % 2 ? seat : concrete, false, false);
       }
     }
   }
-  box(THREE, scene, [54, 0.55, 1.3], [0, 16.2, 21.7], roof);
-  box(THREE, scene, [1.3, 0.55, 35], [28, 16.2, 0], roof);
-  box(THREE, scene, [1.3, 0.55, 35], [-28, 16.2, 0], roof);
+  box(THREE, scene, [54, 0.45, 0.8], [0, 9.2, 23.4], roof);
+  box(THREE, scene, [0.8, 0.45, 35], [28.1, 9.2, 0], roof);
+  box(THREE, scene, [0.8, 0.45, 35], [-28.1, 9.2, 0], roof);
   const crowd = makeCrowd(THREE, scene, lite);
 
   const tower = standard(THREE, '#9eabb5', 0.46, 0.58);
-  const fixture = new THREE.MeshStandardMaterial({ color: '#ecf7ff', emissive: '#bde6ff', emissiveIntensity: 4, roughness: 0.25 });
+  const fixture = new THREE.MeshStandardMaterial({ color: '#fffbed', emissive: '#c6e9ff', emissiveIntensity: 5, roughness: 0.2 });
   crowd.fixtures.push(fixture);
   for (const x of [-27, 27]) for (const z of [-24, 24]) {
     const base = new THREE.Vector3(x, 0, z);
-    const top = new THREE.Vector3(x * 1.06, 23, z * 1.05);
+    const top = new THREE.Vector3(x * 1.06, 17, z * 1.05);
     cylinderBetween(THREE, scene, base, top, 0.16, tower);
-    box(THREE, scene, [2.2, 0.5, 0.8], [top.x, 22.5, top.z], fixture, false, false);
+    for (let lamp = -1; lamp <= 1; lamp++) {
+      box(THREE, scene, [0.5, 0.28, 0.38], [top.x + lamp * 0.52, 16.5, top.z], fixture, false, false);
+    }
+    const halo = new THREE.Mesh(
+      new THREE.SphereGeometry(0.62, 12, 8),
+      new THREE.MeshBasicMaterial({ color: '#d9f3ff', transparent: true, opacity: 0.62, depthWrite: false, blending: THREE.AdditiveBlending }),
+    );
+    halo.position.set(top.x, 16.5, top.z);
+    scene.add(halo);
   }
   return crowd;
 }
@@ -280,9 +286,9 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   scene.background = null;
   scene.fog = new THREE.Fog(night ? '#142438' : '#d99a71', 65, 130);
   const camera = new THREE.PerspectiveCamera(31, 1, 0.1, 180);
-  const hemi = new THREE.HemisphereLight(night ? '#93b8e5' : '#fff0d4', '#162b22', night ? 1.0 : 1.75);
+  const hemi = new THREE.HemisphereLight(night ? '#d0e0e8' : '#fff0d4', '#162b22', night ? 0.85 : 1.75);
   scene.add(hemi);
-  const key = new THREE.DirectionalLight(night ? '#bbd9ff' : '#ffc27d', night ? 3.2 : 2.7);
+  const key = new THREE.DirectionalLight(night ? '#f0f6ff' : '#ffc27d', night ? 3.2 : 2.7);
   key.position.set(-20, night ? 34 : 12, night ? 13 : -24);
   key.castShadow = true;
   key.shadow.mapSize.set(lite ? 1024 : 2048, lite ? 1024 : 2048);
@@ -292,12 +298,26 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   key.shadow.bias = -0.00035; key.shadow.normalBias = 0.028;
   scene.add(key);
 
-  const ground = new THREE.Mesh(new THREE.PlaneGeometry(82, 62), standard(THREE, '#142a24', 0.96));
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(82, 62), standard(THREE, '#163b28', 0.96));
   ground.rotation.x = -Math.PI / 2; ground.position.y = -0.2; ground.receiveShadow = true; scene.add(ground);
   const textures = pitchTextures(THREE, lite);
-  const turf = new THREE.MeshStandardMaterial({ map: textures.color, normalMap: textures.normal, roughnessMap: textures.roughness, roughness: 0.88 });
+  const turf = new THREE.MeshStandardMaterial({ map: textures.color, normalMap: textures.normal, roughnessMap: textures.roughness, color: '#c0f5a8', emissive: '#092b12', emissiveIntensity: 0.12, roughness: 0.72, metalness: 0.025 });
   const pitch = new THREE.Mesh(new THREE.PlaneGeometry(FIELD.length, FIELD.width), turf);
   pitch.rotation.x = -Math.PI / 2; pitch.position.y = 0.005; pitch.receiveShadow = true; scene.add(pitch);
+  for (let i = 0; i < 12; i++) {
+    const stripe = new THREE.Mesh(
+      new THREE.PlaneGeometry(FIELD.length / 12, FIELD.width),
+      new THREE.MeshBasicMaterial({
+        color: i % 2 ? '#b6e9aa' : '#0b4a26',
+        transparent: true,
+        opacity: 0.07,
+        depthWrite: false,
+      }),
+    );
+    stripe.rotation.x = -Math.PI / 2;
+    stripe.position.set(-FIELD.length / 2 + (i + 0.5) * FIELD.length / 12, 0.012, 0);
+    scene.add(stripe);
+  }
   const mark = markingsTexture(THREE);
   const lines = new THREE.Mesh(new THREE.PlaneGeometry(FIELD.length, FIELD.width), new THREE.MeshBasicMaterial({ map: mark, transparent: true, opacity: 0.91, depthWrite: false }));
   lines.rotation.x = -Math.PI / 2; lines.position.y = 0.018; scene.add(lines);
@@ -355,7 +375,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   }
 
   const ballMap = ballTexture(THREE);
-  const ballMaterial = new THREE.MeshStandardMaterial({ map: ballMap, roughness: 0.3, metalness: 0.02 });
+  const ballMaterial = new THREE.MeshStandardMaterial({ map: ballMap, roughness: 0.3, metalness: 0.02, emissive: '#c8d8c9', emissiveIntensity: 0.22 });
   const ball = new THREE.Mesh(new THREE.SphereGeometry(0.11, lite ? 16 : 28, lite ? 12 : 20), ballMaterial);
   ball.castShadow = true; scene.add(ball);
   const ballShadow = new THREE.Mesh(new THREE.CircleGeometry(0.32, 20), new THREE.MeshBasicMaterial({ color: '#06150e', transparent: true, opacity: 0.32, depthWrite: false }));
@@ -415,9 +435,9 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   let elapsed = 0;
   let adTimer = 0;
   let disposed = false;
-  const glowMaterial = new THREE.MeshBasicMaterial({ color: '#e6f4ff', transparent: true, opacity: 0.8, depthWrite: false, blending: THREE.AdditiveBlending });
-  const glow = new THREE.Mesh(new THREE.SphereGeometry(1.6, 10, 6), glowMaterial);
-  glow.position.set(0, 26, 0); scene.add(glow);
+  const glowMaterial = new THREE.MeshBasicMaterial({ color: '#f58a49', transparent: true, opacity: 0.38, depthWrite: false, blending: THREE.AdditiveBlending, toneMapped: false });
+  const glow = new THREE.Mesh(new THREE.SphereGeometry(0.48, 20, 16), glowMaterial);
+  glow.position.set(15, 9, 24); scene.add(glow);
   let target = new THREE.Vector3(0, 0, 0);
   let cameraReady = false;
   let width = 1, height = 1;
@@ -428,7 +448,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     width = Math.max(1, w); height = Math.max(1, h);
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
-    camera.fov = height > width ? 108 : 32;
+    camera.fov = height > width ? 60 : 32;
     camera.updateProjectionMatrix();
   }
 
@@ -534,16 +554,20 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     const trackedX = cameraMode === 'broadcast'
       ? Math.max(-5.5, Math.min(5.5, world.ball.x * 0.28))
       : world.ball.x * 0.35;
-    target.set(trackedX, 0.55, world.ball.z * 0.3);
     const attackDir = teamDir(humanTeam, world.endsSwapped);
+    target.set(
+      trackedX + (portrait && cameraMode === 'broadcast' ? attackDir * 4 : 0),
+      0.55,
+      world.ball.z * 0.3 + (portrait ? 0 : 2.5),
+    );
     const desired = cameraMode === 'replay'
       ? new THREE.Vector3(world.ball.x - attackDir * 8, 5.2, world.ball.z + 13)
       : cameraMode === 'broadcast'
         ? portrait
-          ? new THREE.Vector3(target.x, 24, target.z - 24)
-          : new THREE.Vector3(target.x, 27, target.z - 48)
+          ? new THREE.Vector3(target.x - attackDir * 42, 20, target.z)
+          : new THREE.Vector3(target.x, 19, target.z - 48)
         : new THREE.Vector3(target.x - attackDir * 23, 14.5, target.z);
-    const zoom = cameraMode === 'replay' ? 36 : portrait ? 108 : Math.abs(world.ball.x) > 14 ? 29 : 32;
+    const zoom = cameraMode === 'replay' ? 36 : portrait ? 60 : Math.abs(world.ball.x) > 14 ? 30 : 32;
     camera.fov = damp(camera.fov, zoom, 2.4, dt);
     camera.updateProjectionMatrix();
     if (!cameraReady) {
@@ -564,11 +588,16 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     const dark = mode === 'night';
     drawSky(dark);
     scene.fog = new THREE.Fog(dark ? '#142438' : '#d99a71', 65, 130);
-    hemi.intensity = dark ? 1 : 1.75;
-    key.color.set(dark ? '#bbd9ff' : '#ffc27d');
-    key.intensity = dark ? 3.2 : 2.7;
+    hemi.intensity = dark ? 0.95 : 1.85;
+    key.color.set(dark ? '#f0f6ff' : '#ffc27d');
+    key.intensity = dark ? 4.0 : 3.5;
     for (const fixture of crowd.fixtures) fixture.emissiveIntensity = dark ? 4 : 0.16;
-    glowMaterial.opacity = dark ? 0.8 : 0.04;
+    glowMaterial.opacity = dark ? 0.02 : 0.42;
+    glowMaterial.color.set(dark ? '#d4e6ff' : '#f58a49');
+    glow.position.set(dark ? 0 : -12, dark ? 30 : 5.5, dark ? 0 : 24);
+    turf.color.set(dark ? '#c0f5a8' : '#f2da91');
+    turf.emissive.set(dark ? '#092b12' : '#25150a');
+    turf.emissiveIntensity = dark ? 0.12 : 0.08;
     renderer.toneMappingExposure = dark ? 1.25 : 1.1;
   }
 

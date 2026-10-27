@@ -12,8 +12,12 @@ export function Hud({ world, power, targetId, selectedId, watching, replaying }:
         <div className="g-soccer-clock"><b>{clock}'</b><span>{world.half === 1 ? '1ST HALF' : '2ND HALF'}</span></div>
       </div>
       {world.eventTime > 0 && world.event && (
-        <div className={`g-soccer-banner ${world.phase === 'goal' ? 'is-goal' : ''}`}>
-          <span>{world.phase === 'goal' ? 'MATCH MOMENT' : 'LIVE MATCH'}</span><b>{world.event}</b>
+        <div
+          key={world.event}
+          className={`g-soccer-banner ${world.phase === 'goal' ? 'is-goal' : ''}`}
+          style={{ animationDuration: `${Math.max(0.8, world.eventTime)}s` }}
+        >
+          <b>{world.event}</b>
         </div>
       )}
       {power !== null && (
