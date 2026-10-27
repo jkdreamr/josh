@@ -206,7 +206,7 @@ test('committed Worker specs match the generated game metadata', async () => {
   const online = [...metas, ...appGames].filter((m) => m.online);
   assert.deepEqual(ONLINE_SPECS, Object.fromEntries(online.map((m) => [m.id, { seats: m.online!.seats, ...(m.online!.lateJoin ? { lateJoin: true } : {}), ...(m.online!.bots ? { bots: true } : {}), ...(m.online!.quick ? { quick: true } : {}), ...(m.online!.watch ? { watch: true } : {}) }])));
   // Spectators: the games that draw the host's broadcasts for someone without a seat.
-  assert.deepEqual(online.filter((m) => m.online!.watch).map((m) => m.id).sort(), ['airhockey', 'badminton', 'coxbox', 'dead-week', 'pong', 'sumo', 'tank-maze', 'tennis', 'the-axe', 'wacky-walk']);
+  assert.deepEqual(online.filter((m) => m.online!.watch).map((m) => m.id).sort(), ['airhockey', 'badminton', 'coxbox', 'dead-week', 'pong', 'soccer', 'sumo', 'tank-maze', 'tennis', 'the-axe', 'wacky-walk']);
   for (const m of online) assert.ok(m.online!.seats >= 2 && m.online!.seats <= MAX_SEATS, `${m.id} seats`);
   // Bots fill empty seats beside people, so they need a room with more than two seats, and a game that plays them.
   for (const m of online.filter((game) => game.online!.bots)) assert.ok(m.online!.seats > 2 && !m.online!.race, `${m.id} bots`);
