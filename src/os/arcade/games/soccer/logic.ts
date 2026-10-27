@@ -436,6 +436,15 @@ function pointLineDistance(point: Point, start: Point, end: Point) {
   return Math.hypot(point.x - (start.x + dx * t), point.z - (start.z + dz * t));
 }
 
+export function tackleWindow(world: World, player: Player) {
+  const enemy = world.players.filter((p) => p.team !== player.team).sort((a, b) => distance(a, world.ball) - distance(b, world.ball))[0];
+  const ballDistance = distance(player, world.ball);
+  const angle = enemy ? approachAngle(player, enemy) : 0;
+  const exposed = !enemy || distance(enemy, world.ball) > 0.55;
+  const chance = (angle < 1.3 ? 0.55 : angle > 1.9 ? 0.15 : 0.3) * (enemy?.action === 'shield' ? 0.4 : 1);
+  return { enemy, ballDistance, angle, exposed, chance, probability: exposed ? 1 : chance * (angle > 1.9 ? 0.65 : 1), inReach: ballDistance < 1.5 && world.ball.y < 0.75 };
+}
+
 function approachAngle(player: Player, enemy: Player) {
   const from = Math.atan2(player.x - enemy.x, player.z - enemy.z);
   return Math.abs(Math.atan2(Math.sin(enemy.facing - from), Math.cos(enemy.facing - from)));
@@ -497,13 +506,11 @@ function applyAction(world: World, player: Player, command: Command) {
       player.cooldown = 0.95; player.action = 'slide';
       return;
     }
-    const enemy = world.players.filter((p) => p.team !== player.team).sort((a, b) => distance(a, world.ball) - distance(b, world.ball))[0];
-    const ballDistance = distance(player, world.ball);
-    if (ballDistance < 1.5 && world.ball.y < 0.75) {
-      const angle = enemy ? approachAngle(player, enemy) : 0;
-      const exposed = !enemy || distance(enemy, world.ball) > 0.55;
+    const window = tackleWindow(world, player);
+    const { enemy, ballDistance } = window;
+    if (window.inReach) {
+      const { angle, exposed, chance } = window;
       const behind = angle > 1.9;
-      const chance = (angle < 1.3 ? 0.55 : behind ? 0.15 : 0.3) * (enemy?.action === 'shield' ? 0.4 : 1);
       if (!exposed && behind && rng(world) < 0.35) {
         foul(world, player, enemy!);
         player.cooldown = 0.6; player.action = 'tackle-miss';
