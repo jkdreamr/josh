@@ -307,7 +307,6 @@ function buildGoal(THREE: Three, scene: T.Scene, sign: number, white: T.Material
   group.add(net);
   group.userData.netGeometry = netGeometry;
   group.userData.netBase = new Float32Array(vertices);
-  group.userData.goalSign = sign;
   scene.add(group);
   return group;
 }
