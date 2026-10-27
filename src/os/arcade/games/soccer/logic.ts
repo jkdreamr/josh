@@ -1,12 +1,27 @@
 import { stepBall, type BallState } from './physics.ts';
+import { FIELD } from './field.ts';
+export { FIELD } from './field.ts';
 
-export const FIELD = { length: 42, width: 26, goalWidth: 5, goalHeight: 2.2, penaltyDepth: 8, penaltyWidth: 14, centerRadius: 4 } as const;
 export const STEP = 1 / 60;
-export const PLAYER_COUNT = 10;
+export const PLAYER_COUNT = 22;
+export const TEAM_SIZE = 11;
 export type Team = 0 | 1;
-export type Slot = 'GK' | 'DEF' | 'LM' | 'RM' | 'FWD';
+export type Slot = 'GK' | 'LB' | 'CB' | 'RB' | 'CM' | 'LW' | 'ST' | 'RW';
 export type Action = 'pass' | 'through' | 'lob' | 'shoot' | 'finesse' | 'tackle' | 'slide' | 'skill';
 export type Point = { x: number; z: number };
+export const FORMATION = [
+  { slot: 'GK', x: -50, z: 0 },
+  { slot: 'LB', x: -36, z: -24 },
+  { slot: 'CB', x: -39, z: -9 },
+  { slot: 'CB', x: -39, z: 9 },
+  { slot: 'RB', x: -36, z: 24 },
+  { slot: 'CM', x: -22, z: -13 },
+  { slot: 'CM', x: -26, z: 0 },
+  { slot: 'CM', x: -22, z: 13 },
+  { slot: 'LW', x: -8, z: -26 },
+  { slot: 'ST', x: -2, z: 0 },
+  { slot: 'RW', x: -8, z: 26 },
+] as const satisfies readonly { slot: Slot; x: number; z: number }[];
 export type Player = Point & {
   id: number;
   team: Team;
@@ -45,22 +60,42 @@ export type World = {
   passControl: boolean;
 };
 
-const slots: Slot[] = ['GK', 'DEF', 'LM', 'RM', 'FWD'];
-const formations: Point[] = [{ x: -18.4, z: 0 }, { x: -12, z: 0 }, { x: -8, z: -6 }, { x: -8, z: 6 }, { x: -3.5, z: 0 }];
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
+export const teamOf = (id: number): Team => id < TEAM_SIZE ? 0 : 1;
+export const jerseyNumber = (id: number) => id % TEAM_SIZE + 1;
 export const teamDir = (team: Team, swapped = false) => (team === 0 ? 1 : -1) * (swapped ? -1 : 1);
 export const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.z - b.z);
+
+function placeKickoffPositions(world: World, kickoffTeam: Team) {
+  for (const player of world.players) {
+    const formation = FORMATION[player.id % TEAM_SIZE]!;
+    const direction = teamDir(player.team, world.endsSwapped);
+    player.x = formation.x * direction;
+    player.z = formation.z;
+    if (player.slot === 'ST') {
+      if (player.team === kickoffTeam) {
+        player.x = -direction * 2;
+        player.z = 0;
+      } else {
+        player.x = -direction * (FIELD.centerRadius + 0.25);
+        player.z = 0;
+      }
+    }
+    player.vx = 0;
+    player.vz = 0;
+  }
+}
 
 export function createWorld(seed = 71423, halfLength = 120, humans: 1 | 2 = 1): World {
   const players: Player[] = [];
   for (const team of [0, 1] as const) {
-    for (let i = 0; i < 5; i++) {
-      const p = formations[i]!;
+    for (let i = 0; i < TEAM_SIZE; i++) {
+      const p = FORMATION[i]!;
       const dir = teamDir(team);
-      const homeHuman = team === 0 && (i === 1 || (humans === 2 && i === 2));
+      const homeHuman = team === 0 && (i === 6 || (humans === 2 && i === 9));
       players.push({
-        id: team * 5 + i, team, slot: slots[i]!, x: p.x * dir, z: p.z, vx: 0, vz: 0,
-        facing: dir * Math.PI / 2, stamina: 1, human: homeHuman, controlled: homeHuman && (i === 1 || humans === 1),
+        id: team * TEAM_SIZE + i, team, slot: p.slot, x: p.x * dir, z: p.z, vx: 0, vz: 0,
+        facing: dir * Math.PI / 2, stamina: 1, human: homeHuman, controlled: homeHuman,
         cooldown: 0, action: 'idle',
       });
     }
@@ -69,9 +104,20 @@ export function createWorld(seed = 71423, halfLength = 120, humans: 1 | 2 = 1): 
     players, ball: { x: 0, y: 0.11, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false },
     score: [0, 0], clock: halfLength, halfLength, half: 1, endsSwapped: false,
     phase: 'restart', restart: 'kickoff', restartTeam: 0, restartAt: { x: 0, z: 0 },
-    lastTouch: 0, seed: seed >>> 0 || 1, event: 'kick off', eventTime: 1.35, restartClock: 0, controlled: [1, 6], kickEvent: null, passTarget: null, passControl: false,
+    lastTouch: 0, seed: seed >>> 0 || 1, event: 'kick off', eventTime: 1.35, restartClock: 0, controlled: [6, TEAM_SIZE + 6], kickEvent: null, passTarget: null, passControl: false,
   };
+  placeKickoffPositions(world, 0);
   return world;
+}
+
+export function restartTaker(world: World) {
+  return (world.restart === 'goal-kick'
+    ? world.players.find((player) => player.team === world.restartTeam && player.slot === 'GK')
+    : world.restart === 'kickoff'
+      ? world.players.find((player) => player.team === world.restartTeam && player.slot === 'ST')
+      : undefined)
+    ?? world.players.find((player) => player.team === world.restartTeam && player.controlled)
+    ?? world.players.filter((player) => player.team === world.restartTeam).sort((a, b) => distance(a, world.restartAt) - distance(b, world.restartAt))[0]!;
 }
 
 export function rng(world: World) {
@@ -104,7 +150,7 @@ export function movePlayer(player: Player, input: Point, sprint: boolean, carryi
   const magnitude = Math.hypot(input.x, input.z);
   const nx = magnitude > 1 ? input.x / magnitude : input.x;
   const nz = magnitude > 1 ? input.z / magnitude : input.z;
-  const top = (sprint && player.stamina > 0.07 ? 8 : 6) * (carrying ? 0.88 : 1);
+  const top = (sprint && player.stamina > 0.07 ? 9 : 7) * (carrying ? 0.88 : 1);
   const targetX = nx * top;
   const targetZ = nz * top;
   const accel = 34 * dt;
@@ -122,8 +168,8 @@ export function movePlayer(player: Player, input: Point, sprint: boolean, carryi
   } else {
     player.facing = Math.atan2(player.vx, player.vz);
   }
-  player.x = clamp(player.x + player.vx * dt, -20.7, 20.7);
-  player.z = clamp(player.z + player.vz * dt, -12.6, 12.6);
+  player.x = clamp(player.x + player.vx * dt, -FIELD.length / 2 + 0.4, FIELD.length / 2 - 0.4);
+  player.z = clamp(player.z + player.vz * dt, -FIELD.width / 2 + 0.4, FIELD.width / 2 - 0.4);
   player.stamina = clamp(player.stamina + (sprint && magnitude > 0.2 ? -0.11 : 0.06) * dt, 0, 1);
   player.cooldown = Math.max(0, player.cooldown - dt);
 }
@@ -144,7 +190,7 @@ function kick(world: World, player: Player, action: Action, command: Command) {
   let targetZ = player.z + aim.z;
   if (receiver) {
     const distanceToReceiver = distance(player, receiver);
-    const passSpeed = Math.max(3, (6 + distanceToReceiver * 0.72) * (0.45 + charge * 0.75));
+    const passSpeed = Math.min(25, Math.max(3, (6 + distanceToReceiver * 0.72) * (0.45 + charge * 0.75)));
     const travelTime = distanceToReceiver / passSpeed;
     targetX = receiver.x + receiver.vx * travelTime;
     targetZ = receiver.z + receiver.vz * travelTime;
@@ -182,11 +228,11 @@ function kick(world: World, player: Player, action: Action, command: Command) {
   const error = (rng(world) - 0.5) * (shotError + charge * (action === 'finesse' ? 0.025 : 0.09));
   const a = baseAngle + error;
   const speed = action === 'pass'
-    ? Math.max(3, (6 + distanceToTarget * 0.72) * (0.45 + charge * 0.75))
+    ? Math.min(25, Math.max(3, (6 + distanceToTarget * 0.72) * (0.45 + charge * 0.75)))
     : action === 'through' ? 11 + charge * 11
-      : action === 'lob' ? 10 + charge * 9
+      : action === 'lob' ? 14 + charge * 10
         : action === 'finesse' ? 15 + charge * 8
-          : 14 + charge * 16;
+          : 15 + charge * 17;
   const loft = action === 'lob'
     ? 0.42
     : action === 'through'
@@ -256,9 +302,9 @@ function applyAction(world: World, player: Player, command: Command) {
   if (!command.action || !command.pressed || player.cooldown > 0) return;
   const capSpeed = () => {
     const speed = Math.hypot(player.vx, player.vz);
-    if (speed > 8) {
-      player.vx = player.vx / speed * 8;
-      player.vz = player.vz / speed * 8;
+    if (speed > 9) {
+      player.vx = player.vx / speed * 9;
+      player.vz = player.vz / speed * 9;
     }
   };
   if (command.action === 'tackle' || command.action === 'slide') {
@@ -271,8 +317,8 @@ function applyAction(world: World, player: Player, command: Command) {
       const facingError = Math.abs(Math.atan2(Math.sin(towardBall - player.facing), Math.cos(towardBall - player.facing)));
       if (behind && command.action === 'slide') {
         world.event = 'foul'; world.eventTime = 1.5;
-        setRestart(world, enemy.team, 'free-kick', { x: world.ball.x, z: world.ball.z });
-        if (Math.abs(world.ball.x) > FIELD.length / 2 - FIELD.penaltyDepth) world.restart = 'penalty';
+        const restart = Math.abs(world.ball.x) > FIELD.length / 2 - FIELD.penaltyDepth ? 'penalty' : 'free-kick';
+        setRestart(world, enemy.team, restart, { x: world.ball.x, z: world.ball.z });
       } else if (command.action === 'slide' || facingError < 1.3) {
         const touch = command.action === 'slide' ? 0.58 : 0.42;
         world.ball.x = player.x + Math.sin(player.facing) * touch;
@@ -317,7 +363,14 @@ function setRestart(world: World, team: Team, restart: Exclude<Restart, null>, a
   world.phase = 'restart';
   world.restart = restart;
   world.restartTeam = team;
-  world.restartAt = { x: clamp(at.x, -20, 20), z: clamp(at.z, -12, 12) };
+  const direction = teamDir(team, world.endsSwapped);
+  const point = restart === 'penalty'
+    ? { x: direction * (FIELD.length / 2 - FIELD.penaltySpot), z: 0 }
+    : at;
+  world.restartAt = {
+    x: clamp(point.x, -FIELD.length / 2 + 0.15, FIELD.length / 2 - 0.15),
+    z: clamp(point.z, -FIELD.width / 2 + 0.15, FIELD.width / 2 - 0.15),
+  };
   world.ball = { x: world.restartAt.x, y: 0.11, z: world.restartAt.z, vx: 0, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false };
   world.event = restart === 'goal-kick' ? 'goal kick' : restart;
   world.eventTime = 2;
@@ -328,17 +381,27 @@ export function resolveBoundary(world: World) {
   const b = world.ball;
   if (Math.abs(b.z) > FIELD.width / 2 + 0.04) {
     const awarded: Team = world.lastTouch === 0 ? 1 : 0;
-    setRestart(world, awarded, 'kick-in', { x: clamp(b.x, -20, 20), z: Math.sign(b.z) * (FIELD.width / 2 - 0.15) });
+    setRestart(world, awarded, 'kick-in', {
+      x: clamp(b.x, -FIELD.length / 2 + 0.15, FIELD.length / 2 - 0.15),
+      z: Math.sign(b.z) * (FIELD.width / 2 - 0.15),
+    });
     return 'kick-in';
   }
   if (Math.abs(b.x) > FIELD.length / 2 + 0.12) {
     const defending: Team = b.x > 0 ? (world.endsSwapped ? 0 : 1) : (world.endsSwapped ? 1 : 0);
     const attacking: Team = defending === 0 ? 1 : 0;
     if (world.lastTouch === defending) {
-      setRestart(world, attacking, 'corner', { x: Math.sign(b.x) * 20.6, z: Math.sign(b.z || 1) * 12.1 });
+      setRestart(world, attacking, 'corner', {
+        x: Math.sign(b.x) * (FIELD.length / 2 - 0.15),
+        z: Math.sign(b.z || 1) * (FIELD.width / 2 - 0.15),
+      });
       return 'corner';
     }
-    setRestart(world, defending, 'goal-kick', { x: Math.sign(b.x) * 15, z: 0 });
+    const goalDirection = teamDir(defending, world.endsSwapped);
+    setRestart(world, defending, 'goal-kick', {
+      x: -goalDirection * (FIELD.length / 2 - FIELD.goalAreaDepth),
+      z: 0,
+    });
     return 'goal-kick';
   }
   return null;
@@ -409,44 +472,44 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
     if (world.phase === 'half-time') {
       world.half = 2; world.endsSwapped = !world.endsSwapped; world.clock = world.halfLength;
         world.phase = 'restart'; world.restart = 'kickoff'; world.restartTeam = 1; world.event = 'second half'; world.eventTime = 2; world.restartClock = 0;
+        world.restartAt = { x: 0, z: 0 };
+        placeKickoffPositions(world, 1);
       } else {
         world.phase = 'restart';
         world.ball.x = 0; world.ball.z = 0; world.ball.y = 0.11;
         world.restartAt = { x: 0, z: 0 };
         world.eventTime = 2;
         world.restartClock = 0;
+        placeKickoffPositions(world, world.restartTeam);
       }
     }
     return;
   }
   if (world.phase === 'restart') {
     world.restartClock += t;
+    const taker = restartTaker(world);
     for (const p of world.players) {
       if (p.team === world.restartTeam && p.controlled) movePlayer(p, commands.get(p.id)?.move ?? { x: 0, z: 0 }, !!commands.get(p.id)?.sprint, false, t);
-      if (p.team !== world.restartTeam && world.restart === 'kickoff') {
+      if (world.restart === 'kickoff' && p.id !== taker.id) {
         const direction = teamDir(p.team, world.endsSwapped);
         if (p.x * direction > 0) p.x = -direction * 0.8;
-        if (Math.hypot(p.x, p.z) < 4) {
-          const angle = Math.atan2(p.z, p.x);
-          p.x = Math.cos(angle) * 4;
-          p.z = Math.sin(angle) * 4;
+        if (Math.hypot(p.x, p.z) < FIELD.centerRadius + 0.25) {
+          const radius = FIELD.centerRadius + 0.25;
+          const x = Math.sqrt(Math.max(0, radius * radius - Math.min(radius, Math.abs(p.z)) ** 2));
+          p.x = -direction * x;
         }
-      } else if (p.team !== world.restartTeam && distance(p, world.restartAt) < 4) {
+      } else if (p.team !== world.restartTeam && distance(p, world.restartAt) < FIELD.centerRadius) {
         const dx = p.x - world.restartAt.x;
         const dz = p.z - world.restartAt.z;
         const d = Math.hypot(dx, dz) || 1;
-        p.x = world.restartAt.x + dx / d * 4;
-        p.z = world.restartAt.z + dz / d * 4;
+        p.x = world.restartAt.x + dx / d * FIELD.centerRadius;
+        p.z = world.restartAt.z + dz / d * FIELD.centerRadius;
       }
     }
-    const taker = (world.restart === 'goal-kick'
-      ? world.players.find((p) => p.team === world.restartTeam && p.slot === 'GK')
-      : undefined)
-      ?? world.players.find((p) => p.team === world.restartTeam && p.controlled)
-      ?? world.players.filter((p) => p.team === world.restartTeam).sort((a, b) => distance(a, world.restartAt) - distance(b, world.restartAt))[0]!;
     const action = commands.get(taker.id);
     world.clock = Math.max(0, world.clock - clockStep);
-    const moved = Math.hypot(action?.move.x ?? 0, action?.move.z ?? 0) > 0.05;
+    const moved = world.players.some((player) => player.team === world.restartTeam && player.controlled
+      && Math.hypot(commands.get(player.id)?.move.x ?? 0, commands.get(player.id)?.move.z ?? 0) > 0.05);
     if ((action?.pressed && action.action) || moved || world.restartClock >= 10) {
       world.phase = 'live';
       world.ball.x = world.restartAt.x; world.ball.z = world.restartAt.z; world.ball.y = 0.11;

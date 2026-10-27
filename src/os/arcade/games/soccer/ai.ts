@@ -1,4 +1,4 @@
-import { createWorld, distance, FIELD, stepWorld, teamDir, type Command, type Player, type Team, type World } from './logic.ts';
+import { createWorld, distance, FIELD, FORMATION, restartTaker, stepWorld, teamDir, TEAM_SIZE, type Command, type Player, type Team, type World } from './logic.ts';
 
 export const LEVEL_NAMES = ['easy', 'normal', 'hard'] as const;
 export type Level = (typeof LEVEL_NAMES)[number];
@@ -31,13 +31,13 @@ function laneScore(world: World, from: Player, to: Player) {
 export function keeperTarget(world: World, keeper: Player, target = { x: 0, z: 0 }) {
   const direction = teamDir(keeper.team, world.endsSwapped);
   const goalX = -direction * (FIELD.length / 2 - 0.35);
-  const oneOnOne = Math.abs(world.ball.x - goalX) < 10 && Math.abs(world.ball.z) < 6;
+  const oneOnOne = Math.abs(world.ball.x - goalX) < FIELD.penaltyDepth * 0.6 && Math.abs(world.ball.z) < FIELD.penaltyWidth * 0.15;
   const plane = goalX + direction * 1.4;
   const towardGoal = world.ball.vx * -direction > 0.4;
   const flight = towardGoal ? clamp((plane - world.ball.x) / world.ball.vx, 0, 2.5) : 0;
   const interceptZ = world.ball.z + world.ball.vz * flight;
   target.x = goalX + (world.ball.x - goalX) * (oneOnOne ? 0.22 : 0.08);
-  target.z = clamp(interceptZ * (oneOnOne ? 0.72 : 0.55), -4.4, 4.4);
+  target.z = clamp(interceptZ * (oneOnOne ? 0.72 : 0.55), -FIELD.goalWidth / 2 - 0.8, FIELD.goalWidth / 2 + 0.8);
   return target;
 }
 
@@ -58,13 +58,13 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
     : 0;
   const lane = clamp(player.z * -0.08 + evade, -0.8, 0.8);
   if (!decisionTick) return { move: { x: dir, z: lane }, sprint: goalDistance > 9, aim: { x: dir, z: lane * 0.45 } };
-  const angle = Math.max(0, 1 - Math.abs(player.z) / 9);
-  const xg = clamp((17 - goalDistance) / 17, 0, 1) * angle;
+  const angle = Math.max(0, 1 - Math.abs(player.z) / (FIELD.penaltyWidth / 4));
+  const xg = clamp((FIELD.penaltyDepth - goalDistance) / FIELD.penaltyDepth, 0, 1) * angle;
   if (pressure < 0.9 && player.x * dir < -7) {
     return { move: { x: -dir, z: player.z > 0 ? -0.7 : 0.7 }, action: 'lob', pressed: true, power: 0.78, aim: { x: dir, z: player.z > 0 ? -0.7 : 0.7 } };
   }
-  if (xg > 0.35 && goalDistance < 20 && Math.abs(player.z) < 10 && pressure > 1.4) {
-    const targetZ = -Math.sign(player.z) * 2.1;
+  if (xg > 0.35 && goalDistance < FIELD.penaltyDepth * 1.2 && Math.abs(player.z) < FIELD.penaltyWidth / 4 && pressure > 1.4) {
+    const targetZ = -Math.sign(player.z) * FIELD.goalWidth * 0.29;
     const corner = (targetZ - player.z) / Math.max(8, goalDistance);
     return { move: { x: 0, z: 0 }, action: 'shoot', pressed: true, power: clamp(0.7 + (17 - goalDistance) * 0.012, 0.64, 0.88), aim: { x: dir, z: corner } };
   }
@@ -78,13 +78,13 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
       if (opponent.team === player.team) continue;
       space = Math.min(space, distance(opponent, target));
     }
-    const through = (target.slot === 'FWD' || target.slot === 'LM' || target.slot === 'RM')
-      && Math.abs(target.x - player.x) > 3 && space > 2.2;
+    const through = (target.slot === 'ST' || target.slot === 'LW' || target.slot === 'RW')
+      && Math.abs(target.x - player.x) > FIELD.goalWidth * 0.6 && space > FIELD.goalWidth * 0.3;
     const optionNoise = Math.sin((tick + target.id * 13 + player.id * 7) * 0.37) * noise[level];
-    const score = forward * 0.11 + Math.min(5, space) * 0.13 - danger * 0.5 + optionNoise;
+    const score = forward * 0.11 + Math.min(FIELD.goalWidth, space) * 0.13 - danger * 0.5 + optionNoise;
     if (!candidate || score > candidate.score) candidate = { target, through, score, lane: danger };
   }
-  if (candidate && candidate.score > 0.08 && (pressure < 4.5 || candidate.score > 0.7)) {
+  if (candidate && candidate.score > 0.08 && (pressure < FIELD.goalWidth * 0.6 || candidate.score > 0.7)) {
     const target = candidate.target;
     const lead = candidate.through ? 1.5 : 0;
     return {
@@ -119,18 +119,14 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
     if (p.human || p.controlled) continue;
     if (world.phase !== 'live') {
       if (world.phase === 'restart' && p.team === world.restartTeam) {
-        const taker = (world.restart === 'goal-kick'
-          ? world.players.find((candidate) => candidate.team === world.restartTeam && candidate.slot === 'GK')
-          : undefined)
-          ?? world.players.find((candidate) => candidate.team === world.restartTeam && candidate.controlled)
-          ?? world.players.filter((candidate) => candidate.team === world.restartTeam).sort((a, b) => distance(a, world.restartAt) - distance(b, world.restartAt))[0]!;
+        const taker = restartTaker(world);
         if (p.id === taker.id) commands.set(p.id, { move: { x: 0, z: 0 }, action: 'pass', pressed: true, aim: { x: teamDir(p.team, world.endsSwapped), z: 0 } });
       }
       continue;
     }
     if (p.slot === 'GK') {
       const target = keeperTarget(world, p, keeperTargetScratch);
-      const oneOnOne = Math.abs(world.ball.x - target.x) < 10 && Math.abs(world.ball.z) < 6;
+      const oneOnOne = Math.abs(world.ball.x - target.x) < FIELD.penaltyDepth * 0.6 && Math.abs(world.ball.z) < FIELD.penaltyWidth * 0.15;
       if (carrier?.id === p.id) {
         if (world.event === 'keeper claims it' && world.eventTime > 0.05) {
           commands.set(p.id, { move: { x: 0, z: 0 } });
@@ -156,7 +152,7 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
       if (reacts && Math.hypot(world.ball.vx, world.ball.vy, world.ball.vz) > 16) {
         p.action = Math.abs(target.z - p.z) <= 2.4 ? 'dive' : 'ready';
       }
-      commands.set(p.id, { move: reacts ? { x: target.x - p.x, z: target.z - p.z } : { x: p.vx, z: p.vz }, sprint: oneOnOne || distance(p, target) > 2.5 });
+      commands.set(p.id, { move: reacts ? { x: target.x - p.x, z: target.z - p.z } : { x: p.vx, z: p.vz }, sprint: oneOnOne || distance(p, target) > FIELD.goalWidth * 0.35 });
       continue;
     }
     if (carrier?.id === p.id) {
@@ -180,22 +176,28 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
       continue;
     }
     const attackDir = teamDir(p.team, world.endsSwapped);
+    const home = FORMATION[p.id % TEAM_SIZE]!;
+    const defender = p.slot === 'LB' || p.slot === 'CB' || p.slot === 'RB';
+    const wide = p.slot === 'LW' || p.slot === 'RW';
     let targetX: number;
     let targetZ: number;
     if (ownCarrier) {
-      if (p.slot === 'FWD') {
+      if (p.slot === 'ST') {
         let lastDefenderProgress = -Infinity;
         for (const candidate of world.players) {
           if (candidate.team === p.team || !outfield(candidate)) continue;
           lastDefenderProgress = Math.max(lastDefenderProgress, candidate.x * attackDir);
         }
-        targetX = attackDir * Math.max(ownCarrier.x * attackDir + 6, lastDefenderProgress - 1);
-        targetZ = -Math.sign(ownCarrier.z) * 3;
-      } else if (p.slot === 'LM' || p.slot === 'RM') {
-        targetX = ownCarrier.x + attackDir * 2;
-        targetZ = p.slot === 'LM' ? -8 : 8;
+        targetX = attackDir * Math.max(ownCarrier.x * attackDir + FIELD.goalWidth * 0.8, lastDefenderProgress - FIELD.goalWidth * 0.25);
+        targetZ = -Math.sign(ownCarrier.z) * FIELD.goalWidth * 0.4;
+      } else if (wide) {
+        targetX = ownCarrier.x + attackDir * FIELD.goalWidth * 0.4;
+        targetZ = home.z;
+      } else if (p.slot === 'CM') {
+        targetX = ownCarrier.x - attackDir * FIELD.goalWidth;
+        targetZ = home.z * 0.35;
       } else {
-        targetX = ownCarrier.x - attackDir * 7;
+        targetX = ownCarrier.x - attackDir * FIELD.penaltyDepth * 0.42;
         targetZ = ownCarrier.z * 0.3;
       }
     } else {
@@ -216,25 +218,28 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
           targetX = world.ball.x;
           targetZ = world.ball.z;
         }
-      } else if (p.slot === 'DEF') {
+      } else if (defender) {
         const ownGoalX = -attackDir * (FIELD.length / 2);
         const dx = ownGoalX - world.ball.x;
         const dz = -world.ball.z;
         const length = Math.hypot(dx, dz) || 1;
         const keeper = world.players.find((candidate) => candidate.team === p.team && candidate.slot === 'GK')!;
-        const goalSideX = world.ball.x + dx / length * 7;
+        const goalSideX = world.ball.x + dx / length * FIELD.goalWidth * 0.96;
         targetX = attackDir * Math.max(goalSideX * attackDir, keeper.x * attackDir + 0.75);
-        targetZ = world.ball.z + dz / length * 7;
-      } else if (p.slot === 'LM' || p.slot === 'RM') {
-        targetX = world.ball.x - attackDir * 3.5;
-        targetZ = (p.slot === 'LM' ? -6 : 6) + 0.35 * world.ball.z;
+        targetZ = world.ball.z + dz / length * FIELD.goalWidth * 0.96;
+      } else if (wide) {
+        targetX = world.ball.x - attackDir * FIELD.goalWidth * 0.48;
+        targetZ = home.z + 0.35 * world.ball.z;
+      } else if (p.slot === 'CM') {
+        targetX = world.ball.x - attackDir * FIELD.goalWidth * 0.48;
+        targetZ = home.z + 0.2 * world.ball.z;
       } else {
-        targetX = world.ball.x + attackDir * 2;
+        targetX = world.ball.x + attackDir * FIELD.goalWidth * 0.28;
         targetZ = -0.4 * world.ball.z;
       }
     }
-    targetX = clamp(targetX, -18.8, 18.8);
-    targetZ = clamp(targetZ, -11, 11);
+    targetX = clamp(targetX, -FIELD.length / 2 + 1, FIELD.length / 2 - 1);
+    targetZ = clamp(targetZ, -FIELD.width / 2 + 1, FIELD.width / 2 - 1);
     targets.set(p.id, { x: targetX, z: targetZ });
   }
   const separated = world.players.filter((player) => outfield(player)
@@ -262,10 +267,10 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
         gap = 1;
       }
       const push = (4 - gap) / 2;
-      targetA.x = clamp(targetA.x - dx / gap * push, -18.8, 18.8);
-      targetA.z = clamp(targetA.z - dz / gap * push, -11, 11);
-      targetB.x = clamp(targetB.x + dx / gap * push, -18.8, 18.8);
-      targetB.z = clamp(targetB.z + dz / gap * push, -11, 11);
+      targetA.x = clamp(targetA.x - dx / gap * push, -FIELD.length / 2 + 1, FIELD.length / 2 - 1);
+      targetA.z = clamp(targetA.z - dz / gap * push, -FIELD.width / 2 + 1, FIELD.width / 2 - 1);
+      targetB.x = clamp(targetB.x + dx / gap * push, -FIELD.length / 2 + 1, FIELD.length / 2 - 1);
+      targetB.z = clamp(targetB.z + dz / gap * push, -FIELD.width / 2 + 1, FIELD.width / 2 - 1);
     }
   }
   for (const p of separated) {

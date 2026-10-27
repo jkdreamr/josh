@@ -1,3 +1,5 @@
+import { FIELD } from './field.ts';
+
 type Three = typeof import('three');
 
 function canvasTexture(THREE: Three, canvas: HTMLCanvasElement, color = true) {
@@ -60,22 +62,29 @@ export function pitchTextures(THREE: Three, lite: boolean) {
 }
 
 export function markingsTexture(THREE: Three) {
+  const pixelsPerMeter = 20;
   const canvas = document.createElement('canvas');
-  canvas.width = 1680; canvas.height = 1040;
+  canvas.width = FIELD.length * pixelsPerMeter; canvas.height = FIELD.width * pixelsPerMeter;
   const ctx = canvas.getContext('2d')!;
+  const x = (value: number) => (value + FIELD.length / 2) * pixelsPerMeter;
+  const z = (value: number) => (value + FIELD.width / 2) * pixelsPerMeter;
   ctx.strokeStyle = 'rgba(255,255,247,.98)';
   ctx.lineWidth = 3.5;
-  ctx.strokeRect(4, 4, 1672, 1032);
-  ctx.beginPath(); ctx.moveTo(840, 4); ctx.lineTo(840, 1036); ctx.stroke();
-  ctx.beginPath(); ctx.arc(840, 520, 160, 0, Math.PI * 2); ctx.stroke();
-  ctx.beginPath(); ctx.arc(840, 520, 5, 0, Math.PI * 2); ctx.fillStyle = '#f8f8e8'; ctx.fill();
+  ctx.strokeRect(4, 4, canvas.width - 8, canvas.height - 8);
+  ctx.beginPath(); ctx.moveTo(x(0), 4); ctx.lineTo(x(0), canvas.height - 4); ctx.stroke();
+  ctx.beginPath(); ctx.arc(x(0), z(0), FIELD.centerRadius * pixelsPerMeter, 0, Math.PI * 2); ctx.stroke();
+  ctx.beginPath(); ctx.arc(x(0), z(0), 5, 0, Math.PI * 2); ctx.fillStyle = '#f8f8e8'; ctx.fill();
   for (const sign of [-1, 1]) {
-    const x = sign < 0 ? 4 : 1360;
-    ctx.strokeRect(x, 240, 320, 560);
-    ctx.strokeRect(sign < 0 ? 4 : 1480, 350, 200, 340);
-    ctx.beginPath(); ctx.arc(sign < 0 ? 324 : 1356, 520, 5, 0, Math.PI * 2); ctx.fill();
+    const edge = sign * FIELD.length / 2;
+    const boxStart = sign < 0 ? edge : edge - FIELD.penaltyDepth;
+    const goalStart = sign < 0 ? edge : edge - FIELD.goalAreaDepth;
+    ctx.strokeRect(x(boxStart), z(-FIELD.penaltyWidth / 2), FIELD.penaltyDepth * pixelsPerMeter, FIELD.penaltyWidth * pixelsPerMeter);
+    ctx.strokeRect(x(goalStart), z(-FIELD.goalAreaWidth / 2), FIELD.goalAreaDepth * pixelsPerMeter, FIELD.goalAreaWidth * pixelsPerMeter);
+    const spotX = sign * (FIELD.length / 2 - FIELD.penaltySpot);
+    ctx.beginPath(); ctx.arc(x(spotX), z(0), 5, 0, Math.PI * 2); ctx.fill();
     ctx.beginPath();
-    ctx.arc(sign < 0 ? 324 : 1356, 520, 160, sign < 0 ? -0.78 : Math.PI - 0.78, sign < 0 ? 0.78 : Math.PI + 0.78);
+    const arcAngle = Math.acos((FIELD.penaltyDepth - FIELD.penaltySpot) / FIELD.centerRadius);
+    ctx.arc(x(spotX), z(0), FIELD.centerRadius * pixelsPerMeter, sign < 0 ? -arcAngle : Math.PI - arcAngle, sign < 0 ? arcAngle : Math.PI + arcAngle);
     ctx.stroke();
   }
   return canvasTexture(THREE, canvas);

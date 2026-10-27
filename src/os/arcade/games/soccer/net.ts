@@ -1,4 +1,4 @@
-import type { Command, World } from './logic.ts';
+import { FIELD, PLAYER_COUNT, teamOf, type Command, type World } from './logic.ts';
 
 export type MovePacket = { t: 'soccer'; k: 'mv'; r: number; seq: number; seat: number; x: number; z: number; ax: number; az: number; power: number; buttons: number; held: number };
 export type SnapshotPacket = { t: 'soccer'; k: 's'; r: number; seq: number; state: World };
@@ -11,12 +11,13 @@ const inRange = (v: unknown, min: number, max: number) => typeof v === 'number' 
 function validWorld(value: unknown): value is World {
   if (!value || typeof value !== 'object') return false;
   const w = value as Partial<World>;
-  const slots = ['GK', 'DEF', 'LM', 'RM', 'FWD'];
+  const slots = ['GK', 'LB', 'CB', 'RB', 'CM', 'LW', 'ST', 'RW'];
   const phases = ['live', 'restart', 'goal', 'half-time', 'full-time'];
   const restarts = ['kickoff', 'kick-in', 'corner', 'goal-kick', 'free-kick', 'penalty', null];
   const ball = w.ball;
-  if (!Array.isArray(w.players) || w.players.length !== 10 || !w.players.every((p, i) => p && p.id === i
-    && p.team === (i < 5 ? 0 : 1) && slots.includes(p.slot) && inRange(p.x, -25, 25) && inRange(p.z, -15, 15)
+  if (!Array.isArray(w.players) || w.players.length !== PLAYER_COUNT || !w.players.every((p, i) => p && p.id === i
+    && p.team === teamOf(i) && slots.includes(p.slot)
+    && inRange(p.x, -FIELD.length / 2 - 2, FIELD.length / 2 + 2) && inRange(p.z, -FIELD.width / 2 - 2, FIELD.width / 2 + 2)
     && inRange(p.vx, -10, 10) && inRange(p.vz, -10, 10) && inRange(p.facing, -Math.PI * 2, Math.PI * 2)
     && inRange(p.stamina, 0, 1) && typeof p.human === 'boolean' && typeof p.controlled === 'boolean'
     && inRange(p.cooldown, 0, 30) && typeof p.action === 'string' && p.action.length <= 24)) return false;
@@ -26,14 +27,14 @@ function validWorld(value: unknown): value is World {
   if (!Array.isArray(w.score) || w.score.length !== 2 || !w.score.every((n) => Number.isInteger(n) && n >= 0 && n <= 99)
     || !inRange(w.clock, 0, 360) || !inRange(w.halfLength, 1, 360) || (w.half !== 1 && w.half !== 2)
     || typeof w.endsSwapped !== 'boolean' || !phases.includes(w.phase ?? '') || !restarts.includes(w.restart ?? null)
-    || (w.restartTeam !== 0 && w.restartTeam !== 1) || !w.restartAt || !inRange(w.restartAt.x, -21, 21) || !inRange(w.restartAt.z, -13, 13)
+    || (w.restartTeam !== 0 && w.restartTeam !== 1) || !w.restartAt || !inRange(w.restartAt.x, -FIELD.length / 2, FIELD.length / 2) || !inRange(w.restartAt.z, -FIELD.width / 2, FIELD.width / 2)
     || (w.lastTouch !== 0 && w.lastTouch !== 1) || !Number.isSafeInteger(w.seed) || !inRange(w.eventTime, 0, 30)
     || !inRange(w.restartClock, 0, 360) || typeof w.event !== 'string' || w.event.length > 80
-    || !Array.isArray(w.controlled) || w.controlled.length !== 2 || !w.controlled.every((id) => Number.isInteger(id) && id >= 0 && id < 10)
-    || (w.passTarget !== null && w.passTarget !== undefined && (!Number.isInteger(w.passTarget) || w.passTarget < 0 || w.passTarget >= 10))
+    || !Array.isArray(w.controlled) || w.controlled.length !== 2 || !w.controlled.every((id) => Number.isInteger(id) && id >= 0 && id < PLAYER_COUNT)
+    || (w.passTarget !== null && w.passTarget !== undefined && (!Number.isInteger(w.passTarget) || w.passTarget < 0 || w.passTarget >= PLAYER_COUNT))
     || typeof w.passControl !== 'boolean') return false;
   const kickEvent = w.kickEvent;
-  if (kickEvent !== null && (!kickEvent || !Number.isInteger(kickEvent.playerId) || kickEvent.playerId < 0 || kickEvent.playerId >= 10
+  if (kickEvent !== null && (!kickEvent || !Number.isInteger(kickEvent.playerId) || kickEvent.playerId < 0 || kickEvent.playerId >= PLAYER_COUNT
     || !slots.includes(w.players[kickEvent.playerId]?.slot ?? '') || typeof kickEvent.action !== 'string'
     || kickEvent.action.length > 24 || !inRange(kickEvent.power, 0, 1) || !inRange(kickEvent.time, 0, 360))) return false;
   return true;

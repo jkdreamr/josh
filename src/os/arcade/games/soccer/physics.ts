@@ -1,11 +1,13 @@
+import { FIELD } from './field.ts';
+
 export type BallState = { x: number; y: number; z: number; vx: number; vy: number; vz: number; spin: number; grounded: boolean; inNet: boolean };
 export const BALL_RADIUS = 0.11;
 const GRAVITY = 9.81;
 const DRAG = 0.013;
-const FIELD_X = 21;
-const FIELD_Z = 13;
-const GOAL_HALF = 2.5;
-const GOAL_HEIGHT = 2.2;
+const FIELD_X = FIELD.length / 2;
+const FIELD_Z = FIELD.width / 2;
+const GOAL_HALF = FIELD.goalWidth / 2;
+const GOAL_HEIGHT = FIELD.goalHeight;
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 
 export function stepBall(ball: BallState, dt: number) {
@@ -102,7 +104,7 @@ export function createBall(): BallState {
 }
 
 export function clampBall(ball: BallState) {
-  ball.x = clamp(ball.x, -80, 80);
+  ball.x = clamp(ball.x, -FIELD.length / 2 - 28, FIELD.length / 2 + 28);
   ball.y = clamp(ball.y, BALL_RADIUS, 40);
-  ball.z = clamp(ball.z, -60, 60);
+  ball.z = clamp(ball.z, -FIELD.width / 2 - 20, FIELD.width / 2 + 20);
 }

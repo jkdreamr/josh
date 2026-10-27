@@ -1,9 +1,22 @@
+import { TEAM_SIZE, teamOf } from './logic.ts';
+
 export type Mode = 'cpu' | 'versus' | 'coop';
 
-export const playerForSeat = (seat: number, displayOnly = false, mode: Mode = 'cpu') => displayOnly
-  ? seat === 0 ? 1 : mode === 'coop' ? Math.min(4, seat) : (seat - 1) % 2 === 0 ? 1 + Math.floor((seat - 1) / 2) : 6 + Math.floor((seat - 2) / 2)
-  : seat % 2 === 0 ? 1 + Math.floor(seat / 2) : 6 + Math.floor(seat / 2);
+const homeSeatOrder = [6, 9, 5, 7, 3, 8, 10, 1, 2, 4] as const;
+const playerForSideSeat = (side: 0 | 1, index: number) => side * TEAM_SIZE + homeSeatOrder[index % homeSeatOrder.length]!;
 
-export const seatForPlayer = (id: number, displayOnly: boolean, mode: Mode = 'cpu') => displayOnly
-  ? mode === 'coop' ? id === 0 ? 0 : id < 5 ? id : 99 : id < 5 ? 2 * (id - 1) + 1 : 2 * (id - 6) + 2
-  : id < 5 ? 2 * (id - 1) : 2 * (id - 6) + 1;
+export const playerForSeat = (seat: number, displayOnly = false, mode: Mode = 'cpu') => {
+  if (displayOnly && seat === 0) return playerForSideSeat(0, 0);
+  if (displayOnly && mode === 'coop') return playerForSideSeat(0, Math.max(0, seat - 1));
+  const position = displayOnly ? seat - 1 : seat;
+  const side = position % 2 === 0 ? 0 : 1;
+  return playerForSideSeat(side, Math.floor(position / 2));
+};
+
+export const seatForPlayer = (id: number, displayOnly: boolean, mode: Mode = 'cpu') => {
+  const side = teamOf(id);
+  const position = homeSeatOrder.indexOf((id % TEAM_SIZE) as (typeof homeSeatOrder)[number]);
+  if (position < 0 || (mode === 'coop' && side === 1)) return 99;
+  if (displayOnly && mode === 'coop') return position + 1;
+  return displayOnly ? position * 2 + side + 1 : position * 2 + side;
+};
