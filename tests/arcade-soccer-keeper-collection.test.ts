@@ -57,9 +57,9 @@ test('normal keeper reads a close-range shot before it reaches the save plane', 
   world.kickEvent = { playerId: 1, action: 'shoot', power: 0.8, time: world.clock };
   computeAI(world, 'normal', STEP, 10, 1);
   world.kickEvent = null;
-  computeAI(world, 'normal', STEP, 28, 1);
+  computeAI(world, 'normal', STEP, 27, 1);
   assert.equal(keeper.action, 'ready');
-  computeAI(world, 'normal', STEP, 29, 1);
+  computeAI(world, 'normal', STEP, 28, 1);
   assert.equal(keeper.action, 'dive');
 });
 
