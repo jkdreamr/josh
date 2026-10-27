@@ -225,6 +225,15 @@ export function groundPassSpeed(range: number) {
   return clamp((low + high) / 2, 8, 25);
 }
 
+export function groundPassTarget(ball: Point, receiver: Pick<Player, 'x' | 'z' | 'vx' | 'vz'>): Point {
+  const range = distance(ball, receiver);
+  const time = range / groundPassSpeed(range);
+  return {
+    x: clamp(receiver.x + receiver.vx * time, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3),
+    z: clamp(receiver.z + receiver.vz * time, -FIELD.width / 2 + 0.3, FIELD.width / 2 - 0.3),
+  };
+}
+
 function lobSpeed(range: number, loft: number) {
   let speed = Math.sqrt(range * 9.81 / Math.sin(2 * loft)) * 1.06;
   for (let i = 0; i < 4; i++) {
@@ -255,10 +264,7 @@ function kick(world: World, player: Player, action: Action, command: Command) {
   let speed = 0, loft = 0;
   world.passPoint = null;
   if (action === 'pass') {
-    if (receiver) {
-      const time = rollingFlight(groundPassSpeed(distance(world.ball, target)), distance(world.ball, target)).time;
-      target = { x: receiver.x + receiver.vx * time, z: receiver.z + receiver.vz * time };
-    }
+    if (receiver) target = groundPassTarget(world.ball, receiver);
     speed = clamp(groundPassSpeed(distance(world.ball, target)) * (0.82 + 0.4 * charge), 8, 25);
   } else if (action === 'through') {
     const runSpeed = receiver ? Math.hypot(receiver.vx, receiver.vz) : 0;
