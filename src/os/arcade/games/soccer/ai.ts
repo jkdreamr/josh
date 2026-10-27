@@ -1,4 +1,4 @@
-import { createWorld, distance, FIELD, FORMATION, findReceiver, restartTaker, stepWorld, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
+import { createWorld, distance, FIELD, FORMATION, findReceiver, groundPassPower, isCross, nearestCarrier, restartTaker, shotAim, stepWorld, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
 
 export const LEVEL_NAMES = ['easy', 'normal', 'hard'] as const;
 export type Level = (typeof LEVEL_NAMES)[number];
@@ -38,8 +38,6 @@ const targetMove = (player: Player, x: number, z: number) => {
   const gap = Math.hypot(dx, dz);
   return gap < 0.35 ? { x: 0, z: 0 } : { x: dx / Math.max(1.4, gap), z: dz / Math.max(1.4, gap) };
 };
-const canCarry = (world: World, p: Player) => world.ball.y <= 0.75
-  && !(p.cooldown > 0 && (p.action === 'kick' || p.action === 'pass')) && distance(p, world.ball) < 0.64;
 
 type TeamState = { possession: boolean; changedAt: number };
 type KeeperRead = { startedAt: number; decided: boolean; dive: boolean; kick: World['kickEvent'] };
@@ -63,7 +61,7 @@ function matchState(world: World, tick: number) {
   }
   if (state.tick === tick) return state;
   state.tick = tick;
-  state.carrier = world.players.find((p) => canCarry(world, p)) ?? null;
+  state.carrier = nearestCarrier(world) ?? null;
   const possession = state.carrier?.team ?? world.lastTouch;
   if (possession !== state.possession) {
     state.possession = possession;
@@ -170,10 +168,8 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
   const shootRange = level === 'easy' ? 18 : 12;
   if (goalDistance < shootRange && goodAngle && pressure > 1.5 + qualityNoise && shotLane > 0.18 + Math.abs(qualityNoise) * 0.3) {
     const corner = -Math.sign(player.z || 1) * FIELD.goalWidth * 0.35;
-    // Invert kick()'s lateral shot-aim mapping.
-    const aimZ = Math.sign(corner - player.z) * Math.max(0.001, (Math.min(3.7, Math.abs(corner - player.z)) - 1.1) / 2.5);
     return { move: { x: 0, z: 0 }, action: 'shoot', pressed: true,
-      power: 0.75, aim: { x: dir, z: aimZ } };
+      power: 0.75, aim: shotAim(corner, dir) };
   }
   const lastDefender = Math.max(...opponents.filter(outfield).map((p) => p.x * dir));
   let best: { receiver: Player; action: 'pass' | 'through' | 'lob'; score: number } | null = null;
@@ -192,7 +188,7 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
     if (Math.abs(player.z) > lateral(0.3) && player.x * dir > longitudinal(0.22) && roleOf(receiver).line === 'att'
       && Math.abs(receiver.z) < lateral(0.2) && space > 3) action = 'lob';
     const aim = { x: receiver.x - player.x, z: receiver.z - player.z };
-    if (findReceiver(world, player, aim, action === 'through')?.id !== receiver.id) continue;
+    if (findReceiver(world, player, aim, action === 'through', action === 'lob' && isCross(world, player))?.id !== receiver.id) continue;
     const score = forward * 0.16 + Math.min(space, 6) * 0.12 + Math.min(lane, 4) * 0.08
       - gap * 0.025 + (action === 'through' ? 0.5 : 0) + optionNoise
       + (receiver.slot === 'GK' ? -0.8 : 0);
@@ -201,7 +197,7 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
   if (best && ((pressure < 2.5 && (best.receiver.x - player.x) * dir > -1) || pressure < 1.4
     || (best.score > 1.5 && (best.receiver.x - player.x) * dir > 4) || player.slot === 'GK')) {
     return { move: { x: 0, z: 0 }, action: best.action, pressed: true,
-      power: best.action === 'pass' ? clamp(0.28 + distance(player, best.receiver) * 0.012, 0.32, 0.48) : 0.5,
+      power: best.action === 'pass' ? groundPassPower(distance(player, best.receiver)) : 0.5,
       aim: { x: best.receiver.x - player.x, z: best.receiver.z - player.z } };
   }
   if (player.slot === 'GK') return { move: { x: 0, z: 0 } };
@@ -209,6 +205,7 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
 }
 
 function shapeTarget(world: World, p: Player, state: MatchState) {
+  if (!state.carrier && world.passTarget === p.id && world.passPoint) return { ...world.passPoint };
   const dir = teamDir(p.team, world.endsSwapped);
   const ballProgress = world.ball.x * dir;
   const hasBall = state.possession === p.team;
