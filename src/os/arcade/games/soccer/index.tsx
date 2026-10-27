@@ -26,7 +26,6 @@ const TIME = defineSetting<Time>('soccer:time', ['night', 'golden'], 'night', { 
 const DISPLAY_ONLY = defineSetting<'on' | 'off'>('soccer:display-only', ['on', 'off'], 'on');
 
 const modeOptions = [['cpu', 'vs CPU'], ['versus', '2P versus'], ['coop', '2P co-op']] as const;
-const phoneModeOptions = [['cpu', 'vs CPU'], ['versus', '2 players'], ['coop', 'Co-op']] as const;
 const halfOptions = [['2', '2 min'], ['4', '4 min'], ['6', '6 min']] as const;
 const cameraOptions = [['broadcast', 'Broadcast'], ['end', 'End to end']] as const;
 const timeOptions = [['night', 'Night'], ['golden', 'Golden hour']] as const;
@@ -165,23 +164,36 @@ function PhoneLobby() {
     return () => window.clearInterval(timer);
   }, [online?.code, online?.isHost, online?.players, online?.round, online?.start, phones.length, requiredPhones]);
   if (!online?.isHost) return null;
-  const invite = typeof location === 'undefined' ? '' : `${location.protocol}//${location.host}/?game=soccer&room=${online.code}`;
+  const fallback = typeof location === 'undefined' ? '' : `${location.host}/?room=${online.code}`;
+  const fallbackHref = typeof location === 'undefined' ? '' : `${location.protocol}//${fallback}`;
   return (
     <div className="g-soccer-phone-lobby">
-      <strong>Connect your phone</strong>
-      {countdown !== null && <strong className="g-soccer-phone-countdown" role="status">Starting in {countdown}…</strong>}
-      {qr && <img src={qr} alt={`Phone controller QR code for room ${online.code}`} />}
-      <span>1 Open your phone camera · 2 Scan · 3 Your phone becomes the controller.</span>
-      <b className="g-soccer-room-code">{online.code}</b>
-      {invite && <a href={invite}>{invite}</a>}
-      <Segmented label="Match mode" value={mode} options={phoneModeOptions} onChange={setMode} />
-      <span className="g-soccer-phone-mode-note">vs CPU uses 1 phone · 2 players and Co-op use 2 phones.</span>
-      <div className="g-soccer-phone-connections">
-        {phones.map((player) => {
-          const playerId = playerForSeat(player.seat, true, mode);
-          const teamName = teamOf(playerId) === 0 ? 'Bay City' : 'Northshore';
-          return <span key={player.seat}>Phone {player.seat} connected ✓ ({teamName})</span>;
-        })}
+      <div className="g-soccer-phone-qr">
+        {qr && <img src={qr} alt="Phone controller QR code" />}
+        <strong>Scan with your iPhone camera</strong>
+      </div>
+      <div className="g-soccer-phone-lobby-content">
+        <div className="g-soccer-phone-connections" role="status">
+          {Array.from({ length: requiredPhones }, (_, index) => phones[index]
+            ? <span key={index}>Phone {index + 1} connected ✓</span>
+            : <span className="is-waiting" key={index}>{index === 0 ? 'Waiting for phone…' : `Waiting for phone ${index + 1}…`}</span>)}
+        </div>
+        {countdown !== null && <strong className="g-soccer-phone-countdown" role="status">Starting in {countdown}…</strong>}
+        <div className="g-soccer-phone-toggle" role="group" aria-label="How many phones">
+          <button type="button" aria-pressed={mode === 'cpu'} onClick={() => setMode('cpu')}>1 phone · vs CPU</button>
+          <button type="button" aria-pressed={mode !== 'cpu'} onClick={() => setMode(mode === 'coop' ? 'coop' : 'versus')}>2 phones</button>
+        </div>
+        {mode !== 'cpu' && (
+          <div className="g-soccer-phone-toggle is-secondary" role="group" aria-label="Team setup">
+            <button type="button" aria-pressed={mode === 'coop'} onClick={() => setMode('coop')}>Same team</button>
+            <button type="button" aria-pressed={mode === 'versus'} onClick={() => setMode('versus')}>Against each other</button>
+          </div>
+        )}
+        {fallback && <p className="g-soccer-phone-fallback">No camera? Go to <a href={fallbackHref}>{fallback}</a></p>}
+        <details className="g-soccer-phone-settings">
+          <summary>Settings</summary>
+          <Settings online />
+        </details>
       </div>
     </div>
   );
@@ -743,6 +755,7 @@ function PhoneController() {
   const [displayOnly, setDisplayOnly] = useState(true);
   const [mode, setMode] = useState<Mode>('cpu');
   const [showGame, setShowGame] = useState(false);
+  const [showConnectedToast, setShowConnectedToast] = useState(true);
   const [chargeProgress, setChargeProgress] = useState(0);
   const [chargingAction, setChargingAction] = useState<Command['action']>(null);
   const chargeStartedAt = useRef<number | null>(null);
@@ -817,12 +830,16 @@ function PhoneController() {
       }
     };
   }, []);
+  useEffect(() => {
+    const timer = window.setTimeout(() => setShowConnectedToast(false), 2200);
+    return () => window.clearTimeout(timer);
+  }, []);
   const phoneHasBall = () => {
     const snapshot = phoneWorld.current;
     return !!snapshot && nearestCarrier(snapshot)?.team === teamOf(playerForSeat(online?.seat ?? 0, displayOnly, mode));
   };
   const send = (action: Command['action'] = null, pressed = false, power = chargePower(chargeStartedAt.current === null ? 0 : (performance.now() - chargeStartedAt.current) / 1000), switchNearest = false) => {
-    if (!online) return;
+      if (!online) return;
     online.send(movePacket(online.round || 1, sequence.current++, online.seat, {
       move: movement.current,
       sprint: sprint.current,
@@ -898,6 +915,7 @@ function PhoneController() {
   const chargeName = chargingAction === 'pass' ? 'Pass' : chargingAction === 'shoot' ? 'Shoot' : chargingAction === 'through' ? 'Through' : chargingAction === 'lob' ? 'Lob' : chargingAction === 'skill' ? 'Skill' : 'Hold to charge';
   return (
     <div className="g-soccer-phone-controller">
+      {showConnectedToast && <div className="g-soccer-phone-connected" role="status">Connected — look at your Mac</div>}
       <header>
         <b>{teamOf(phonePlayer) === 1 ? 'NORTHSHORE' : 'BAY CITY'}</b>
         <strong>{score[0]} · {score[1]}</strong>
@@ -945,7 +963,7 @@ export default function Soccer({ onExit, roomCode }: { onExit?: () => void; room
       roomCode={roomCode}
       phoneFirst
       setup={<Settings />}
-      hostSetup={<><PhoneLobby /><Settings online /></>}
+      hostSetup={<PhoneLobby />}
       defaultBots={0}
       botNames={['bay city bot', 'northshore bot', 'wing bot', 'keeper bot']}
       quickNote="2v2, normal bots, and three-minute halves."

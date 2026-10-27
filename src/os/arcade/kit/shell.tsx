@@ -1000,39 +1000,67 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
         )}
 
         {status === 'ready' && onlineOpen && canPlayOnline && !quick && (
-          <OnlinePanel
-            game={meta.id}
-            code={onlineCode}
-            players={onlinePlayers}
-            bots={lobbyBots}
-            listed={onlineListed}
-            visibility={visibility}
-            seat={onlineSeat}
-            seats={onlineSeats}
-            inProgress={onlineInProgress}
-            busy={onlineBusy}
-            error={onlineError}
-            name={onlineName}
-            onName={setOnlineName}
-            onVisibility={setVisibility}
-            onCreate={makeRoom}
-            onJoin={joinRoom}
-            onStart={() => onlineLink?.start()}
-            onBots={setBots}
-            onListed={setListed}
-            onLeave={leaveRoom}
-            onShare={os && onlineCode ? shareRoom : undefined}
-            lastCode={lostCode}
-            watching={watching}
-            watchers={watchers}
-            watchable={watchable}
-            onWatchable={setRoomWatchable}
-            onTakeSeat={takeSeat}
-            onWatchRound={watchRound}
-            note={race ? 'A score race: everyone plays their own round at the same time and the best score wins.' : undefined}
-            setup={hostSetup}
-            setupFirst={phoneFirstOn}
-          />
+          phoneFirstOn ? (
+            <div className="arcade-ov arcade-phone-first-overlay">
+              <div className={`arcade-card arcade-phone-first-card${phoneFirst && touch && !!joinCode && onlineSeat !== 0 ? ' is-phone-join' : ''}`}>
+                {phoneFirst && touch && !!joinCode && onlineSeat !== 0 ? (
+                  onlineError ? (
+                    <>
+                      <p className="arcade-phone-first-error" role="alert">{onlineError}</p>
+                      <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" disabled={onlineBusy} onClick={() => joinRoom(lostCode || joinCode)}>
+                        {onlineBusy ? 'Connecting…' : 'Try again'}
+                      </button>
+                    </>
+                  ) : <p role="status">Connecting to your match…</p>
+                ) : (
+                  <>
+                    {onlineError && (
+                      <p className="arcade-phone-first-error" role="alert">
+                        {onlineError}
+                      </p>
+                    )}
+                    {onlineSeat === 0 ? hostSetup : onlineBusy ? <p role="status">Creating your room…</p> : hostSetup}
+                    {onlineError && !touch && <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={connectPhone}>Try again</button>}
+                  </>
+                )}
+                <button type="button" className="arcade-phone-first-cancel" onClick={leaveRoom}>Cancel</button>
+              </div>
+            </div>
+          ) : (
+            <OnlinePanel
+              game={meta.id}
+              code={onlineCode}
+              players={onlinePlayers}
+              bots={lobbyBots}
+              listed={onlineListed}
+              visibility={visibility}
+              seat={onlineSeat}
+              seats={onlineSeats}
+              inProgress={onlineInProgress}
+              busy={onlineBusy}
+              error={onlineError}
+              name={onlineName}
+              onName={setOnlineName}
+              onVisibility={setVisibility}
+              onCreate={makeRoom}
+              onJoin={joinRoom}
+              onStart={() => onlineLink?.start()}
+              onBots={setBots}
+              onListed={setListed}
+              onLeave={leaveRoom}
+              onShare={os && onlineCode ? shareRoom : undefined}
+              lastCode={lostCode}
+              watching={watching}
+              watchers={watchers}
+              watchable={watchable}
+              onWatchable={setRoomWatchable}
+              onTakeSeat={takeSeat}
+              onWatchRound={watchRound}
+              note={race ? 'A score race: everyone plays their own round at the same time and the best score wins.' : undefined}
+              setup={hostSetup}
+              setupFirst={phoneFirstOn}
+            />
+          )
         )}
 
         {(status === 'ready' || status === 'paused') && !onlineOpen && !compact && howOpen && meta.howTo && <HowToCard meta={meta} onClose={() => setHowOpen(false)} />}
@@ -1051,13 +1079,13 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
               <div className="arcade-card">
                 {glyph}
                 <h2>{meta.title}</h2>
-                <p>{meta.controls}</p>
-                {setup && !quickOn && <div className="arcade-setup">{setup}</div>}
+                {!phoneFirstOn && <p>{meta.controls}</p>}
+                {setup && !quickOn && !phoneFirstOn && <div className="arcade-setup">{setup}</div>}
                 {quickOn && quickSetup && <div className="arcade-setup">{quickSetup}</div>}
                 <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={phoneFirstOn ? connectPhone : quickOn ? () => play() : start} ref={autoFocus}>
                   {phoneFirstOn ? 'Connect Phone' : 'Play'}
                 </button>
-                {phoneFirstOn && <button type="button" className="arcade-btn" onClick={start}>{soloLabel}</button>}
+                {phoneFirstOn && <button type="button" className="arcade-phone-first-link" onClick={start}>Play on this computer instead</button>}
                 {/* with quick play, the game's settings are for playing on this device, so they go with that button */}
                 {quickOn && (
                   <>
@@ -1073,12 +1101,12 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                     {quickOn ? 'Play with Friends' : 'Play Online'}
                   </button>
                 )}
-                {meta.howTo && (
+                {meta.howTo && !phoneFirstOn && (
                   <button type="button" className="arcade-btn" onClick={() => setHowOpen(true)}>
                     How to Play
                   </button>
                 )}
-                {best !== null && <small>Best {fmt(best)}</small>}
+                {best !== null && !phoneFirstOn && <small>Best {fmt(best)}</small>}
               </div>
             </div>
           ))}

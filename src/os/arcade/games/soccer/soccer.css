@@ -371,12 +371,6 @@
 .g-soccer-phone-button.is-b { top: 60px; right: 0; background: #df6974; }
 .g-soccer-phone-button.is-a { bottom: 0; left: 60px; background: #7ed68c; }
 .g-soccer-phone-show { position: absolute; top: max(12px, env(safe-area-inset-top, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); z-index: 30; }
-.g-soccer-phone-lobby { display: grid; gap: 10px; justify-items: start; padding: 14px; margin-top: 8px; border: 1px solid #ffffff22; border-radius: 12px; background: #0b1725aa; color: #e8f3fa; font-size: 12px; }
-.g-soccer-phone-lobby img { width: min(280px, 100%); height: auto; aspect-ratio: 1; background: white; border-radius: 7px; image-rendering: pixelated; }
-.g-soccer-phone-lobby > span { max-width: 36ch; font-weight: 700; line-height: 1.5; }
-.g-soccer-room-code { font-size: 28px; letter-spacing: .18em; color: #e9f37a; }
-.g-soccer-phone-lobby > a { max-width: 100%; overflow-wrap: anywhere; color: #a8ddff; }
-.g-soccer-phone-mode-note { color: #b8d0dc; font-size: 10px; font-weight: 700; }
 .g-soccer-state { display: block; grid-column: 1 / -1; margin-top: 5px; color: #ffe67d; font-size: 10px; letter-spacing: .12em; }
 .g-soccer-power { position: relative; height: 12px; margin-top: 5px; overflow: hidden; border: 1px solid #ffffff66; border-radius: 5px; background: linear-gradient(90deg, #07111dcc 85%, #a7334d88 85%); }
 .g-soccer-power > i { display: block; height: 100%; background: #83db91; }
@@ -395,8 +389,125 @@
 .g-soccer-phone-button > small { max-width: 100%; padding: 0 3px; font-size: 9px; line-height: 1.1; white-space: normal; }
 .g-soccer-phone-utilities { gap: 5px; }
 .g-soccer-phone-action { white-space: normal; }
-.g-soccer-phone-connections { display: grid; gap: 5px; font-weight: 750; color: #baf1c4; }
-.g-soccer-phone-countdown { padding: 8px 12px; border-radius: 9px; background: #e9f37a; color: #102016; font-size: 16px; }
+.g-soccer .arcade-phone-first-overlay { overflow: hidden; }
+.g-soccer .arcade-phone-first-card {
+  width: min(780px, 100%);
+  max-height: calc(100% - 8px);
+  align-items: stretch;
+  gap: 14px;
+  padding: 26px;
+  border: 1px solid #ffffff28;
+  background: linear-gradient(140deg, #14283aee, #091722f5);
+  text-align: left;
+}
+.g-soccer .arcade-phone-first-card.is-phone-join {
+  width: min(380px, 100%);
+  align-items: center;
+  text-align: center;
+}
+.g-soccer .arcade-phone-first-card > p { text-align: center; }
+.g-soccer .arcade-phone-first-error { color: #ffd5d5 !important; }
+.g-soccer .arcade-phone-first-cancel {
+  align-self: center;
+  padding: 4px 12px;
+  color: #b3c1ca;
+  font-size: 12px;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.g-soccer .arcade-phone-first-cancel:hover,
+.g-soccer .arcade-phone-first-link:hover { color: #fff; }
+.g-soccer .arcade-phone-first-link {
+  padding: 5px 8px;
+  color: #b8c7d1 !important;
+  font-size: 12px !important;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+.g-soccer-phone-lobby {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  align-items: center;
+  gap: 30px;
+  width: 100%;
+}
+.g-soccer-phone-qr { display: grid; justify-items: center; gap: 12px; text-align: center; }
+.g-soccer-phone-qr img {
+  display: block;
+  width: 260px;
+  height: 260px;
+  border-radius: 8px;
+  background: #fff;
+  image-rendering: pixelated;
+}
+.g-soccer-phone-qr strong { color: #f5f8f6; font-size: 14px; }
+.g-soccer-phone-lobby-content { display: grid; align-content: center; gap: 14px; min-width: 0; }
+.g-soccer-phone-connections { display: grid; gap: 7px; font-size: 14px; font-weight: 750; color: #baf1c4; }
+.g-soccer-phone-connections .is-waiting { display: flex; align-items: center; gap: 8px; color: #e0e8ec; }
+.g-soccer-phone-connections .is-waiting::before {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e9f37a;
+  box-shadow: 0 0 0 0 #e9f37a88;
+  content: "";
+  animation: g-soccer-phone-pulse 1.6s ease-out infinite;
+}
+@keyframes g-soccer-phone-pulse {
+  70%, 100% { box-shadow: 0 0 0 8px #e9f37a00; }
+}
+.g-soccer-phone-countdown { justify-self: start; padding: 8px 12px; border-radius: 9px; background: #e9f37a; color: #102016; font-size: 16px; }
+.g-soccer-phone-toggle { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; }
+.g-soccer-phone-toggle button {
+  min-height: 44px;
+  padding: 8px 10px;
+  border: 1px solid #ffffff35;
+  border-radius: 10px;
+  background: #132c40;
+  color: #e3edf2;
+  font-size: 12px;
+  font-weight: 750;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+.g-soccer-phone-toggle button[aria-pressed="true"] { border-color: #e9f37a; background: #e9f37a; color: #172119; }
+.g-soccer-phone-toggle.is-secondary button { min-height: 36px; background: #102333; font-size: 11px; }
+.g-soccer-phone-toggle.is-secondary button[aria-pressed="true"] { background: #a9c9da; border-color: #a9c9da; color: #10202b; }
+.g-soccer-phone-fallback { margin: 0 !important; color: #aab8c1 !important; font-size: 11px !important; }
+.g-soccer-phone-fallback a { color: #b9e4f7; text-decoration: underline; text-underline-offset: 2px; overflow-wrap: anywhere; }
+.g-soccer-phone-settings { border-top: 1px solid #ffffff21; padding-top: 10px; color: #e2e9ec; }
+.g-soccer-phone-settings summary { cursor: pointer; color: #b8c7d1; font-size: 12px; font-weight: 700; }
+.g-soccer-phone-settings[open] .g-soccer-settings { gap: 8px; margin-top: 12px; }
+.g-soccer-phone-settings .arcade-field { margin: 0; }
+.g-soccer-phone-connected {
+  position: absolute;
+  z-index: 4;
+  top: calc(max(72px, env(safe-area-inset-top, 0px) + 62px));
+  left: 50%;
+  padding: 11px 16px;
+  transform: translateX(-50%);
+  border: 1px solid #baf1c466;
+  border-radius: 999px;
+  background: #0c211ddd;
+  color: #d7ffe0;
+  box-shadow: 0 8px 28px #0006;
+  font-size: 13px;
+  font-weight: 750;
+  white-space: nowrap;
+  pointer-events: none;
+  animation: g-soccer-connected-toast 2.2s ease both;
+}
+@keyframes g-soccer-connected-toast {
+  0% { opacity: 0; transform: translate(-50%, -8px); }
+  12%, 72% { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, -4px); }
+}
+
+@media (max-width: 680px) {
+  .g-soccer .arcade-phone-first-overlay { overflow: auto; }
+  .g-soccer .arcade-phone-first-card { width: min(440px, 100%); padding: 18px; }
+  .g-soccer-phone-lobby { grid-template-columns: 1fr; gap: 18px; }
+  .g-soccer-phone-qr img { width: min(180px, 100%); height: auto; aspect-ratio: 1; }
+}
 
 @media (orientation: landscape) {
   .g-soccer-phone-controller header {
