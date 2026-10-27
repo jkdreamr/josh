@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { computeAI, keeperTarget, simulateCpuMatch, simulateCpuMatchStats } from '../src/os/arcade/games/soccer/ai.ts';
-import { createWorld, distance, FIELD, stepWorld, TEAM_SIZE, type Player } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, distance, FIELD, stepWorld, teamDir, TEAM_SIZE, type Player } from '../src/os/arcade/games/soccer/logic.ts';
 
 let measured: ReturnType<typeof simulateCpuMatchStats>[] | undefined;
 const normalMatches = () => measured ??= [2, 17, 31, 47, 59, 71, 89, 103].map((seed) => simulateCpuMatchStats(seed, 'normal', 'normal', 480));
@@ -83,6 +83,49 @@ test('keeper shades toward the predicted ball crossing and steps out one-on-one'
   g.ball.x = FIELD.length / 2 - 6;
   const oneOnOneX = keeperTarget(g, keeper).x;
   assert.ok(oneOnOneX < normalX);
+});
+
+test('keeper steering brakes outward momentum between positioning decisions', () => {
+  const world = tacticalWorld();
+  const keeper = world.players[0]!;
+  keeper.z = 3; keeper.vz = 4;
+  world.ball.x = 0; world.ball.z = 0;
+  for (let tick = 1; tick <= 180; tick++) {
+    const commands = computeAI(world, 'normal', 1 / 60, tick, 0);
+    if (tick === 1) assert.ok(commands.get(keeper.id)!.move.z < 0);
+    stepWorld(world, 1 / 60, commands);
+    assert.ok(Math.abs(keeper.z) <= FIELD.goalWidth / 2 + 1);
+  }
+  assert.ok(Math.abs(keeper.z) < 0.5);
+});
+
+test('a keeper in possession holds position while waiting for a distribution decision', () => {
+  const world = tacticalWorld();
+  const keeper = world.players[0]!;
+  world.ball.x = keeper.x; world.ball.z = keeper.z;
+  world.lastTouch = keeper.team;
+  const command = computeAI(world, 'normal', 1 / 60, 1, keeper.team).get(keeper.id)!;
+  assert.deepEqual(command.move, { x: 0, z: 0 });
+});
+
+test('keepers stay near their own goal through seeded matches and the change of ends', () => {
+  for (const seed of [17, 47]) {
+    const live = [0, 0], confined = [0, 0];
+    simulateCpuMatch(seed, 'normal', 'normal', 480, (world) => {
+      if (world.phase !== 'live') return;
+      for (const keeper of world.players.filter((p) => p.slot === 'GK')) {
+        const goalX = -teamDir(keeper.team, world.endsSwapped) * FIELD.length / 2;
+        const target = keeperTarget(world, keeper);
+        assert.ok(Math.abs(target.z) <= FIELD.goalWidth / 2 + 1);
+        assert.ok(Math.abs(target.x - goalX) <= FIELD.penaltyDepth);
+        live[keeper.team]++;
+        if (Math.abs(keeper.z) <= FIELD.goalWidth / 2 + 2
+          && Math.abs(keeper.x - goalX) <= FIELD.penaltyDepth) confined[keeper.team]++;
+      }
+    });
+    for (const team of [0, 1]) assert.ok(live[team]! > 0 && confined[team]! / live[team]! >= 0.95,
+      `seed ${seed} team ${team}: ${confined[team]}/${live[team]} live ticks near goal`);
+  }
 });
 
 for (const [home, away] of [['hard', 'easy'], ['hard', 'normal'], ['normal', 'easy']] as const) test(`${home} CPU beats ${away} across seeded four-minute halves`, () => {

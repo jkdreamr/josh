@@ -50,6 +50,7 @@ type MatchState = {
   teams: [TeamState, TeamState];
   runs: Map<number, { until: number; x: number; z: number }>;
   keeperReads: Map<number, KeeperRead>;
+  keeperTargets: Map<number, Point>;
 };
 const matches = new WeakMap<World, MatchState>();
 
@@ -57,7 +58,7 @@ function matchState(world: World, tick: number) {
   let state = matches.get(world);
   if (!state || tick < state.tick) {
     state = { tick: -1, carrier: null, possession: world.lastTouch,
-      teams: [{ possession: world.lastTouch === 0, changedAt: tick }, { possession: world.lastTouch === 1, changedAt: tick }], runs: new Map(), keeperReads: new Map() };
+      teams: [{ possession: world.lastTouch === 0, changedAt: tick }, { possession: world.lastTouch === 1, changedAt: tick }], runs: new Map(), keeperReads: new Map(), keeperTargets: new Map() };
     matches.set(world, state);
   }
   if (state.tick === tick) return state;
@@ -78,7 +79,7 @@ function matchState(world: World, tick: number) {
       x: clamp(passer.x + teamDir(passer.team, world.endsSwapped) * longitudinal(0.14), -longitudinal(0.44), longitudinal(0.44)),
       z: clamp(passer.z + (passer.z > 0 ? -1 : 1) * lateral(0.1), -lateral(0.4), lateral(0.4)) });
   }
-  if (world.phase !== 'live') { state.runs.clear(); state.keeperReads.clear(); }
+  if (world.phase !== 'live') { state.runs.clear(); state.keeperReads.clear(); state.keeperTargets.clear(); }
   for (const [id, run] of state.runs) if (run.until < tick) state.runs.delete(id);
   return state;
 }
@@ -275,14 +276,18 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
       }
       if (p.slot === 'GK') {
         if (carrier?.id === p.id) {
-          commands.set(p.id, world.event === 'keeper claims it' && world.eventTime > 0.25
-            ? { move: { x: 0, z: 0 } } : carrierCommand(world, p, level, tick));
+          const command = world.event === 'keeper claims it' && world.eventTime > 0.25
+            ? { move: { x: 0, z: 0 } } : carrierCommand(world, p, level, tick);
+          command.move = { x: 0, z: 0 };
+          commands.set(p.id, command);
           continue;
         }
-        const target = keeperTarget(world, p);
         readKeeperShot(world, p, level, tick, state);
         const reacts = tick % Math.round(keeperReaction[level] * 60) === 0;
-        commands.set(p.id, { move: reacts ? targetMove(p, target.x, target.z) : { x: p.vx / 6, z: p.vz / 6 }, sprint: false });
+        if (reacts || !state.keeperTargets.has(p.id) || Math.abs(p.z) > FIELD.goalWidth / 2 + 1
+          || Math.abs(p.x - ownGoal.x) > FIELD.penaltyDepth - 1) state.keeperTargets.set(p.id, keeperTarget(world, p));
+        const target = state.keeperTargets.get(p.id)!;
+        commands.set(p.id, { move: targetMove(p, target.x, target.z), sprint: false });
         continue;
       }
       if (carrier?.id === p.id) {
