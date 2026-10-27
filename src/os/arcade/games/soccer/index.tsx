@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type PointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent } from 'react';
 import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useThree, useOnline, useSetting, getSetting, Segmented, defineSetting, levelOptions, levelIndex, TouchControls, sfx } from '../../kit';
 import type { LevelName } from '../../kit/controls';
 import { meta } from './meta.ts';
@@ -9,7 +9,8 @@ import { createWorld, distance, FIELD, teamOf, findReceiver, matchClock, nearest
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { goalRoar, kickThump, netSwish, startCrowd, whistle } from './audio.ts';
 import { createScene, type CameraMode, type SoccerView, type TimeMode } from './scene.ts';
-import { Hud, PowerMeter } from './hud.tsx';
+import { Hud } from './hud.tsx';
+import { clampOrigin, followOrigin, haptic, hitButton, STICK, stickVector, type PadPoint } from './pad.ts';
 import { playerForSeat, type Mode } from './seats.ts';
 import './soccer.css';
 import QRCode from 'qrcode';
@@ -742,6 +743,88 @@ function Play() {
   );
 }
 
+type FaceKey = 'a' | 'b' | 'x' | 'y';
+const FACE_KEYS: readonly FaceKey[] = ['y', 'x', 'b', 'a'];
+const FACE: Record<FaceKey, Command['action']> = { a: 'pass', b: 'shoot', x: 'lob', y: 'through' };
+
+function markPressed(element: HTMLElement | null | undefined, pressed: boolean) {
+  if (!element) return;
+  if (pressed) element.dataset.pressed = '';
+  else delete element.dataset.pressed;
+}
+
+function markFired(element: HTMLElement | null | undefined) {
+  if (!element) return;
+  delete element.dataset.fired;
+  void element.offsetWidth;
+  element.dataset.fired = '';
+}
+
+/** Floating stick: the base jumps to wherever the thumb lands in the zone, then follows it past max travel. */
+function PadStick({ movement }: { movement: { current: { x: number; z: number } } }) {
+  const zone = useRef<HTMLDivElement>(null);
+  const base = useRef<HTMLDivElement>(null);
+  const knob = useRef<HTMLElement>(null);
+  const pointer = useRef<number | null>(null);
+  const origin = useRef<PadPoint>({ x: 0, y: 0 });
+  const metrics = (event: PointerEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    const size = base.current?.offsetWidth ?? 0;
+    return { rect, margin: size / 2, travel: size * STICK.travel, thumb: { x: event.clientX - rect.left, y: event.clientY - rect.top } };
+  };
+  const draw = (thumb: PadPoint, travel: number) => {
+    const { knob: offset, move } = stickVector(thumb.x - origin.current.x, thumb.y - origin.current.y, travel);
+    movement.current = move;
+    if (base.current) {
+      base.current.style.left = `${origin.current.x}px`;
+      base.current.style.top = `${origin.current.y}px`;
+    }
+    if (knob.current) knob.current.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+  };
+  const release = (event: PointerEvent<HTMLDivElement>) => {
+    if (pointer.current !== event.pointerId) return;
+    pointer.current = null;
+    movement.current = { x: 0, z: 0 };
+    if (base.current) {
+      base.current.style.left = '';
+      base.current.style.top = '';
+      delete base.current.dataset.active;
+    }
+    if (knob.current) knob.current.style.transform = '';
+  };
+  return (
+    <div
+      ref={zone}
+      className="g-soccer-pad-stickzone"
+      role="application"
+      aria-label="Movement stick: touch anywhere on the left half and drag"
+      onPointerDown={(event) => {
+        if (pointer.current !== null) return;
+        event.preventDefault();
+        pointer.current = event.pointerId;
+        event.currentTarget.setPointerCapture(event.pointerId);
+        const { rect, margin, travel, thumb } = metrics(event);
+        origin.current = clampOrigin(thumb, rect.width, rect.height, margin);
+        if (base.current) base.current.dataset.active = '';
+        haptic(8);
+        draw(thumb, travel);
+      }}
+      onPointerMove={(event) => {
+        if (pointer.current !== event.pointerId) return;
+        const { rect, margin, travel, thumb } = metrics(event);
+        origin.current = clampOrigin(followOrigin(origin.current, thumb, travel), rect.width, rect.height, margin);
+        draw(thumb, travel);
+      }}
+      onPointerUp={release}
+      onPointerCancel={release}
+      onLostPointerCapture={release}
+      onContextMenu={(event) => event.preventDefault()}
+    >
+      <div ref={base} className="g-soccer-pad-stick"><i ref={knob} /></div>
+    </div>
+  );
+}
+
 function PhoneController() {
   const online = useOnline();
   const movement = useRef({ x: 0, z: 0 });
@@ -750,6 +833,10 @@ function PhoneController() {
   const sequence = useRef(0);
   const phoneWorld = useRef<World | null>(null);
   const shoulder = useRef(false);
+  const jockey = useRef(false);
+  const faceRefs = useRef<Partial<Record<FaceKey, HTMLButtonElement | null>>>({});
+  const facePointers = useRef(new Map<number, FaceKey | null>());
+  const [attacking, setAttacking] = useState(false);
   const [score, setScore] = useState<[number, number]>([0, 0]);
   const previousScore = useRef<[number, number]>([0, 0]);
   const [displayOnly, setDisplayOnly] = useState(true);
@@ -805,12 +892,21 @@ function PhoneController() {
         lock = null;
       }
     };
+    const preventScroll = (event: TouchEvent) => { if (event.cancelable) event.preventDefault(); };
     document.addEventListener('gesturestart', preventGesture, { passive: false });
+    document.addEventListener('touchmove', preventScroll, { passive: false });
+    document.addEventListener('dblclick', preventGesture, { passive: false });
+    document.addEventListener('selectstart', preventGesture);
+    document.addEventListener('contextmenu', preventGesture);
     document.addEventListener('visibilitychange', onVisibility);
     void requestWakeLock();
     return () => {
       live = false;
       document.removeEventListener('gesturestart', preventGesture);
+      document.removeEventListener('touchmove', preventScroll);
+      document.removeEventListener('dblclick', preventGesture);
+      document.removeEventListener('selectstart', preventGesture);
+      document.removeEventListener('contextmenu', preventGesture);
       document.removeEventListener('visibilitychange', onVisibility);
       void lock?.release().catch(() => {});
       Object.assign(html.style, previousHtml);
@@ -843,6 +939,7 @@ function PhoneController() {
     online.send(movePacket(online.round || 1, sequence.current++, online.seat, {
       move: movement.current,
       sprint: sprint.current,
+      jockey: jockey.current,
       action: action === 'shoot' && shoulder.current && phoneHasBall() ? 'finesse' : action,
       heldAction: held.current,
       pressed,
@@ -867,6 +964,7 @@ function PhoneController() {
     send(null, false);
   };
   const releaseCharge = (action: Command['action'], vibrate = true) => {
+    if (chargeStartedAt.current !== null && held.current !== action) return;
     const started = chargeStartedAt.current;
     const power = chargePower(started === null ? 0 : (performance.now() - started) / 1000);
     held.current = null;
@@ -874,7 +972,7 @@ function PhoneController() {
     setChargingAction(null);
     setChargeProgress(0);
     send(started !== null && vibrate ? action : null, started !== null && vibrate, power);
-    if (vibrate) navigator.vibrate?.(18);
+    if (vibrate && started !== null) haptic(18);
   };
   useEffect(() => {
     if (!online) return;
@@ -883,6 +981,7 @@ function PhoneController() {
       const packet = parsePacket(data);
       if (packet?.k === 's') {
         phoneWorld.current = packet.state;
+        setAttacking(nearestCarrier(packet.state)?.team === teamOf(playerForSeat(online.seat, displayOnly, mode)));
         if (packet.state.score.some((value, index) => value !== previousScore.current[index])) navigator.vibrate?.([70, 40, 120]);
         previousScore.current = [...packet.state.score];
         setScore(packet.state.score);
@@ -899,48 +998,127 @@ function PhoneController() {
   }, [online, mode, displayOnly]);
   if (!online) return null;
   const phonePlayer = playerForSeat(online.seat, displayOnly, mode);
-  const attacking = phoneHasBall();
+  const myTeam = teamOf(phonePlayer);
   if (showGame) return <><Play key={`phone-game-${online.round ?? 0}`} /><button className="g-soccer-phone-show" type="button" onClick={() => setShowGame(false)}>Controller</button></>;
-  const button = (action: Command['action'], key: string, label: string, className: string) => (
-    <button
-      type="button"
-      className={`g-soccer-phone-button ${className}`}
-      aria-label={`${label} (${key})`}
-      onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); beginCharge(action); }}
-      onPointerUp={(event) => { event.preventDefault(); releaseCharge(action); }}
-      onPointerCancel={() => releaseCharge(action, false)}
-      onContextMenu={(event) => event.preventDefault()}
-    ><span>{key}</span><small>{label}</small></button>
-  );
   const chargeName = chargingAction === 'pass' ? 'Pass' : chargingAction === 'shoot' ? 'Shoot' : chargingAction === 'through' ? 'Through' : chargingAction === 'lob' ? 'Lob' : chargingAction === 'skill' ? 'Skill' : 'Hold to charge';
+  const chargingKey = FACE_KEYS.find((key) => FACE[key] === chargingAction) ?? null;
+  const faceLabel: Record<FaceKey, string> = attacking
+    ? { a: 'Pass', b: 'Shoot', x: 'Lob · Cross', y: 'Through' }
+    : { a: 'Switch', b: 'Tackle', x: 'Slide', y: 'Through' };
+  const faceHint: Partial<Record<FaceKey, string>> = attacking ? {} : { a: 'hold Contain' };
+  const faceAt = (event: PointerEvent<HTMLElement>) => hitButton({ x: event.clientX, y: event.clientY }, FACE_KEYS.flatMap((id) => {
+    const rect = faceRefs.current[id]?.getBoundingClientRect();
+    return rect ? [{ id, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, r: rect.width / 2 }] : [];
+  }));
+  const pressFace = (key: FaceKey) => {
+    markPressed(faceRefs.current[key], true);
+    haptic(10);
+    beginCharge(FACE[key]);
+  };
+  const releaseFace = (key: FaceKey, fire: boolean) => {
+    const element = faceRefs.current[key];
+    markPressed(element, false);
+    if (fire) markFired(element);
+    releaseCharge(FACE[key], fire);
+  };
+  const endFace = (event: PointerEvent<HTMLElement>, fire: boolean) => {
+    if (!facePointers.current.has(event.pointerId)) return;
+    const key = facePointers.current.get(event.pointerId);
+    facePointers.current.delete(event.pointerId);
+    if (key) releaseFace(key, fire);
+  };
+  const pad = (name: string, down: () => void, up?: () => void) => ({
+    onPointerDown: (event: PointerEvent<HTMLButtonElement>) => {
+      event.preventDefault();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      markPressed(event.currentTarget, true);
+      haptic(8);
+      down();
+    },
+    onPointerUp: (event: PointerEvent<HTMLButtonElement>) => { markPressed(event.currentTarget, false); up?.(); },
+    onPointerCancel: (event: PointerEvent<HTMLButtonElement>) => { markPressed(event.currentTarget, false); up?.(); },
+    onContextMenu: (event: { preventDefault: () => void }) => event.preventDefault(),
+    'aria-label': name,
+    tabIndex: -1,
+    type: 'button' as const,
+  });
+  const hold = (flag: { current: boolean }) => [() => { flag.current = true; send(); }, () => { flag.current = false; send(); }] as const;
+  const [jockeyDown, jockeyUp] = hold(jockey);
+  const [bumperDown, bumperUp] = hold(shoulder);
+  const [sprintDown, sprintUp] = hold(sprint);
+  const ltLabel = attacking ? 'Shield' : 'Jockey';
+  const lbLabel = attacking ? 'Skill' : 'Switch';
+  const rbLabel = attacking ? 'Finesse' : 'Press';
   return (
-    <div className="g-soccer-phone-controller">
+    <div className={`g-soccer-phone-controller g-soccer-pad ${attacking ? 'is-attack' : 'is-defend'}`}>
+      <div className="g-soccer-pad-body" aria-hidden="true"><i className="is-left" /><i className="is-right" /></div>
       {showConnectedToast && <div className="g-soccer-phone-connected" role="status">Connected — look at your Mac</div>}
-      <header>
-        <b>{teamOf(phonePlayer) === 1 ? 'NORTHSHORE' : 'BAY CITY'}</b>
-        <strong>{score[0]} · {score[1]}</strong>
-        <button type="button" onClick={() => setShowGame(true)}>Show game</button>
-      </header>
-      <div className="g-soccer-phone-charge" role="progressbar" aria-label={`${chargeName} power`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(chargeProgress * 100)}>
-        <span>{chargingAction ? `${chargeName} · ${Math.round(chargeProgress * 100)}%` : 'HOLD AN ACTION TO CHARGE'}</span>
-        <PowerMeter power={chargeProgress} />
-      </div>
-      <Stick movement={movement} />
-      <div className="g-soccer-phone-buttons">
-        <div className="g-soccer-phone-utilities">
-          <button type="button" className="g-soccer-phone-action" onPointerDown={(event) => {
-            event.preventDefault(); send(attacking ? 'skill' : null, attacking, 0.1, !attacking);
-          }}>LB · {attacking ? 'Skill' : 'Switch'}</button>
-          <button type="button" className="g-soccer-phone-action" onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); shoulder.current = true; send(); }} onPointerUp={() => { shoulder.current = false; send(); }} onPointerCancel={() => { shoulder.current = false; send(); }}>RB · {attacking ? 'Finesse' : 'Press'}</button>
-          <button type="button" className="g-soccer-phone-action is-sprint" onPointerDown={(event) => { event.preventDefault(); event.currentTarget.setPointerCapture(event.pointerId); sprint.current = true; send(); }} onPointerUp={(event) => { event.preventDefault(); sprint.current = false; send(); }} onPointerCancel={() => { sprint.current = false; send(); }}>Sprint (hold)</button>
+      <PadStick movement={movement} />
+      <div
+        className="g-soccer-pad-face"
+        onPointerDown={(event) => {
+          event.preventDefault();
+          event.currentTarget.setPointerCapture(event.pointerId);
+          const key = faceAt(event);
+          facePointers.current.set(event.pointerId, key);
+          if (key) pressFace(key);
+        }}
+        onPointerMove={(event) => {
+          if (!facePointers.current.has(event.pointerId)) return;
+          const key = faceAt(event);
+          const previous = facePointers.current.get(event.pointerId) ?? null;
+          if (!key || key === previous) return;
+          if (previous) releaseFace(previous, true);
+          facePointers.current.set(event.pointerId, key);
+          pressFace(key);
+        }}
+        onPointerUp={(event) => endFace(event, true)}
+        onPointerCancel={(event) => endFace(event, false)}
+        onLostPointerCapture={(event) => endFace(event, false)}
+        onContextMenu={(event) => event.preventDefault()}
+      >
+        <div className="g-soccer-pad-diamond">
+          {FACE_KEYS.map((key) => (
+            <button
+              key={key}
+              ref={(element) => { faceRefs.current[key] = element; }}
+              type="button"
+              tabIndex={-1}
+              className={`g-soccer-pad-btn is-${key}${chargingKey === key ? ' is-charging' : ''}${chargingKey === key && chargeProgress > 0.85 ? ' is-over' : ''}`}
+              style={chargingKey === key ? { '--charge': chargeProgress.toFixed(3) } as CSSProperties : undefined}
+              aria-label={`${key.toUpperCase()}: ${faceLabel[key]}${faceHint[key] ? `, ${faceHint[key]}` : ''}`}
+            >
+              <b>{key.toUpperCase()}</b>
+              <small>{faceLabel[key]}</small>
+              {faceHint[key] && <em>{faceHint[key]}</em>}
+            </button>
+          ))}
         </div>
-        <div className="g-soccer-phone-diamond">
-          {button('lob', 'X', attacking ? 'Lob·Cross' : 'Slide', 'is-x')}
-          {button('through', 'Y', 'Through', 'is-y')}
-          {button('pass', 'A', attacking ? 'Pass' : 'Switch · hold Contain', 'is-a')}
-          {button('shoot', 'B', attacking ? 'Shoot' : 'Tackle', 'is-b')}
+      </div>
+      <div className="g-soccer-pad-shoulders is-left">
+        <button className="g-soccer-pad-trigger" {...pad(`LT: ${ltLabel} (hold)`, jockeyDown, jockeyUp)}><b>LT</b><small>{ltLabel}</small></button>
+        <button className="g-soccer-pad-bumper" {...pad(`LB: ${lbLabel}`, () => send(attacking ? 'skill' : null, attacking, 0.1, !attacking))}><b>LB</b><small>{lbLabel}</small></button>
+      </div>
+      <div className="g-soccer-pad-shoulders is-right">
+        <button className="g-soccer-pad-bumper" {...pad(`RB: ${rbLabel} (hold)`, bumperDown, bumperUp)}><b>RB</b><small>{rbLabel}</small></button>
+        <button className="g-soccer-pad-trigger" {...pad('RT: Sprint (hold)', sprintDown, sprintUp)}><b>RT</b><small>Sprint</small></button>
+      </div>
+      <div className="g-soccer-pad-strip">
+        <div className="g-soccer-pad-score" aria-label={`Bay City ${score[0]}, Northshore ${score[1]}`}>
+          <span className={myTeam === 0 ? 'is-mine' : undefined}>BAY CITY</span>
+          <strong>{score[0]}<i>–</i>{score[1]}</strong>
+          <span className={myTeam === 1 ? 'is-mine' : undefined}>NORTHSHORE</span>
+        </div>
+        <div className={`g-soccer-pad-meter${chargeProgress > 0.85 ? ' is-over' : ''}`} role="progressbar" aria-label={`${chargeName} power`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(chargeProgress * 100)}>
+          <i style={{ width: `${chargeProgress * 100}%` }} />
+          <span>{chargingAction ? `${chargeName} · ${Math.round(chargeProgress * 100)}%` : 'Hold a button to charge'}</span>
+        </div>
+        <div className="g-soccer-pad-center">
+          <em className="g-soccer-pad-mode">{attacking ? 'Attack' : 'Defend'}</em>
+          <button type="button" className="g-soccer-pad-menu" onClick={() => setShowGame(true)}><span aria-hidden="true">☰</span> Show game</button>
         </div>
       </div>
+      <p className="g-soccer-pad-rotate">Turn your phone sideways for the full controller</p>
     </div>
   );
 }
