@@ -129,7 +129,7 @@ export type NetEv =
 export type Group = [origin: number, events: NetEv[]];
 
 export type Packet =
-  | { k: 's'; round: number; state: State; watch: number; seq?: number }
+  | { k: 's'; round: number; state: State; watch: number }
   | { k: 'S'; round: number; seed: number; time: number; level: Level; roster: number[] | null; states: [number, State][]; glass: number[] | null; doors: number[] | null; mode: Mode; teams: number[] | null }
   | { k: 'e'; round: number; groups: Group[] }
   | { k: 'end'; round: number; winner: number; places: [number, number, number][] }
@@ -272,11 +272,8 @@ function unpackState(a: unknown): State | null {
   return { x: x / 20, z: z / 20, y: y / 10, aim: aim / 100, vx: clampV(vx), vz: clampV(vz), phase, hp: hp / 10, shield: shield / 10, w: HELD_CODES[w], r, flags, helmet, vest, scope, scopes };
 }
 
-/**
- * A guest's report of its egg, and the egg it watches once its own is out (so the host knows what it needs to see),
- * numbered (`seq`, counting up) so one that comes in behind a newer one is let go.
- */
-export const guestState = (round: number, s: State, watch = -1, seq = -1) => ({ t: 'pk', r: round, k: 's', c: packState(s), ...(watch >= 0 ? { v: watch } : {}), ...(seq >= 0 ? { n: seq } : {}) });
+/** A guest's report of its egg, and the egg it watches once its own is out (so the host knows what it needs to see). */
+export const guestState = (round: number, s: State, watch = -1) => ({ t: 'pk', r: round, k: 's', c: packState(s), ...(watch >= 0 ? { v: watch } : {}) });
 
 /** A state as a string, to tell whether it has changed since it was last sent. */
 export const stateKey = (s: State) => packState(s).join();
@@ -665,8 +662,7 @@ export function parsePacket(value: unknown): Packet | null {
   const round = p.r as number;
   if (p.k === 's') {
     const state = unpackState(p.c);
-    if (!state || (p.v !== undefined && !fid(p.v)) || (p.n !== undefined && !(Number.isSafeInteger(p.n) && (p.n as number) >= 0))) return null;
-    return { k: 's', round, state, watch: p.v === undefined ? -1 : (p.v as number), ...(p.n !== undefined ? { seq: p.n as number } : {}) };
+    return state && (p.v === undefined || fid(p.v)) ? { k: 's', round, state, watch: p.v === undefined ? -1 : (p.v as number) } : null;
   }
   if (p.k === 'S') {
     if (!int(p.sd) || !num(p.tm) || !isLevel(p.lv) || !Array.isArray(p.c) || (p.ro !== undefined && !Array.isArray(p.ro))) return null;

@@ -482,12 +482,12 @@ function wheelAt(dx: number, dy: number, teams: boolean, size: ReturnType<typeof
 const SLICE_TEXT: Partial<Record<EmoteId, string>> = { meds: 'meds', shield: 'shield', gun: 'gun', help: 'help!', follow: 'follow me', enemy: 'enemy', omw: 'on my way' };
 /**
  * Whether the egg we see sees another's emote: a call only on its team, a face over anyone in plain sight close by
- * (and its own, and its team's, always). `view`: what the screen hides, so a bubble goes with its egg.
+ * (and its own, and its team's, always).
  */
-function seesEmote(m: Match, f: Fighter, eye: Fighter | undefined, k: EmoteId, view: View | null) {
+function seesEmote(m: Match, f: Fighter, eye: Fighter | undefined, k: EmoteId) {
   if (!eye || (f.phase !== 'ground' && f.phase !== 'drop')) return false;
   if (f === eye || (m.mode !== 'solo' && f.team === eye.team)) return true;
-  return !isTeamEmote(k) && Math.hypot(f.x - eye.x, f.z - eye.z) < 40 && (f.inside < 0 || f.inside === eye.inside) && !(view ? view.hides(f.id) : concealed(m, f, eye));
+  return !isTeamEmote(k) && Math.hypot(f.x - eye.x, f.z - eye.z) < 40 && (f.inside < 0 || f.inside === eye.inside) && !concealed(m, f, eye);
 }
 /** How long the build key's blueprint stays up after a build key, and the edit key's mark after an edit. */
 const PREVIEW = 2.5;
@@ -528,6 +528,7 @@ function Play({ mode }: { mode: StageMode }) {
   const view = useRef<View | null>(null);
   const match = useRef<Match | null>(null);
   const net = useRef<Session>(null as unknown as Session);
+  if (import.meta.env.DEV) (window as unknown as Record<string, unknown>).__scramble = { match: () => match.current, view: () => view.current, net: () => net.current };
   net.current ??= newSession(!live || online!.isHost);
   if (!match.current) {
     if (mode === 'idle') match.current = soloMatch(randomSeed(), level);
@@ -1513,7 +1514,7 @@ function Play({ mode }: { mode: StageMode }) {
         break;
       case 'emote': {
         // a bubble over the egg (see placeOverlays), and a team's call in the feed with a chirp
-        if (!f || !seesEmote(m, f, eye, e.k, view.current)) break;
+        if (!f || !seesEmote(m, f, eye, e.k)) break;
         if (isTeamEmote(e.k)) {
           addFeed(`${mine ? 'you' : f.name}: ${emoteText(e.k, e.a)}`, true);
           sfx.tone({ freq: 760, to: 980, dur: 0.09, type: 'triangle', vol: 0.09 });
@@ -1622,7 +1623,7 @@ function Play({ mode }: { mode: StageMode }) {
       const d = Math.hypot(f.x - eye.x, f.z - eye.z);
       // teammates first, from farther off, wherever they are
       if (m.mode !== 'solo' && f.team === eye.team) near.push([d - 1000, f]);
-      else if (d < 40 && (f.inside < 0 || f.inside === eye.inside) && !v.hides(f.id)) near.push([d, f]);
+      else if (d < 40 && (f.inside < 0 || f.inside === eye.inside) && !concealed(m, f, eye)) near.push([d, f]);
     }
     near.sort((a, b) => a[0] - b[0]);
     // nearest first; one that would cover a name already up stays hidden (sized from its text, not measured)
@@ -1939,7 +1940,7 @@ function Play({ mode }: { mode: StageMode }) {
     const emotes = m.fighters
       .filter((o) => {
         const em = emoteOf(m, o);
-        return !!em && seesEmote(m, o, focus, em.k, view.current);
+        return !!em && seesEmote(m, o, focus, em.k);
       })
       .map((o) => `${o.id},${o.emote},${o.emoteA ?? ''},${o.emoteAt.toFixed(2)}`)
       .join(';');
