@@ -166,16 +166,16 @@ test('finesse is slower and its spin curls toward goal centre in either directio
   }
 });
 
-test('first-time shot fires on arrival, expires after 0.35 s, and does not buffer against a carrier', () => {
+test('first-time shot fires on arrival, expires after 0.5 s, and does not buffer against a carrier', () => {
   for (const arrives of [true, false]) {
     const { world, player, fire } = setup();
     world.ball.x = player.x + 2; world.ball.vx = arrives ? -8 : 0;
     fire('shoot', 0.7);
     assert.ok(player.buffer);
     let fired = false;
-    for (let i = 0; i < 25; i++) {
+    for (let i = 0; i < 30; i++) {
       stepWorld(world, STEP);
-      if (world.kickEvent?.action === 'shoot') { fired = true; assert.ok(i * STEP <= 0.35); break; }
+      if (world.kickEvent?.action === 'shoot') { fired = true; assert.ok(i * STEP <= 0.5); break; }
     }
     assert.equal(fired, arrives); assert.equal(player.buffer, null);
   }
