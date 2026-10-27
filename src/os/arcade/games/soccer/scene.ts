@@ -762,7 +762,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
         shadowType: renderer.shadowMap.type,
         shadowWidth: key.shadow.mapSize.width,
         shadowHeight: key.shadow.mapSize.height,
-        crowdMeshCount: crowd.mesh.count,
+        crowdMeshCount: stadium.crowdCount(),
       };
     },
     update,
