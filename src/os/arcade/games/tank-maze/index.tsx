@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, LEVEL_NAMES, Segmented, defineSetting, formatTally, levelIndex, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
-import { aimAligned, aimAt, canvasToWorld, createWorld, fitBoard, keyHeading, mulberry32, noInput, spawnRound, standings, stickInput, step, toCanvas, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
+import { aimAligned, aimAt, canvasToWorld, createWorld, fitBoard, hudRow, keyHeading, mulberry32, noInput, spawnRound, standings, stickInput, step, toCanvas, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
 import { makeMemory, think, type BotMemory } from './bots.ts';
-import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacket, type NetEvent, type RoundPacket } from './net.ts';
+import { endPacket, inputPacket, parsePacket, rosterPacket, roundPacket, seatNames, statePacket, tankHolders, holdersLeft, tankName, type NetEvent, type RosterPacket, type RoundPacket } from './net.ts';
+import { finalLine, freeSpans, layoutChips, rosterLine, type ChipLayout, type Span } from './hud.ts';
 import { meta } from './meta';
 import './tank-maze.css';
 
@@ -77,6 +78,8 @@ type Match = {
   seats: number[];
   bots: number[];
   departed: Set<number>;
+  /** Seats whose player still drives their own tank this match. */
+  holders: Set<number>;
   minds: (BotMemory | null)[];
   rngs: (() => number)[];
   names: string[];
@@ -108,6 +111,10 @@ type Match = {
   lastNetAt: number;
   /** Local match built before the canvas had a real size; rebuild round 1 once it does. */
   fixDims: boolean;
+  /** Guest side: the world, seats and names come from the host (a round or roster packet), not the placeholder. */
+  synced: boolean;
+  /** Host side: when the roster last went out (late spectators build their view from it). */
+  lastRosterAt: number;
 };
 
 const STEP = 1 / 60;
@@ -118,6 +125,19 @@ function TankMaze() {
   const { ref, size, ctx } = useCanvas();
   const [banner, setBanner] = useState<{ text: string; sub: string } | null>(null);
   const [waiting, setWaiting] = useState(false);
+  const [notice, setNotice] = useState<{ text: string; sub: string; id: number } | null>(null);
+  /** Online: the name of everyone seen in the room by seat, so a seat whose player left still reads as them. */
+  const known = useRef(new Map<number, string>());
+  const prevPlayers = useRef<number[]>([]);
+  /** The Game Over card this game put up (null when the shell's own card is up), redrawn when someone leaves. */
+  const lastEnd = useRef<{ title: string; scores: number[]; rounds: number } | null>(null);
+  /** On-screen scale of the canvas (framed iPads draw it at ~0.82) and the shell pills that sit over the HUD row. */
+  const view = useRef<{ at: number; u: number; badge: (Span & { y0: number; y1: number }) | null; ctrl: { x0: number; y0: number; y1: number } | null }>({ at: -1e9, u: 1, badge: null, ctrl: null });
+  /** The last chip layout and what it was laid out for (layoutChips measures text, so it only reruns on a change). */
+  const chipCache = useRef<{ key: string; fit: ChipLayout } | null>(null);
+  /** HUD band height when the score chips wrap to a second row below the shell controls (0 = one row). */
+  const hudRef = useRef(0);
+  const [, setHudH] = useState(0);
   const [mode] = useSetting(MODE);
   const [rivals] = useSetting(RIVALS);
   const [levelName] = useSetting(LEVEL);
@@ -151,7 +171,12 @@ function TankMaze() {
   };
 
   /** Maze/board layout: the board rect plus the touch zone each human gets. */
-  const layout = (w: number, h: number) => touchLayout(w, h, online ? 1 : effMode === '3p' ? 3 : effMode === '2p' ? 2 : 1, touch);
+  const layout = (w: number, h: number) => touchLayout(w, h, online ? 1 : effMode === '3p' ? 3 : effMode === '2p' ? 2 : 1, touch, hudRef.current);
+  /** fitBoard, kept clear of the shell controls as measured (touch makes them larger than the default). */
+  const fitTo = (board: { x: number; y: number; w: number; h: number }, cols: number, rows: number, w: number) => {
+    const ctrl = view.current.ctrl;
+    return fitBoard(board, cols, rows, w, ctrl ? { w: w - ctrl.x0 + 6, h: ctrl.y1 + 6 } : undefined);
+  };
 
   const mazeSize = (board: { w: number; h: number }) => {
     if (board.w >= board.h) {
@@ -162,11 +187,23 @@ function TankMaze() {
     return { cols, rows: Math.max(7, Math.min(11, Math.round((6 * board.h) / board.w))) };
   };
 
+  /**
+   * A tank's label. Online it comes from the names the match started with (the host's, sent to guests in its round
+   * and end packets), not the live bot list: the room renumbers its bots when someone leaves.
+   */
   const nameOf = (match: Match, id: number) => {
     if (!online) return NAMES[id];
     const seat = match.seats[id];
-    const name = seatNames(match.seats, online.players, online.bots)[id] ?? `Seat ${seat}`;
-    return match.departed.has(seat) && online.players.some((pl) => pl.seat === seat) ? `${name} (Bot)` : name;
+    if (seat === undefined) return match.names[id] ?? NAMES[id] ?? `Tank ${id + 1}`;
+    const live = online.players.find((pl) => pl.seat === seat);
+    const base = match.names[id];
+    if (base === undefined) {
+      const gone = !live && !online.bots.some((b) => b.seat === seat);
+      if (gone && known.current.has(seat)) return `${known.current.get(seat)} (Left)`;
+      const name = seatNames(match.seats, online.players, online.bots)[id] ?? `Seat ${seat}`;
+      return match.departed.has(seat) && live ? `${name} (Bot)` : name;
+    }
+    return tankName(base, seat, match, live?.name);
   };
 
   const applyEvents = (match: Match, events: NetEvent[]) => {
@@ -204,6 +241,7 @@ function TankMaze() {
       seats: [],
       bots: [],
       departed: new Set(),
+      holders: new Set(),
       minds: world.tanks.map(() => null),
       rngs: world.tanks.map((_, i) => mulberry32(seed ^ (i + 1) * 7919)),
       names: [],
@@ -233,6 +271,8 @@ function TankMaze() {
       settleWinner: undefined,
       lastNetAt: 0,
       fixDims: false,
+      synced: false,
+      lastRosterAt: -1e9,
     };
     return match;
   };
@@ -259,6 +299,29 @@ function TankMaze() {
         target: match.world.target,
         level: match.level,
         spawns: match.world.tanks.map((t) => ({ x: t.x, y: t.y, a: t.a })),
+        names: match.seats.map((_, i) => nameOf(match, i)),
+      }),
+    );
+  };
+
+  const hostSendRoster = (match: Match) => {
+    if (!online || online.seat !== 0) return;
+    match.lastRosterAt = performance.now();
+    const w = match.world;
+    online.send(
+      rosterPacket({
+        roomRound: online.round,
+        round: w.round,
+        seed: w.seed,
+        cols: w.maze.cols,
+        rows: w.maze.rows,
+        target: w.target,
+        level: match.level,
+        seats: match.seats,
+        bots: match.bots,
+        departed: [...match.departed].filter((s) => match.seats.includes(s)),
+        names: match.seats.map((_, i) => nameOf(match, i)),
+        scores: w.scores,
       }),
     );
   };
@@ -269,8 +332,15 @@ function TankMaze() {
     const { w, h } = sizeRef.current;
     const lay = layout(w || 800, h || 500);
     let match: Match;
+    const prev = m.current;
+    lastEnd.current = null;
     if (online) {
-      const seats = [...new Set([...online.players.map((p) => p.seat), ...online.bots.map((b) => b.seat)])].sort((a, b) => a - b).slice(0, 4);
+      // Someone who left between matches keeps their seat, driven by a bot and labeled as having left.
+      const carried =
+        !isGuest && prev?.ended
+          ? prev.seats.filter((s) => known.current.has(s) && !online.players.some((p) => p.seat === s) && !online.bots.some((b) => b.seat === s))
+          : [];
+      const seats = [...new Set([...online.players.map((p) => p.seat), ...online.bots.map((b) => b.seat), ...carried])].sort((a, b) => a - b).slice(0, 4);
       const bots = online.bots.map((b) => b.seat).filter((s) => seats.includes(s));
       if (isGuest) {
         // Guests wait for the host's round packet; build a placeholder world meanwhile.
@@ -280,6 +350,10 @@ function TankMaze() {
       }
       match.seats = seats;
       match.bots = bots;
+      for (const s of carried) if (seats.includes(s)) match.departed.add(s);
+      match.holders = tankHolders(online.players.map((p) => p.seat), match);
+      // The host fixes every tank's name for the match; guests take them from its round packet.
+      if (!isGuest) match.names = seatNames(seats, [...online.players, ...carried.map((s) => ({ seat: s, name: known.current.get(s) ?? `Seat ${s}` }))], online.bots);
       match.level = cfg.current.level;
       for (let i = 0; i < match.world.tanks.length; i++) match.minds[i] = makeMemory();
       if (!isGuest) hostSendRound(match);
@@ -360,7 +434,7 @@ function TankMaze() {
     if (zi < 0) {
       const { w, h } = sizeRef.current;
       const { cols, rows } = match.world.maze;
-      const fit = fitBoard(layout(w, h).board, cols, rows, w);
+      const fit = fitTo(layout(w, h).board, cols, rows, w);
       if (fit.cell <= 0) return;
       const pt = canvasToWorld({ x, y }, fit);
       if (pt.x < 0 || pt.x >= cols || pt.y < 0 || pt.y >= rows) return;
@@ -481,6 +555,10 @@ function TankMaze() {
           applyRoundPacket(match, pkt);
           return;
         }
+        if (pkt.k === 'roster') {
+          applyRoster(match, pkt);
+          return;
+        }
         if (pkt.k === 's') {
           match.lastStateAt = performance.now();
           const snap: Snapshot = {
@@ -521,17 +599,17 @@ function TankMaze() {
         if (pkt.k === 'end' && !match.reported) {
           match.reported = true;
           match.ended = true;
+          if (pkt.seats) {
+            match.seats = pkt.seats;
+            if (pkt.bots) match.bots = pkt.bots;
+          }
+          if (pkt.names) match.names = pkt.names;
           online.reportResult(online.round, pkt.winner);
           // champ is the seat whose tank actually won the match (bots and departed seats count);
           // winner stays null for them because nobody scores the room win.
           const champ = pkt.champ;
           const title = champ === null ? 'Draw' : champ === online.seat ? 'You Win' : `${seatName(match, champ)} Wins`;
-          const names = match.world.tanks.map((_, i) => nameOf(match, i));
-          const winnerTankId = champ === null ? -1 : match.seats.indexOf(champ);
-          shell.gameOver(undefined, {
-            title,
-            detail: `${formatTally(pkt.scores, { names, lead: winnerTankId >= 0 ? winnerTankId : undefined })} in ${pkt.rounds} rounds.`,
-          });
+          showOver(match, title, pkt.scores, pkt.rounds);
         }
       }),
     [online?.onMessage, online?.seat, online?.round],
@@ -556,6 +634,7 @@ function TankMaze() {
     match.world = world;
     match.seats = pkt.seats;
     match.bots = pkt.bots;
+    match.names = pkt.names ?? [];
     match.guestScores = pkt.scores.slice();
     match.snaps = [];
     match.particles = [];
@@ -565,8 +644,89 @@ function TankMaze() {
     match.guestMines = [];
     match.guestPickups = [];
     match.onlineRound = pkt.roomRound;
+    match.holders = tankHolders(online?.players.map((p) => p.seat) ?? [], match, match.synced ? match.holders : undefined);
+    match.synced = true;
     startBanner(match);
   };
+
+  /** A spectator who joined mid-round builds this round's maze and the host's roster from it; everyone else just refreshes names. */
+  const applyRoster = (match: Match, pkt: RosterPacket) => {
+    if (match.ended) return;
+    const w = match.world;
+    const same = match.synced && match.onlineRound === pkt.roomRound && w.round === pkt.round && w.seed === pkt.seed && w.maze.cols === pkt.cols && w.maze.rows === pkt.rows && w.tanks.length === pkt.seats.length;
+    if (!same) {
+      const world = createWorld({ cols: pkt.cols, rows: pkt.rows, seed: pkt.seed, count: pkt.seats.length, target: pkt.target });
+      world.round = pkt.round;
+      world.scores = pkt.scores.slice();
+      match.world = world;
+      match.guestScores = pkt.scores.slice();
+      match.particles = [];
+      match.level = pkt.level as 0 | 1 | 2;
+      match.onlineRound = pkt.roomRound;
+      match.synced = true;
+    }
+    match.seats = pkt.seats;
+    match.bots = pkt.bots;
+    match.departed = new Set(pkt.departed);
+    match.names = pkt.names;
+    match.holders = tankHolders(online?.players.map((p) => p.seat) ?? [], match, same ? match.holders : undefined);
+  };
+
+  /** Labeled final score, plus (online) who is in the room. */
+  const overDetail = (match: Match, scores: number[], rounds: number) => {
+    if (!online) {
+      const ids = match.world.tanks.map((t) => t.id);
+      const cpu = cfg.current.mode === 'cpu';
+      return finalLine(ids.map((i) => (cpu && i === 0 ? 'You' : NAMES[i])), scores, rounds);
+    }
+    // Every score the host sent gets a name, even if this client's world was built with fewer tanks.
+    const ids = scores.map((_, i) => i);
+    const names = ids.map((i) => (match.seats[i] === online.seat ? 'You' : nameOf(match, i)));
+    const people = [...online.players].sort((a, b) => (a.seat === online.seat ? -1 : b.seat === online.seat ? 1 : a.seat - b.seat)).map((p) => (p.seat === online.seat ? 'You' : p.name));
+    return `${finalLine(names, scores, rounds)} ${rosterLine(people)}`.trim();
+  };
+
+  const showOver = (match: Match, title: string, scores: number[], rounds: number) => {
+    lastEnd.current = { title, scores: scores.slice(), rounds };
+    shell.gameOver(undefined, { title, detail: overDetail(match, scores, rounds) });
+  };
+
+  // Online: say when someone leaves. Mid-round a bot takes their tank and the round goes on; on the Game Over card the
+  // roster updates and their seat reads as left.
+  useEffect(() => {
+    if (!online) {
+      known.current.clear();
+      prevPlayers.current = [];
+      return;
+    }
+    const now = online.players;
+    const gone = prevPlayers.current.filter((s) => s !== online.seat && !now.some((p) => p.seat === s));
+    for (const p of now) known.current.set(p.seat, p.name);
+    prevPlayers.current = now.map((p) => p.seat);
+    const match = m.current;
+    if (!gone.length || !match) return;
+    // Only someone who drove a tank this match hands it to a bot; a newcomer waiting in a seat (or watching) never did.
+    const { left, holders } = holdersLeft(match.holders, prevPlayers.current, match, online.seat);
+    match.holders = holders;
+    const names = left.map((s) => known.current.get(s) ?? `Seat ${s}`);
+    if (shell.status === 'playing' && !match.ended && left.length) {
+      setNotice({ text: `${names.join(' and ')} Left`, sub: 'A bot takes over their tank.', id: performance.now() });
+    } else if (shell.status === 'over' && lastEnd.current) {
+      const e = lastEnd.current;
+      shell.updateOver({ title: e.title, detail: overDetail(match, e.scores, e.rounds) });
+    }
+  }, [online?.players]);
+
+  // Host: someone new is watching (or the room changed), so send the roster now rather than at the next tick.
+  useEffect(() => {
+    if (online?.isHost && m.current) m.current.lastRosterAt = -1e9;
+  }, [online?.isHost, online?.watchers, online?.players]);
+
+  useEffect(() => {
+    if (!notice) return;
+    const t = window.setTimeout(() => setNotice(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [notice]);
 
   // -----------------------------------------------------------------------------------------------------------------
   // Sim
@@ -584,7 +744,7 @@ function TankMaze() {
       if (!match.reported) {
         match.reported = true;
         online.reportResult(online.round, winnerSeat);
-        online.send(endPacket({ k: 'end', roomRound: online.round, winner: winnerSeat, champ: winner >= 0 ? (match.seats[winner] ?? null) : null, scores: w.scores, rounds: w.round }));
+        online.send(endPacket({ k: 'end', roomRound: online.round, winner: winnerSeat, champ: winner >= 0 ? (match.seats[winner] ?? null) : null, scores: w.scores, rounds: w.round, names: match.seats.map((_, i) => nameOf(match, i)), seats: match.seats, bots: match.bots }));
       }
       title = winnerSeat === null ? (winner >= 0 ? `${nameOf(match, winner)} Wins` : 'Draw') : winnerSeat === online.seat ? 'You Win' : `${seatName(match, winnerSeat)} Wins`;
       if (winner >= 0 && winnerSeat === null) title = `${nameOf(match, winner)} Wins`;
@@ -592,9 +752,7 @@ function TankMaze() {
       const cpuMode = cfg.current.mode === 'cpu';
       title = winner < 0 ? 'Draw' : cpuMode ? (winner === 0 ? 'You Win' : `${NAMES[winner]} Wins`) : `${NAMES[winner]} Wins`;
     }
-    const names = w.tanks.map((_, i) => nameOf(match, i));
-    const detail = `${formatTally(w.scores, { names, lead: winner >= 0 ? winner : undefined })} in ${w.round} rounds.`;
-    shell.gameOver(undefined, { title, detail });
+    showOver(match, title, w.scores, w.round);
     if (winner === 0) sfx.play('win');
     else sfx.play('lose');
   };
@@ -650,12 +808,12 @@ function TankMaze() {
       return;
     }
 
-    // Host: a seat whose player left is taken over by a bot for the rest of the match.
+    // Host: a seat whose player left is taken over by a bot for the rest of the match (even if a newcomer has since taken the seat).
     if (online && !match.ended) {
       for (let i = 0; i < match.seats.length; i++) {
         const seat = match.seats[i];
         if (match.bots.includes(seat) || match.departed.has(seat)) continue;
-        if (!online.players.some((p) => p.seat === seat)) {
+        if (!match.holders.has(seat) || !online.players.some((p) => p.seat === seat)) {
           match.departed.add(seat);
           match.minds[i] = makeMemory();
         }
@@ -734,9 +892,10 @@ function TankMaze() {
       if (w.phase === 'done' && !match.ended) endMatch(match);
     }
 
-    // Host state broadcast ~25 Hz.
+    // Host state broadcast ~25 Hz, and the roster every couple of seconds for anyone who just started watching.
     if (online && online.seat === 0) {
       const now = performance.now();
+      if (!match.ended && now - match.lastRosterAt > 2000) hostSendRoster(match);
       if (now - (match.lastNetAt ?? 0) > 40 && match.world.phase !== 'ready') {
         match.lastNetAt = now;
         const w = match.world;
@@ -764,6 +923,34 @@ function TankMaze() {
   // -----------------------------------------------------------------------------------------------------------------
   // Render
 
+  /** Re-measured a few times a second: the canvas's on-screen scale and the shell pills over the HUD row, in canvas px. */
+  const measureView = (bandH: number) => {
+    const v = view.current;
+    const now = performance.now();
+    if (now - v.at < 400) return v;
+    v.at = now;
+    const cv = ref.current;
+    const root = shell.root.current;
+    if (!cv || !cv.offsetWidth) return v;
+    const r = cv.getBoundingClientRect();
+    const k = r.width / cv.offsetWidth;
+    if (!(k > 0.2)) return v;
+    // clamped: mid scale-in animation k reads tiny
+    const u = Math.min(1.5, Math.max(1, 1 / k));
+    if (u !== v.u) root?.style.setProperty('--g-tank-maze-u', String(u));
+    v.u = u;
+    const rel = (el: Element | null | undefined) => {
+      if (!el) return null;
+      const b = el.getBoundingClientRect();
+      if (!b.width || (b.top - r.top) / k > bandH) return null;
+      return { x0: (b.left - r.left) / k, x1: (b.right - r.left) / k, y0: (b.top - r.top) / k, y1: (b.bottom - r.top) / k };
+    };
+    const badge = rel(root?.querySelector('.arcade-online-status'));
+    v.badge = badge;
+    v.ctrl = rel(root?.querySelector('.arcade-ctrl'));
+    return v;
+  };
+
   const render = () => {
     const c = ctx();
     const match = m.current;
@@ -775,7 +962,7 @@ function TankMaze() {
     if (!match) return;
     const world = match.world;
     const lay = layout(w, h);
-    const fit = fitBoard(lay.board, world.maze.cols, world.maze.rows, w);
+    const fit = fitTo(lay.board, world.maze.cols, world.maze.rows, w);
     const cell = fit.cell;
     const bw = cell * world.maze.cols;
     const bh = cell * world.maze.rows;
@@ -1068,66 +1255,66 @@ function TankMaze() {
     }
 
     // HUD chips
-    const hudH = lay.hud;
-    const compactHud = hudH < 30;
+    const rowH = hudRow(h);
     const scores = isGuest ? match.guestScores : standings(world);
     const chips = viewTanks.map((_, i) => i);
-    // chips live in [12, w-176] so they never sit under the shell's top-right controls;
-    // online they split into two groups around the centered transport badge (~112px at w/2)
-    const chipLeft = 12;
-    const chipRight = w - 176;
-    const leftW = w / 2 - 56 - chipLeft;
-    const rightW = chipRight - (w / 2 + 56);
-    const groups: { idxs: number[]; x0: number; x1: number }[] =
-      online && leftW >= 80 && rightW >= 80
-        ? [
-            { idxs: chips.slice(0, Math.ceil(chips.length / 2)), x0: chipLeft, x1: w / 2 - 56 },
-            { idxs: chips.slice(Math.ceil(chips.length / 2)), x0: w / 2 + 56, x1: chipRight },
-          ]
-        : [{ idxs: chips, x0: chipLeft, x1: chipRight }];
-    for (const g of groups) {
-      const avail = Math.max(0, g.x1 - g.x0);
-      let chipFont = Math.max(11, Math.min(13, hudH * 0.4));
-      let gap = compactHud ? 8 : 14;
-      const measure = () => {
-        c.font = `600 ${chipFont}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
-        const ws = g.idxs.map((i) => {
-          const name = nameOf(match, i);
-          return 10 + c.measureText(name).width + 8 + c.measureText(`${scores[i] ?? 0}`).width + 6;
-        });
-        return { ws, total: ws.reduce((a, b) => a + b, 0) + gap * Math.max(0, g.idxs.length - 1) };
+    // Chips stay out of the shell's top-right controls and, online, the Direct/Relayed badge (both measured).
+    // When they can't fit beside the controls (four chips on a phone), the rest wrap to a row below them.
+    const v = measureView(Math.max(lay.hud, rowH));
+    const u = v.u;
+    const ctrl = v.ctrl;
+    const ctrlX = ctrl ? ctrl.x0 : w - 176;
+    const row1Bottom = Math.max(rowH, ctrl?.y1 ?? 0);
+    const row2Top = Math.max(rowH, (ctrl?.y1 ?? 44) + 4);
+    const badgeIn = (y0: number, y1: number) => (online && v.badge && v.badge.y0 < y1 && v.badge.y1 > y0 ? [v.badge] : []);
+    const row1 = freeSpans(12, ctrlX - 8, badgeIn(0, row1Bottom));
+    const row2 = freeSpans(12, w - 12, badgeIn(row2Top, row2Top + rowH));
+    const fontOf = (f: number, weight: number) => `${weight} ${f}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
+    const labels = chips.map((i) => ({ name: nameOf(match, i), score: `${scores[i] ?? 0}` }));
+    const key = JSON.stringify([labels, row1, row2, u, rowH, h >= 320]);
+    if (chipCache.current?.key !== key) {
+      const measure = (text: string, px: number, weight: 600 | 700) => {
+        c.font = fontOf(px, weight);
+        return c.measureText(text).width;
       };
-      let { ws: widths, total } = measure();
-      if (total > avail && gap > 4) {
-        gap = 4;
-        ({ ws: widths, total } = measure());
-      }
-      while (total > avail && chipFont > 11) {
-        chipFont--;
-        ({ ws: widths, total } = measure());
-      }
-      let cx = g.x0 + Math.max(0, (avail - total) / 2);
-      for (let ci = 0; ci < g.idxs.length; ci++) {
-        const i = g.idxs[ci];
-        const cw = widths[ci];
-        c.fillStyle = 'rgba(255,255,255,0.65)';
-        c.beginPath();
-        c.roundRect(cx, hudH / 2 - hudH * 0.32, cw, hudH * 0.64, hudH * 0.32);
-        c.fill();
-        c.fillStyle = COLORS[i % COLORS.length];
-        c.beginPath();
-        c.arc(cx + 9, hudH / 2, 4, 0, Math.PI * 2);
-        c.fill();
+      // Tall stages wrap; short ones (framed laptop windows) tighten the chips and shorten names first.
+      chipCache.current = { key, fit: layoutChips(labels, row1, row2, { u, rowH, wrap: h >= 320, measure }) };
+    }
+    const chipFit = chipCache.current.fit;
+    const wrapped = chipFit.placed.some((p) => p.row === 1);
+    const needHud = wrapped ? Math.ceil(row2Top + rowH) : 0;
+    if (needHud !== hudRef.current) {
+      hudRef.current = needHud;
+      setHudH(needHud);
+    }
+    // Wrapped: the first row lines up with the controls beside it.
+    const rowY = [wrapped && ctrl ? (ctrl.y0 + ctrl.y1) / 2 : rowH / 2, row2Top + rowH / 2];
+    const chipFont = chipFit.font;
+    const pillH = Math.max(rowH * 0.64, chipFont + 6 * u);
+    for (let ci = 0; ci < chips.length; ci++) {
+      const i = chips[ci];
+      const cw = chipFit.widths[ci];
+      const cx = chipFit.placed[ci].x;
+      const cy = rowY[chipFit.placed[ci].row];
+      const name = chipFit.names[ci];
+      c.fillStyle = 'rgba(255,255,255,0.65)';
+      c.beginPath();
+      c.roundRect(cx, cy - pillH / 2, cw, pillH, pillH / 2);
+      c.fill();
+      c.fillStyle = COLORS[i % COLORS.length];
+      c.beginPath();
+      c.arc(cx + chipFit.dot, cy, 4 * u, 0, Math.PI * 2);
+      c.fill();
+      let tx = cx + chipFit.padL;
+      if (name) {
+        c.font = fontOf(chipFont, 600);
         c.fillStyle = '#2e2d2a';
-        const name = nameOf(match, i);
-        c.fillText(name, cx + 17, hudH / 2 + chipFont * 0.36);
-        const nw = c.measureText(name).width;
-        c.font = `700 ${chipFont}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
-        c.fillStyle = '#1d1c19';
-        c.fillText(`${scores[i] ?? 0}`, cx + 17 + nw + 8, hudH / 2 + chipFont * 0.36);
-        c.font = `600 ${chipFont}px -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif`;
-        cx += cw + gap;
+        c.fillText(name, tx, cy + chipFont * 0.36);
+        tx += c.measureText(name).width + chipFit.nameGap;
       }
+      c.font = fontOf(chipFont, 700);
+      c.fillStyle = '#1d1c19';
+      c.fillText(labels[ci].score, tx, cy + chipFont * 0.36);
     }
 
     // touch sticks
@@ -1205,9 +1392,19 @@ function TankMaze() {
           {banner.sub && <span>{banner.sub}</span>}
         </div>
       )}
-      {waiting && (
-        <div className="g-tank-maze-banner g-tank-maze-waiting" aria-live="polite">
-          <strong>Waiting for host</strong>
+      {(waiting || notice) && (
+        <div className="g-tank-maze-toasts" aria-live="polite">
+          {notice && (
+            <div className="g-tank-maze-banner g-tank-maze-toast" key={notice.id}>
+              <strong>{notice.text}</strong>
+              <span>{notice.sub}</span>
+            </div>
+          )}
+          {waiting && (
+            <div className="g-tank-maze-banner g-tank-maze-toast">
+              <strong>Waiting for host</strong>
+            </div>
+          )}
         </div>
       )}
     </div>

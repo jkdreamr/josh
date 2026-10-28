@@ -1,3 +1,11 @@
+.g-tank-maze {
+  container: g-tank-maze-host / inline-size;
+}
+.g-tank-maze .arcade-card p.arcade-detail {
+  display: block;
+  margin: 0;
+  line-height: 1.3;
+}
 .g-tank-maze .g-tank-maze-stage {
   position: absolute;
   inset: 0;
@@ -55,23 +63,71 @@
   }
 }
 .g-tank-maze .g-tank-maze-banner strong {
-  font-size: 18px;
+  font-size: calc(18px * var(--g-tank-maze-u, 1));
   font-weight: 700;
   letter-spacing: -0.01em;
   color: #f6f3ec;
   white-space: nowrap;
 }
 .g-tank-maze .g-tank-maze-banner span {
-  font-size: 12.5px;
+  /* framed iPads draw the game at ~0.82x; --g-tank-maze-u scales text back up to its intended on-screen size */
+  font-size: calc(13px * var(--g-tank-maze-u, 1));
   font-weight: 500;
   color: rgba(246, 243, 236, 0.62);
   white-space: nowrap;
 }
-.g-tank-maze .g-tank-maze-waiting {
-  top: auto;
+.g-tank-maze .g-tank-maze-toasts {
+  position: absolute;
+  left: 50%;
   bottom: 18px;
-  padding: 8px 16px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  transform: translateX(-50%);
+  pointer-events: none;
 }
-.g-tank-maze .g-tank-maze-waiting strong {
-  font-size: 13px;
+.g-tank-maze .g-tank-maze-toasts .g-tank-maze-toast {
+  position: static;
+  gap: 2px;
+  padding: 8px 16px;
+  transform: none;
+  animation: g-tank-maze-rise 0.24s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@keyframes g-tank-maze-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+.g-tank-maze .g-tank-maze-toasts .g-tank-maze-toast strong {
+  font-size: calc(14px * var(--g-tank-maze-u, 1));
+}
+/* Touch: shell controls at 40px on screen (--g-tank-maze-u undoes a framed iPad's ~0.82 scale). */
+@media (pointer: coarse) {
+  .g-tank-maze .arcade-ctrl button {
+    width: calc(40px * var(--g-tank-maze-u, 1));
+    height: calc(40px * var(--g-tank-maze-u, 1));
+  }
+  .g-tank-maze .arcade-ctrl svg {
+    width: calc(16px * var(--g-tank-maze-u, 1));
+    height: calc(16px * var(--g-tank-maze-u, 1));
+  }
+}
+/* Narrow game areas (portrait phones, framed or full screen): the toolbar reaches the middle of the top row, so the
+   online badge moves to the top-left corner (the score chips are laid out around wherever it is). Sized by the game
+   root, not the viewport, and wider for the larger touch controls. */
+@container g-tank-maze-host (max-width: 440px) {
+  .g-tank-maze .arcade-online-status {
+    left: 12px;
+    transform: none;
+  }
+}
+@media (pointer: coarse) {
+  @container g-tank-maze-host (max-width: 620px) {
+    .g-tank-maze .arcade-online-status {
+      left: 12px;
+      transform: none;
+    }
+  }
 }

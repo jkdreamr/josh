@@ -34,7 +34,9 @@ import {
   type Maze,
 } from '../src/os/arcade/games/tank-maze/logic.ts';
 import { makeMemory, STANDOFF, think } from '../src/os/arcade/games/tank-maze/bots.ts';
-import { endPacket, inputPacket, parsePacket, roundPacket, seatNames, statePacket } from '../src/os/arcade/games/tank-maze/net.ts';
+<<<<<<< HEAD
+import { endPacket, inputPacket, parsePacket, rosterPacket, roundPacket, seatNames, statePacket, tankHolders, holdersLeft, tankName } from '../src/os/arcade/games/tank-maze/net.ts';
+import { clipName, finalLine, freeSpans, layoutChips, listNames, packChipRows, packChips, rosterLine, type Span } from '../src/os/arcade/games/tank-maze/hud.ts';
 import { formatTally } from '../src/os/arcade/kit/tally.ts';
 
 const fire: TankInput = { turn: 0, move: 0, fire: true };
@@ -717,7 +719,23 @@ test('state and input packets round trip', () => {
   const di = parsePacket(inputPacket({ k: 'in', roomRound: 1, turn: 0, move: 0, fireCount: 0, dir: -Math.PI / 2 }));
   assert.ok(di && di.k === 'in' && Math.abs(di.dir! + Math.PI / 2) < 0.001);
   const e = parsePacket(endPacket({ k: 'end', roomRound: 1, winner: 2, champ: 2, scores: [5, 3], rounds: 9 }));
-  assert.ok(e && e.k === 'end' && e.winner === 2);
+  assert.ok(e && e.k === 'end' && e.winner === 2 && e.names === undefined);
+});
+
+test('round and end packets carry the host tank names', () => {
+  const base = { roomRound: 2, round: 1, seed: 7, cols: 10, rows: 6, seats: [0, 1, 3], bots: [3], scores: [0, 0, 0], target: 3, level: 1 as const };
+  const spawns = [0, 1, 2].map((i) => ({ x: i + 0.5, y: 0.5, a: 0 }));
+  const names = ['R2Host', 'R2Guest (Left)', 'Bot 1'];
+  const r = parsePacket(JSON.parse(JSON.stringify(roundPacket({ ...base, spawns, names }))));
+  assert.ok(r && r.k === 'round');
+  assert.deepEqual(r.names, names);
+  // a wrong-length or malformed list reads as absent
+  const bad = parsePacket({ ...JSON.parse(JSON.stringify(roundPacket({ ...base, spawns }))), names: ['A', 'B'] });
+  assert.ok(bad && bad.k === 'round' && bad.names === undefined);
+  const e = parsePacket(JSON.parse(JSON.stringify(endPacket({ k: 'end', roomRound: 2, winner: null, champ: 3, scores: [1, 2, 3], rounds: 6, names }))));
+  assert.ok(e && e.k === 'end');
+  assert.deepEqual(e.names, names);
+  assert.equal(parsePacket({ ...endPacket({ k: 'end', roomRound: 2, winner: null, champ: 3, scores: [1, 2, 3], rounds: 6 }), names: [1, 2, 3] })?.k, 'end');
 });
 
 test('end packet champ rides along while winner stays null', () => {
@@ -744,6 +762,78 @@ test('seatNames gives a bot that takes over a departed seat a fresh number', () 
   const two = seatNames([0, 1, 2, 3], [{ seat: 0, name: 'Bot 3' }], [{ seat: 3, name: 'Bot 1' }]);
   assert.deepEqual(two, ['Bot 3', 'Bot 2', 'Bot 4', 'Bot 1']);
   assert.deepEqual(seatNames([0, 1], [{ seat: 0, name: 'A' }, { seat: 1, name: 'B' }], []), ['A', 'B']);
+});
+
+// Host, a guest who left mid-match (their tank now driven by a bot) and two room bots; First To 3, seven rounds in.
+const hostRoster = {
+  roomRound: 4,
+  round: 7,
+  seed: 123456789,
+  cols: 10,
+  rows: 6,
+  target: 3,
+  level: 1,
+  seats: [0, 1, 2, 3],
+  bots: [2, 3],
+  departed: [1],
+  names: ['Host-R3', 'Guest-R3 (Left)', 'Bot 1', 'Bot 2'],
+  scores: [1, 1, 3, 0],
+};
+
+/** What a client's Game Over line says, given its roster, the room's live players, and which seat is "You". */
+const overLine = (r: { seats: number[]; bots: number[]; departed: number[]; names: string[] }, scores: number[], players: { seat: number; name: string }[], me: number, rounds: number) =>
+  finalLine(
+    r.seats.map((seat, i) => (seat === me ? 'You' : tankName(r.names[i], seat, { bots: r.bots, departed: new Set(r.departed) }, players.find((p) => p.seat === seat)?.name))),
+    scores,
+    rounds,
+  );
+
+test('roster packets round trip and carry the whole match roster', () => {
+  const r = parsePacket(JSON.parse(JSON.stringify(rosterPacket(hostRoster))));
+  assert.ok(r && r.k === 'roster');
+  assert.deepEqual(r, { k: 'roster', ...hostRoster });
+  // names and scores must cover every seat; bad seat lists are rejected
+  const raw = JSON.parse(JSON.stringify(rosterPacket(hostRoster)));
+  assert.equal(parsePacket({ ...raw, names: ['A', 'B'] }), null);
+  assert.equal(parsePacket({ ...raw, scores: [1, 2, 3] }), null);
+  assert.equal(parsePacket({ ...raw, departed: [9] }), null);
+  assert.equal(parsePacket({ ...raw, seats: [1, 2] }), null);
+  assert.equal(parsePacket({ ...raw, cols: 99 }), null);
+});
+
+test('a spectator who joined mid-round maps every name to the same score as the host', () => {
+  // the room after the guest left: only the host is a player, and the room renumbered its bots
+  const players = [{ seat: 0, name: 'Host-R3' }];
+  const host = overLine(hostRoster, hostRoster.scores, players, 0, 7);
+  assert.equal(host, 'Bot 1 3, You 1, Guest-R3 (Left) 1 and Bot 2 0 after 7 rounds.');
+  // a fresh phone watcher (seat -1) knows nothing but what the host sent it
+  const r = parsePacket(JSON.parse(JSON.stringify(rosterPacket(hostRoster))));
+  assert.ok(r && r.k === 'roster');
+  const watcher = overLine(r, r.scores, players, -1, 7);
+  assert.equal(watcher, 'Bot 1 3, Host-R3 1, Guest-R3 (Left) 1 and Bot 2 0 after 7 rounds.');
+  // bots never read as left, and no score is dropped
+  assert.ok(!/Bot \d \(Left\)/.test(watcher));
+  assert.ok(watcher.includes('Bot 2 0'));
+  // the Game Over packet carries the same seats, so a watcher that missed the roster still matches the champ seat
+  const e = parsePacket(JSON.parse(JSON.stringify(endPacket({ k: 'end', roomRound: 4, winner: null, champ: 2, scores: hostRoster.scores, rounds: 7, names: hostRoster.names, seats: hostRoster.seats, bots: hostRoster.bots }))));
+  assert.ok(e && e.k === 'end' && e.seats && e.bots && e.names);
+  assert.equal(e.names[e.seats.indexOf(e.champ!)], 'Bot 1');
+  assert.equal(overLine({ seats: e.seats, bots: e.bots, departed: [], names: e.names }, e.scores, players, -1, e.rounds), watcher);
+  // an older host's end packet without seats still parses
+  const old = parsePacket({ game: 'tank-maze', type: 'end', room: 4, winner: null, champ: 2, scores: [1, 1, 3, 0], rounds: 7 });
+  assert.ok(old && old.k === 'end' && old.seats === undefined);
+});
+
+test('tankName tags people who have gone, never bots', () => {
+  const roster = { bots: [2, 3], departed: new Set([1]) };
+  assert.equal(tankName('Bot 1', 2, roster, undefined), 'Bot 1');
+  assert.equal(tankName('Guest (Left)', 1, roster, undefined), 'Guest (Left)');
+  assert.equal(tankName('Host', 0, roster, 'Host'), 'Host');
+  // someone who left after the last roster
+  assert.equal(tankName('Host', 0, roster, undefined), 'Host (Left)');
+  // the departed seat's player is back in the room while a bot still drives the tank
+  assert.equal(tankName('Guest', 1, roster, 'Guest'), 'Guest (Bot)');
+  assert.equal(tankName('Guest', 1, roster, 'Someone Else'), 'Guest (Left)');
 });
 
 test('malformed packets are rejected', () => {
@@ -869,4 +959,129 @@ test('touchLayout keeps touch zones off the board', () => {
   const desk = touchLayout(1440, 900, 3, false);
   assert.equal(desk.zones.length, 0);
   assert.ok(desk.board.h === 900 - desk.hud);
+});
+
+test('hud chips skip the online badge and the shell controls', () => {
+  const spans = freeSpans(12, 417, [{ x0: 273, x1: 328 }]);
+  assert.deepEqual(spans, [{ x0: 12, x1: 265 }, { x0: 336, x1: 417 }]);
+  const xs = packChips([100, 100, 40, 30], spans, 8);
+  assert.ok(xs);
+  const ws = [100, 100, 40, 30];
+  for (let i = 0; i < 4; i++) {
+    const inside = spans.some((s) => xs[i] >= s.x0 - 1e-9 && xs[i] + ws[i] <= s.x1 + 1e-9);
+    assert.ok(inside, `chip ${i} at ${xs[i]} overlaps a blocked span`);
+  }
+  assert.equal(packChips([200, 200, 200], spans, 8), null);
+});
+
+test('hud chips that miss the row beside the controls wrap to a second row', () => {
+  // phone portrait: four chips, only ~100px left of the 40px touch controls
+  const row1 = freeSpans(12, 116, []);
+  const row2 = freeSpans(12, 378, []);
+  const ws = [70, 84, 76, 74];
+  assert.equal(packChips(ws, row1, 14), null);
+  const placed = packChipRows(ws, [row1, row2], 14);
+  assert.ok(placed);
+  assert.deepEqual(placed.map((p) => p.row), [0, 1, 1, 1]);
+  const rowSpans = [row1, row2];
+  placed.forEach((p, i) => {
+    assert.ok(rowSpans[p.row].some((s) => p.x >= s.x0 - 1e-9 && p.x + ws[i] <= s.x1 + 1e-9), `chip ${i} leaves its row`);
+  });
+  // a row with room keeps everything on row 0
+  assert.ok(packChipRows(ws, [freeSpans(12, 600, []), row2], 14)?.every((p) => p.row === 0));
+  assert.equal(packChipRows([400], [row1, row2], 14), null);
+});
+
+// rough text metrics: about 0.56em per character
+const measure = (text: string, px: number) => text.length * px * 0.56;
+const inSpans = (x: number, w: number, spans: readonly Span[]) => spans.some((s) => x >= s.x0 - 1e-9 && x + w <= s.x1 + 1e-9);
+
+test('score chips in a short framed window stay clear of the controls', () => {
+  // 1280x720 framed laptop: a 464x198 stage, controls from x270
+  const row1 = freeSpans(12, 262, []);
+  const row2 = freeSpans(12, 452, []);
+  const labels = ['You', 'Green', 'Blue', 'Gold'].map((name, i) => ({ name, score: `${i}` }));
+  const fit = layoutChips(labels, row1, row2, { u: 1, rowH: 26, wrap: false, measure });
+  assert.ok(fit.fits);
+  assert.ok(fit.placed.every((p) => p.row === 0));
+  fit.placed.forEach((p, i) => assert.ok(inSpans(p.x, fit.widths[i], row1), `chip ${i} runs under the controls`));
+  assert.ok(fit.font >= 11.25);
+});
+
+test('score chips go around the online badge, shortening long names', () => {
+  // desktop guest: a 523px stage, controls from x335, the badge at x150-205
+  const row1 = freeSpans(12, 327, [{ x0: 150, x1: 205 }]);
+  const row2 = freeSpans(12, 511, []);
+  const labels = ['R2Guest', 'R2Host Longname', 'Bot 1', 'Bot 2'].map((name) => ({ name, score: '2' }));
+  const fit = layoutChips(labels, row1, row2, { u: 1, rowH: 26, wrap: false, measure });
+  fit.placed.forEach((p, i) => assert.ok(inSpans(p.x, fit.widths[i], fit.placed[i].row ? row2 : row1), `chip ${i} overlaps`));
+  // tall stages wrap to a second row before clipping names
+  const tall = layoutChips(labels, freeSpans(12, 116, []), freeSpans(12, 378, []), { u: 1, rowH: 44, wrap: true, measure });
+  assert.ok(tall.fits);
+  assert.deepEqual(tall.names, labels.map((l) => l.name));
+  assert.ok(tall.placed.some((p) => p.row === 1));
+});
+
+test('clipped chip names keep their Left or Bot tag', () => {
+  assert.equal(clipName('Bot 1', 5), 'Bot 1');
+  assert.equal(clipName('Green Tester (Left)', 6), 'Green… (Left)');
+  assert.equal(clipName('Somebody (Bot)', 24), 'Somebody (Bot)');
+});
+
+test('a taller hud band and larger touch controls push the board down', () => {
+  const one = touchLayout(390, 728, 1, true);
+  const two = touchLayout(390, 728, 1, true, 94);
+  assert.equal(two.hud, 94);
+  assert.equal(two.board.y, 94);
+  assert.equal(two.board.y + two.board.h, one.board.y + one.board.h);
+  // the default pill reach still applies when the measured one is smaller
+  const land = touchLayout(844, 274, 1, true).board;
+  const small = fitBoard(land, 12, 6, 844, { w: 100, h: 20 });
+  assert.deepEqual(small, fitBoard(land, 12, 6, 844));
+  // 40px touch controls: 272px wide, 62px tall from the top-right corner
+  const big = fitBoard(land, 12, 6, 844, { w: 272, h: 62 });
+  const right = big.ox + big.cell * 12;
+  assert.ok(right <= 844 - 272 + 1e-9 || big.oy >= 62 - 1e-9, 'maze slides under the controls');
+});
+
+test('game over copy labels every score and lists the people in the room', () => {
+  assert.equal(finalLine(['You', 'Green Tester', 'Bot 1', 'Bot 2'], [0, 0, 2, 3], 6), 'Bot 2 3, Bot 1 2, You 0 and Green Tester 0 after 6 rounds.');
+  assert.equal(finalLine(['Red', 'Green', 'Blue'], [3, 1, 0], 1), 'Red 3, Green 1 and Blue 0 after 1 round.');
+  assert.equal(rosterLine(['You', 'Green Tester']), '2 people here: You and Green Tester.');
+  assert.equal(rosterLine(['You']), 'Just you here.');
+  assert.equal(listNames(['A', 'B', 'C']), 'A, B and C');
+});
+
+test('only someone who drove a tank this match is announced as having left', () => {
+  // Host 0, guest 1, bots 2 and 3.
+  const roster = { seats: [0, 1, 2, 3], bots: [2, 3], departed: new Set<number>() };
+  let holders = tankHolders([0, 1], roster);
+  assert.deepEqual([...holders], [0, 1]);
+
+  // The guest leaves mid-round: announced, and a bot keeps their tank.
+  let step = holdersLeft(holders, [0], roster, 0);
+  assert.deepEqual(step.left, [1]);
+  holders = step.holders;
+  roster.departed.add(1);
+
+  // A fresh phone takes the vacated seat as a waiting player, then switches to Watch: nobody is announced.
+  step = holdersLeft(holders, [0, 1], roster, 0);
+  assert.deepEqual(step.left, []);
+  holders = step.holders;
+  assert.deepEqual([...holders], [0]);
+  step = holdersLeft(holders, [0], roster, 0);
+  assert.deepEqual(step.left, []);
+
+  // The same holds on a watcher's client, and even if the departure hadn't reached its roster yet.
+  const late = { seats: [0, 1, 2, 3], bots: [2, 3], departed: new Set<number>() };
+  const watcher = holdersLeft(tankHolders([0, 1], late), [0], late, -1);
+  assert.deepEqual(watcher.left, [1]);
+  assert.deepEqual(holdersLeft(watcher.holders, [0, 1], late, -1).left, []);
+  assert.deepEqual(holdersLeft(holdersLeft(watcher.holders, [0, 1], late, -1).holders, [0], late, -1).left, []);
+
+  // Next match the newcomer does drive seat 1, so leaving then is announced.
+  const next = { seats: [0, 1, 2, 3], bots: [2, 3], departed: new Set<number>() };
+  assert.deepEqual(holdersLeft(tankHolders([0, 1], next), [0], next, 0).left, [1]);
+  // Bots and seats already handed to a bot never count.
+  assert.deepEqual([...tankHolders([0, 1, 2], { seats: [0, 1, 2], bots: [2], departed: new Set([1]) })], [0]);
 });
