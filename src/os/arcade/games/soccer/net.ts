@@ -283,3 +283,25 @@ export function consumeCommand(command: ControlCommand): ControlCommand {
 export function cloneSnapshot(world: World) {
   return JSON.parse(JSON.stringify(world)) as Omit<World, 'seed'> & { seed: number };
 }
+
+export const SNAPSHOT_MAX_BYTES = 8 * 1024 - 256;
+const snapshotEncoder = new TextEncoder();
+
+export function trimSnapshot(world: World): World {
+  const serialize = (decimals: number, dropHostFields = false) => JSON.stringify(world, (key, value) => {
+    if (dropHostFields && key === 'buffer') return null;
+    if (dropHostFields && key === 'touchCd') return undefined;
+    return typeof value === 'number' && Number.isFinite(value) && !Number.isInteger(value)
+      ? Math.round(value * 10 ** decimals) / 10 ** decimals
+      : value;
+  })!;
+  let json = serialize(3);
+  if (snapshotEncoder.encode(json).byteLength > SNAPSHOT_MAX_BYTES) {
+    json = serialize(2);
+    if (snapshotEncoder.encode(json).byteLength > SNAPSHOT_MAX_BYTES) {
+      // Tier 3 drops host-only kick-buffer and touch-cooldown state.
+      json = serialize(2, true);
+    }
+  }
+  return JSON.parse(json) as World;
+}

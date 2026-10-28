@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { acceptMovePacket, commandFromPacket, consumeCommand, mergeRemoteCommand, movePacket, parsePacket, sameStick, stickSendDelay, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
+import { ROOM_MESSAGE_MAX_BYTES } from '../worker/src/room-core.ts';
+import { computeAI } from '../src/os/arcade/games/soccer/ai.ts';
+import { createWorld, STEP, stepWorld, type Command, type World } from '../src/os/arcade/games/soccer/logic.ts';
+import { acceptMovePacket, commandFromPacket, consumeCommand, mergeRemoteCommand, movePacket, parsePacket, sameStick, stickSendDelay, trimSnapshot, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
 import { chargePower } from '../src/os/arcade/games/soccer/input.ts';
+import { startShootout } from '../src/os/arcade/games/soccer/setpieces.ts';
 
 const remoteSeat = (): RemoteSeat => ({ seq: -1, edge: -1, held: null, pressUsed: false });
 
@@ -161,4 +165,113 @@ test('online configuration is constrained to supported match options', () => {
   assert.equal(parsePacket({ t: 'soccer', k: 'cfg', r: 1, seq: 0, half: 7, level: 1 }), null);
   assert.equal(parsePacket({ t: 'soccer', k: 'cfg', r: 1, seq: 0, half: 3, level: 9 }), null);
   assert.equal(parsePacket({ t: 'soccer', k: 'cfg', r: 1, seq: 0, half: 3, level: 1, mode: 'duo' }), null);
+});
+
+test('trimmed full-match and worst-case snapshots fit the worker relay', () => {
+  const encoder = new TextEncoder();
+  const relayMessage = (state: World) => ({
+    t: 'msg', to: 3, d: { '~r': 999, d: { t: 'soccer', k: 's', r: 1, seq: 99999999, state } },
+  });
+  const frame = (state: World) => JSON.stringify(relayMessage(state));
+  const frameAtPrecision = (state: World, decimals: number) => JSON.stringify(relayMessage(state), (_key, value) =>
+    typeof value === 'number' && Number.isFinite(value) && !Number.isInteger(value)
+      ? Math.round(value * 10 ** decimals) / 10 ** decimals
+      : value);
+  const world = createWorld(71423, 120);
+  const homeCommands = new Map<number, Command>();
+  const awayCommands = new Map<number, Command>();
+  const commands = new Map<number, Command>();
+  const largestValues = new Map<string, { bytes: number; value: unknown }>();
+  let largestWorld: World | undefined;
+  let largestWorldBytes = -1;
+  let samples = 0;
+  const keepLargest = (key: string, value: unknown) => {
+    const json = JSON.stringify(value);
+    if (json === undefined) return;
+    const bytes = encoder.encode(json).byteLength;
+    if (bytes > (largestValues.get(key)?.bytes ?? -1)) largestValues.set(key, { bytes, value: structuredClone(value) });
+  };
+
+  for (let tick = 0; tick < 30000 && world.phase !== 'full-time'; tick++) {
+    computeAI(world, 'hard', STEP, tick, 0, homeCommands);
+    computeAI(world, 'hard', STEP, tick, 1, awayCommands);
+    commands.clear();
+    for (const [id, command] of homeCommands) commands.set(id, command);
+    for (const [id, command] of awayCommands) commands.set(id, command);
+    stepWorld(world, STEP, commands);
+    if (tick % 3 !== 0) continue;
+
+    samples++;
+    const state = trimSnapshot(world);
+    const packet = { t: 'soccer', k: 's', r: 1, seq: 99999999, state };
+    assert.ok(parsePacket(packet), `trimmed snapshot at tick ${tick} must parse`);
+    const relayBytes = encoder.encode(frame(state)).byteLength;
+    assert.ok(relayBytes <= ROOM_MESSAGE_MAX_BYTES, `relay frame at tick ${tick} is ${relayBytes} bytes`);
+
+    for (const key of ['setPiece', 'setPieceRun', 'shootout', 'rules', 'kickEvent', 'passPoint']) {
+      keepLargest(key, world[key as keyof World]);
+    }
+    const json = JSON.stringify(world)!;
+    const worldBytes = encoder.encode(json).byteLength;
+    if (worldBytes > largestWorldBytes) {
+      largestWorldBytes = worldBytes;
+      largestWorld = structuredClone(world);
+    }
+  }
+  assert.equal(world.phase, 'full-time', 'the simulated match should reach full time');
+  assert.ok(samples > 1000, 'the full match should provide many samples');
+  assert.ok(largestWorld);
+
+  const shootoutWorld = structuredClone(largestWorld);
+  startShootout(shootoutWorld);
+  keepLargest('shootout', shootoutWorld.shootout);
+
+  const worstCase = structuredClone(largestWorld);
+  worstCase.setPiece = largestValues.get('setPiece')?.value as World['setPiece'];
+  worstCase.setPieceRun = largestValues.get('setPieceRun')?.value as World['setPieceRun'];
+  worstCase.shootout = largestValues.get('shootout')?.value as World['shootout'];
+  worstCase.rules = structuredClone(largestValues.get('rules')?.value as World['rules']);
+  worstCase.kickEvent = largestValues.get('kickEvent')?.value as World['kickEvent'];
+  worstCase.passPoint = largestValues.get('passPoint')?.value as World['passPoint'];
+  worstCase.rules!.yellows = Array.from({ length: 22 }, (_, id) => id);
+  for (const player of worstCase.players) {
+    player.buffer = { action: 'finesse', power: 0.123456789, aim: { x: 12.3456789, z: -23.456789 }, t: 0.98765432 };
+    player.slide = { x: 0.70710678, z: -0.70710678, t: 0.5432198, won: true };
+    player.touchCd = 0.123456789;
+    player.planting = true;
+    player.formation = 10;
+    player.action = 'x'.repeat(24);
+  }
+  worstCase.event = 'e'.repeat(80);
+
+  const rawPacket = { t: 'soccer', k: 's', r: 1, seq: 99999999, state: worstCase };
+  const rawPacketIsValid = parsePacket(rawPacket) !== null;
+  const beforeTrim = structuredClone(worstCase);
+  const trimmedWorstCase = trimSnapshot(worstCase);
+  assert.deepEqual(worstCase, beforeTrim, 'trimming must not mutate the host world');
+  if (rawPacketIsValid) {
+    assert.ok(parsePacket({ ...rawPacket, state: trimmedWorstCase }), 'trimmed worst case must remain parseable');
+    console.log('Worst-case composite was parse-valid before and after trimming.');
+  } else {
+    console.log('Worst-case composite was not parse-valid before trimming; skipped trimmed parse assertion.');
+  }
+  const rawBytes = encoder.encode(frame(worstCase)).byteLength;
+  const threeDecimalBytes = encoder.encode(frameAtPrecision(worstCase, 3)).byteLength;
+  const twoDecimalBytes = encoder.encode(frameAtPrecision(worstCase, 2)).byteLength;
+  const tierThreeBytes = encoder.encode(frame(trimmedWorstCase)).byteLength;
+  console.log(`Snapshot worst-case relay bytes: raw=${rawBytes}, 3dp=${threeDecimalBytes}, 2dp=${twoDecimalBytes}, tier-3=${tierThreeBytes}`);
+  assert.ok(rawBytes > ROOM_MESSAGE_MAX_BYTES, `raw worst-case frame is only ${rawBytes} bytes`);
+  assert.ok(tierThreeBytes <= ROOM_MESSAGE_MAX_BYTES, `tier-3 worst-case frame is ${tierThreeBytes} bytes`);
+});
+
+test('trimSnapshot rounds fractions and preserves integers', () => {
+  const world = createWorld(71423, 120);
+  world.ball.x = 1.23456;
+  const snapshot = trimSnapshot(world);
+  assert.notEqual(snapshot, world);
+  assert.equal(snapshot.ball.x, 1.235);
+  assert.equal(world.ball.x, 1.23456);
+  assert.equal(snapshot.seed, world.seed);
+  assert.equal(snapshot.players[0].id, world.players[0].id);
+  assert.deepEqual(snapshot.score, world.score);
 });

@@ -3,7 +3,7 @@ import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useOnline, useSet
 import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
 import { chargePower, IDENTITY_BASIS, screenToWorld, gamepadInput, keyboardInput, reconcileControllers, type ControlCommand, type GamepadHistory } from './input.ts';
-import { acceptMovePacket, cloneSnapshot, consumeCommand, movePacket, parsePacket, sameStick, stickSendDelay, type RemoteSeat, type LobbyMember } from './net.ts';
+import { acceptMovePacket, consumeCommand, movePacket, parsePacket, sameStick, stickSendDelay, trimSnapshot, type RemoteSeat, type LobbyMember } from './net.ts';
 import { createWorld, distance, teamOf, findReceiver, matchClock, nearestCarrier, setRestart, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
 import { setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
@@ -1007,7 +1007,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       snapshotTimer.current += dt;
       if (snapshotTimer.current >= 0.05) {
         snapshotTimer.current %= 0.05;
-        const state = cloneSnapshot(current);
+        const state = trimSnapshot(current);
         if (!state.kickEvent && pendingSnapshotKick.current) state.kickEvent = { ...pendingSnapshotKick.current };
         pendingSnapshotKick.current = null;
         room.send({ t: 'soccer', k: 's', r: room.round || 1, seq: snapshotSequence.current++, state });
