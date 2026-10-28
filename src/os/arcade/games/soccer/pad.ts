@@ -5,6 +5,17 @@ export type PadButtonZone<Id extends string> = { id: Id; x: number; y: number; r
 export const STICK = { deadZone: 0.14, outerZone: 0.92, curve: 1.45, travel: 0.34 };
 /** Face buttons register this far past their drawn radius, so a thumb that lands between buttons still hits the nearest one. */
 export const FACE_SLOP = 1.3;
+export type FaceLabels = { a: string; b: string; x: string; y: string };
+
+export function faceLabels(attacking: boolean, overrides?: Partial<FaceLabels> | null): FaceLabels {
+  const labels = {
+    ...(attacking
+      ? { a: 'Pass', b: 'Shoot', x: 'Lob · Cross', y: 'Through' }
+      : { a: 'Contain', b: 'Tackle', x: 'Slide', y: 'Press' }),
+    ...overrides,
+  };
+  return attacking ? labels : { ...labels, y: 'Press' };
+}
 
 /**
  * Turns a thumb offset (px from the stick origin, screen axes) into a knob offset clamped to `radius` and a move
@@ -66,7 +77,8 @@ let hapticLabel: HTMLLabelElement | null = null;
 export function haptic(ms = 12) {
   if (typeof navigator === 'undefined' || typeof document === 'undefined') return;
   if (typeof navigator.vibrate === 'function') {
-    navigator.vibrate(ms);
+    const activation = (navigator as Navigator & { userActivation?: { hasBeenActive?: boolean } }).userActivation;
+    if (activation?.hasBeenActive !== false) navigator.vibrate(ms);
     return;
   }
   if (!/iP(hone|ad|od)/.test(navigator.userAgent) && !(navigator.maxTouchPoints > 1 && /Macintosh/.test(navigator.userAgent))) return;

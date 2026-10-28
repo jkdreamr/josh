@@ -5,7 +5,12 @@ import { FIELD, groundPassSpeed, groundPassTarget } from '../src/os/arcade/games
 test('assisted pass leads a runner using the calibrated launch-time horizon', () => {
   const receiver = { x: 15, z: 0, vx: 6, vz: 0 };
   const target = groundPassTarget({ x: 0, z: 0 }, receiver);
-  assert.ok(Math.abs(target.x - (15 + 6 * 15 / groundPassSpeed(15))) < 1e-9);
+  let predicted = { x: receiver.x, z: receiver.z };
+  for (let i = 0; i < 2; i++) {
+    const time = Math.hypot(predicted.x, predicted.z) / groundPassSpeed(15);
+    predicted = { x: receiver.x + receiver.vx * time, z: receiver.z + receiver.vz * time };
+  }
+  assert.ok(Math.abs(target.x - predicted.x) < 1e-9);
   assert.equal(target.z, 0);
   assert.ok(target.x > receiver.x);
   assert.deepEqual(groundPassTarget({ x: 0, z: 0 }, { ...receiver, vx: 0 }), { x: 15, z: 0 });

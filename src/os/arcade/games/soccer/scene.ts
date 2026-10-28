@@ -1,17 +1,18 @@
 import type * as T from 'three';
 import type { World, Player, Team } from './logic.ts';
 import { FIELD, jerseyNumber, teamDir } from './logic.ts';
-import { clubById, DEFAULT_CLUBS, matchKits, rosterName, type Kit } from './teams.ts';
+import { clubById, DEFAULT_CLUBS, matchKits, type Kit } from './teams.ts';
 import { disposeTree, damp } from './gl.ts';
 import { loadSoccerModel, MODEL_URLS } from './load.ts';
 import { ballNumberTexture, ballTexture } from './textures.ts';
+import { playerName } from './broadcast.ts';
 import { buildStadium, type PitchPattern } from './stadium.ts';
-import { IDENTITY_BASIS, type ViewBasis } from './input.ts';
-import { cameraGoal, createCameraRig, stepCameraBasis, stepCameraRig, type CameraMode } from './camera.ts';
+import type { ViewBasis } from './input.ts';
+import { cameraGoal, createCameraRig, desiredCameraBasis, stepCameraBasis, stepCameraRig, type CameraMode } from './camera.ts';
 export type { CameraMode } from './camera.ts';
 import { createPracticeMarkers } from './practice-markers.ts';
 import type { PracticeMarker } from './practice.ts';
-import { approachAngle, bindSoccerRig, bodyFrameVelocity, createSoccerAnimationInput, createSoccerAnimator, kickingFoot, playSoccerClip, preferredFoot, soccerClipActive, soccerDribbleOffset, updateSoccerAnimator, type SoccerAnimator, type SoccerClip } from './player.ts';
+import { approachAngle, bindSoccerRig, bodyFrameVelocity, createSoccerAnimationInput, createSoccerAnimator, kickingFoot, kickClipStartTime, playSoccerClip, preferredFoot, soccerClipActive, soccerDribbleOffset, updateSoccerAnimator, type SoccerAnimator, type SoccerClip } from './player.ts';
 import type { SoccerRenderStats } from './perf.ts';
 import { createFxLayer, type FxDirector } from './fx.ts';
 
@@ -29,10 +30,12 @@ type Crowd = { mesh: T.InstancedMesh; count: number; phases: number[]; baseY: nu
 
 export type SoccerView = {
   resize(width: number, height: number): void;
+  /** Fraction of the view height covered by the bottom HUD; the broadcast keeps play above it. */
+  setSafeBottom(fraction: number): void;
   viewBasis(): ViewBasis;
   getCameraNdc(): SoccerCameraNdc;
   perfStats(): SoccerRenderStats;
-  update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId?: number | null, power?: number | null, cameraDt?: number): void;
+  update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId?: number | null, power?: number | null, cameraDt?: number, tagIds?: readonly number[]): void;
   setFx(director: FxDirector | null): void;
   render(): void;
   /** Resolves once the shaders are compiled; frames rendered meanwhile are skipped. */
@@ -199,13 +202,17 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const canvas = renderer.domElement;
   canvas.style.cssText = 'display:block;width:100%;height:100%;touch-action:none';
   host.appendChild(canvas);
-  const indicator = document.createElement('div');
-  indicator.className = 'g-soccer-world-indicator';
-  const indicatorArrow = document.createElement('i');
-  const indicatorName = document.createElement('span');
-  const indicatorPower = document.createElement('b');
-  indicator.append(indicatorArrow, indicatorName, indicatorPower);
-  host.appendChild(indicator);
+  // One on-pitch name tag per local human (P1 plus a co-op/versus P2).
+  const indicators = [0, 1].map(() => {
+    const root = document.createElement('div');
+    root.className = 'g-soccer-world-indicator';
+    root.style.display = 'none';
+    const name = document.createElement('span');
+    const power = document.createElement('b');
+    root.append(document.createElement('i'), name, power);
+    host.appendChild(root);
+    return { root, name, power };
+  });
   const projected = new THREE.Vector3();
 
   const scene = new THREE.Scene();
@@ -243,7 +250,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   scene.fog = new THREE.Fog(night ? '#142438' : '#d99a71', 150, 270);
   const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 180);
   const cameraDirection = new THREE.Vector3();
-  let lastViewBasis: ViewBasis = IDENTITY_BASIS;
+  let lastViewBasis: ViewBasis | null = null;
+  let desiredBroadcastBasis: ViewBasis | null = null;
   const hemi = new THREE.HemisphereLight('#d0e0e8', '#162b22', 0.85);
   scene.add(hemi);
   const key = new THREE.DirectionalLight('#f0f6ff', 3.2);
@@ -467,6 +475,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const debug = typeof location !== 'undefined' && new URLSearchParams(location.search).has('soccerdebug');
   const quality = {
     dpr: Math.min(window.devicePixelRatio || 1, lite ? 1.5 : 2),
+    tier: 0,
     slow: 0,
     stable: 0,
     lastRender: 0,
@@ -479,6 +488,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const onLost = (event: Event) => event.preventDefault();
   canvas.addEventListener('webglcontextlost', onLost);
 
+  let safeBottom = 0;
   function resize(w: number, h: number) {
     width = Math.max(1, w); height = Math.max(1, h);
     renderer.setSize(width, height, false);
@@ -486,7 +496,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     camera.updateProjectionMatrix();
   }
 
-  function update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId: number | null = null, power: number | null = null, cameraDt = dt) {
+  function update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId: number | null = null, power: number | null = null, cameraDt = dt, tagIds: readonly number[] = []) {
+    desiredBroadcastBasis = desiredCameraBasis(world, humanTeam, camera.aspect, 'broadcast');
     const clubs = world.clubs ?? DEFAULT_CLUBS;
     setKits([clubs[0], clubs[1]]);
     elapsed += Math.min(0.05, dt);
@@ -522,7 +533,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       reticle.scale.setScalar(mouth ? 1 : 4);
       reticle.position.set(setPiece.aim.x, mouth ? setPiece.aim.y : 0.12, setPiece.aim.z);
     }
-    const goal = cameraGoal(world, humanTeam, camera.aspect, cameraMode, (time - (introStartedAt ?? time)) / 5.5);
+    const goal = cameraGoal(world, humanTeam, camera.aspect, cameraMode, (time - (introStartedAt ?? time)) / 5.5, safeBottom);
     // Camera FX enter the same bounded springs; no render-only displacement or zoom bypasses them.
     if (fxDirector) {
       const shiftX = fxDirector.nudgeX + fxDirector.shakeX;
@@ -550,14 +561,18 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       const speed = Math.hypot(player.vx, player.vz);
       const kickEvent = world.kickEvent;
       const eventForPlayer = kickEvent?.playerId === player.id;
+      const carrying = currentCarrier?.id === player.id;
+      const forwardBallSpeed = (world.ball.vx - player.vx) * Math.sin(player.facing) + (world.ball.vz - player.vz) * Math.cos(player.facing);
+      const touchState = actor.root.userData.soccerTouch ??= { cooldown: player.touchCd ?? 0, carrier: carrying, forwardSpeed: forwardBallSpeed, controlled: player.controlled };
       if (eventForPlayer && kickEvent && kickEvent !== actor.lastKick) {
         const clip = kickClip(kickEvent.action);
         if (clip) {
           const foot = kickingFoot(actor.root.rotation.y, world.ball.vx, world.ball.vz, actor.anim.foot);
-          startClip(actor, clip, foot === 'l' ? 1 : -1, kickEvent.power, true);
+          const charged = touchState.controlled && actor.anim.charge > 0.2;
+          playSoccerClip(actor.anim, clip, foot === 'l' ? 1 : -1, kickEvent.power, kickClipStartTime(clip, charged));
         }
       } else if (!eventForPlayer && player.cooldown > actor.prevCooldown + 0.05) {
-        const clip = replayClip(player.action);
+        const clip = replayClip(player.action === 'tackle-miss' ? 'tackle' : player.action);
         if (clip) {
           const side = player.action === 'slide'
             ? bodyFrameVelocity(actor.root.rotation.y, player.vx, player.vz, actor.anim.frame).side >= 0 ? 1 : -1
@@ -565,6 +580,17 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
           startClip(actor, clip, side, 0.5);
         }
       }
+      const knockOn = player.touchCd !== undefined
+        ? player.touchCd - touchState.cooldown > 0.2 && player.touchCd <= 0.45 && forwardBallSpeed > 2 && Math.hypot(world.ball.x - player.x, world.ball.z - player.z) < 1.2
+        : forwardBallSpeed - touchState.forwardSpeed > 3 && Math.hypot(world.ball.x - player.x, world.ball.z - player.z) < 1;
+      if (!eventForPlayer && (touchState.carrier || carrying) && knockOn) {
+        const side = bodyFrameVelocity(actor.root.rotation.y, world.ball.x - player.x, world.ball.z - player.z, actor.anim.frame).side >= 0 ? 1 : -1;
+        playSoccerClip(actor.anim, 'touch', side, 0.5);
+      }
+      touchState.cooldown = player.touchCd ?? 0;
+      touchState.carrier = carrying;
+      touchState.forwardSpeed = forwardBallSpeed;
+      touchState.controlled = player.controlled;
       actor.lastKick = kickEvent;
       if (world.phase !== 'goal') actor.celebrated = false;
       const celebrating = world.phase === 'goal' && cameraMode !== 'replay' && player.team === scoringTeam && !isKeeper(player);
@@ -581,7 +607,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
           const timeToPlane = (keeperPlaneX - world.ball.x) / world.ball.vx;
           const crossingZ = timeToPlane > 0 ? world.ball.z + world.ball.vz * timeToPlane : world.ball.z;
           const side = bodyFrameVelocity(actor.root.rotation.y, keeperPlaneX - player.x, crossingZ - player.z, actor.anim.frame).side >= 0 ? 1 : -1;
-          startClip(actor, player.action === 'dive' ? 'dive' : 'catch', side, 0.5);
+          startClip(actor, player.action === 'dive' || (player.action === 'parry' && Math.abs(crossingZ - player.z) > 0.7) ? 'dive' : 'catch', side, 0.5);
           actor.keeperShot = true;
         }
         if (ballSpeed < 6 || !towardOwnGoal) actor.keeperShot = false;
@@ -604,7 +630,6 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       } else {
         actor.keeperShot = false;
       }
-      const carrying = currentCarrier?.id === player.id;
       const carrierDx = currentCarrier ? currentCarrier.x - player.x : 0;
       const carrierDz = currentCarrier ? currentCarrier.z - player.z : 0;
       const jockey = !isKeeper(player) && speed < 6.5 && currentCarrier !== null
@@ -632,6 +657,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       input.time = time;
       input.carrying = carrying;
       input.jockey = jockey;
+      input.planting = !!player.planting;
       input.keeperSet = isKeeper(player) && Math.abs(world.ball.x - ownGoalX) < 25;
       input.lookX = world.ball.x - player.x;
       input.lookY = world.ball.y;
@@ -673,21 +699,24 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     if (fxDirector) fxLayer.update(fxDirector, ball.position, world.ball, camera, dt);
     const shadowScale = Math.max(0.25, 1.1 - world.ball.y * 0.2);
     ballShadow.scale.set(shadowScale, shadowScale, 1);
-    if (controlled && cameraMode !== 'setpiece') {
-      projected.set(controlled.x, 2.75, controlled.z).project(camera);
-      const visible = projected.z >= -1 && projected.z <= 1 && Math.abs(projected.x) < 1.05 && Math.abs(projected.y) < 1.05;
-      indicator.style.display = visible ? 'grid' : 'none';
-      if (visible) {
-        indicator.style.left = `${(projected.x * 0.5 + 0.5) * width}px`;
-        indicator.style.top = `${(0.5 - projected.y * 0.5) * height}px`;
-        indicator.style.setProperty('--player-color', activeKits[controlled.team].shirt);
-        const name = rosterName(clubById(world.clubs?.[controlled.team]), controlled.id % 11).toUpperCase();
-        indicatorName.textContent = `NO. ${jerseyNumber(controlled.id)}  ${name}`;
-        indicatorPower.style.width = power === null ? '0%' : `${Math.round(Math.max(0.04, power) * 100)}%`;
-        indicatorPower.style.visibility = power === null ? 'hidden' : 'visible';
-        indicatorPower.style.backgroundColor = (power ?? 0) > 0.85 ? '#ff755f' : '#e6f36d';
-      }
-    } else indicator.style.display = 'none';
+    const tagged = controlled ? [controlled.id, ...tagIds.filter((id) => id !== controlled.id)] : [];
+    for (let i = 0; i < indicators.length; i++) {
+      const tag = indicators[i]!;
+      const player = cameraMode === 'setpiece' ? undefined : world.players[tagged[i] ?? -1];
+      if (player) projected.set(player.x, 2.75, player.z).project(camera);
+      const visible = !!player && !player.sentOff && projected.z >= -1 && projected.z <= 1 && Math.abs(projected.x) < 1.05 && Math.abs(projected.y) < 1.05;
+      tag.root.style.display = visible ? 'grid' : 'none';
+      if (!visible) continue;
+      const charge = i === 0 ? power : null;
+      tag.root.style.left = `${(projected.x * 0.5 + 0.5) * width}px`;
+      tag.root.style.top = `${(0.5 - projected.y * 0.5) * height}px`;
+      tag.root.style.setProperty('--player-color', activeKits[player.team].shirt);
+      const label = `NO. ${jerseyNumber(player.id)}  ${playerName(player.id, world).toUpperCase()}`;
+      if (tag.name.textContent !== label) tag.name.textContent = label;
+      tag.power.style.width = charge === null ? '0%' : `${Math.round(Math.max(0.04, charge) * 100)}%`;
+      tag.power.style.visibility = charge === null ? 'hidden' : 'visible';
+      tag.power.style.backgroundColor = (charge ?? 0) > 0.85 ? '#ff755f' : '#e6f36d';
+    }
     const sunLow = stadium.sunLow();
     key.position.set(cameraRig.target.value.x - FIELD.length * 0.17, sunLow ? 18 : 30, cameraRig.target.value.z + (sunLow ? FIELD.width * 0.3 : -FIELD.width * 0.28));
     key.target.position.set(cameraRig.target.value.x, 0, cameraRig.target.value.z);
@@ -712,17 +741,20 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     if (quality.dpr > 1.01) {
       quality.dpr = quality.dpr > 1.75 ? 1.5 : quality.dpr > 1.35 ? 1.25 : 1;
       renderer.setPixelRatio(quality.dpr);
+      quality.tier++;
       return;
     }
     if (quality.shadows) {
       quality.shadows = false;
       key.castShadow = false;
       renderer.shadowMap.enabled = false;
+      quality.tier++;
       return;
     }
     if (!quality.crowdHalf) {
       quality.crowdHalf = true;
       stadium.reduceCrowd();
+      quality.tier++;
     }
   }
 
@@ -775,17 +807,18 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
 
   return {
     resize,
+    setSafeBottom(fraction) { safeBottom = Number.isFinite(fraction) ? Math.max(0, Math.min(0.45, fraction)) : 0; },
     viewBasis() {
-      return {
-        right: { ...lastViewBasis.right },
-        forward: { ...lastViewBasis.forward },
-      };
+      const basis = lastViewBasis ?? desiredBroadcastBasis ?? { forward: { x: 0, z: 1 }, right: { x: -1, z: 0 } };
+      return { right: { ...basis.right }, forward: { ...basis.forward } };
     },
     getCameraNdc() {
       return cameraNdc;
     },
     perfStats() {
       return {
+        dpr: quality.dpr,
+        qualityTier: quality.tier,
         rendererCalls: renderer.info.render.calls,
         triangles: renderer.info.render.triangles,
         shadowsEnabled: renderer.shadowMap.enabled,
@@ -801,7 +834,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     precompile,
     attach(next) {
       next.appendChild(canvas);
-      next.appendChild(indicator);
+      for (const tag of indicators) next.appendChild(tag.root);
     },
     setTime,
     setPattern(pattern) { stadium.setPattern(pattern); },
@@ -820,7 +853,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       stadium.dispose();
       fxLayer.dispose();
       disposeTree(scene);
-      indicator.remove();
+      for (const tag of indicators) tag.root.remove();
       ballMap.dispose();
       envTarget?.dispose();
       renderer.dispose();

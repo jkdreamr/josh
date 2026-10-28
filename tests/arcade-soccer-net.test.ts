@@ -12,6 +12,13 @@ test('online move packets round-trip validated inputs', () => {
   assert.equal(commandFromPacket(packet).heldAction, 'shoot');
 });
 
+test('neutral aim remains neutral in online move packets', () => {
+  const packet = movePacket(1, 1, 0, { move: { x: 0, z: 0 }, aim: { x: 0, z: 0 } });
+  assert.equal(packet.ax, 0);
+  assert.equal(packet.az, 0);
+  assert.deepEqual(commandFromPacket(packet).aim, { x: 0, z: 0 });
+});
+
 test('held action packets round-trip every supported charged action', () => {
   for (const heldAction of ['pass', 'shoot', 'through', 'lob', 'skill'] as const) {
     const packet = movePacket(1, 2, 0, { move: { x: 0, z: 0 }, heldAction });
@@ -38,7 +45,7 @@ test('malformed, non-finite, and out-of-range packet fields are rejected', () =>
 });
 
 test('all held control flags and directional switch round-trip, with legacy flick fields optional', () => {
-  for (const flag of ['jockey', 'autoJockey', 'contain', 'switchNearest', 'finesseHeld', 'press'] as const) {
+  for (const flag of ['jockey', 'autoJockey', 'contain', 'switchNearest', 'finesse', 'finesseHeld', 'press'] as const) {
     const packet = movePacket(1, 1, 0, { move: { x: 0, z: 0 }, [flag]: true });
     assert.deepEqual(parsePacket(packet), packet);
     assert.equal(commandFromPacket(packet)[flag], true);
