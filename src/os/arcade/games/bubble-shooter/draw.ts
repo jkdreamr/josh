@@ -1,4 +1,4 @@
-import { BOMB, DEADLINE_Y, FIELD_H, FIELD_W, R, RAINBOW, ROW_H, SHOOTER, STONE, cellCenter, hue, isIce, lowestBubbleBottom, starsFor, type Game, type Pt } from './logic';
+import { BOMB, DEADLINE_Y, FIELD_H, FIELD_W, R, RAINBOW, ROW_H, SHOOTER, STONE, cellCenter, hue, isIce, lowestBubbleBottom, starsFor, type Game, type Pt } from './logic.ts';
 
 export const PALETTE = [
   { base: '#ff453a', light: '#ffb0aa', dark: '#9e1209' },
@@ -47,18 +47,23 @@ export type View = {
   calm: boolean;
   /** 1 / the phone or iPad frame scale, so text stays readable on screen. */
   u: number;
+  /** Touch: the shell controls are finger sized (see bubble-shooter.css), so the board keeps clear of a bigger strip. */
+  touch: boolean;
 };
 
 export type Fit = { scale: number; x: number; y: number };
 
 /** Field placement in CSS px. Uses the top strip only when the score pill and controls would overlap the board. */
-export function fitField(w: number, h: number): Fit {
+export function fitField(w: number, h: number, touchU?: number): Fit {
   const fitWith = (top: number) => {
     const scale = Math.max(0.05, Math.min((w - 16) / FIELD_W, (h - top - 8) / FIELD_H));
     return { scale, x: (w - FIELD_W * scale) / 2, y: top + Math.max(0, (h - top - 8 - FIELD_H * scale) / 2) };
   };
+  // touch controls: five 44px buttons (times the frame scale) in a pill 10px from the top right corner
+  const btn = touchU === undefined ? 0 : 44 * touchU;
   const roomy = fitWith(8);
-  return roomy.x >= 150 ? roomy : fitWith(50);
+  if (roomy.x >= (btn ? 5 * (btn + 2) + 20 : 150)) return roomy;
+  return fitWith(btn ? Math.ceil(btn + 22) : 50);
 }
 
 export function toField(fit: Fit, x: number, y: number): Pt {
@@ -222,7 +227,7 @@ function danger(game: Game) {
 export function draw(c: CanvasRenderingContext2D | null, w: number, h: number, dpr: number, v: View) {
   if (!c || w <= 0 || h <= 0) return;
   const g = v.game;
-  const fit = fitField(w, h);
+  const fit = fitField(w, h, v.touch ? v.u : undefined);
   c.clearRect(0, 0, w, h);
   const bg = c.createLinearGradient(0, 0, 0, h);
   bg.addColorStop(0, '#151a33');

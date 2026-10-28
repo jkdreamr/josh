@@ -144,10 +144,14 @@ function Play() {
   const [levelSetting, setLevelSetting] = useSetting(LEVEL);
   const { ref, size, ctx } = useCanvas();
   const round = useRef<Round | null>(null);
-  if (round.current === null) {
+  const roundKey = useRef('');
+  // Play can mount before the room is known, so a guest's first round is rebuilt once useOnline() arrives
+  const key = online ? `online#${online.round}` : 'local';
+  if (round.current === null || roundKey.current !== key) {
+    roundKey.current = key;
     // online races are always endless, on the same board for everyone in the room
     const mode: Mode = online ? 'endless' : getSetting(MODE);
-    const level = Math.max(1, LEVEL_IDS.indexOf(getSetting(LEVEL)) + 1);
+    const level = mode === 'levels' ? Math.max(1, LEVEL_IDS.indexOf(getSetting(LEVEL)) + 1) : 1;
     const seed = online ? seedFrom(`${online.players.map((p) => p.name).join('|')}#${online.round}`) : undefined;
     round.current = {
       game: createGame({ mode, level, rng: seed !== undefined ? mulberry32(seed) : undefined }),
@@ -165,7 +169,8 @@ function Play() {
       banner: null,
       hint: null,
       calm: false,
-      u: 1,
+      u: round.current?.u ?? 1,
+      touch: shell.touch,
       armed: null,
       overIn: -1,
       reported: false,
@@ -181,6 +186,7 @@ function Play() {
   useEffect(() => {
     r0.calm = typeof window !== 'undefined' && !!window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
     r0.hint = shell.touch ? 'Drag to aim, let go to shoot' : 'Click to shoot';
+    r0.touch = shell.touch;
     r0.guide = traceAim(r0.game, r0.aim);
     shell.invalidate();
   }, [r0, shell.touch, shell.invalidate]);
@@ -333,7 +339,7 @@ function Play() {
 
   const local = (e: RPointerEvent<HTMLCanvasElement>) => {
     // offsetX/Y are in the canvas's own coordinates, so this stays exact on the 3D-projected laptop screen.
-    const fit = fitField(size.w, size.h);
+    const fit = fitField(size.w, size.h, shell.touch ? r0.u : undefined);
     return { fit, p: toField(fit, e.nativeEvent.offsetX, e.nativeEvent.offsetY) };
   };
   const onLauncher = (fit: ReturnType<typeof fitField>, x: number, y: number) => {

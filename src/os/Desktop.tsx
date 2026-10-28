@@ -2074,7 +2074,7 @@ function Dock({ wins, onFocus, active, screenW }: { wins: Win[]; onFocus: (id: A
               onClick={(e) => click(id, e.currentTarget)}
               onPointerEnter={(e) => e.pointerType === 'mouse' && setHoveredItem(id)}
               onPointerLeave={(e) => {
-                if (e.pointerType === 'mouse' && !dockRef.current?.contains(e.relatedTarget as Node | null)) setHoveredItem(null);
+                if (e.pointerType === 'mouse' && !(e.relatedTarget instanceof Node && dockRef.current?.contains(e.relatedTarget))) setHoveredItem(null);
               }}
               aria-label={apps[id].title}
             >
@@ -2095,7 +2095,7 @@ function Dock({ wins, onFocus, active, screenW }: { wins: Win[]; onFocus: (id: A
               onClick={(e) => click('trash', e.currentTarget)}
               onPointerEnter={(e) => e.pointerType === 'mouse' && setHoveredItem('trash')}
               onPointerLeave={(e) => {
-                if (e.pointerType === 'mouse' && !dockRef.current?.contains(e.relatedTarget as Node | null)) setHoveredItem(null);
+                if (e.pointerType === 'mouse' && !(e.relatedTarget instanceof Node && dockRef.current?.contains(e.relatedTarget))) setHoveredItem(null);
               }}
               aria-label="Trash"
             >

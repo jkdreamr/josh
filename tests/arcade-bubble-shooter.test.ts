@@ -19,6 +19,7 @@ import {
   getCell,
   inBounds,
   levelConfig,
+  ROWS_PER_TIER,
   lowestBubbleBottom,
   neighbors,
   rowLength,
@@ -249,6 +250,26 @@ test('endless boards are deterministic and levelConfig ramps up', () => {
   for (const row of g.grid) for (const v of row) assert.ok(v >= 0 && v < 4);
 });
 
+test('endless always starts at speed 1, whatever campaign level is picked, and only speeds up', () => {
+  const base = createGame({ mode: 'endless', seed: 7 });
+  const picked = createGame({ mode: 'endless', level: 5, seed: 7 });
+  assert.equal(picked.level, 1);
+  assert.equal(picked.colors, base.colors);
+  assert.equal(picked.dropEvery, base.dropEvery);
+  assert.deepEqual(picked.grid, base.grid);
+  let last = picked.level;
+  for (let i = 0; i < 3 * ROWS_PER_TIER && !picked.ended; i++) {
+    picked.shotsUntilDrop = 1;
+    picked.current = 0;
+    fire(picked, Math.PI / 2);
+    runShot(picked);
+    assert.ok(picked.level >= last, 'speed never goes back');
+    last = picked.level;
+  }
+  assert.ok(picked.pushed > 0);
+  assert.equal(picked.level, 1 + Math.floor(picked.pushed / ROWS_PER_TIER));
+});
+
 test('every level parses, has a fair shot budget and brings in specials after their intro', () => {
   assert.ok(LEVELS.length >= 30);
   const intro = { stone: LEVELS.findIndex((l) => l.map.some((m) => m.includes('#'))), bomb: LEVELS.findIndex((l) => l.map.some((m) => m.includes('*'))), ice: LEVELS.findIndex((l) => l.map.some((m) => /[A-Z]/.test(m))) };
@@ -434,4 +455,14 @@ test('campaign progress parses safely and unlocks in order', () => {
   assert.equal(recordClear(p, '2', 1, 100), false);
   assert.deepEqual([p.stars['2'], p.best['2']], [2, 800]);
   assert.equal(totalStars(p), 5);
+});
+
+test('touch boards keep clear of the finger sized shell controls', async () => {
+  const { fitField } = await import('../src/os/arcade/games/bubble-shooter/draw.ts');
+  const fieldTop = (u?: number) => fitField(390, 700, u).y;
+  assert.ok(fieldTop() >= 50);
+  assert.ok(fieldTop(1) >= 10 + 44 + 6, 'phone: below the 44px control pill');
+  assert.ok(fieldTop(1.224) >= 10 + 44 * 1.224 + 6, 'framed iPad: below the scaled pill');
+  const wide = fitField(1400, 500, 1);
+  assert.ok(wide.x >= 5 * 46 + 20 || wide.y >= 60, 'wide stage: board beside or below the pill');
 });
