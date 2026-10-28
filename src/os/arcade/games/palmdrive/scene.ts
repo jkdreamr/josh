@@ -326,7 +326,7 @@ function hullFlames(THREE: Three) {
   return new THREE.MeshLambertMaterial({ map, alphaTest: 0.5, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
 }
 
-/** THREE.EquirectangularReflectionMapping and THREE.AddOperation, by value: kit/three-lib.ts does not export the constants. */
+/** The mapping and combine constants are used by their numeric values. */
 const EQUIRECT_REFLECTION = 303 as T.Mapping;
 const ADD_OPERATION = 2 as T.Combine;
 
