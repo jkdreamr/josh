@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { computeAI } from '../src/os/arcade/games/soccer/ai.ts';
 import { phoneControlledPlayer, reconcileControllers, syncControllerSeats, type ControlCommand } from '../src/os/arcade/games/soccer/input.ts';
-import { createWorld, nearestCarrier, restartTaker, setRestart, STEP, stepWorld } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, nearestCarrier, receiverAssistActive, restartTaker, setRestart, STEP, stepWorld } from '../src/os/arcade/games/soccer/logic.ts';
 import { acceptMovePacket, consumeCommand, InputFreshness, movePacket, neutralCommand, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
 import { assignControllers } from '../src/os/arcade/games/soccer/seats.ts';
 import { phoneStoppagePrompt } from '../src/os/arcade/games/soccer/setpieces.ts';
@@ -174,6 +174,7 @@ for (const seed of seeds) test(`full-match phone pipeline soak seed ${seed}`, ()
     const command = commands.get(id);
     const before = { vx: player.vx, vz: player.vz, facing: player.facing, planting: player.planting };
     const ownershipBefore = { controlled: world.controlled[0], humans: world.players.filter((p) => p.human).map((p) => p.id), passFrom: world.passFrom, passTarget: world.passTarget, passControl: world.passControl, phase: world.phase };
+    const receiverTarget = receiverAssistActive(world, player, command?.move ?? { x: 0, z: 0 });
     const eligible = world.phase === 'live' && !player.slide && !world.setPiece && !!command && Math.hypot(command.move.x, command.move.z) > 0.15;
     if (world.phase !== 'live') {
       assert.ok(phoneStoppagePrompt(world, phoneControlledPlayer(world, 6)), `missing prompt seed=${seed} tick=${tick}`);
@@ -213,8 +214,11 @@ for (const seed of seeds) test(`full-match phone pipeline soak seed ${seed}`, ()
     const projection = command ? player.vx * command.move.x + player.vz * command.move.z : 0;
     const previousProjection = command ? before.vx * command.move.x + before.vz * command.move.z : 0;
     const facingProjection = (angle: number) => command ? Math.sin(angle) * command.move.x + Math.cos(angle) * command.move.z : 0;
-    const responded = !!command && (projection > 0.2 || projection - previousProjection > 1e-5
-      || facingProjection(player.facing) - facingProjection(before.facing) > 1e-5);
+    const responded = receiverTarget
+      ? Math.hypot(player.vx, player.vz) > 1
+        && player.vx * (receiverTarget.x - player.x) + player.vz * (receiverTarget.z - player.z) > 0
+      : !!command && (projection > 0.2 || projection - previousProjection > 1e-5
+        || facingProjection(player.facing) - facingProjection(before.facing) > 1e-5);
     if (process.env.SOCCER_PLANT_TRACE === '1' && seed === 98765 && simTicks >= 292 && simTicks <= 330) {
       console.log(JSON.stringify({ plantingTrace: { step: simTicks, time: simTicks * STEP, id, move: command?.move, before, after: { vx: player.vx, vz: player.vz, planting: player.planting }, projectionChange: projection - previousProjection, responded } }));
     }

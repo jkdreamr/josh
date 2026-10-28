@@ -196,7 +196,7 @@ export function takeSetPiece(w: World, action: Action = 'lob', power = 0.65) {
     const seconds = shot ? distance(w.ball,target)/(speed*0.88) : distance(w.ball,target)/(action === 'shoot' ? 25 : 17+power*8);
     const spin = s.curl*d*35;
     Object.assign(w.ball,deliveryVelocity(w,target,Math.max(0.2,seconds),spin),{spin,grounded:false});
-    w.passTarget = null; w.passPoint = null;
+    w.passTarget = null; w.passStrikeAt = null; w.passAim = null; w.passPoint = null;
     if (!shot) {
       const runners = w.players.filter(p => p.team === w.restartTeam && p.id !== taker.id && p.slot !== 'GK').sort((a,b)=>distance(a,target)-distance(b,target));
       const receiver = runners[0]!;
@@ -320,7 +320,7 @@ export function stepSetPieceRun(w: World,t: number,previousX: number) {
       const gap=distance(b,target), speed=13+rng(w)*4;
       b.vx=(target.x-b.x)/gap*speed; b.vz=(target.z-b.z)/gap*speed; b.vy=attacking?0.5:6; b.spin=0;
       p.action='header'; p.touchCd=0.5; w.lastTouch=p.team; w.lastToucherId=p.id; w.kickEvent={playerId:p.id,action:'shoot',power:0.7,time:w.halfLength-w.clock};
-      w.event=attacking?'header!':'headed clear'; w.eventTime=1; w.passTarget=null; w.passPoint=null;
+      w.event=attacking?'header!':'headed clear'; w.eventTime=1; w.passTarget=null; w.passStrikeAt=null; w.passAim=null; w.passPoint=null;
       run.runs={}; run.marks={}; run.wall=[]; run.t=0.8;
       return;
     }
