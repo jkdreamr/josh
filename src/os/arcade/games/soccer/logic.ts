@@ -3,12 +3,15 @@ import { FIELD } from './field.ts';
 import { arrangeSetPiece, stepSetPiece, setPieceCommands, stepSetPieceRun, startShootout, resolveShootoutKick, stepShootout, type SetPiece, type SetPieceRun, type Shootout } from './setpieces.ts';
 import { worldMultipliers } from './ratings.ts';
 import { clubById } from './teams.ts';
+import { runCallCommands, type RunCall } from './runs.ts';
 import {
   applyStoppageCard, checkOffside, clearOffside, createRules, finishAdvantage, halfOver, indirectBlocksGoal,
   noteGoal, noteKick, noteRestart, noteTouch, onFoul, approachAngle, offsidePosition, rulesStep,
   type RulesState,
 } from './rules.ts';
 export { FIELD } from './field.ts';
+export { callRun, pickRunner } from './runs.ts';
+export type { RunCall } from './runs.ts';
 
 export const STEP = 1 / 60;
 export const KEEPER_REACH = { ready: 1.1, dive: 2.4 } as const;
@@ -62,12 +65,13 @@ export type Player = Point & {
   formation?: number;
   action: string;
 };
-export type Command = { move: Point; sprint?: boolean; jockey?: boolean; autoJockey?: boolean; contain?: boolean; switchDir?: Point | null; switchNearest?: boolean; action?: Action | null; heldAction?: Action | null; aim?: Point; power?: number; finesse?: boolean; finesseHeld?: boolean; pressed?: boolean; press?: boolean; allowOffside?: boolean };
+export type Command = { move: Point; sprint?: boolean; jockey?: boolean; autoJockey?: boolean; contain?: boolean; switchDir?: Point | null; switchNearest?: boolean; callRun?: boolean; action?: Action | null; heldAction?: Action | null; aim?: Point; power?: number; finesse?: boolean; finesseHeld?: boolean; pressed?: boolean; press?: boolean; allowOffside?: boolean };
 export type Restart = 'kickoff' | 'kick-in' | 'corner' | 'goal-kick' | 'free-kick' | 'penalty' | null;
 export type World = {
   practice?: boolean;
   setPiece?: SetPiece | null;
   setPieceRun?: SetPieceRun | null;
+  runCall?: RunCall | null;
   shootout?: Shootout | null;
   cup?: boolean;
   players: Player[];
@@ -1132,6 +1136,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
   world.stealProtect = Math.max(0, (world.stealProtect ?? 0) - t);
   world.eventTime = Math.max(0, world.eventTime - t);
   world.kickEvent = null;
+  if (world.phase !== 'live') world.runCall = null;
   if (stepShootout(world, t)) return;
   if (world.phase === 'full-time') return;
   if (world.phase === 'goal' || world.phase === 'half-time') {
@@ -1215,6 +1220,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
   commands = new Map(commands);
   prepareDefense(world, commands, carrier, t);
   commands = setPieceCommands(world, commands);
+  commands = runCallCommands(world, commands, t);
   for (const p of world.players) {
     if (p.sentOff) continue;
     const command = commands.get(p.id);

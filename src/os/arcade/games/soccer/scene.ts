@@ -26,7 +26,7 @@ export type SoccerCameraNdc = {
   maxAbsX: number;
   maxAbsY: number;
 };
-type Actor = { root: T.Group; anim: SoccerAnimator; team: Team; keeper: boolean; contact: T.Mesh; fallback: T.Group; marker: T.Mesh; arrow: T.Mesh; carrierRing: T.Mesh; powerBar: T.Group; powerFill: T.Mesh; number: T.Mesh; kitMaterials: Record<'shirt' | 'shorts' | 'socks' | 'trim', T.Material>; prevCooldown: number; prevAction: string; lastKick: World['kickEvent']; keeperShot: boolean; celebrated: boolean; lodTick: number; lodDt: number; skeletons: T.Skeleton[] };
+type Actor = { root: T.Group; anim: SoccerAnimator; team: Team; keeper: boolean; contact: T.Mesh; fallback: T.Group; marker: T.Mesh; arrow: T.Mesh; carrierRing: T.Mesh; runRing: T.Mesh; powerBar: T.Group; powerFill: T.Mesh; number: T.Mesh; kitMaterials: Record<'shirt' | 'shorts' | 'socks' | 'trim', T.Material>; prevCooldown: number; prevAction: string; lastKick: World['kickEvent']; keeperShot: boolean; celebrated: boolean; lodTick: number; lodDt: number; skeletons: T.Skeleton[] };
 type Crowd = { mesh: T.InstancedMesh; count: number; phases: number[]; baseY: number[]; fixtures: T.MeshStandardMaterial[] };
 
 export type SoccerView = {
@@ -175,6 +175,8 @@ function createPlayer(THREE: Three, player: Player, lite: boolean, kits: [Kit, K
   root.add(arrow);
   const carrierRing = new THREE.Mesh(new THREE.RingGeometry(0.52, 0.58, 24), new THREE.MeshBasicMaterial({ color: '#fff1a8', transparent: true, opacity: 0.68, side: THREE.DoubleSide }));
   carrierRing.rotation.x = -Math.PI / 2; carrierRing.position.y = 0.04; carrierRing.visible = false; root.add(carrierRing);
+  const runRing = new THREE.Mesh(new THREE.RingGeometry(0.66, 0.7, 24), new THREE.MeshBasicMaterial({ color: player.team === 0 ? '#ff8290' : '#9feaff', transparent: true, opacity: 0.48, side: THREE.DoubleSide }));
+  runRing.rotation.x = -Math.PI / 2; runRing.position.y = 0.045; runRing.visible = false; root.add(runRing);
   const powerBar = new THREE.Group();
   const powerBack = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.055), new THREE.MeshBasicMaterial({ color: '#07131b', transparent: true, opacity: 0.86, side: THREE.DoubleSide }));
   const powerFill = new THREE.Mesh(new THREE.PlaneGeometry(0.86, 0.032), new THREE.MeshBasicMaterial({ color: '#e6f36d', side: THREE.DoubleSide }));
@@ -183,7 +185,7 @@ function createPlayer(THREE: Three, player: Player, lite: boolean, kits: [Kit, K
   root.add(anim.figure);
   void boots;
   void digit;
-  return { root, anim, team: player.team, keeper: isKeeper(player), contact, fallback, marker, arrow, carrierRing, powerBar, powerFill, number, kitMaterials: { shirt, shorts, socks, trim }, prevCooldown: 0, prevAction: 'idle', lastKick: null, keeperShot: false, celebrated: false, lodTick: 0, lodDt: 0, skeletons: [] };
+  return { root, anim, team: player.team, keeper: isKeeper(player), contact, fallback, marker, arrow, carrierRing, runRing, powerBar, powerFill, number, kitMaterials: { shirt, shorts, socks, trim }, prevCooldown: 0, prevAction: 'idle', lastKick: null, keeperShot: false, celebrated: false, lodTick: 0, lodDt: 0, skeletons: [] };
 }
 
 
@@ -647,6 +649,9 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       if (player.controlled || player.id === targetId) (actor.marker.material as T.MeshBasicMaterial).opacity = 0.72 + Math.sin(elapsed * 5) * 0.18;
       actor.arrow.visible = player.controlled;
       actor.carrierRing.visible = carrying;
+      actor.runRing.visible = world.runCall?.playerId === player.id;
+      actor.runRing.scale.setScalar(1 + Math.sin(elapsed * 4) * 0.06);
+      (actor.runRing.material as T.MeshBasicMaterial).opacity = 0.38 + Math.sin(elapsed * 4) * 0.1;
       actor.powerBar.visible = false;
       const input = animationInput;
       input.vx = player.vx;
@@ -767,7 +772,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       if (!disposed) {
         fxLayer.warm(true);
         for (const actor of actors.values()) {
-          for (const object of [actor.marker, actor.arrow, actor.carrierRing, actor.powerBar]) {
+          for (const object of [actor.marker, actor.arrow, actor.carrierRing, actor.runRing, actor.powerBar]) {
             warmedActors.push({ object, visible: object.visible });
             object.visible = true;
           }
