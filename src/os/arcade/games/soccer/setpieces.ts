@@ -1,6 +1,6 @@
 import { clubById, DEFAULT_CLUBS } from './teams.ts';
 
-import { FIELD, distance, kick, movePlayer, rng, setRestart, teamDir, transferControl, type Action, type Command, type Player, type Point, type Team, type World } from './logic.ts';
+import { FIELD, distance, kick, movePlayer, restartTaker, rng, setRestart, teamDir, transferControl, type Action, type Command, type Player, type Point, type Team, type World } from './logic.ts';
 import { stepBall } from './physics.ts';
 
 export type SetPiece = { kind: 'corner' | 'free-kick' | 'penalty' | 'goal-kick' | 'throw-in'; option: string; aim: Point & { y: number }; curl: -1 | 0 | 1; direct: boolean; takerId: number; wall: number[]; keeperDive: -1 | 0 | 1 | null; cpuDelay: number; marks?: Record<number, number> };
@@ -272,7 +272,13 @@ export function phoneStoppagePrompt(w: World, playerId: number): string | null {
   if (!player) return null;
   const labels = setPieceLabels(w, player.team, playerId);
   if (labels) return `${labels.title} · ${labels.hint}`;
-  if (w.phase === 'restart') return `${w.event || 'Kick off'} · move the stick or press to take`;
+  if (w.phase === 'restart') {
+    const taker = w.restart === 'kickoff' ? restartTaker(w) : null;
+    if (taker?.human) return playerId === taker.id
+      ? 'Kick off · aim with stick, press A to pass'
+      : 'Kick off · waiting for the taker';
+    return `${w.event || 'Kick off'} · move the stick or press to take`;
+  }
   if (w.phase !== 'live') return w.event || w.phase;
   if (player.slide) return 'Sliding · movement resumes after the slide';
   return null;
