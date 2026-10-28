@@ -157,9 +157,9 @@ export function arrangeSetPiece(w: World) {
   const aim = w.setPiece.aim, r = distance(w.ball,aim)||1;
   snap(taker,w.ball.x-(aim.x-w.ball.x)/r*0.5,w.ball.z-(aim.z-w.ball.z)/r*0.5);
   taker.facing = Math.atan2(aim.x-taker.x,aim.z-taker.z);
+  if (kind === 'goal-kick') spaceTeammates(w, taker.id);
   spaceOut(w, taker);
   if (team.some(p => p.human) && !taker.human) transferControl(w,w.restartTeam,taker.id);
-  if (kind === 'goal-kick') spaceTeammates(w, taker.id);
 }
 
 // Fixed-time shooting solves all three components against the simulation integrator.
