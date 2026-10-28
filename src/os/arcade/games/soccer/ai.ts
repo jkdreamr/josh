@@ -9,6 +9,7 @@ const keeperReadDelay = { easy: 0.5, normal: 0.3, hard: 0.16 } as const;
 const keeperReadNoise = { easy: 0.28, normal: 0.08, hard: 0.01 } as const;
 const decisionInterval = { easy: 0.7, normal: 0.3, hard: 0.24 } as const;
 export const KEEPER_MAX_HOLD = 4;
+export const DEAD_BALL_UNSTICK = 2;
 const noise = { easy: 0.65, normal: 0.2, hard: 0.03 } as const;
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 const outfield = (player: Player) => player.slot !== 'GK' && !player.sentOff;
@@ -52,6 +53,7 @@ type MatchState = {
   keeperReads: Map<number, KeeperRead>;
   keeperTargets: Map<number, Point>;
   keeperHold?: { id: number; since: number } | null;
+  deadBallSince: number | null;
 };
 const matches = new WeakMap<World, MatchState>();
 
@@ -59,13 +61,15 @@ function matchState(world: World, tick: number) {
   let state = matches.get(world);
   if (!state || tick < state.tick) {
     state = { tick: -1, carrier: null, possession: world.lastTouch,
-      teams: [{ possession: world.lastTouch === 0, changedAt: tick }, { possession: world.lastTouch === 1, changedAt: tick }], runs: new Map(), keeperReads: new Map(), keeperTargets: new Map() };
+      teams: [{ possession: world.lastTouch === 0, changedAt: tick }, { possession: world.lastTouch === 1, changedAt: tick }], runs: new Map(), keeperReads: new Map(), keeperTargets: new Map(), deadBallSince: null };
     matches.set(world, state);
   }
   if (state.tick === tick) return state;
   state.tick = tick;
   state.carrier = nearestCarrier(world) ?? null;
   if (state.carrier?.slot !== 'GK') state.keeperHold = null;
+  const deadBall = world.phase === 'live' && !state.carrier && Math.hypot(world.ball.vx, world.ball.vz) < 1.5 && world.ball.y < 0.75;
+  state.deadBallSince = deadBall ? state.deadBallSince ?? tick : null;
   const possession = state.carrier?.team ?? world.lastTouch;
   if (possession !== state.possession) {
     state.possession = possession;
@@ -405,7 +409,7 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
               sprint: distance(p, target) > 4, action: (carrier || readsWindow && window.exposed) && mayTackle && gap < 1.38 && goodWindow ? 'tackle' : null, pressed: reacts });
           } else {
             const flight = clamp(distance(p, world.ball) / 8, 0, 0.7);
-            if (Math.hypot(world.ball.vx, world.ball.vz) < 1.5 && distance(p, world.ball) < 3) chasers.add(p.id);
+            if (state.deadBallSince !== null && tick - state.deadBallSince >= DEAD_BALL_UNSTICK * 60 && distance(p, world.ball) < 3) chasers.add(p.id);
             commands.set(p.id, { move: targetMove(p, clamp(world.ball.x + world.ball.vx * flight, -FIELD.length / 2, FIELD.length / 2),
               clamp(world.ball.z + world.ball.vz * flight, -FIELD.width / 2, FIELD.width / 2)), sprint: true });
           }

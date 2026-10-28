@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { computeAI, KEEPER_MAX_HOLD } from '../src/os/arcade/games/soccer/ai.ts';
+import { computeAI, DEAD_BALL_UNSTICK, KEEPER_MAX_HOLD } from '../src/os/arcade/games/soccer/ai.ts';
 import { createWorld, FIELD, nearestCarrier, resolveKeeperContact, stepWorld, TEAM_SIZE, teamDir, type Command, type World } from '../src/os/arcade/games/soccer/logic.ts';
 
 function liveWorld() {
@@ -17,17 +17,21 @@ function commandsFor(world: World, tick: number) {
   return commands;
 }
 
-test('a loose-ball chaser is not pushed off the ball by teammate spacing', () => {
+test('a chaser stuck beside a dead ball by teammate spacing breaks free and collects it', () => {
   const world = liveWorld();
   world.ball.x = 20; world.ball.z = -12; world.ball.y = 0.11; world.ball.vx = world.ball.vy = world.ball.vz = 0; world.ball.grounded = true;
   world.players.filter((p) => p.slot !== 'GK').forEach((p, i) => { p.x = p.team === 0 ? -35 : -25; p.z = -30 + (i % 11) * 6; p.vx = p.vz = 0; });
   const chaser = world.players[TEAM_SIZE + 5]!, mate = world.players[TEAM_SIZE + 6]!;
   chaser.x = 19.27; chaser.z = -12; mate.x = 21.27; mate.z = -12;
-  const move = commandsFor(world, 0).get(chaser.id)!.move;
-  assert.ok(Math.hypot(move.x, move.z) >= 0.08, `chase input ${JSON.stringify(move)} is inside the deadzone`);
-  assert.ok(move.x > 0, `chaser should move toward the ball, got ${JSON.stringify(move)}`);
   let tick = 0;
-  while (!nearestCarrier(world) && tick < 120) { stepWorld(world, 1 / 60, commandsFor(world, tick)); tick++; }
+  while (!nearestCarrier(world) && tick < (DEAD_BALL_UNSTICK + 2) * 60) {
+    const commands = commandsFor(world, tick);
+    if (tick === (DEAD_BALL_UNSTICK + 0.1) * 60) {
+      const move = commands.get(chaser.id)!.move;
+      assert.ok(Math.hypot(move.x, move.z) >= 0.08 && move.x > 0, `chaser input ${JSON.stringify(move)} does not reach the ball`);
+    }
+    stepWorld(world, 1 / 60, commands); tick++;
+  }
   assert.equal(nearestCarrier(world)?.team, 1, `ball still loose after ${tick} ticks`);
 });
 
