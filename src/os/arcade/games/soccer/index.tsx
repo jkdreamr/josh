@@ -1210,12 +1210,6 @@ function PadStick({ movement, onChange }: { movement: { current: { x: number; z:
   };
   const release = (event: PointerEvent<HTMLDivElement>) => {
     if (pointer.current !== event.pointerId) return;
-    const cached = cachedMetrics.current;
-    if (cached) {
-      const thumb = { x: event.clientX - cached.rect.left, y: event.clientY - cached.rect.top };
-      origin.current = clampOrigin(followOrigin(origin.current, thumb, cached.travel), cached.rect.width, cached.rect.height, cached.margin);
-      draw(thumb, cached.travel);
-    }
     pointer.current = null;
     cachedMetrics.current = null;
     movement.current = { x: 0, z: 0 };
@@ -1353,7 +1347,7 @@ export function PhoneController() {
     document.addEventListener('dblclick', preventGesture, { passive: false });
     document.addEventListener('selectstart', preventGesture);
     document.addEventListener('contextmenu', preventGesture);
-    document.addEventListener('visibilitychange', onVisibility, { passive: true });
+    document.addEventListener('visibilitychange', onVisibility);
     void requestWakeLock();
     return () => {
       live = false;
@@ -1389,7 +1383,7 @@ export function PhoneController() {
     const preference = window.matchMedia('(prefers-reduced-motion: reduce)');
     const updatePreference = () => { reducedMotion.current = preference.matches; };
     updatePreference();
-    preference.addEventListener('change', updatePreference, { passive: true });
+    preference.addEventListener('change', updatePreference);
     const target = window as Window & { __soccerFx?: { trigger: (kind: string, advance?: number) => void } };
     if (!new URLSearchParams(location.search).has('soccerdebug')) {
       return () => preference.removeEventListener('change', updatePreference);
