@@ -5,7 +5,7 @@
   "name": "josh-arcade-smoke",
   "main": "../../src/index.ts",
   "compatibility_date": "2026-10-12",
-  "vars": { "TELEGRAM_BOT_TOKEN": "test-token", "TELEGRAM_API": "http://127.0.0.1:8788", "AUTO_REPLY_HOURS": "0.001", "LOUNGE_ADMIN_TOKEN": "test-admin-token" },
+  "vars": { "TELEGRAM_BOT_TOKEN": "test-token", "TELEGRAM_API": "http://127.0.0.1:8788", "AUTO_REPLY_HOURS": "0.001", "LOUNGE_ADMIN_TOKEN": "test-admin-token", "TELEMETRY_TOKEN": "test-telemetry-token" },
   "services": [{ "binding": "AI", "service": "ai-stub" }],
   "durable_objects": {
     "bindings": [
@@ -14,7 +14,8 @@
       { "name": "STATS", "class_name": "Stats" },
       { "name": "CHAT", "class_name": "Chat" },
       { "name": "LOUNGE", "class_name": "Lounge" },
-      { "name": "LOBBY", "class_name": "Lobby" }
+      { "name": "LOBBY", "class_name": "Lobby" },
+      { "name": "TELEMETRY", "class_name": "Telemetry" }
     ]
   },
   "migrations": [
@@ -22,6 +23,7 @@
     { "tag": "v2", "new_sqlite_classes": ["Stats"] },
     { "tag": "v3", "new_sqlite_classes": ["Chat"] },
     { "tag": "v4", "new_sqlite_classes": ["Lounge"] },
-    { "tag": "v5", "new_sqlite_classes": ["Lobby"] }
+    { "tag": "v5", "new_sqlite_classes": ["Lobby"] },
+    { "tag": "v6", "new_sqlite_classes": ["Telemetry"] }
   ]
 }

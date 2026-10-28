@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "seed": 254,
+  "clubs": [
+    "bay-city",
+    "northshore"
+  ],
+  "mode": "coop",
+  "halfLength": 120,
+  "humans": 1,
+  "level": "normal",
+  "seats": {
+    "0": 6
+  },
+  "frames": 150,
+  "commands": [],
+  "presence": [
+    {
+      "from": 30,
+      "to": 89,
+      "seats": []
+    }
+  ],
+  "setup": {
+    "name": "live"
+  }
+}

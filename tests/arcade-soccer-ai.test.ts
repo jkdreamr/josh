@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { BALANCE } from './soccer-replay/bands.ts';
 import { computeAI, keeperTarget, simulateCpuMatch, simulateCpuMatchStats } from '../src/os/arcade/games/soccer/ai.ts';
 import { createWorld, distance, FIELD, stepWorld, teamDir, TEAM_SIZE, type Player } from '../src/os/arcade/games/soccer/logic.ts';
 
@@ -35,10 +36,10 @@ test('seeded four-minute halves have plausible average scoring', () => {
   let total = 0;
   for (const { world: g } of normalMatches()) {
     assert.equal(g.phase, 'full-time');
-    assert.ok(g.score[0] + g.score[1] <= 8, `score: ${g.score.join('-')}`);
+    assert.ok(g.score[0] + g.score[1] <= BALANCE.maxGoals, `score: ${g.score.join('-')}`);
     total += g.score[0] + g.score[1];
   }
-  assert.ok(total / 8 >= 1 && total / 8 <= 5, `average goals: ${total / 8}`);
+  assert.ok(total / 8 >= BALANCE.goals[0] && total / 8 <= BALANCE.goals[1], `average goals: ${total / 8}`);
 });
 
 test('scoring generalizes to eight additional seeds', () => {
@@ -46,9 +47,9 @@ test('scoring generalizes to eight additional seeds', () => {
     assert.equal(world.phase, 'full-time');
     return world.score[0] + world.score[1];
   });
-  assert.ok(goals.every((n) => n <= 8), `goals: ${goals}`);
+  assert.ok(goals.every((n) => n <= BALANCE.maxGoals), `goals: ${goals}`);
   const mean = goals.reduce((sum, n) => sum + n, 0) / goals.length;
-  assert.ok(mean >= 1 && mean <= 5, `other-seed average goals: ${mean}`);
+  assert.ok(mean >= BALANCE.goals[0] && mean <= BALANCE.goals[1], `other-seed average goals: ${mean}`);
 });
 
 test('normal matches have realistic passing, shot conversion, possession and no strong home bias', () => {
@@ -57,16 +58,16 @@ test('normal matches have realistic passing, shot conversion, possession and no 
     const completion = sum('passesCompleted') / sum('passesAttempted');
     const shotsPerGoal = sum('shots') / sum('goals');
     const homePossession = sum('possessionTicks', 0) / sum('possessionTicks');
-    assert.ok(completion >= 0.65 && completion <= 0.9, `pass completion: ${completion}`);
+    assert.ok(completion >= BALANCE.completion[0] && completion <= BALANCE.completion[1], `pass completion: ${completion}`);
     for (const team of [0, 1]) {
       const rate = sum('passesCompleted', team) / sum('passesAttempted', team);
-      assert.ok(rate >= 0.65 && rate <= 0.9, `team ${team} pass completion: ${rate}`);
+      assert.ok(rate >= BALANCE.completion[0] && rate <= BALANCE.completion[1], `team ${team} pass completion: ${rate}`);
     }
-    assert.ok(shotsPerGoal >= 3 && shotsPerGoal <= 10, `shots per goal: ${shotsPerGoal}`);
-    assert.ok(homePossession >= 0.35 && homePossession <= 0.65, `home carried-time share: ${homePossession}`);
+    assert.ok(shotsPerGoal >= BALANCE.shotsPerGoal[0] && shotsPerGoal <= BALANCE.shotsPerGoal[1], `shots per goal: ${shotsPerGoal}`);
+    assert.ok(homePossession >= BALANCE.possession[0] && homePossession <= BALANCE.possession[1], `home carried-time share: ${homePossession}`);
     const wins = matches.filter((m) => m.world.score[0] > m.world.score[1]).length;
     const losses = matches.filter((m) => m.world.score[0] < m.world.score[1]).length;
-    if (matches === measured) assert.ok(Math.abs(wins - losses) <= 3, `home W/L: ${wins}/${losses}`);
+    if (matches === measured) assert.ok(Math.abs(wins - losses) <= BALANCE.homeWinLossGap, `home W/L: ${wins}/${losses}`);
   }
 });
 
@@ -136,8 +137,8 @@ for (const [home, away] of [['hard', 'easy'], ['hard', 'normal'], ['normal', 'ea
     if (game.score[0] > game.score[1]) wins++;
     if (game.score[0] < game.score[1]) losses++;
   }
-  assert.ok(wins > losses + 2, `${home} wins ${wins}, loses ${losses}`);
-  if (home === 'hard' && away === 'easy') assert.ok(wins >= 7 && losses <= 1, `hard/easy W/L: ${wins}/${losses}`);
+  assert.ok(wins > losses + BALANCE.ladderGap, `${home} wins ${wins}, loses ${losses}`);
+  if (home === 'hard' && away === 'easy') assert.ok(wins >= BALANCE.hardEasyWins && losses <= BALANCE.hardEasyLosses, `hard/easy W/L: ${wins}/${losses}`);
 });
 
 test('CPU teams hold shape without sustained teammate clumping', () => {
