@@ -19,3 +19,7 @@
 .is-tablet .win.is-max .arcade-app-game {
   padding-bottom: 0;
 }
+/* Soccer's broadcast frame fills the zoomed window, which already ends above the dock. */
+.win.is-max .arcade-app-game:has(.g-soccer) {
+  padding-bottom: 0;
+}
