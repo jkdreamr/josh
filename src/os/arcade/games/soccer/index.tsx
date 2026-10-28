@@ -241,7 +241,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const [hud, setHud] = useState<HudState>({
     score0: 0, score1: 0, clock: '00:00', added: null, half: 1,
     phase: 'restart', event: 'kick off', eventTime: 1.35, eventKey: 0,
-    selectedId: 6, stamina: 1, rivalId: null, rivalStamina: 1, state: null, targetId: null, power: null,
+    selectedId: 6, stamina: 1, rivalId: null, rivalStamina: 1, partnerId: null, partnerStamina: 1, state: null, targetId: null, power: null,
     replaying: false, statsVersion: 0, presentation: 'live',
   });
   const radarRef = useRef<RadarHandle | null>(null);
@@ -466,7 +466,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     setHud({
       score0: 0, score1: 0, clock: '00:00', added: null, half: 1,
       phase: 'restart', event: fresh.event, eventTime: fresh.eventTime, eventKey: 0,
-      selectedId: 6, stamina: 1, rivalId: null, rivalStamina: 1, state: null, targetId: null, power: null,
+      selectedId: 6, stamina: 1, rivalId: null, rivalStamina: 1, partnerId: null, partnerStamina: 1, state: null, targetId: null, power: null,
       replaying: false, statsVersion: 0, presentation: 'live',
     });
     setPracticeHud(practiceRef.current ? practiceView(practiceRef.current) : null);
@@ -1114,7 +1114,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     }
     const indicatorPower = aiming?.holding ? chargePower(aiming.seconds) : power.current ?? (remote?.heldAction ? remote.power ?? null : null);
     const sceneStart = soccerPerfEnabled ? performance.now() : 0;
-    viewRef.current?.update(renderWorld, dt * fxDirector.animScale, performance.now() / 1000, localTeam, camera, target, indicatorPower, dt);
+    viewRef.current?.update(renderWorld, dt * fxDirector.animScale, performance.now() / 1000, localTeam, camera, target, indicatorPower, dt, localPlayerIds);
     if (soccerPerfEnabled) recordSoccerPerf('sceneUpdateMs', performance.now() - sceneStart);
     viewRef.current?.setMarkers(practiceRef.current?.markers ?? []);
     hudTimer.current += dt;
@@ -1134,10 +1134,11 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         if (player.team === selected.team) continue;
         if (!rival || (player.controlled !== rival.controlled ? player.controlled : distance(player, current.ball) < distance(rival, current.ball))) rival = player;
       }
+      const partner = localPlayerIds.map((id) => current.players[id]).find((player) => player && player.id !== selectedPlayerId && player.team === selected.team && player.human) ?? null;
       const nextHud: HudState = {
         score0: current.score[0], score1: current.score[1], clock: clock.label, added: clock.added,
         half: current.half, phase: current.phase, event: current.event, eventTime: current.eventTime, eventKey: hudEventKey.current,
-        selectedId: selectedPlayerId, stamina: Math.round(selected.stamina * 50) / 50, rivalId: rival?.id ?? null, rivalStamina: Math.round((rival?.stamina ?? 1) * 50) / 50, state: selectedState, targetId: target,
+        selectedId: selectedPlayerId, stamina: Math.round(selected.stamina * 50) / 50, rivalId: rival?.id ?? null, rivalStamina: Math.round((rival?.stamina ?? 1) * 50) / 50, partnerId: partner?.id ?? null, partnerStamina: Math.round((partner?.stamina ?? 1) * 50) / 50, state: selectedState, targetId: target,
         power: indicatorPower, replaying: current.phase === 'goal' && !replaySkipped.current,
         statsVersion: statsObserver.current.stats.version, presentation: presentation.current,
       };

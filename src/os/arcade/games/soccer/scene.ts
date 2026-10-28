@@ -1,10 +1,11 @@
 import type * as T from 'three';
 import type { World, Player, Team } from './logic.ts';
 import { FIELD, jerseyNumber, teamDir } from './logic.ts';
-import { clubById, DEFAULT_CLUBS, matchKits, rosterName, type Kit } from './teams.ts';
+import { clubById, DEFAULT_CLUBS, matchKits, type Kit } from './teams.ts';
 import { disposeTree, damp } from './gl.ts';
 import { loadSoccerModel, MODEL_URLS } from './load.ts';
 import { ballNumberTexture, ballTexture } from './textures.ts';
+import { playerName } from './broadcast.ts';
 import { buildStadium, type PitchPattern } from './stadium.ts';
 import type { ViewBasis } from './input.ts';
 import { cameraGoal, createCameraRig, desiredCameraBasis, stepCameraBasis, stepCameraRig, type CameraMode } from './camera.ts';
@@ -32,7 +33,7 @@ export type SoccerView = {
   viewBasis(): ViewBasis;
   getCameraNdc(): SoccerCameraNdc;
   perfStats(): SoccerRenderStats;
-  update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId?: number | null, power?: number | null, cameraDt?: number): void;
+  update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId?: number | null, power?: number | null, cameraDt?: number, tagIds?: readonly number[]): void;
   setFx(director: FxDirector | null): void;
   render(): void;
   /** Resolves once the shaders are compiled; frames rendered meanwhile are skipped. */
@@ -199,13 +200,17 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const canvas = renderer.domElement;
   canvas.style.cssText = 'display:block;width:100%;height:100%;touch-action:none';
   host.appendChild(canvas);
-  const indicator = document.createElement('div');
-  indicator.className = 'g-soccer-world-indicator';
-  const indicatorArrow = document.createElement('i');
-  const indicatorName = document.createElement('span');
-  const indicatorPower = document.createElement('b');
-  indicator.append(indicatorArrow, indicatorName, indicatorPower);
-  host.appendChild(indicator);
+  // One on-pitch name tag per local human (P1 plus a co-op/versus P2).
+  const indicators = [0, 1].map(() => {
+    const root = document.createElement('div');
+    root.className = 'g-soccer-world-indicator';
+    root.style.display = 'none';
+    const name = document.createElement('span');
+    const power = document.createElement('b');
+    root.append(document.createElement('i'), name, power);
+    host.appendChild(root);
+    return { root, name, power };
+  });
   const projected = new THREE.Vector3();
 
   const scene = new THREE.Scene();
@@ -488,7 +493,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     camera.updateProjectionMatrix();
   }
 
-  function update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId: number | null = null, power: number | null = null, cameraDt = dt) {
+  function update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId: number | null = null, power: number | null = null, cameraDt = dt, tagIds: readonly number[] = []) {
     desiredBroadcastBasis = desiredCameraBasis(world, humanTeam, camera.aspect, 'broadcast');
     const clubs = world.clubs ?? DEFAULT_CLUBS;
     setKits([clubs[0], clubs[1]]);
@@ -691,21 +696,24 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     if (fxDirector) fxLayer.update(fxDirector, ball.position, world.ball, camera, dt);
     const shadowScale = Math.max(0.25, 1.1 - world.ball.y * 0.2);
     ballShadow.scale.set(shadowScale, shadowScale, 1);
-    if (controlled && cameraMode !== 'setpiece') {
-      projected.set(controlled.x, 2.75, controlled.z).project(camera);
-      const visible = projected.z >= -1 && projected.z <= 1 && Math.abs(projected.x) < 1.05 && Math.abs(projected.y) < 1.05;
-      indicator.style.display = visible ? 'grid' : 'none';
-      if (visible) {
-        indicator.style.left = `${(projected.x * 0.5 + 0.5) * width}px`;
-        indicator.style.top = `${(0.5 - projected.y * 0.5) * height}px`;
-        indicator.style.setProperty('--player-color', activeKits[controlled.team].shirt);
-        const name = rosterName(clubById(world.clubs?.[controlled.team]), controlled.id % 11).toUpperCase();
-        indicatorName.textContent = `NO. ${jerseyNumber(controlled.id)}  ${name}`;
-        indicatorPower.style.width = power === null ? '0%' : `${Math.round(Math.max(0.04, power) * 100)}%`;
-        indicatorPower.style.visibility = power === null ? 'hidden' : 'visible';
-        indicatorPower.style.backgroundColor = (power ?? 0) > 0.85 ? '#ff755f' : '#e6f36d';
-      }
-    } else indicator.style.display = 'none';
+    const tagged = controlled ? [controlled.id, ...tagIds.filter((id) => id !== controlled.id)] : [];
+    for (let i = 0; i < indicators.length; i++) {
+      const tag = indicators[i]!;
+      const player = cameraMode === 'setpiece' ? undefined : world.players[tagged[i] ?? -1];
+      if (player) projected.set(player.x, 2.75, player.z).project(camera);
+      const visible = !!player && !player.sentOff && projected.z >= -1 && projected.z <= 1 && Math.abs(projected.x) < 1.05 && Math.abs(projected.y) < 1.05;
+      tag.root.style.display = visible ? 'grid' : 'none';
+      if (!visible) continue;
+      const charge = i === 0 ? power : null;
+      tag.root.style.left = `${(projected.x * 0.5 + 0.5) * width}px`;
+      tag.root.style.top = `${(0.5 - projected.y * 0.5) * height}px`;
+      tag.root.style.setProperty('--player-color', activeKits[player.team].shirt);
+      const label = `NO. ${jerseyNumber(player.id)}  ${playerName(player.id, world).toUpperCase()}`;
+      if (tag.name.textContent !== label) tag.name.textContent = label;
+      tag.power.style.width = charge === null ? '0%' : `${Math.round(Math.max(0.04, charge) * 100)}%`;
+      tag.power.style.visibility = charge === null ? 'hidden' : 'visible';
+      tag.power.style.backgroundColor = (charge ?? 0) > 0.85 ? '#ff755f' : '#e6f36d';
+    }
     const sunLow = stadium.sunLow();
     key.position.set(cameraRig.target.value.x - FIELD.length * 0.17, sunLow ? 18 : 30, cameraRig.target.value.z + (sunLow ? FIELD.width * 0.3 : -FIELD.width * 0.28));
     key.target.position.set(cameraRig.target.value.x, 0, cameraRig.target.value.z);
@@ -822,7 +830,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     precompile,
     attach(next) {
       next.appendChild(canvas);
-      next.appendChild(indicator);
+      for (const tag of indicators) next.appendChild(tag.root);
     },
     setTime,
     setPattern(pattern) { stadium.setPattern(pattern); },
@@ -841,7 +849,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       stadium.dispose();
       fxLayer.dispose();
       disposeTree(scene);
-      indicator.remove();
+      for (const tag of indicators) tag.root.remove();
       ballMap.dispose();
       envTarget?.dispose();
       renderer.dispose();
