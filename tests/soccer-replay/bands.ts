@@ -2,8 +2,7 @@
 export const BALANCE = {
   goals: [1, 5],
   maxGoals: 8,
-  // Real top-flight football averages roughly 9–11 shots per goal; 12 leaves room for seed variance in 8-match cohorts.
-  shotsPerGoal: [3, 12],
+  shotsPerGoal: [3, 10],
   completion: [0.65, 0.9],
   possession: [0.35, 0.65],
   homeWinLossGap: 3,
