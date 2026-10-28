@@ -169,12 +169,15 @@ test('manual switch weights goal-side, excludes current/other humans and flick u
 });
 
 test('command switch flags and defending raw context actions share the logic path', () => {
-  for (const command of [{ switchNearest: true }, { action: 'pass', pressed: true, power: 0.1 }, { switchDir: { x: 1, z: 0 } }] as Partial<Command>[]) {
+  for (const command of [{ switchNearest: true }, { switchDir: { x: 1, z: 0 } }] as Partial<Command>[]) {
     const { world, defender, tick } = fixture(); const mate = world.players[2]!;
     mate.human = false; mate.x = -1; mate.z = 0;
     tick({ move: { x: 0, z: 0 }, ...command });
     assert.equal(world.controlled[0], mate.id); assert.equal(defender.human, false);
   }
+  const tap = fixture();
+  tap.tick({ move: { x: 0, z: 0 }, action: 'pass', pressed: true, power: 0.1 });
+  assert.equal(tap.world.controlled[0], tap.defender.id, 'tap A contains instead of switching');
   for (const [action, expected] of [['shoot', 'tackle'], ['lob', 'slide'], ['through', 'idle']] as const) {
     const { defender, tick } = fixture(); defender.x = 1.2;
     tick({ move: { x: 0, z: 0 }, action, pressed: true });
@@ -240,6 +243,36 @@ test('auto switching needs the same better candidate for 15 steps and never flip
   }
   for (let frame = 0; frame < 3; frame++) { reset(false); a.x = -18; tick(); }
   assert.equal(world.controlled[0], b.id);
+});
+
+test('own last touch prevents automatic switches during a loose-ball chase', () => {
+  const { world, defender, carrier, tick } = fixture();
+  carrier.x = 20; carrier.z = 20;
+  defender.x = -12; defender.z = 0;
+  const mate = world.players[2]!;
+  mate.human = false; mate.x = -2; mate.z = 0;
+  world.carrierId = world.lastToucherId = null;
+  world.passTarget = null; world.lastTouch = 0;
+  world.ball.x = world.ball.z = 0;
+  world.ball.vx = 6; world.ball.vz = 0;
+  for (let frame = 0; frame < 60; frame++) tick();
+  assert.equal(world.controlled[0], defender.id);
+});
+
+test('opponent last touch still permits automatic switching after 0.25 seconds', () => {
+  const { world, defender, carrier, tick } = fixture();
+  carrier.x = 20; carrier.z = 20;
+  defender.x = -12; defender.z = 0;
+  const mate = world.players[2]!;
+  mate.human = false; mate.x = -2; mate.z = 0;
+  world.carrierId = world.lastToucherId = null;
+  world.passTarget = null; world.lastTouch = 1;
+  world.ball.x = world.ball.z = 0;
+  world.ball.vx = 6; world.ball.vz = 0;
+  for (let frame = 0; frame < 14; frame++) tick();
+  assert.equal(world.controlled[0], defender.id);
+  tick();
+  assert.equal(world.controlled[0], mate.id);
 });
 
 test('manual switches start the auto-switch cooldown and candidate state is validated in snapshots', () => {

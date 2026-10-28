@@ -17,6 +17,9 @@ export default defineConfig({
   adapter: vercel(),
   devToolbar: { enabled: false },
   vite: {
+    define: {
+      __BUILD_SHA__: JSON.stringify((process.env.VERCEL_GIT_COMMIT_SHA || process.env.BUILD_SHA || '').slice(0, 12).toLowerCase()),
+    },
     resolve: {
       alias: {
         'node-fetch': fileURLToPath(new URL('./src/os/games/katago/node-fetch-stub.ts', import.meta.url)),

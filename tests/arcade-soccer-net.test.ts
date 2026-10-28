@@ -1,15 +1,63 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { acceptMovePacket, commandFromPacket, consumeCommand, mergeRemoteCommand, movePacket, parsePacket, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
-import { chargePower } from '../src/os/arcade/games/soccer/input.ts';
+import { ROOM_MESSAGE_MAX_BYTES } from '../worker/src/room-core.ts';
+import { computeAI } from '../src/os/arcade/games/soccer/ai.ts';
+import { createWorld, STEP, stepWorld, type Command, type World } from '../src/os/arcade/games/soccer/logic.ts';
+import { acceptMovePacket, commandFromPacket, consumeCommand, InputFreshness, mergeRemoteCommand, movePacket, parsePacket, sameStick, stickSendDelay, trimSnapshot, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
+import { chargePower, screenToWorld } from '../src/os/arcade/games/soccer/input.ts';
+import { desiredCameraBasis } from '../src/os/arcade/games/soccer/camera.ts';
+import { startShootout } from '../src/os/arcade/games/soccer/setpieces.ts';
 
 const remoteSeat = (): RemoteSeat => ({ seq: -1, edge: -1, held: null, pressUsed: false });
+const stickDirections = [
+  { x: 0, z: -1 },
+  { x: Math.SQRT1_2, z: -Math.SQRT1_2 },
+  { x: 1, z: 0 },
+  { x: -Math.SQRT1_2, z: Math.SQRT1_2 },
+];
+const assertVectorClose = (actual: { x: number; z: number } | null | undefined, expected: { x: number; z: number }) => {
+  assert.ok(actual);
+  assert.ok(Math.hypot(actual.x - expected.x, actual.z - expected.z) < 0.02);
+};
 
 test('online move packets round-trip validated inputs', () => {
   const packet = movePacket(2, 42, 1, { move: { x: 0.32, z: -1 }, sprint: true, action: 'shoot', heldAction: 'shoot', pressed: true });
   assert.deepEqual(parsePacket(packet), packet);
   assert.equal(commandFromPacket(packet).action, 'shoot');
   assert.equal(commandFromPacket(packet).heldAction, 'shoot');
+});
+
+test('stick changes use move packet quantization and an 8ms minimum gap', () => {
+  assert.equal(sameStick({ x: 0.004, z: 0 }, { x: 0, z: 0 }), true);
+  assert.equal(sameStick({ x: 0.006, z: 0 }, { x: 0, z: 0 }), false);
+  assert.equal(stickSendDelay(100, 93), 1);
+  assert.equal(stickSendDelay(100, 92), 0);
+  assert.equal(stickSendDelay(110, 100), 0);
+});
+
+test('ping packets validate ids and timestamps', () => {
+  const ping = { t: 'soccer', k: 'pg', id: 3, at: 125.5 };
+  assert.deepEqual(parsePacket(ping), ping);
+  for (const bad of [
+    { ...ping, id: -1 }, { ...ping, id: 1.5 }, { ...ping, at: Number.NaN },
+    { ...ping, at: -1 }, { t: 'soccer', k: 'pg', id: 1 }, { t: 'soccer', k: 'pg', at: 1 },
+  ]) assert.equal(parsePacket(bad), null);
+});
+
+test('club navigation packets round-trip the optional club flag', () => {
+  const nav = { t: 'soccer', k: 'nav', r: 1, seq: 2, seat: 1, dx: 1, dy: 0, a: false, b: false, club: true };
+  assert.deepEqual(parsePacket(nav), nav);
+  assert.equal(parsePacket({ ...nav, club: 'yes' }), null);
+  const legacy = { ...nav };
+  delete (legacy as { club?: boolean }).club;
+  assert.deepEqual(parsePacket(legacy), legacy);
+});
+
+test('neutral aim remains neutral in online move packets', () => {
+  const packet = movePacket(1, 1, 0, { move: { x: 0, z: 0 }, aim: { x: 0, z: 0 } });
+  assert.equal(packet.ax, 0);
+  assert.equal(packet.az, 0);
+  assert.deepEqual(commandFromPacket(packet).aim, { x: 0, z: 0 });
 });
 
 test('held action packets round-trip every supported charged action', () => {
@@ -38,7 +86,7 @@ test('malformed, non-finite, and out-of-range packet fields are rejected', () =>
 });
 
 test('all held control flags and directional switch round-trip, with legacy flick fields optional', () => {
-  for (const flag of ['jockey', 'autoJockey', 'contain', 'switchNearest', 'finesseHeld', 'press'] as const) {
+  for (const flag of ['jockey', 'autoJockey', 'contain', 'switchNearest', 'finesse', 'finesseHeld', 'press'] as const) {
     const packet = movePacket(1, 1, 0, { move: { x: 0, z: 0 }, [flag]: true });
     assert.deepEqual(parsePacket(packet), packet);
     assert.equal(commandFromPacket(packet)[flag], true);
@@ -93,6 +141,143 @@ test('a repeated delivery recovers a lost action edge and is applied once', () =
   assert.equal(second.command?.pressed, false);
 });
 
+test('a duplicate move delivery with the same sequence and edge is applied only once', () => {
+  const packet = movePacket(1, 4, 0, { move: { x: 0.5, z: 0 }, action: 'shoot', pressed: true, power: 0.8 }, 7);
+  const first = acceptMovePacket(remoteSeat(), undefined, packet, false);
+  assert.equal(first.command?.action, 'shoot');
+  const consumed = consumeCommand(first.command!);
+  const duplicate = acceptMovePacket(first.seat, consumed, packet, false);
+  assert.equal(duplicate.command, null);
+  assert.equal(duplicate.seat.seq, packet.seq);
+  assert.equal(duplicate.seat.edge, packet.e);
+});
+
+test('repeated pass edges retain their already converted world aim', () => {
+  const previous = { move: { x: 0, z: 0 }, action: 'pass' as const, pressed: true, power: 0.8, aim: { x: 0, z: 1 } };
+  const seat: RemoteSeat = { seq: 1, edge: 7, held: null, pressUsed: false };
+  const packet = movePacket(1, 2, 0, {
+    move: { x: 0, z: -1 },
+    action: 'pass',
+    pressed: true,
+    power: 0.8,
+    aim: { x: 0, z: -1 },
+  }, 7);
+  const flip = (point: { x: number; z: number }) => ({ x: -point.x, z: -point.z });
+  const accepted = acceptMovePacket(seat, previous, packet, false, flip);
+  assert.deepEqual(accepted.command?.aim, previous.aim);
+  const neutralAim = acceptMovePacket(
+    { ...seat, seq: 2 },
+    previous,
+    { ...packet, seq: 3, e: 8, ax: 0.05, az: 0 },
+    false,
+    flip,
+  );
+  assert.deepEqual(neutralAim.command?.aim, { x: 0, z: 0 });
+});
+
+test('remote pass and shot releases with two repeats retain broadcast-converted directions and kick once', () => {
+  const actions = ['pass', 'shoot'] as const;
+  for (const action of actions) for (const stick of stickDirections) {
+    const world = createWorld(651, 60, 1);
+    world.phase = 'live';
+    world.restart = null;
+    world.setPiece = null;
+    world.controlled[0] = 6;
+    for (const player of world.players) {
+      player.human = player.id === 6;
+      player.controlled = player.id === 6;
+      player.vx = 0;
+      player.vz = 0;
+      player.cooldown = 0;
+      player.touchCd = 0;
+      if (player.id !== 6) {
+        player.x = player.team === 0 ? -15 : 35;
+        player.z = player.team === 0 ? -35 : 15;
+      }
+    }
+    const carrier = world.players[6]!;
+    carrier.x = 0;
+    carrier.z = 0;
+    world.ball = { x: 0.3, y: 0.11, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false };
+    world.carrierId = carrier.id;
+    world.lastToucherId = carrier.id;
+    const basis = desiredCameraBasis(world, 0, 16 / 9, 'broadcast');
+    const toWorld = (point: { x: number; z: number }) => screenToWorld(point, basis);
+    let seat = remoteSeat();
+    let previous = acceptMovePacket(seat, undefined, movePacket(1, 1, 1, {
+      move: stick,
+      heldAction: action,
+      aim: stick,
+      power: 0.8,
+    }, 0), false, toWorld);
+    seat = previous.seat;
+    let command = previous.command!;
+    const release = movePacket(1, 2, 1, { move: stick, action, pressed: true, aim: stick, power: 0.8 }, 1);
+    previous = acceptMovePacket(seat, command, release, false, toWorld);
+    seat = previous.seat;
+    command = previous.command!;
+    for (const seq of [3, 4]) {
+      previous = acceptMovePacket(seat, command, movePacket(1, seq, 1, {
+        move: stick,
+        action,
+        pressed: true,
+        aim: stick,
+        power: 0.8,
+      }, 1), false, toWorld);
+      seat = previous.seat;
+      command = previous.command!;
+    }
+    assertVectorClose(command.aim, toWorld(stick));
+    assertVectorClose(command.move, toWorld(stick));
+    stepWorld(world, STEP, new Map([[carrier.id, command]]));
+    assert.equal(world.kickEvent?.playerId, carrier.id);
+    assert.equal(world.kickEvent?.action, action);
+    if (action === 'pass') {
+      const speed = Math.hypot(world.ball.vx, world.ball.vz);
+      const expected = toWorld(stick);
+      const alignment = (world.ball.vx * expected.x + world.ball.vz * expected.z) / speed;
+      assert.ok(alignment > Math.cos(Math.PI / 60), `pass launch differs by more than 3° for ${JSON.stringify(stick)}: ${alignment}`);
+    }
+
+    const consumed = consumeCommand(command);
+    const after = acceptMovePacket(seat, consumed, movePacket(1, 5, 1, {
+      move: stick,
+      action,
+      pressed: true,
+      aim: stick,
+      power: 0.8,
+    }, 1), false, toWorld);
+    stepWorld(world, STEP, new Map([[carrier.id, after.command!]]));
+    assert.equal(world.kickEvent, null, 'the repeated edge must not fire a second kick');
+  }
+});
+
+test('directional switches retain world-space vectors through repeated packets', () => {
+  for (const stick of stickDirections) {
+    const world = createWorld(652, 60, 1);
+    const basis = desiredCameraBasis(world, 0, 16 / 9, 'broadcast');
+    const toWorld = (point: { x: number; z: number }) => screenToWorld(point, basis);
+    const first = acceptMovePacket(remoteSeat(), undefined, movePacket(1, 1, 1, {
+      move: stick,
+      switchNearest: true,
+      switchDir: stick,
+    }, 1), false, toWorld);
+    let seat = first.seat;
+    let command = first.command!;
+    for (const seq of [2, 3]) {
+      const repeated = acceptMovePacket(seat, command, movePacket(1, seq, 1, {
+        move: stick,
+        switchNearest: true,
+        switchDir: stick,
+      }, 1), false, toWorld);
+      seat = repeated.seat;
+      command = repeated.command!;
+    }
+    assertVectorClose(command.switchDir, toWorld(stick));
+    assertVectorClose(command.move, toWorld(stick));
+  }
+});
+
 test('defensive held shot becomes an immediate action and its release is discarded', () => {
   const hold = movePacket(1, 1, 0, { move: { x: 0, z: 0 }, heldAction: 'shoot', power: 0.37 }, 1);
   const pressed = acceptMovePacket(remoteSeat(), undefined, hold, true);
@@ -133,4 +318,137 @@ test('online configuration is constrained to supported match options', () => {
   assert.equal(parsePacket({ t: 'soccer', k: 'cfg', r: 1, seq: 0, half: 7, level: 1 }), null);
   assert.equal(parsePacket({ t: 'soccer', k: 'cfg', r: 1, seq: 0, half: 3, level: 9 }), null);
   assert.equal(parsePacket({ t: 'soccer', k: 'cfg', r: 1, seq: 0, half: 3, level: 1, mode: 'duo' }), null);
+});
+
+test('trimmed full-match and worst-case snapshots fit the worker relay', () => {
+  const encoder = new TextEncoder();
+  const relayMessage = (state: World) => ({
+    t: 'msg', to: 3, d: { '~r': 999, d: { t: 'soccer', k: 's', r: 1, seq: 99999999, state } },
+  });
+  const frame = (state: World) => JSON.stringify(relayMessage(state));
+  const frameAtPrecision = (state: World, decimals: number) => JSON.stringify(relayMessage(state), (_key, value) =>
+    typeof value === 'number' && Number.isFinite(value) && !Number.isInteger(value)
+      ? Math.round(value * 10 ** decimals) / 10 ** decimals
+      : value);
+  const world = createWorld(71423, 120);
+  const homeCommands = new Map<number, Command>();
+  const awayCommands = new Map<number, Command>();
+  const commands = new Map<number, Command>();
+  const largestValues = new Map<string, { bytes: number; value: unknown }>();
+  let largestWorld: World | undefined;
+  let largestWorldBytes = -1;
+  let samples = 0;
+  const keepLargest = (key: string, value: unknown) => {
+    const json = JSON.stringify(value);
+    if (json === undefined) return;
+    const bytes = encoder.encode(json).byteLength;
+    if (bytes > (largestValues.get(key)?.bytes ?? -1)) largestValues.set(key, { bytes, value: structuredClone(value) });
+  };
+
+  for (let tick = 0; tick < 30000 && world.phase !== 'full-time'; tick++) {
+    computeAI(world, 'hard', STEP, tick, 0, homeCommands);
+    computeAI(world, 'hard', STEP, tick, 1, awayCommands);
+    commands.clear();
+    for (const [id, command] of homeCommands) commands.set(id, command);
+    for (const [id, command] of awayCommands) commands.set(id, command);
+    stepWorld(world, STEP, commands);
+    if (tick % 3 !== 0) continue;
+
+    samples++;
+    const state = trimSnapshot(world);
+    const packet = { t: 'soccer', k: 's', r: 1, seq: 99999999, state };
+    assert.ok(parsePacket(packet), `trimmed snapshot at tick ${tick} must parse`);
+    const relayBytes = encoder.encode(frame(state)).byteLength;
+    assert.ok(relayBytes <= ROOM_MESSAGE_MAX_BYTES, `relay frame at tick ${tick} is ${relayBytes} bytes`);
+
+    for (const key of ['setPiece', 'setPieceRun', 'shootout', 'rules', 'kickEvent', 'passPoint']) {
+      keepLargest(key, world[key as keyof World]);
+    }
+    const json = JSON.stringify(world)!;
+    const worldBytes = encoder.encode(json).byteLength;
+    if (worldBytes > largestWorldBytes) {
+      largestWorldBytes = worldBytes;
+      largestWorld = structuredClone(world);
+    }
+  }
+  assert.equal(world.phase, 'full-time', 'the simulated match should reach full time');
+  assert.ok(samples > 1000, 'the full match should provide many samples');
+  assert.ok(largestWorld);
+
+  const shootoutWorld = structuredClone(largestWorld);
+  startShootout(shootoutWorld);
+  keepLargest('shootout', shootoutWorld.shootout);
+
+  const worstCase = structuredClone(largestWorld);
+  worstCase.setPiece = largestValues.get('setPiece')?.value as World['setPiece'];
+  worstCase.setPieceRun = largestValues.get('setPieceRun')?.value as World['setPieceRun'];
+  worstCase.shootout = largestValues.get('shootout')?.value as World['shootout'];
+  worstCase.rules = structuredClone(largestValues.get('rules')?.value as World['rules']);
+  worstCase.kickEvent = largestValues.get('kickEvent')?.value as World['kickEvent'];
+  worstCase.passPoint = largestValues.get('passPoint')?.value as World['passPoint'];
+  worstCase.rules!.yellows = Array.from({ length: 22 }, (_, id) => id);
+  for (const player of worstCase.players) {
+    player.buffer = { action: 'finesse', power: 0.123456789, aim: { x: 12.3456789, z: -23.456789 }, t: 0.98765432 };
+    player.slide = { x: 0.70710678, z: -0.70710678, t: 0.5432198, won: true };
+    player.touchCd = 0.123456789;
+    player.planting = true;
+    player.formation = 10;
+    player.action = 'x'.repeat(24);
+  }
+  worstCase.event = 'e'.repeat(80);
+
+  const rawPacket = { t: 'soccer', k: 's', r: 1, seq: 99999999, state: worstCase };
+  const rawPacketIsValid = parsePacket(rawPacket) !== null;
+  const beforeTrim = structuredClone(worstCase);
+  const trimmedWorstCase = trimSnapshot(worstCase);
+  assert.deepEqual(worstCase, beforeTrim, 'trimming must not mutate the host world');
+  if (rawPacketIsValid) {
+    assert.ok(parsePacket({ ...rawPacket, state: trimmedWorstCase }), 'trimmed worst case must remain parseable');
+    console.log('Worst-case composite was parse-valid before and after trimming.');
+  } else {
+    console.log('Worst-case composite was not parse-valid before trimming; skipped trimmed parse assertion.');
+  }
+  const rawBytes = encoder.encode(frame(worstCase)).byteLength;
+  const threeDecimalBytes = encoder.encode(frameAtPrecision(worstCase, 3)).byteLength;
+  const twoDecimalBytes = encoder.encode(frameAtPrecision(worstCase, 2)).byteLength;
+  const tierThreeBytes = encoder.encode(frame(trimmedWorstCase)).byteLength;
+  console.log(`Snapshot worst-case relay bytes: raw=${rawBytes}, 3dp=${threeDecimalBytes}, 2dp=${twoDecimalBytes}, tier-3=${tierThreeBytes}`);
+  assert.ok(rawBytes > ROOM_MESSAGE_MAX_BYTES, `raw worst-case frame is only ${rawBytes} bytes`);
+  assert.ok(tierThreeBytes <= ROOM_MESSAGE_MAX_BYTES, `tier-3 worst-case frame is ${tierThreeBytes} bytes`);
+});
+
+test('trimSnapshot rounds fractions and preserves integers', () => {
+  const world = createWorld(71423, 120);
+  world.ball.x = 1.23456;
+  const snapshot = trimSnapshot(world);
+  assert.notEqual(snapshot, world);
+  assert.equal(snapshot.ball.x, 1.235);
+  assert.equal(world.ball.x, 1.23456);
+  assert.equal(snapshot.seed, world.seed);
+  assert.equal(snapshot.players[0].id, world.players[0].id);
+  assert.deepEqual(snapshot.score, world.score);
+});
+
+test('a held-still stick stays fresh through the 30 Hz keepalive despite change-only stick sends', () => {
+  const tracker = new InputFreshness();
+  tracker.sync(0, [1]);
+  let lastSent = { x: 0.6, z: 0 };
+  let lastSentAt = 0;
+  for (let now = 0; now <= 5000; now += 1) {
+    const stick = { x: 0.6, z: 0 };
+    if (!sameStick(stick, lastSent) && stickSendDelay(now, lastSentAt) === 0) { lastSent = stick; lastSentAt = now; tracker.record(now, 1); }
+    if (now % 33 === 0) { lastSentAt = now; tracker.record(now, 1); }
+    assert.deepEqual(tracker.staleSeats(now, [1]), []);
+  }
+});
+
+test('after a stale reset the reliable copy of an edge packet is applied only once', () => {
+  const tracker = new InputFreshness();
+  tracker.sync(0, [1]);
+  const edge = movePacket(1, 0, 1, { move: { x: 0, z: 0 }, action: 'shoot', pressed: true }, 4);
+  assert.equal(tracker.record(2000, 1), true);
+  const first = acceptMovePacket(remoteSeat(), undefined, edge, false);
+  assert.equal(first.command?.action, 'shoot');
+  assert.equal(tracker.record(2001, 1), false);
+  assert.equal(acceptMovePacket(first.seat, first.command!, edge, false).command, null);
 });

@@ -10,12 +10,7 @@ export type Club = {
   roster: readonly string[];
 };
 
-const DEFAULT_ROSTERS = [
-  ['A. MORGAN', 'T. BENNETT', 'D. PARK', 'L. WILLIAMS', 'R. CHEN', 'S. PATEL', 'J. KIM', 'E. BROOKS', 'C. REYES', 'M. RIVERA', 'N. FOSTER'],
-  ['I. CARTER', 'O. FOSTER', 'D. SINGH', 'T. WALKER', 'B. NGUYEN', 'H. PRICE', 'M. JONES', 'P. CLARKE', 'R. DIAZ', 'K. ALVAREZ', 'S. WARD'],
-] as const;
-
-const broadcastClub = (id: string, roster: readonly string[]): Club => {
+const broadcastClub = (id?: string | null): Club => {
   const club = clubById(id);
   return {
     name: club.name,
@@ -23,14 +18,20 @@ const broadcastClub = (id: string, roster: readonly string[]): Club => {
     abbr: club.short,
     primary: club.home.shirt,
     secondary: club.home.shorts,
-    roster,
+    roster: club.players.map((player) => player.name),
   };
 };
 
 export const CLUBS = [
-  broadcastClub(DEFAULT_CLUBS[0], DEFAULT_ROSTERS[0]),
-  broadcastClub(DEFAULT_CLUBS[1], DEFAULT_ROSTERS[1]),
+  broadcastClub(DEFAULT_CLUBS[0]),
+  broadcastClub(DEFAULT_CLUBS[1]),
 ] as const satisfies readonly [Club, Club];
+
+/** The two clubs actually playing in `world` (defaults when it has none). */
+export const matchClubs = (world?: Pick<World, 'clubs'> | null): readonly [Club, Club] =>
+  !world?.clubs || world.clubs[0] === DEFAULT_CLUBS[0] && world.clubs[1] === DEFAULT_CLUBS[1]
+    ? CLUBS
+    : [broadcastClub(world.clubs[0]), broadcastClub(world.clubs[1])];
 
 export type TeamStats = {
   goals: number;
@@ -53,9 +54,9 @@ export type MatchStats = { teams: [TeamStats, TeamStats]; ticker: TickerItem[]; 
 export const REGULAR = 45 / 48;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-export function playerName(id: number, world?: Pick<World, 'clubs'>): string {
+/** Single source of truth for player names: HUD, on-pitch tag, intro lineups, ticker and goal cards. */
+export function playerName(id: number, world?: Pick<World, 'clubs'> | null): string {
   const team = teamOf(id);
-  if (!world?.clubs || world.clubs[team] === DEFAULT_CLUBS[team]) return CLUBS[team].roster[id % TEAM_SIZE]!;
   return rosterName(clubById(world?.clubs?.[team] ?? DEFAULT_CLUBS[team]), id % TEAM_SIZE);
 }
 
@@ -106,7 +107,8 @@ export function broadcastClock(world: World, stats: MatchStats): { label: string
     totalSeconds = (base + 45) * 60 + extra;
     minute = `${base + 45}+${Math.min(added, Math.floor(extra / 60) + 1)}'`;
   }
-  const wholeSeconds = Math.floor(totalSeconds);
+  // Like a TV clock, the running time stops at 45:00 / 90:00; added time shows only as the +N tab and the minute.
+  const wholeSeconds = Math.floor(Math.min(totalSeconds, (base + 45) * 60));
   const minutes = Math.floor(wholeSeconds / 60);
   const seconds = wholeSeconds % 60;
   return {
@@ -131,6 +133,7 @@ export function createStatsObserver() {
   let currentHalf: World['half'] = 1;
   let pendingPass: { team: Team; passer: number } | null = null;
   let pendingShot: { team: Team; shooter: number; xg: number } | null = null;
+  let lastSave: { shotTeam: Team; keeperTeam: Team } | null = null;
   let lastKicker: number | null = null;
   let lastCompletedPass: { passer: number; receiver: number; at: number } | null = null;
   let simTime = 0;
@@ -158,6 +161,7 @@ export function createStatsObserver() {
     currentHalf = 1;
     pendingPass = null;
     pendingShot = null;
+    lastSave = null;
     lastKicker = null;
     lastCompletedPass = null;
     simTime = 0;
@@ -233,6 +237,7 @@ export function createStatsObserver() {
       stats.teams[pendingShot.team].onTarget++;
       const keeperTeam = (1 - pendingShot.team) as Team;
       stats.teams[keeperTeam].saves++;
+      lastSave = { shotTeam: pendingShot.team, keeperTeam };
       const keeperId = world.lastToucherId ?? world.players.find((player) => player.team === keeperTeam && player.slot === 'GK')?.id;
       addTicker(world, 'save', keeperTeam, `save by ${keeperId === undefined ? 'keeper' : playerName(keeperId, world)}`);
       pendingShot = null;
@@ -245,9 +250,13 @@ export function createStatsObserver() {
       if (goals <= 0) continue;
       stats.teams[team].goals = world.score[team];
       for (let count = 0; count < goals; count++) {
-        if (pendingShot?.team === team) stats.teams[team].onTarget++;
         const scorer = lastKicker ?? world.lastToucherId ?? undefined;
         const isGoal = scorer !== undefined && teamOf(scorer) === team;
+        if (pendingShot?.team === team) stats.teams[team].onTarget++;
+        else if (lastSave?.shotTeam === team) stats.teams[lastSave.keeperTeam].saves--;
+        else if (isGoal) { stats.teams[team].shots++; stats.teams[team].onTarget++; }
+        pendingShot = null;
+        lastSave = null;
         const kind: TickerKind = isGoal ? 'goal' : 'own-goal';
         const assist = isGoal && scorer !== undefined && lastCompletedPass?.receiver === scorer && now - lastCompletedPass.at < 12
           ? lastCompletedPass.passer
@@ -265,9 +274,10 @@ export function createStatsObserver() {
     const kick = world.kickEvent;
     if (kick) {
       lastKicker = kick.playerId;
+      lastSave = null;
       if (pendingPass && pendingPass.passer !== kick.playerId) resolvePass(kick.playerId, now);
       const team = teamOf(kick.playerId);
-      if (kick.action === 'shoot' || kick.action === 'finesse') {
+      if ((kick.action === 'shoot' || kick.action === 'finesse') && world.event !== 'headed clear') {
         const shooter = world.players[kick.playerId]!;
         const xg = xgFor(world, shooter, team);
         stats.teams[team].shots++;
@@ -300,6 +310,7 @@ export function createStatsObserver() {
 
     if (pendingShot && ((carrier !== null && teamOf(carrier) !== pendingShot.team && !savedThisStep)
       || (world.phase !== 'live' && !scored))) pendingShot = null;
+    if (lastSave && (carrier !== null || world.phase !== 'live' && !scored)) lastSave = null;
 
     if (previousPhase === 'live' && world.phase === 'restart') {
       pendingPass = null;

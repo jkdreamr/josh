@@ -72,6 +72,7 @@ export function createFxDirector(opts: { reducedMotion?: boolean } = {}): FxDire
   let latestSimTime = 0;
   let displayTime = 0;
   let displayed = false;
+  let following = true;
   let lastTouchAt = -Infinity;
   let timeScale = 1;
   let hitStopRemaining = 0;
@@ -130,11 +131,9 @@ export function createFxDirector(opts: { reducedMotion?: boolean } = {}): FxDire
       armHitStop(0.075);
       shake = Math.max(shake, 0.07);
       armPunch(-1.4);
-    } else if (kind === 'tackle') {
-      armHitStop(0.045);
-    } else if (kind === 'save') {
-      armHitStop(power >= 0.75 ? 0.07 : 0.04);
-      if (power >= 0.75) shake = Math.max(shake, 0.08);
+    } else if (kind === 'save' && power >= 0.75) {
+      armHitStop(0.07);
+      shake = Math.max(shake, 0.08);
     } else if (kind === 'post') {
       armHitStop(0.055);
       shake = Math.max(shake, 0.12);
@@ -355,6 +354,7 @@ export function createFxDirector(opts: { reducedMotion?: boolean } = {}): FxDire
       if (displayTime > latestSimTime) displayTime = latestSimTime;
       if (latestSimTime - displayTime > 0.12) displayTime = latestSimTime - 0.12;
     }
+    following = hitStopRemaining <= 0 && latestSimTime - displayTime <= 1e-4;
     if (reducedMotion) {
       timeScale = 1;
       shake = 0;
@@ -366,6 +366,10 @@ export function createFxDirector(opts: { reducedMotion?: boolean } = {}): FxDire
   };
 
   const renderWorld = (current: World) => {
+    if (following) {
+      displayTime = latestSimTime;
+      return current;
+    }
     if (reducedMotion || current.phase !== 'live' || latestSimTime - displayTime < 1e-4 || sampleCount < 2) {
       if (current.phase !== 'live') displayTime = latestSimTime;
       return current;
@@ -525,6 +529,7 @@ export function createFxDirector(opts: { reducedMotion?: boolean } = {}): FxDire
     latestSimTime = 0;
     displayTime = 0;
     displayed = false;
+    following = true;
     lastTouchAt = -Infinity;
     timeScale = 1;
     hitStopRemaining = 0;
@@ -581,6 +586,7 @@ export function haptic(pattern: number | number[]) {
 
 export type FxLayer = {
   update(director: FxDirector, ball: T.Vector3, ballVel: Pick<BallState, 'x' | 'y' | 'z' | 'vx' | 'vy' | 'vz'>, camera: T.PerspectiveCamera, dt: number): void;
+  warm(on: boolean): void;
   applyCamera(camera: T.PerspectiveCamera): void;
   restoreCamera(camera: T.PerspectiveCamera): void;
   dispose(): void;
@@ -712,6 +718,8 @@ export function createFxLayer(THREE: typeof import('three'), scene: T.Scene): Fx
   const cameraUp = new THREE.Vector3();
   const cameraWorldRight = new THREE.Vector3();
   const cameraWorldUp = new THREE.Vector3();
+  const warmObjects = [trail, curl, ...puffs, ...rings];
+  let warmVisibility: boolean[] | null = null;
   let savedFov = 0;
   let cameraApplied = false;
   let currentDirector: FxDirector | null = null;
@@ -962,5 +970,16 @@ export function createFxLayer(THREE: typeof import('three'), scene: T.Scene): Fx
     puffTexture.dispose();
   };
 
-  return { update, applyCamera, restoreCamera, dispose };
+  const warm = (on: boolean) => {
+    if (on) {
+      if (warmVisibility) return;
+      warmVisibility = warmObjects.map((object) => object.visible);
+      for (const object of warmObjects) object.visible = true;
+    } else if (warmVisibility) {
+      warmObjects.forEach((object, index) => { object.visible = warmVisibility![index]!; });
+      warmVisibility = null;
+    }
+  };
+
+  return { update, warm, applyCamera, restoreCamera, dispose };
 }

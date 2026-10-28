@@ -1,5 +1,7 @@
 import type { KeyState } from '../../kit/keys.ts';
-import type { Command, Point, World } from './logic.ts';
+import { isCross, matchClock, possessionTeam, type Command, type Point, type Team, type World } from './logic.ts';
+import { phoneClockLabel } from './pad.ts';
+import { phoneStoppagePrompt, setPieceLabels } from './setpieces.ts';
 
 export type ViewBasis = { right: Point; forward: Point };
 export const IDENTITY_BASIS: ViewBasis = { right: { x: 1, z: 0 }, forward: { x: 0, z: -1 } };
@@ -36,6 +38,26 @@ export type InputState = ControlCommand & {
 
 export function chargePower(seconds: number) {
   return Math.max(0.1, Math.min(1, seconds));
+}
+
+export function phoneAttacking(world: World | null, team: Team): boolean {
+  return !!world && possessionTeam(world) === team;
+}
+
+export function phoneViewKey(world: World | null, team: Team, playerId: number): string {
+  const player = world?.players.find((candidate) => candidate.id === playerId);
+  return JSON.stringify({
+    team,
+    playerId,
+    attacking: phoneAttacking(world, team),
+    labels: world ? setPieceLabels(world, team, playerId) : null,
+    cross: !!world && !!player && isCross(world, player),
+    clock: world && !(world.phase === 'restart' && world.restart === 'kickoff')
+      ? phoneClockLabel(matchClock(world))
+      : null,
+    stoppagePrompt: world ? phoneStoppagePrompt(world, playerId) : null,
+    taking: world?.phase === 'restart' && world.setPiece?.takerId === playerId,
+  });
 }
 
 export function keyboardInput(keys: KeyState, p2 = false, arrows = false): InputState {
@@ -118,6 +140,20 @@ export function gamepadInput(pad: Pad, previous: GamepadHistory = {}, defending 
   return { state, previous: { buttons, flick } };
 }
 
+export function carryEdge(pending: Partial<Command> | null | undefined, next: Command): Command {
+  if (!pending || next.action && next.pressed || next.switchNearest || next.switchDir) return next;
+  if (!(pending.action && pending.pressed || pending.switchNearest || pending.switchDir)) return next;
+  return {
+    ...next,
+    action: pending.action,
+    pressed: pending.pressed,
+    power: pending.power,
+    aim: pending.aim,
+    switchNearest: pending.switchNearest,
+    switchDir: pending.switchDir,
+  };
+}
+
 export function reconcileControllers(world: World, assignments: Map<number, number>) {
   const next = new Map(assignments);
   for (const [seat, id] of assignments) {
@@ -130,4 +166,39 @@ export function reconcileControllers(world: World, assignments: Map<number, numb
     else next.delete(seat);
   }
   return next;
+}
+
+export function syncControllerSeats(world: World, assignments: Map<number, number>, preferred: Map<number, number>) {
+  const next = new Map(assignments);
+  for (const [seat, id] of next) {
+    if (!preferred.has(seat)) continue;
+    const player = world.players.find((p) => p.id === id);
+    const target = world.players.find((p) => p.id === preferred.get(seat));
+    if (player && target && player.team === target.team && !player.sentOff) continue;
+    if (player) { player.human = false; player.controlled = false; }
+    next.delete(seat);
+  }
+  for (const [seat, id] of preferred) {
+    if (next.has(seat)) continue;
+    const target = world.players.find((p) => p.id === id);
+    const occupied = new Set(next.values());
+    const replacement = target && !target.sentOff && !occupied.has(id) ? target
+      : world.players.find((p) => p.team === target?.team && !p.sentOff && !occupied.has(p.id));
+    if (replacement) next.set(seat, replacement.id);
+  }
+  for (const [seat, id] of next) {
+    const player = world.players.find((p) => p.id === id);
+    if (player) { player.human = true; player.controlled = true; }
+    if (world.controlledSeats && seat >= 0 && seat < world.controlledSeats.length) world.controlledSeats[seat] = id;
+  }
+  return next;
+}
+
+export function phoneControlledPlayer(world: World | null, assigned: number) {
+  if (!world) return assigned;
+  const player = world.players.find((p) => p.id === assigned);
+  if (!player || player.human && player.controlled && !player.sentOff) return assigned;
+  const selected = world.players.find((p) => p.id === world.controlled[player.team]);
+  if (selected?.team === player.team && selected.human && selected.controlled && !selected.sentOff) return selected.id;
+  return world.players.find((p) => p.team === player.team && p.human && p.controlled && !p.sentOff)?.id ?? assigned;
 }

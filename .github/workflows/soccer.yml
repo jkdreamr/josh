@@ -1,0 +1,25 @@
+name: Soccer regression tests
+
+on:
+  pull_request:
+    paths:
+      - 'src/os/arcade/games/soccer/**'
+      - 'tests/arcade-soccer-*.test.ts'
+      - 'tests/fixtures/soccer/**'
+      - 'tests/soccer-replay/**'
+      - 'scripts/soccer-soak.ts'
+      - 'package.json'
+      - 'package-lock.json'
+      - '.github/workflows/soccer.yml'
+
+jobs:
+  soccer:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: node --test tests/arcade-soccer-*.test.ts

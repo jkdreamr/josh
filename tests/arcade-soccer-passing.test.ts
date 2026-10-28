@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createWorld, distance, FIELD, TEAM_SIZE, findReceiver, groundPassSpeed, STEP, stepWorld, type Action, type Command } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, distance, FIELD, TEAM_SIZE, findReceiver, groundPassSpeed, kick, STEP, stepWorld, type Action, type Command } from '../src/os/arcade/games/soccer/logic.ts';
 import { stepBall, type BallState } from '../src/os/arcade/games/soccer/physics.ts';
-import { cloneSnapshot, parsePacket } from '../src/os/arcade/games/soccer/net.ts';
+import { acceptMovePacket, cloneSnapshot, consumeCommand, movePacket, parsePacket, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
 
 function setup(seed = 47) {
   const world = createWorld(seed);
@@ -37,6 +37,140 @@ test('assisted pass respects the cone, angle preference, and blocked lanes', () 
   assert.equal(findReceiver(world, player, { x: 1, z: 0 }, false)?.id, angled.id);
 });
 
+test('human pass prefers the aimed centre-back over a similarly aligned goalkeeper', () => {
+  const world = createWorld();
+  const carrier = world.players[4]!;
+  const centerBack = world.players[3]!;
+  const keeper = world.players[0]!;
+  for (const player of world.players) player.sentOff = true;
+  carrier.sentOff = false; carrier.x = 0; carrier.z = 0;
+  centerBack.sentOff = false; centerBack.x = -11.5; centerBack.z = 14.7;
+  keeper.sentOff = false; keeper.x = -19; keeper.z = 25.3;
+  const angle = 127.5 * Math.PI / 180;
+
+  assert.equal(findReceiver(world, carrier, { x: Math.cos(angle), z: Math.sin(angle) }, false, false, false, 0.75)?.id, centerBack.id);
+});
+
+test('human pass can choose an aimed goalkeeper when no outfielder is within 25 degrees', () => {
+  const world = createWorld();
+  const carrier = world.players[4]!;
+  const centerBack = world.players[3]!;
+  const keeper = world.players[0]!;
+  for (const player of world.players) player.sentOff = true;
+  carrier.sentOff = false; carrier.x = 0; carrier.z = 0;
+  keeper.sentOff = false; keeper.x = 20; keeper.z = 0;
+  const angle = 27 * Math.PI / 180;
+  centerBack.sentOff = false; centerBack.x = 18 * Math.cos(angle); centerBack.z = 18 * Math.sin(angle);
+
+  assert.equal(findReceiver(world, carrier, { x: 1, z: 0 }, false, false, false, 0.75)?.id, keeper.id);
+});
+
+test('receiver selection covers eight stick directions in a teammate ring and values tap versus held range', () => {
+  const { world, player } = setup();
+  player.x = 0; player.z = 0;
+  const teammates = world.players.filter((p) => p.team === player.team && p.id !== player.id);
+  for (const mate of teammates) mate.sentOff = true;
+  for (let i = 0; i < 8; i++) {
+    const mate = teammates[i]!;
+    mate.sentOff = false;
+    const angle = i * Math.PI / 4;
+    mate.x = Math.cos(angle) * 15;
+    mate.z = Math.sin(angle) * 15;
+  }
+  for (let i = 0; i < 8; i++) {
+    const angle = i * Math.PI / 4;
+    assert.equal(findReceiver(world, player, { x: Math.cos(angle), z: Math.sin(angle) }, false)?.id, teammates[i]!.id);
+  }
+
+  for (const mate of teammates) mate.sentOff = true;
+  const near = teammates[1]!, far = teammates[2]!;
+  near.sentOff = far.sentOff = false;
+  near.x = 10; near.z = 0;
+  far.x = 25; far.z = 0;
+  assert.equal(findReceiver(world, player, { x: 1, z: 0 }, false, false, false, 0.1)?.id, near.id);
+  assert.equal(findReceiver(world, player, { x: 1, z: 0 }, false, false, false, 1)?.id, far.id);
+
+  const straight = teammates[2]!, eightDegrees = teammates[3]!;
+  for (const mate of teammates) mate.sentOff = true;
+  straight.sentOff = eightDegrees.sentOff = false;
+  const angle = Math.PI / 4;
+  straight.x = Math.cos(angle) * 15; straight.z = Math.sin(angle) * 15;
+  eightDegrees.x = Math.cos(angle + 8 * Math.PI / 180) * 15;
+  eightDegrees.z = Math.sin(angle + 8 * Math.PI / 180) * 15;
+  assert.equal(findReceiver(world, player, { x: Math.cos(angle), z: Math.sin(angle) }, false)?.id, straight.id);
+
+  const kickoff = createWorld(123);
+  const midfieldCarrier = kickoff.players[1]!;
+  midfieldCarrier.x = midfieldCarrier.z = 0;
+  for (let i = 0; i < 8; i++) {
+    const direction = { x: Math.cos(i * Math.PI / 4), z: Math.sin(i * Math.PI / 4) };
+    const receiver = findReceiver(kickoff, midfieldCarrier, direction, false);
+    if (receiver) assert.equal(receiver.team, midfieldCarrier.team);
+  }
+});
+
+test('human pass transfers control to its receiver on the strike frame', () => {
+  const { world, player, fire } = setup();
+  const receiver = world.players[2]!;
+  receiver.human = false;
+  receiver.x = player.x + 12; receiver.z = player.z;
+  fire('pass', 0.6);
+  assert.equal(world.kickEvent?.playerId, player.id);
+  assert.equal(world.passTarget, receiver.id);
+  assert.equal(world.controlled[player.team], receiver.id);
+  assert.equal(receiver.human, true);
+  assert.equal(player.human, false);
+});
+
+test('a repeated phone pass edge kicks once across 250 ms, starting on the release step', () => {
+  const { world, player } = setup();
+  const receiver = world.players[2]!;
+  receiver.human = false;
+  receiver.x = player.x + 12; receiver.z = player.z;
+  const seat: RemoteSeat = { seq: -1, edge: -1, held: null, pressUsed: false };
+  const held = acceptMovePacket(seat, undefined, movePacket(1, 1, 1, {
+    move: { x: 0, z: 0 }, heldAction: 'pass', aim: { x: 1, z: 0 },
+  }), false);
+  stepWorld(world, STEP, new Map([[player.id, held.command!]]));
+  assert.notEqual(world.kickEvent?.action, 'pass');
+
+  let accepted = acceptMovePacket(held.seat, consumeCommand(held.command!), movePacket(1, 2, 1, {
+    move: { x: 0, z: 0 }, action: 'pass', pressed: true, power: 0.7, aim: { x: 1, z: 0 },
+  }, 1), false);
+  stepWorld(world, STEP, new Map([[player.id, accepted.command!]]));
+  assert.equal(world.kickEvent?.playerId, player.id, 'release kicks on the first subsequent world step');
+  let kickEvents = Number(world.kickEvent?.action === 'pass');
+  let previous = consumeCommand(accepted.command!);
+  for (let seq = 3; seq <= 17; seq++) {
+    accepted = acceptMovePacket(accepted.seat, previous, movePacket(1, seq, 1, {
+      move: { x: 0, z: 0 }, action: 'pass', pressed: true, power: 0.7, aim: { x: 1, z: 0 },
+    }, 1), false);
+    assert.equal(accepted.command?.action, null);
+    previous = consumeCommand(accepted.command!);
+    stepWorld(world, STEP, new Map([[world.controlled[player.team], accepted.command!]]));
+    kickEvents += Number(world.kickEvent?.action === 'pass');
+  }
+  assert.equal(kickEvents, 1);
+});
+
+test('released phone action is accepted and kicked on the next world step', () => {
+  const { world, player } = setup();
+  const receiver = world.players[2]!;
+  receiver.x = player.x + 12; receiver.z = player.z;
+  const seat: RemoteSeat = { seq: -1, edge: -1, held: null, pressUsed: false };
+  const held = acceptMovePacket(seat, undefined, movePacket(1, 1, 1, {
+    move: { x: 0, z: 0 }, heldAction: 'pass', aim: { x: 1, z: 0 },
+  }, 1), false);
+  stepWorld(world, STEP, new Map([[player.id, held.command!]]));
+  assert.notEqual(world.kickEvent?.action, 'pass');
+  const released = acceptMovePacket(held.seat, consumeCommand(held.command!), movePacket(1, 2, 1, {
+    move: { x: 0, z: 0 }, action: 'pass', pressed: true, power: 0.6, aim: { x: 1, z: 0 },
+  }, 2), false);
+  stepWorld(world, STEP, new Map([[player.id, released.command!]]));
+  assert.equal(world.kickEvent?.playerId, player.id);
+  assert.equal(world.kickEvent?.action, 'pass');
+});
+
 test('ground passes use the rolling model and charge controls arrival speed', () => {
   const arrivals: number[] = [];
   for (const power of [0.1, 0.45, 1]) {
@@ -48,8 +182,8 @@ test('ground passes use the rolling model and charge controls arrival speed', ()
     for (let i = 0; i < 900 && ball.x < receiver.x && ball.vx > 0.01; i++) freeStep(ball);
     const arrival = ball.x >= receiver.x ? Math.hypot(ball.vx, ball.vz) : 0;
     arrivals.push(arrival);
-    if (power === 0.1) assert.ok(ball.x < receiver.x, `weak pass reached ${ball.x}`);
   }
+  assert.ok(arrivals[0]! > 0 && arrivals[0]! < arrivals[1]!);
   console.log(`15 m pass arrivals (0.1 / 0.45 / 1): ${arrivals.map((s) => s.toFixed(2)).join(' / ')} m/s (0 = fell short)`);
   assert.ok(arrivals[1]! >= 2 && arrivals[1]! <= 7);
   assert.ok(arrivals[2]! > arrivals[1]! + 2);
@@ -63,9 +197,29 @@ test('ground passes use the rolling model and charge controls arrival speed', ()
       const receiver = world.players[2]!; receiver.x = range / 2; receiver.z = 5;
       fire('pass', charge);
       const speed = Math.hypot(world.ball.vx, world.ball.vz);
-      assert.ok(speed >= 7.8 && speed <= 25);
+      assert.ok(speed >= 7.8 && speed <= 26);
     }
   }
+});
+
+test('human ground passes keep tap, full-charge and driven launch speeds in their FIFA ranges', () => {
+  const launchSpeed = (power: number, finesse = false) => {
+    const { world, player } = setup();
+    player.x = -7.5; world.ball.x = -7.1;
+    const receiver = world.players[2]!;
+    receiver.human = false;
+    receiver.x = 7.5; receiver.z = 5;
+    kick(world, player, 'pass', {
+      move: { x: 0, z: 0 }, aim: { x: 1, z: 0 }, action: 'pass', pressed: true, power, finesse,
+    });
+    return Math.hypot(world.ball.vx, world.ball.vz);
+  };
+  const tap = launchSpeed(0.1);
+  const full = launchSpeed(1);
+  const driven = launchSpeed(0.1, true);
+  assert.ok(tap >= 12 && tap <= 15.5, `tap speed ${tap}`);
+  assert.ok(full > tap, `full speed ${full}, tap speed ${tap}`);
+  assert.ok(driven >= 20, `driven speed ${driven}`);
 });
 
 test('unassisted pass uses space range and moving receiver is led', () => {

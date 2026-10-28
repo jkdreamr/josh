@@ -1,13 +1,16 @@
-import { createWorld, distance, FIELD, FORMATION, KEEPER_REACH, findReceiver, groundPassPower, isCross, movePlayer, nearestCarrier, restartTaker, shotAim, shotError, shotOverchargeThreshold, shotSpeed, STEP, stepWorld, tackleWindow, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
+import { createWorld, distance, FIELD, FORMATION, KEEPER_REACH, findReceiver, groundPassPower, isCross, movePlayer, nearestCarrier, restartTaker, shotAim, shotError, shotOverchargeThreshold, shotSpeed, STEP, stepWorld, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
 import { cpuMayTackle, offsidePosition, onsideProgress, stepUpLine } from './rules.ts';
+import { activeLunge, commitLunge, observe, passRead, perceive, perceivedTackleWindow } from './perception.ts';
 
 export const LEVEL_NAMES = ['easy', 'normal', 'hard'] as const;
 export type Level = (typeof LEVEL_NAMES)[number];
 const reaction = { easy: 0.6, normal: 0.3, hard: 0.18 } as const;
-const keeperReaction = { easy: 0.6, normal: 0.42, hard: 0.2 } as const;
+const keeperReaction = { easy: 0.5, normal: 0.42, hard: 0.42 } as const;
 const keeperReadDelay = { easy: 0.5, normal: 0.3, hard: 0.16 } as const;
-const keeperReadNoise = { easy: 0.28, normal: 0.08, hard: 0.01 } as const;
+const keeperReadNoise = { easy: 0.28, normal: 0.22, hard: 0.08 } as const;
 const decisionInterval = { easy: 0.7, normal: 0.3, hard: 0.24 } as const;
+export const KEEPER_MAX_HOLD = 4;
+export const DEAD_BALL_UNSTICK = 2;
 const noise = { easy: 0.65, normal: 0.2, hard: 0.03 } as const;
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 const outfield = (player: Player) => player.slot !== 'GK' && !player.sentOff;
@@ -50,6 +53,8 @@ type MatchState = {
   runs: Map<number, { until: number; x: number; z: number }>;
   keeperReads: Map<number, KeeperRead>;
   keeperTargets: Map<number, Point>;
+  keeperHold?: { id: number; since: number } | null;
+  deadBallSince: number | null;
 };
 const matches = new WeakMap<World, MatchState>();
 
@@ -57,12 +62,15 @@ function matchState(world: World, tick: number) {
   let state = matches.get(world);
   if (!state || tick < state.tick) {
     state = { tick: -1, carrier: null, possession: world.lastTouch,
-      teams: [{ possession: world.lastTouch === 0, changedAt: tick }, { possession: world.lastTouch === 1, changedAt: tick }], runs: new Map(), keeperReads: new Map(), keeperTargets: new Map() };
+      teams: [{ possession: world.lastTouch === 0, changedAt: tick }, { possession: world.lastTouch === 1, changedAt: tick }], runs: new Map(), keeperReads: new Map(), keeperTargets: new Map(), deadBallSince: null };
     matches.set(world, state);
   }
   if (state.tick === tick) return state;
   state.tick = tick;
   state.carrier = nearestCarrier(world) ?? null;
+  if (state.carrier?.slot !== 'GK') state.keeperHold = null;
+  const deadBall = world.phase === 'live' && !state.carrier && Math.hypot(world.ball.vx, world.ball.vz) < 1.5 && world.ball.y < 0.75;
+  state.deadBallSince = deadBall ? state.deadBallSince ?? tick : null;
   const possession = state.carrier?.team ?? world.lastTouch;
   if (possession !== state.possession) {
     state.possession = possession;
@@ -233,9 +241,9 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
   const shotLane = laneClearance(world, player, { x: goalX, z: -Math.sign(player.z) * FIELD.goalWidth * 0.32 }, player.team, true);
   const goodAngle = Math.abs(player.z) < lateral(level === 'easy' ? 0.21 : 0.18) && Math.abs(player.z) / Math.max(3, Math.abs(goalX - player.x)) < 0.8;
   const shootRange = 18;
-  if (goalDistance < shootRange && goodAngle && pressure > 1.5 + qualityNoise && shotLane > 0.18 + Math.abs(qualityNoise) * 0.3) {
+  if (goalDistance < shootRange && goodAngle && pressure > (level === 'hard' ? 1.1 : 1.5) + qualityNoise && shotLane > 0.18 + Math.abs(qualityNoise) * 0.3) {
     const choice = cpuShotChoice(world, player, level, tick, dt);
-    return { move: { x: 0, z: 0 }, action: 'shoot', pressed: true,
+    if (level !== 'hard' || choice.probability >= 0.65 || goalDistance < 11) return { move: { x: 0, z: 0 }, action: 'shoot', pressed: true,
       power: choice.power, aim: shotAim(choice.targetZ, dir) };
   }
   const lastDefender = Math.max(...opponents.filter(outfield).map((p) => p.x * dir));
@@ -249,7 +257,8 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
     const space = Math.min(...opponents.map((p) => distance(p, receiver)));
     const lane = laneClearance(world, player, receiver, player.team);
     const optionNoise = Math.sin((tick + rosterIndex(world, receiver) * 17) * 0.19) * noise[level];
-    if (lane < 0.8 - optionNoise * 0.5 || space < 1.2 - optionNoise * 0.5) continue;
+    const margin = level === 'hard' ? 0.7 : 0;
+    if (lane < 0.8 + margin - optionNoise * 0.5 || space < 1.2 + margin - optionNoise * 0.5) continue;
     let action: 'pass' | 'through' | 'lob' = 'pass';
     if (facingForward && pressure > 3 && forward > longitudinal(0.12) && gap < longitudinal(0.31)
       && receiver.x * dir > lastDefender - 1 && receiver.vx * dir > 2 && space > 4) action = 'through';
@@ -257,9 +266,10 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
       && Math.abs(receiver.z) < lateral(0.2) && space > 3) action = 'lob';
     const aim = { x: receiver.x - player.x, z: receiver.z - player.z };
     if (findReceiver(world, player, aim, action === 'through', action === 'lob' && isCross(world, player),
-      !!world.rules?.offside && level !== 'easy')?.id !== receiver.id) continue;
+      !!world.rules?.offside && level !== 'easy', action === 'pass' ? groundPassPower(distance(player, receiver)) : 0.45, 'ai')?.id !== receiver.id) continue;
     const score = forward * 0.16 + Math.min(space, 6) * 0.12 + Math.min(lane, 4) * 0.08
       - gap * 0.025 + (action === 'through' ? 0.5 : 0) + optionNoise
+      + (level === 'hard' && Math.hypot(goalX - receiver.x, receiver.z) < 14 && Math.abs(receiver.z) < lateral(0.18) ? 0.6 : 0)
       + (receiver.slot === 'GK' ? -0.8 : 0);
     if (!best || score > best.score) best = { receiver, action, score };
   }
@@ -271,6 +281,16 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
   }
   if (player.slot === 'GK') return { move: { x: 0, z: 0 } };
   return wait;
+}
+
+function keeperClearance(world: World, keeper: Player): Command {
+  const dir = teamDir(keeper.team, world.endsSwapped);
+  const opponents = world.players.filter((p) => p.team !== keeper.team && !p.sentOff);
+  const outlet = world.players.filter((q) => q.team === keeper.team && outfield(q) && !q.sentOff && !offsidePosition(world, q))
+    .map((q) => ({ q, score: (q.x - keeper.x) * dir * 0.05 + Math.min(8, ...opponents.map((o) => distance(o, q))) * 0.4 }))
+    .sort((a, b) => b.score - a.score || a.q.id - b.q.id)[0]?.q;
+  const aim = outlet ? { x: outlet.x - keeper.x, z: outlet.z - keeper.z } : { x: dir, z: Math.sign(keeper.z || 1) * 0.6 };
+  return { move: { x: 0, z: 0 }, action: 'lob', pressed: true, power: 0.8, aim };
 }
 
 function shapeTarget(world: World, p: Player, state: MatchState) {
@@ -314,8 +334,10 @@ const tickWindow = (tick: number) => tick % 180 < 75;
 export function computeAI(world: World, level: Level, dt: number, tick: number, team?: Team, commands = new Map<number, Command>()) {
   commands.clear();
   const state = matchState(world, tick);
+  observe(world, tick);
   const carrier = state.carrier;
   const targets = new Map<number, Point>();
+  const chasers = new Set<number>();
   for (const side of [0, 1] as const) {
     if (team !== undefined && team !== side) continue;
     const players = world.players.filter((p) => p.team === side && !p.sentOff);
@@ -343,8 +365,10 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
       }
       if (p.slot === 'GK') {
         if (carrier?.id === p.id) {
-          const command = world.event === 'keeper claims it' && world.eventTime > 0.25
+          if (state.keeperHold?.id !== p.id) state.keeperHold = { id: p.id, since: tick };
+          let command: Command = world.event === 'keeper claims it' && world.eventTime > 0.25
             ? { move: { x: 0, z: 0 } } : carrierCommand(world, p, level, tick);
+          if (!command.action && (tick - state.keeperHold.since) * dt >= KEEPER_MAX_HOLD) command = keeperClearance(world, p);
           command.move = { x: 0, z: 0 };
           commands.set(p.id, command);
           continue;
@@ -368,36 +392,59 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
       }
       if (state.possession !== side || !carrier && world.passTarget === null) {
         if (p.id === presser?.id) {
-          const receiver = world.players.find((q) => q.id === world.passTarget && q.team !== side && !q.sentOff);
+          const receiver = passRead(world, level, tick)
+            ? world.players.find((q) => q.id === world.passTarget && q.team !== side && !q.sentOff) : undefined;
           const readsWindow = level === 'hard' || level === 'normal' && Math.sin((tick + rosterIndex(world, p) * 31) * 0.37) > noise[level];
           const loose = readsWindow ? world.players.find((q) => q.id === world.lastToucherId && q.team !== side && !q.sentOff && distance(q, world.ball) < 4) : undefined;
           const opponent = (carrier?.team !== side ? carrier ?? receiver : receiver) ?? loose;
           if (opponent) {
-            const dx = ownGoal.x - opponent.x, dz = -opponent.z;
+            const seen = perceive(world, opponent.id, level, tick);
+            const seenBall = perceive(world, 'ball', level, tick);
+            const seenOpponent = {
+              ...opponent, x: seen.x, z: seen.z, vx: seen.vx, vz: seen.vz, facing: seen.facing, action: seen.action,
+            };
+            const lunge = activeLunge(world, p.id, tick);
+            if (lunge) {
+              commands.set(p.id, { move: { x: lunge.x, z: lunge.z }, sprint: false });
+              continue;
+            }
+            const dx = ownGoal.x - seen.x, dz = -seen.z;
             const length = Math.hypot(dx, dz) || 1;
-            const target = { x: opponent.x + dx / length * 2, z: opponent.z + dz / length * 2 };
-            const move = targetMove(p, target.x, target.z);
-            const gap = distance(p, world.ball);
-            const facingAway = Math.sin(opponent.facing) * -dir < 0.2;
-            const exposed = distance(opponent, world.ball) > 0.48;
-            const window = tackleWindow(world, p);
+            const target = { x: seen.x + dx / length * 2, z: seen.z + dz / length * 2 };
+            const gap = distance(p, seenBall);
+            const facingAway = Math.sin(seen.facing) * -dir < 0.2;
+            const exposed = distance(seen, seenBall) > 0.48;
+            const window = perceivedTackleWindow(world, p, seenOpponent, seenBall);
             const goodWindow = readsWindow ? window.inReach && window.probability >= (level === 'hard' ? 0.5 : 0.3) : exposed || facingAway;
             const reacts = (tick + rosterIndex(world, p) * 2) % Math.round(reaction[level] * 60) === 0;
-            const mayTackle = level === 'easy' || level === 'hard' && window.exposed || cpuMayTackle(world, p, opponent);
-            commands.set(p.id, { move: gap < 1.38 && reacts && goodWindow ? targetMove(p, world.ball.x, world.ball.z) : distance(p, target) < 0.65
-              ? { x: opponent.vx / 6, z: opponent.vz / 6 } : move,
-              sprint: distance(p, target) > 4, action: (carrier || readsWindow && window.exposed) && mayTackle && gap < 1.38 && goodWindow ? 'tackle' : null, pressed: reacts });
+            const mayTackle = level === 'easy' || level === 'hard' && window.exposed || cpuMayTackle(world, p, seenOpponent);
+            if (gap < 1.38 && reacts && goodWindow) {
+              const move = targetMove(p, seenBall.x, seenBall.z);
+              commitLunge(world, p.id, tick, move);
+              commands.set(p.id, {
+                move, sprint: distance(p, target) > 4,
+                action: (carrier || readsWindow && window.exposed) && mayTackle ? 'tackle' : null,
+                pressed: true,
+              });
+            } else {
+              const move = distance(p, target) < 0.65
+                ? { x: (target.x - p.x) / 1.4 + seen.vx / 7, z: (target.z - p.z) / 1.4 + seen.vz / 7 }
+                : targetMove(p, target.x, target.z);
+              commands.set(p.id, { move, sprint: distance(p, target) > 4 });
+            }
           } else {
             const flight = clamp(distance(p, world.ball) / 8, 0, 0.7);
+            if (state.deadBallSince !== null && tick - state.deadBallSince >= DEAD_BALL_UNSTICK * 60 && distance(p, world.ball) < 3) chasers.add(p.id);
             commands.set(p.id, { move: targetMove(p, clamp(world.ball.x + world.ball.vx * flight, -FIELD.length / 2, FIELD.length / 2),
               clamp(world.ball.z + world.ball.vz * flight, -FIELD.width / 2, FIELD.width / 2)), sprint: true });
           }
           continue;
         }
         if (p.id === cover?.id && carrier?.team !== side && carrier) {
-          const dx = ownGoal.x - carrier.x, dz = -carrier.z;
+          const seen = perceive(world, carrier.id, level, tick);
+          const dx = ownGoal.x - seen.x, dz = -seen.z;
           const length = Math.hypot(dx, dz) || 1;
-          targets.set(p.id, { x: carrier.x + dx / length * longitudinal(0.135), z: carrier.z + dz / length * longitudinal(0.135) });
+          targets.set(p.id, { x: seen.x + dx / length * longitudinal(0.135), z: seen.z + dz / length * longitudinal(0.135) });
           continue;
         }
       }
@@ -410,9 +457,10 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
         if (threat) {
           marking = threat;
           marked.add(threat.id);
-          const dx = ownGoal.x - threat.x, dz = -threat.z;
+          const seen = perceive(world, threat.id, level, tick);
+          const dx = ownGoal.x - seen.x, dz = -seen.z;
           const length = Math.hypot(dx, dz) || 1;
-          target = { x: threat.x + dx / length * 1.5, z: threat.z + dz / length * 1.5 };
+          target = { x: seen.x + dx / length * 1.5, z: seen.z + dz / length * 1.5 };
         }
       }
       if (roleOf(p).line === 'def' && distance(p, world.ball) > 12) {
@@ -468,7 +516,9 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
       x += (p.x - mate.x) / Math.max(0.5, gap) * strength;
       z += (p.z - mate.z) / Math.max(0.5, gap) * strength;
     }
-    command.move = { x: command.move.x + x * 1.2, z: command.move.z + z * 1.2 };
+    const spaced = { x: command.move.x + x * 1.2, z: command.move.z + z * 1.2 };
+    const cancelsChase = Math.hypot(spaced.x, spaced.z) < 0.08 || spaced.x * command.move.x + spaced.z * command.move.z <= 0;
+    if (!(chasers.has(p.id) && cancelsChase)) command.move = spaced;
   }
   return commands;
 }

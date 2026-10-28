@@ -1,5 +1,5 @@
 import { computeAI, type Level } from './ai.ts';
-import { createWorld, distance, FIELD, nearestCarrier, rng, stepWorld, TEAM_SIZE, type Command, type Player, type Point, type World } from './logic.ts';
+import { createWorld, distance, FIELD, nearestCarrier, rng, stepWorld, TEAM_SIZE, transferControl, type Command, type Player, type Point, type World } from './logic.ts';
 
 export const PRACTICE_MODE = 'practice';
 export type DrillId = 'free' | 'passing' | 'finishing' | 'slalom' | 'defending';
@@ -142,7 +142,10 @@ function settle(player: Player, at: Point, facing: number) {
 function pinBench(state: PracticeState, world: World) {
   for (const player of world.players) {
     if (isActive(state, player.id)) continue;
-    if (player.human) { player.human = false; player.controlled = false; }
+    if (player.human) {
+      const replacement = world.players.find((candidate) => candidate.team === player.team && isActive(state, candidate.id) && !candidate.human && !candidate.sentOff);
+      if (replacement) transferControl(world, player.team, replacement.id, player.id);
+    }
     settle(player, benchSpot(state, player.id), 0);
   }
 }
@@ -162,9 +165,7 @@ function giveControl(world: World, to: Player) {
   if (to.human) return;
   const humans = world.players.filter((p) => p.team === to.team && p.human);
   const from = humans.sort((a, b) => distance(a, to) - distance(b, to))[0];
-  if (from) { from.human = false; from.controlled = false; }
-  to.human = true; to.controlled = true;
-  if (!from || world.controlled[to.team] === from.id) world.controlled[to.team] = to.id;
+  transferControl(world, to.team, to.id, from?.id ?? world.controlled[to.team]);
 }
 
 function ensureControl(state: PracticeState, world: World) {
@@ -172,16 +173,15 @@ function ensureControl(state: PracticeState, world: World) {
   const outfield = world.players.filter((p) => p.team === 0 && p.slot !== 'GK' && isActive(state, p.id));
   if (!world.players.some((p) => p.team === 0 && p.human)) {
     const pick = outfield.sort((a, b) => distance(a, world.ball) - distance(b, world.ball))[0];
-    if (pick) { pick.human = true; pick.controlled = true; world.controlled[0] = pick.id; }
+    if (pick) transferControl(world, 0, pick.id);
   }
   const controlled = world.players[world.controlled[0]];
   if (!controlled?.human) {
     const human = world.players.find((p) => p.team === 0 && p.human);
-    if (human) world.controlled[0] = human.id;
+    if (human) transferControl(world, 0, human.id);
   }
   const carrier = nearestCarrier(world);
   if (carrier && carrier.team === 0 && !carrier.human && carrier.slot !== 'GK' && isActive(state, carrier.id)) giveControl(world, carrier);
-  if (!isActive(state, world.controlled[1])) world.controlled[1] = AWAY_GK;
 }
 
 const humanPlayer = (world: World) => world.players[world.controlled[0]]!;
@@ -250,10 +250,21 @@ export function setupDrill(state: PracticeState, world: World) {
   world.phase = 'live'; world.restart = null; world.event = ''; world.eventTime = 0;
   world.halfLength = 360; world.clock = 360; world.half = 1; world.endsSwapped = false; world.score = [0, 0];
   world.switchAt = [-1, -1]; world.switchWait = [0, 0]; world.dribbleAt = [-1, -1];
-  const humans = world.players.filter((p) => p.human).map((p) => p.id);
+  const humans = world.players.filter((p) => p.human && isActive(state, p.id) && p.team === 0).map((p) => p.id);
+  if (!humans.length) humans.push(HUMAN);
+  const desiredHumans = new Set(humans);
   for (const player of world.players) {
-    const human = isActive(state, player.id) && player.team === 0 && (humans.includes(player.id) || (player.id === HUMAN && !humans.some((id) => isActive(state, id))));
-    player.human = human; player.controlled = human; player.stamina = 1;
+    player.stamina = 1;
+  }
+  for (const player of world.players) {
+    if (player.human && !desiredHumans.has(player.id)) {
+      const replacement = world.players.find((candidate) => candidate.team === player.team && isActive(state, candidate.id) && !candidate.human && !candidate.sentOff);
+      if (replacement) transferControl(world, player.team, replacement.id, player.id);
+    }
+  }
+  for (const id of desiredHumans) {
+    const player = world.players[id]!;
+    if (!player.human) transferControl(world, player.team, player.id, player.id);
   }
   world.controlled = [HUMAN, state.drill === 'defending' ? DRIBBLER : AWAY_GK];
   const human = world.players[HUMAN]!;
@@ -425,6 +436,11 @@ function nextAttempt(state: PracticeState, world: World) {
 
 export function stepPractice(state: PracticeState, world: World, dt: number, userCommands: Map<number, Command>, level: Level = 'normal', tick = 0, scratch?: Map<number, Command>) {
   if (state.phase === 'done') { world.eventTime = Math.max(0, world.eventTime - dt); return; }
+  const practiceOffside = state.drill === 'passing' ? world.rules?.offside : undefined;
+  if (practiceOffside !== undefined && world.rules) {
+    world.rules.offside = false;
+    world.rules.snapshot = null;
+  }
   const commands = practiceAI(world, state, level, dt, tick, scratch);
   for (const [id, command] of userCommands) if (isActive(state, id)) commands.set(id, sanitize(state, command));
   if (world.clock < 60) {
@@ -437,6 +453,7 @@ export function stepPractice(state: PracticeState, world: World, dt: number, use
   const goals = world.score[0];
   world.score[1] = 0;
   stepWorld(world, dt, commands);
+  if (practiceOffside !== undefined && world.rules) world.rules.offside = practiceOffside;
   state.time += dt;
   const goal = world.score[0] > goals;
   const goalZ = world.ball.z;

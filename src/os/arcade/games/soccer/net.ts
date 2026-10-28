@@ -1,4 +1,4 @@
-import { FIELD, PLAYER_COUNT, teamOf, type World } from './logic.ts';
+import { FIELD, PLAYER_COUNT, teamOf, type Point, type World } from './logic.ts';
 import type { ControlCommand } from './input.ts';
 import { CLUB_IDS } from './teams.ts';
 import { COMPETITIONS, COMPETITION_IDS, type CompetitionId, type Mode } from './modes.ts';
@@ -6,16 +6,54 @@ import type { CupSummary } from './cup.ts';
 import { validRules } from './rules.ts';
 
 export type MovePacket = { t: 'soccer'; k: 'mv'; r: number; seq: number; seat: number; x: number; z: number; ax: number; az: number; power: number; buttons: number; held: number; e?: number; sx?: number; sz?: number };
-export type SnapshotPacket = { t: 'soccer'; k: 's'; r: number; seq: number; state: World };
+export type PingPacket = { t: 'soccer'; k: 'pg'; id: number; at: number };
+export type SnapshotPacket = { t: 'soccer'; k: 's'; r: number; seq: number; state: World; ack?: number[] };
 export type ConfigPacket = { t: 'soccer'; k: 'cfg'; r: number; seq: number; half: 2 | 3 | 4 | 6; level: 0 | 1 | 2; displayOnly: boolean; mode?: Mode; comp?: CompetitionId; clubs?: [string, string]; offside?: boolean };
 export type LobbyMember = { seat: number; role: 'host' | 'phone' | 'mac'; side: 0 | 1 };
-export type LobbyPacket = { t: 'soccer'; k: 'lobby'; r: number; seq: number; comp: CompetitionId; mode: Mode; clubs: [string, string]; focus: [number, number]; ready: [boolean, boolean]; countdown: number | null; members: LobbyMember[]; cup?: CupSummary };
+export type LobbyPacket = { t: 'soccer'; k: 'lobby'; r: number; seq: number; comp: CompetitionId; mode: Mode; clubs: [string, string]; focus: [number, number]; ready: [boolean, boolean]; countdown: number | null; members: LobbyMember[]; cup?: CupSummary; screen?: 'lobby' | 'match' };
 export type HiPacket = { t: 'soccer'; k: 'hi'; r: number; seq: number; seat: number; role: 'phone' | 'mac'; side: 0 | 1 };
-export type NavPacket = { t: 'soccer'; k: 'nav'; r: number; seq: number; seat: number; dx: -1 | 0 | 1; dy: -1 | 0 | 1; a: boolean; b: boolean };
+export type NavPacket = { t: 'soccer'; k: 'nav'; r: number; seq: number; seat: number; dx: -1 | 0 | 1; dy: -1 | 0 | 1; a: boolean; b: boolean; club?: boolean };
 export type PracticePickPacket = { t: 'soccer'; k: 'pd'; r: number; seq: number; seat: number; pick: string };
 export type PracticeStatusPacket = { t: 'soccer'; k: 'pp'; r: number; seq: number; drill: string; prompt: string; hint: string; score: string; best: string; done: boolean; tutorial: string };
-export type SoccerPacket = MovePacket | SnapshotPacket | ConfigPacket | LobbyPacket | HiPacket | NavPacket | PracticePickPacket | PracticeStatusPacket;
+export type SoccerPacket = MovePacket | PingPacket | SnapshotPacket | ConfigPacket | LobbyPacket | HiPacket | NavPacket | PracticePickPacket | PracticeStatusPacket;
 export type RemoteSeat = { seq: number; edge: number; held: ControlCommand['heldAction'] | null; pressUsed: boolean };
+export const STICK_MIN_GAP_MS = 8;
+export function sameStick(a: { x: number; z: number }, b: { x: number; z: number }): boolean {
+  return Math.round(a.x * 100) === Math.round(b.x * 100) && Math.round(a.z * 100) === Math.round(b.z * 100);
+}
+export function stickSendDelay(now: number, lastSentAt: number): number {
+  return Math.max(0, STICK_MIN_GAP_MS - (now - lastSentAt));
+}
+export const INPUT_STALE_MS = 1500;
+
+export class InputFreshness {
+  private arrivals = new Map<number, number>();
+
+  sync(now: number, seats: readonly number[], reset = false) {
+    for (const seat of this.arrivals.keys()) if (!seats.includes(seat)) this.arrivals.delete(seat);
+    for (const seat of seats) if (reset || !this.arrivals.has(seat)) this.arrivals.set(seat, now);
+  }
+
+  record(now: number, seat: number) {
+    const stale = this.staleSeats(now, [seat]).length > 0;
+    this.arrivals.set(seat, now);
+    return stale;
+  }
+
+  staleSeats(now: number, seats: readonly number[]) {
+    return seats.filter((seat) => {
+      const arrival = this.arrivals.get(seat);
+      return arrival !== undefined && now - arrival > INPUT_STALE_MS;
+    });
+  }
+}
+
+export function neutralCommand(): ControlCommand {
+  return { move: { x: 0, z: 0 }, aim: { x: 0, z: 0 }, action: null, pressed: false,
+    heldAction: null, sprint: false, contain: false, jockey: false, autoJockey: false,
+    press: false, finesseHeld: false, switchNearest: false, switchDir: null };
+}
+
 const shortText = (value: unknown, max = 160) => typeof value === 'string' && value.length <= max;
 const finite = (v: unknown, abs: number) => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= abs;
 const quantized = (v: unknown) => finite(v, 1) && Math.abs((v as number) * 100 - Math.round((v as number) * 100)) < 1e-6;
@@ -68,6 +106,8 @@ function validWorld(value: unknown): value is World {
     || (w.lastTouch !== 0 && w.lastTouch !== 1) || !Number.isSafeInteger(w.seed) || !inRange(w.eventTime, 0, 30)
     || !inRange(w.restartClock, 0, 360) || typeof w.event !== 'string' || w.event.length > 80
     || !Array.isArray(w.controlled) || w.controlled.length !== 2 || !w.controlled.every((id) => Number.isInteger(id) && id >= 0 && id < PLAYER_COUNT)
+    || (w.controlledSeats !== undefined && (!Array.isArray(w.controlledSeats) || w.controlledSeats.length !== 4
+      || !w.controlledSeats.every((id) => id === null || Number.isInteger(id) && id >= 0 && id < PLAYER_COUNT)))
     || (w.passTarget !== null && w.passTarget !== undefined && (!Number.isInteger(w.passTarget) || w.passTarget < 0 || w.passTarget >= PLAYER_COUNT))
     || (w.passFrom !== null && w.passFrom !== undefined && (!Number.isInteger(w.passFrom) || w.passFrom < 0 || w.passFrom >= PLAYER_COUNT))
     || typeof w.passControl !== 'boolean'
@@ -95,7 +135,9 @@ function validWorld(value: unknown): value is World {
 }
 
 export function movePacket(round: number, seq: number, seat: number, command: ControlCommand, edge?: number): MovePacket {
-  const aimLength = Math.hypot(command.aim?.x ?? 1, command.aim?.z ?? 0) || 1;
+  const aim = command.aim ?? { x: 1, z: 0 };
+  const aimLength = Math.hypot(aim.x, aim.z);
+  const aimScale = aimLength > 0 ? 1 / aimLength : 0;
   const buttons = (command.action === 'pass' ? 1 : 0)
     | (command.action === 'shoot' ? 2 : 0)
     | (command.action === 'through' ? 4 : 0)
@@ -106,12 +148,12 @@ export function movePacket(round: number, seq: number, seat: number, command: Co
     | (command.action === 'finesse' ? 256 : 0)
     | (command.action === 'skill' ? 512 : 0)
     | (command.jockey ? 1024 : 0) | (command.autoJockey ? 2048 : 0) | (command.contain ? 4096 : 0)
-    | (command.switchNearest ? 8192 : 0) | (command.finesseHeld ? 16384 : 0);
+    | (command.switchNearest ? 8192 : 0) | (command.finesse || command.finesseHeld ? 16384 : 0);
   return {
     t: 'soccer', k: 'mv', r: round, seq, seat,
     x: Math.round(command.move.x * 100) / 100, z: Math.round(command.move.z * 100) / 100,
-    ax: Math.round((command.aim?.x ?? 1) / aimLength * 100) / 100,
-    az: Math.round((command.aim?.z ?? 0) / aimLength * 100) / 100,
+    ax: Math.round(aim.x * aimScale * 100) / 100,
+    az: Math.round(aim.z * aimScale * 100) / 100,
     power: Math.round(Math.max(0, Math.min(1, command.power ?? 0.72)) * 100) / 100,
     buttons: buttons | (command.sprint ? 64 : 0),
     ...(edge === undefined ? {} : { e: edge }),
@@ -127,7 +169,12 @@ export function movePacket(round: number, seq: number, seat: number, command: Co
 export function parsePacket(value: unknown): SoccerPacket | null {
   if (!value || typeof value !== 'object') return null;
   const p = value as Record<string, unknown>;
-  if (p.t !== 'soccer' || !Number.isSafeInteger(p.r) || (p.r as number) < 0 || !Number.isSafeInteger(p.seq) || (p.seq as number) < 0) return null;
+  if (p.t !== 'soccer') return null;
+  if (p.k === 'pg') {
+    if (!Number.isSafeInteger(p.id) || (p.id as number) < 0 || !inRange(p.at, 0, Number.MAX_VALUE)) return null;
+    return { t: 'soccer', k: 'pg', id: p.id as number, at: p.at as number };
+  }
+  if (!Number.isSafeInteger(p.r) || (p.r as number) < 0 || !Number.isSafeInteger(p.seq) || (p.seq as number) < 0) return null;
   if (p.k === 'cfg') {
     if (![2, 3, 4, 6].includes(p.half as number) || ![0, 1, 2].includes(p.level as number)
       || (p.displayOnly !== undefined && typeof p.displayOnly !== 'boolean')
@@ -153,12 +200,14 @@ export function parsePacket(value: unknown): SoccerPacket | null {
       || !Array.isArray(p.members) || !p.members.every((member) => member && Number.isInteger(member.seat) && member.seat >= 0 && member.seat <= 3
         && ['host', 'phone', 'mac'].includes(member.role) && (member.side === 0 || member.side === 1))
       || new Set(p.members.map((member) => (member as Record<string, unknown>).seat)).size !== p.members.length
-      || (p.cup !== undefined && !validCupSummary(p.cup))) return null;
+      || (p.cup !== undefined && !validCupSummary(p.cup))
+      || (p.screen !== undefined && !['lobby', 'match'].includes(p.screen as string))) return null;
     return {
       t: 'soccer', k: 'lobby', r: p.r as number, seq: p.seq as number, comp: p.comp as CompetitionId,
       mode: p.mode as LobbyPacket['mode'], clubs: [...p.clubs] as [string, string], focus: [...p.focus] as [number, number],
       ready: [...p.ready] as [boolean, boolean], countdown: p.countdown as number | null,
       members: structuredClone(p.members) as LobbyMember[], ...(p.cup === undefined ? {} : { cup: structuredClone(p.cup) as CupSummary }),
+      ...(p.screen === undefined ? {} : { screen: p.screen as LobbyPacket['screen'] }),
     };
   }
   if (p.k === 'hi') {
@@ -169,8 +218,13 @@ export function parsePacket(value: unknown): SoccerPacket | null {
   if (p.k === 'nav') {
     if (!Number.isInteger(p.seat) || (p.seat as number) < 1 || (p.seat as number) > 3
       || ![-1, 0, 1].includes(p.dx as number) || ![-1, 0, 1].includes(p.dy as number)
-      || typeof p.a !== 'boolean' || typeof p.b !== 'boolean') return null;
-    return { t: 'soccer', k: 'nav', r: p.r as number, seq: p.seq as number, seat: p.seat as number, dx: p.dx as -1 | 0 | 1, dy: p.dy as -1 | 0 | 1, a: p.a, b: p.b };
+      || typeof p.a !== 'boolean' || typeof p.b !== 'boolean'
+      || (p.club !== undefined && typeof p.club !== 'boolean')) return null;
+    return {
+      t: 'soccer', k: 'nav', r: p.r as number, seq: p.seq as number, seat: p.seat as number,
+      dx: p.dx as -1 | 0 | 1, dy: p.dy as -1 | 0 | 1, a: p.a, b: p.b,
+      ...(p.club === undefined ? {} : { club: p.club as boolean }),
+    };
   }
   if (p.k === 'mv') {
     if (!Number.isInteger(p.seat) || (p.seat as number) < 0 || (p.seat as number) > 3 || !quantized(p.x) || !quantized(p.z)
@@ -190,7 +244,13 @@ export function parsePacket(value: unknown): SoccerPacket | null {
     return { t: 'soccer', k: 'pp', r: p.r as number, seq: p.seq as number, drill: p.drill as string, prompt: p.prompt as string, hint: p.hint as string, score: p.score as string, best: p.best as string, done: p.done as boolean, tutorial: p.tutorial as string };
   }
   if (p.k === 's' && validWorld(p.state)) {
-    return { t: 'soccer', k: 's', r: p.r as number, seq: p.seq as number, state: structuredClone(p.state) };
+    const ack = Array.isArray(p.ack) && p.ack.length <= 4 && p.ack.every((seq) => Number.isSafeInteger(seq) && (seq as number) >= -1)
+      ? p.ack as number[]
+      : undefined;
+    return {
+      t: 'soccer', k: 's', r: p.r as number, seq: p.seq as number, state: structuredClone(p.state),
+      ...(ack === undefined ? {} : { ack: [...ack] }),
+    };
   }
   return null;
 }
@@ -201,7 +261,7 @@ export function commandFromPacket(packet: MovePacket): ControlCommand {
   const held = packet.held;
   const heldAction = held & 2 ? 'shoot' : held & 1 ? 'pass' : held & 4 ? 'through' : held & 8 ? 'lob' : held & 512 ? 'skill' : null;
   return { move: { x: packet.x, z: packet.z }, sprint: !!(buttons & 64), action, heldAction, press: !!(buttons & 128), pressed: !!action, power: packet.power, aim: { x: packet.ax, z: packet.az },
-    jockey: !!(buttons & 1024), autoJockey: !!(buttons & 2048), contain: !!(buttons & 4096), switchNearest: !!(buttons & 8192), finesseHeld: !!(buttons & 16384),
+    jockey: !!(buttons & 1024), autoJockey: !!(buttons & 2048), contain: !!(buttons & 4096), switchNearest: !!(buttons & 8192), finesse: !!(buttons & 16384), finesseHeld: !!(buttons & 16384),
     switchDir: packet.sx === undefined ? null : { x: packet.sx, z: packet.sz! } };
 }
 
@@ -213,8 +273,20 @@ export function mergeRemoteCommand(previous: ControlCommand | undefined, current
   };
 }
 
-export function acceptMovePacket(seat: RemoteSeat, previous: ControlCommand | undefined, packet: MovePacket, defending: boolean): { seat: RemoteSeat; command: ControlCommand | null } {
+export function acceptMovePacket(
+  seat: RemoteSeat,
+  previous: ControlCommand | undefined,
+  packet: MovePacket,
+  defending: boolean,
+  toWorld?: (point: Point) => Point,
+): { seat: RemoteSeat; command: ControlCommand | null } {
   const incoming = commandFromPacket(packet);
+  if (toWorld) {
+    incoming.move = toWorld(incoming.move);
+    const aim = toWorld(incoming.aim ?? { x: 0, z: 0 });
+    incoming.aim = Math.hypot(aim.x, aim.z) > 0.05 ? aim : { x: 0, z: 0 };
+    if (incoming.switchDir) incoming.switchDir = toWorld(incoming.switchDir);
+  }
   const hasEdge = packet.e !== undefined;
   const freshSequence = packet.seq > seat.seq;
   const freshEdge = hasEdge && packet.e! > seat.edge;
@@ -269,4 +341,26 @@ export function consumeCommand(command: ControlCommand): ControlCommand {
 
 export function cloneSnapshot(world: World) {
   return JSON.parse(JSON.stringify(world)) as Omit<World, 'seed'> & { seed: number };
+}
+
+export const SNAPSHOT_MAX_BYTES = 8 * 1024 - 256;
+const snapshotEncoder = new TextEncoder();
+
+export function trimSnapshot(world: World): World {
+  const serialize = (decimals: number, dropHostFields = false) => JSON.stringify(world, (key, value) => {
+    if (dropHostFields && key === 'buffer') return null;
+    if (dropHostFields && key === 'touchCd') return undefined;
+    return typeof value === 'number' && Number.isFinite(value) && !Number.isInteger(value)
+      ? Math.round(value * 10 ** decimals) / 10 ** decimals
+      : value;
+  })!;
+  let json = serialize(3);
+  if (snapshotEncoder.encode(json).byteLength > SNAPSHOT_MAX_BYTES) {
+    json = serialize(2);
+    if (snapshotEncoder.encode(json).byteLength > SNAPSHOT_MAX_BYTES) {
+      // Tier 3 drops host-only kick-buffer and touch-cooldown state.
+      json = serialize(2, true);
+    }
+  }
+  return JSON.parse(json) as World;
 }

@@ -1,6 +1,6 @@
 import { clubById, DEFAULT_CLUBS } from './teams.ts';
 
-import { FIELD, distance, kick, movePlayer, rng, setRestart, teamDir, transferControl, type Action, type Command, type Player, type Point, type Team, type World } from './logic.ts';
+import { FIELD, distance, kick, movePlayer, restartTaker, rng, setRestart, teamDir, transferControl, type Action, type Command, type Player, type Point, type Team, type World } from './logic.ts';
 import { stepBall } from './physics.ts';
 
 export type SetPiece = { kind: 'corner' | 'free-kick' | 'penalty' | 'goal-kick' | 'throw-in'; option: string; aim: Point & { y: number }; curl: -1 | 0 | 1; direct: boolean; takerId: number; wall: number[]; keeperDive: -1 | 0 | 1 | null; cpuDelay: number; marks?: Record<number, number> };
@@ -25,6 +25,87 @@ function exclude(w: World, p: Player) {
   const dx = p.x - w.restartAt.x, dz = p.z - w.restartAt.z, r = Math.hypot(dx, dz);
   if (r < 9.15) { const a = r ? dx / r : -teamDir(w.restartTeam, w.endsSwapped); p.x = w.restartAt.x + a * 9.16; p.z = w.restartAt.z + (r ? dz / r : 0) * 9.16; }
   p.x = clamp(p.x, -52.35, 52.35); p.z = clamp(p.z, -33.85, 33.85);
+}
+const SET_PIECE_GAP = 0.75;
+function spaceOut(w: World, taker: Player) {
+  const active = w.players.filter(p => !p.sentOff), wall = w.setPiece?.wall ?? [];
+  for (let pass = 0; pass < 80; pass++) {
+    let moved = false;
+    for (let i = 0; i < active.length; i++) for (let j = i + 1; j < active.length; j++) {
+      const a = active[i]!, b = active[j]!, gap = distance(a, b);
+      if (gap >= SET_PIECE_GAP || wall.includes(a.id) && wall.includes(b.id)) continue;
+      const dx = gap > 1e-6 ? (b.x - a.x) / gap : 0, dz = gap > 1e-6 ? (b.z - a.z) / gap : (a.id < b.id ? 1 : -1);
+      const push = SET_PIECE_GAP - gap + 1e-3, pinned = (p: Player) => p.id === taker.id || wall.includes(p.id);
+      const share = pinned(a) ? 0 : pinned(b) ? 1 : 0.5;
+      const clear = [a, b].map(p => p.team !== w.restartTeam && distance(p, w.restartAt) >= 9.15);
+      a.x -= dx * push * share; a.z -= dz * push * share;
+      b.x += dx * push * (1 - share); b.z += dz * push * (1 - share);
+      [a, b].forEach((p, k) => {
+        if (clear[k] && distance(p, w.restartAt) < 9.15) exclude(w, p);
+        else { p.x = clamp(p.x, -52.35, 52.35); p.z = clamp(p.z, -33.85, 33.85); }
+      });
+      moved = true;
+    }
+    if (!moved) return;
+  }
+}
+function spaceTeammates(w: World, fixed: number, min = 2) {
+  for (const team of [0, 1] as const) {
+    const players = w.players.filter(p => p.team === team && !p.sentOff);
+    for (let pass = 0; pass < 4; pass++) {
+      for (let i = 0; i < players.length; i++) {
+        for (let j = i + 1; j < players.length; j++) {
+          const a = players[i]!, b = players[j]!;
+          if (distance(a, b) >= min) continue;
+          const aFixed = a.id === fixed || a.slot === 'GK';
+          const bFixed = b.id === fixed || b.slot === 'GK';
+          if (aFixed && bFixed) continue;
+          const moverIndex = bFixed ? i : j;
+          const otherIndex = bFixed ? j : i;
+          const mover = players[moverIndex]!, other = players[otherIndex]!;
+          const dx = mover.x - other.x;
+          const offset = Math.sqrt(Math.max(0, min * min - dx * dx));
+          let direction = Math.sign(mover.z - other.z) || Math.sign(moverIndex - otherIndex);
+          let z = other.z + direction * offset;
+          if (z < -33.85 || z > 33.85) {
+            direction *= -1;
+            z = other.z + direction * offset;
+          }
+          snap(mover, mover.x, z);
+        }
+      }
+    }
+  }
+}
+function clearWall(w: World) {
+  const setPiece = w.setPiece;
+  if (!setPiece?.wall.length) return;
+  const members = setPiece.wall.map(id => w.players[id]!).filter(p => !p.sentOff);
+  if (!members.length) return;
+  const g = goal(w), range = distance(w.ball, { x: g, z: 0 }) || 1;
+  const dx = (g - w.ball.x) / range, dz = -w.ball.z / range;
+  const c = members.reduce((sum, p) => ({ x: sum.x + p.x / members.length, z: sum.z + p.z / members.length }), { x: 0, z: 0 });
+  const halfWidth = Math.max(...members.map(p => Math.abs((p.x - c.x) * -dz + (p.z - c.z) * dx)));
+  const wallIds = new Set(setPiece.wall);
+  for (const p of w.players) {
+    if (p.team === w.restartTeam || wallIds.has(p.id) || p.slot === 'GK' || p.human || p.sentOff) continue;
+    const px = p.x - c.x, pz = p.z - c.z;
+    const depth = px * dx + pz * dz, lateral = px * -dz + pz * dx;
+    if (Math.abs(depth) >= 2 || Math.abs(lateral) >= halfWidth + 2) continue;
+    const target = (side: number) => ({
+      x: c.x + dx * depth - dz * side * (halfWidth + 2),
+      z: c.z + dz * depth + dx * side * (halfWidth + 2),
+    });
+    let side = Math.sign(lateral) || 1;
+    let position = target(side);
+    if (position.z < -33.85 || position.z > 33.85) {
+      side *= -1;
+      position = target(side);
+    }
+    snap(p, position.x, position.z);
+    exclude(w, p);
+    if (setPiece.marks) delete setPiece.marks[p.id];
+  }
 }
 export function arrangeSetPiece(w: World) {
   if (!w.restart || w.restart === 'kickoff') { w.setPiece = null; return; }
@@ -62,10 +143,11 @@ export function arrangeSetPiece(w: World) {
       for(const id of w.setPiece.wall) delete w.setPiece.marks[id];
     }
     enemies.forEach(p => exclude(w,p));
+    if (kind === 'free-kick' && w.setPiece.wall.length) clearWall(w);
   } else if (kind === 'penalty') {
-    w.players.filter(p => p.id !== taker.id).forEach((p,i) => snap(p,w.shootout ? (i%3-1)*3 : w.restartAt.x-d*(12+i%3),w.shootout ? (Math.floor(i/3)-3)*1.5 : (i%2 ? 1 : -1)*(22+i%4)));
+    w.players.filter(p => p.id !== taker.id).forEach((p,i) => snap(p,w.shootout ? (i%3-1)*3 : w.restartAt.x-d*(12+i%3),w.shootout ? (Math.floor(i/3)-3)*1.5 : (i%2 ? 1 : -1)*(21 + Math.floor(i/2)*1.25)));
     const keeper = enemies.find(p => p.slot === 'GK')!; snap(keeper,g-d*0.15,0);
-    if (enemies.some(p => p.human)) transferControl(w,keeper.team,keeper.id);
+    if (enemies.some(p => p.human) && !keeper.human) transferControl(w,keeper.team,keeper.id);
   } else if (kind === 'goal-kick') {
     team.filter(p => p.slot === 'CB').forEach((p,i) => snap(p,-g+d*17,i ? 13 : -13));
     enemies.forEach(p => { if (p.x*d < -36) snap(p,-d*34,p.z); });
@@ -75,7 +157,9 @@ export function arrangeSetPiece(w: World) {
   const aim = w.setPiece.aim, r = distance(w.ball,aim)||1;
   snap(taker,w.ball.x-(aim.x-w.ball.x)/r*0.5,w.ball.z-(aim.z-w.ball.z)/r*0.5);
   taker.facing = Math.atan2(aim.x-taker.x,aim.z-taker.z);
-  if (team.some(p => p.human)) transferControl(w,w.restartTeam,taker.id);
+  if (kind === 'goal-kick') spaceTeammates(w, taker.id);
+  spaceOut(w, taker);
+  if (team.some(p => p.human) && !taker.human) transferControl(w,w.restartTeam,taker.id);
 }
 
 // Fixed-time shooting solves all three components against the simulation integrator.
@@ -132,6 +216,14 @@ export function takeSetPiece(w: World, action: Action = 'lob', power = 0.65) {
   taker.touchCd=0.5; taker.cooldown=0.5; taker.action='kick';
   w.lastTouch=w.restartTeam; w.lastToucherId=taker.id; w.carrierId=null;
   w.phase='live'; w.restart=null; w.setPiece=null; w.setPieceRun=run;
+  if (s.kind === 'goal-kick' && taker.human && w.controlled[w.restartTeam] === taker.id) {
+    const receiver = w.players.find((player) => player.id === w.passTarget
+      && player.team === w.restartTeam && player.slot !== 'GK' && !player.sentOff && !player.human);
+    const next = receiver ?? w.players.filter((player) => player.team === w.restartTeam
+      && player.slot !== 'GK' && !player.sentOff && !player.human)
+      .sort((a, b) => distance(a, w.ball) - distance(b, w.ball))[0];
+    if (next) transferControl(w, w.restartTeam, next.id, taker.id);
+  }
   if (w.shootout) w.shootout.flight=0;
 }
 export function stepSetPiece(w: World, commands: Map<number,Command>, t: number) {
@@ -150,6 +242,13 @@ export function stepSetPiece(w: World, commands: Map<number,Command>, t: number)
     if(marker.human || s.wall.includes(marker.id)) continue;
     const target={...marker,x:mark.x+d*0.8,z:mark.z};
     exclude(w,target);
+    if(distance(target,mark)<SET_PIECE_GAP) {
+      // The exclusion arc pushed the marker onto its man: mark him from the side along the arc instead.
+      const rx=mark.x-w.restartAt.x, rz=mark.z-w.restartAt.z, r=Math.hypot(rx,rz)||1;
+      const side=(marker.x-mark.x)*-rz+(marker.z-mark.z)*rx>=0?1:-1;
+      target.x=w.restartAt.x+rx/r*9.16-rz/r*side*0.8; target.z=w.restartAt.z+rz/r*9.16+rx/r*side*0.8;
+      exclude(w,target);
+    }
     const gap=distance(marker,target);
     movePlayer(marker,{x:(target.x-marker.x)/Math.max(1,gap),z:(target.z-marker.z)/Math.max(1,gap)},gap>2,false,t);
     exclude(w,marker);
@@ -267,6 +366,23 @@ export function stepShootout(w: World,t: number) {
   if(w.phase==='live') { s.flight=(s.flight??0)+t; if(s.flight>=3.5) {resolveShootoutKick(w,false); return true;} }
   return false;
 }
+export function phoneStoppagePrompt(w: World, playerId: number): string | null {
+  const player = w.players.find((p) => p.id === playerId);
+  if (!player) return null;
+  const labels = setPieceLabels(w, player.team, playerId);
+  if (labels) return `${labels.title} · ${labels.hint}`;
+  if (w.phase === 'restart') {
+    const taker = w.restart === 'kickoff' ? restartTaker(w) : null;
+    if (taker?.human) return playerId === taker.id
+      ? 'Kick off · aim with stick, press A to pass'
+      : 'Kick off · waiting for the taker';
+    return `${w.event || 'Kick off'} · move the stick or press to take`;
+  }
+  if (w.phase !== 'live') return w.event || w.phase;
+  if (player.slide) return 'Sliding · movement resumes after the slide';
+  return null;
+}
+
 export function setPieceLabels(w: World,team: Team,playerId?: number): {title:string;hint:string;a:string;b:string;x:string;y:string;lb:string;rb:string}|null {
   const s=w.setPiece; if(w.phase!=='restart'||!s) return null;
   const title=(w.shootout?'PENS '+shootoutScore(w).join('-')+' · ':'')+s.kind.toUpperCase()+' · '+s.option.toUpperCase();
