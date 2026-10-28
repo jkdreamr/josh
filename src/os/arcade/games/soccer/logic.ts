@@ -12,6 +12,8 @@ export { FIELD } from './field.ts';
 
 export const STEP = 1 / 60;
 export const KEEPER_REACH = { ready: 1.1, dive: 2.4 } as const;
+export const DEAD_PASS_SPEED = 1;
+export const KEEPER_HOLD_SPEED = { body: 17, stretch: 13 } as const;
 export const PLAYER_COUNT = 22;
 export const TEAM_SIZE = 11;
 export const CONTROL_SPEED = 14;
@@ -234,7 +236,9 @@ export function rng(world: World) {
 export function switchPlayer(world: World, team: Team, direction: Point = { x: 0, z: 0 }, fromId = world.controlled[team]) {
   const currentId = fromId;
   const current = world.players.find((p) => p.id === currentId);
-  const candidates = world.players.filter((p) => p.team === team && p.id !== currentId && !p.human && !p.sentOff);
+  const keeperAllowed = world.setPiece?.kind === 'penalty' || !!world.shootout;
+  const candidates = world.players.filter((p) => p.team === team && p.id !== currentId && !p.human && !p.sentOff
+    && (keeperAllowed || p.slot !== 'GK'));
   if (!candidates.length) return currentId;
   const norm = Math.hypot(direction.x, direction.z);
   const angle = (p: Player) => current ? Math.acos(clamp(((p.x - current.x) * direction.x + (p.z - current.z) * direction.z) / ((distance(p, current) || 1) * norm), -1, 1)) : Math.PI;
@@ -483,7 +487,7 @@ export function shotError(world: World, player: Player, target: Point, power: nu
   return finesse ? error * 0.6 : error;
 }
 
-export function separatePlayers(players: Player[], dt: number, carrier?: Player, endsSwapped = false) {
+export function separatePlayers(players: Player[], dt: number, carrier?: Player, endsSwapped = false, claimant?: Player) {
   const strength = clamp(dt * 30, 0, 1);
   if (!strength) return;
   const ordered = [...players].sort((a, b) => a.id - b.id);
@@ -517,9 +521,9 @@ export function separatePlayers(players: Player[], dt: number, carrier?: Player,
             dx = -mz / radius * sign; dz = mx / radius * sign;
           }
         }
-        const push = (0.7 - gap) * strength / 2;
-        pushes[i * 2] -= dx * push; pushes[i * 2 + 1] -= dz * push;
-        pushes[j * 2] += dx * push; pushes[j * 2 + 1] += dz * push;
+        const push = (0.7 - gap) * strength / 2, wa = a === claimant ? 0 : b === claimant ? 2 : 1, wb = 2 - wa;
+        pushes[i * 2] -= dx * push * wa; pushes[i * 2 + 1] -= dz * push * wa;
+        pushes[j * 2] += dx * push * wb; pushes[j * 2 + 1] += dz * push * wb;
       }
     }
     for (let i = 0; i < ordered.length; i++) {
@@ -1041,7 +1045,8 @@ export function resolveKeeperContact(world: World, previousX: number) {
     ball.x = plane + direction * 0.16;
     ball.z = clamp(ball.z, keeper.z - 2.4, keeper.z + 2.4);
     ball.inNet = false;
-    if (speed < 17) {
+    const atBody = Math.abs(ball.z - keeper.z) <= KEEPER_REACH.ready * multipliers.keeperReach;
+    if (speed < (atBody ? KEEPER_HOLD_SPEED.body : KEEPER_HOLD_SPEED.stretch)) {
       ball.x = keeper.x + direction * 0.25;
       ball.z = keeper.z;
       ball.y = 0.11; ball.vx = ball.vy = ball.vz = 0; ball.grounded = true;
@@ -1051,9 +1056,10 @@ export function resolveKeeperContact(world: World, previousX: number) {
       keeper.action = 'catch';
       world.event = 'keeper claims it';
     } else {
-      ball.vx = direction * Math.max(4, speed * 0.42);
-      ball.vy = Math.max(1.2, Math.abs(ball.vy) * 0.34);
-      ball.vz = clamp((ball.z - keeper.z) * 2.4, -7, 7);
+      const side = Math.sign(ball.z - keeper.z || ball.z || 1);
+      ball.vx = direction * Math.max(3, speed * 0.22);
+      ball.vy = Math.max(1.6, Math.abs(ball.vy) * 0.34);
+      ball.vz = side * clamp(speed * 0.38, 5, 9);
       ball.grounded = false;
       keeper.action = 'parry';
       world.event = 'keeper parries';
@@ -1262,13 +1268,27 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
       kick(world, p, p.buffer.action, { move: command?.move ?? { x: 0, z: 0 }, ...p.buffer });
     }
   }
-  if (!world.practice) separatePlayers(world.players, t, carrier, world.endsSwapped);
+  // On a dead loose ball the nearest player holds his line so a symmetric press cannot freeze both just outside control range.
+  const deadLoose = !carrier && world.phase === 'live' && world.ball.y < 0.75 && Math.hypot(world.ball.vx, world.ball.vz) < 0.5;
+  const nearest = deadLoose ? world.players.filter((p) => !p.sentOff && distance(p, world.ball) < 1.2)
+    .sort((a, b) => distance(a, world.ball) - distance(b, world.ball) || a.id - b.id)[0] : undefined;
+  const claimant = nearest && distance(nearest, world.ball) >= 0.64 && Math.hypot(nearest.vx, nearest.vz) < 1.5
+    && world.players.some((p) => p !== nearest && !p.sentOff && distance(p, nearest) < 0.75) ? nearest : undefined;
+  if (!world.practice) separatePlayers(world.players, t, carrier, world.endsSwapped, claimant);
   const nowCarrier = nearestCarrier(world);
   checkOffside(world, nowCarrier);
   if (world.phase !== 'live') return;
   if (nowCarrier && nowCarrier.id !== previousCarrierId && nowCarrier.id !== previousToucherId) {
     world.stealProtect = world.stealWinnerId !== null && world.stealWinnerId !== undefined ? 0.9 : 0.35;
     world.stealWinnerId = null;
+  }
+  if (!nowCarrier && world.passTarget !== null && world.ball.y < 0.75
+    && Math.hypot(world.ball.vx, world.ball.vz) < DEAD_PASS_SPEED) {
+    const receiver = world.players.find((p) => p.id === world.passTarget);
+    if (!receiver || !receiver.human && distance(receiver, world.ball) > 3) {
+      world.passTarget = null; world.passControl = false; world.passPoint = null; world.passFrom = null;
+      world.setPieceRun = null;
+    }
   }
   if (nowCarrier && world.passTarget !== null) {
     if (world.passTarget === nowCarrier.id && world.passControl && !nowCarrier.human) {

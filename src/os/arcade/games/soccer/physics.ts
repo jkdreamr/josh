@@ -5,7 +5,6 @@ export const BALL_RADIUS = 0.11;
 const GRAVITY = 9.81;
 const DRAG = 0.013;
 const FIELD_X = FIELD.length / 2;
-const FIELD_Z = FIELD.width / 2;
 const GOAL_HALF = FIELD.goalWidth / 2;
 const GOAL_HEIGHT = FIELD.goalHeight;
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
@@ -65,10 +64,6 @@ export function stepBall(ball: BallState, dt: number) {
         ball.vz *= Math.exp(-5 * h);
         ball.vy *= Math.exp(-4 * h);
       }
-    }
-    if (Math.abs(ball.z) > FIELD_Z && Math.abs(ball.x) < FIELD_X - BALL_RADIUS) {
-      ball.z = Math.sign(ball.z) * FIELD_Z;
-      ball.vz = -ball.vz * 0.58;
     }
     if (Math.abs(ball.x) > FIELD_X + 3 && !ball.inNet) ball.vx *= 0.98;
   }
