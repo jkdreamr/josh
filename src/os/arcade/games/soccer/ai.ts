@@ -1,5 +1,6 @@
 import { createWorld, distance, FIELD, FORMATION, KEEPER_REACH, findReceiver, groundPassPower, isCross, movePlayer, nearestCarrier, restartTaker, shotAim, shotError, shotOverchargeThreshold, shotSpeed, STEP, stepWorld, tackleWindow, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
 import { cpuMayTackle, offsidePosition, onsideProgress, stepUpLine } from './rules.ts';
+import { activeLunge, commitLunge, observe, passRead, perceive, perceivedTackleWindow } from './perception.ts';
 
 export const LEVEL_NAMES = ['easy', 'normal', 'hard'] as const;
 export type Level = (typeof LEVEL_NAMES)[number];
@@ -314,6 +315,7 @@ const tickWindow = (tick: number) => tick % 180 < 75;
 export function computeAI(world: World, level: Level, dt: number, tick: number, team?: Team, commands = new Map<number, Command>()) {
   commands.clear();
   const state = matchState(world, tick);
+  observe(world, tick);
   const carrier = state.carrier;
   const targets = new Map<number, Point>();
   for (const side of [0, 1] as const) {
@@ -368,25 +370,46 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
       }
       if (state.possession !== side || !carrier && world.passTarget === null) {
         if (p.id === presser?.id) {
-          const receiver = world.players.find((q) => q.id === world.passTarget && q.team !== side && !q.sentOff);
+          const receiver = passRead(world, level, tick)
+            ? world.players.find((q) => q.id === world.passTarget && q.team !== side && !q.sentOff) : undefined;
           const readsWindow = level === 'hard' || level === 'normal' && Math.sin((tick + rosterIndex(world, p) * 31) * 0.37) > noise[level];
           const loose = readsWindow ? world.players.find((q) => q.id === world.lastToucherId && q.team !== side && !q.sentOff && distance(q, world.ball) < 4) : undefined;
           const opponent = (carrier?.team !== side ? carrier ?? receiver : receiver) ?? loose;
           if (opponent) {
-            const dx = ownGoal.x - opponent.x, dz = -opponent.z;
+            const seen = perceive(world, opponent.id, level, tick);
+            const seenBall = perceive(world, 'ball', level, tick);
+            const seenOpponent = {
+              ...opponent, x: seen.x, z: seen.z, vx: seen.vx, vz: seen.vz, facing: seen.facing, action: seen.action,
+            };
+            const lunge = activeLunge(world, p.id, tick);
+            if (lunge) {
+              commands.set(p.id, { move: { x: lunge.x, z: lunge.z }, sprint: false });
+              continue;
+            }
+            const dx = ownGoal.x - seen.x, dz = -seen.z;
             const length = Math.hypot(dx, dz) || 1;
-            const target = { x: opponent.x + dx / length * 2, z: opponent.z + dz / length * 2 };
-            const move = targetMove(p, target.x, target.z);
-            const gap = distance(p, world.ball);
-            const facingAway = Math.sin(opponent.facing) * -dir < 0.2;
-            const exposed = distance(opponent, world.ball) > 0.48;
-            const window = tackleWindow(world, p);
+            const target = { x: seen.x + dx / length * 2, z: seen.z + dz / length * 2 };
+            const gap = distance(p, seenBall);
+            const facingAway = Math.sin(seen.facing) * -dir < 0.2;
+            const exposed = distance(seen, seenBall) > 0.48;
+            const window = perceivedTackleWindow(world, p, seenOpponent, seenBall);
             const goodWindow = readsWindow ? window.inReach && window.probability >= (level === 'hard' ? 0.5 : 0.3) : exposed || facingAway;
             const reacts = (tick + rosterIndex(world, p) * 2) % Math.round(reaction[level] * 60) === 0;
-            const mayTackle = level === 'easy' || level === 'hard' && window.exposed || cpuMayTackle(world, p, opponent);
-            commands.set(p.id, { move: gap < 1.38 && reacts && goodWindow ? targetMove(p, world.ball.x, world.ball.z) : distance(p, target) < 0.65
-              ? { x: opponent.vx / 6, z: opponent.vz / 6 } : move,
-              sprint: distance(p, target) > 4, action: (carrier || readsWindow && window.exposed) && mayTackle && gap < 1.38 && goodWindow ? 'tackle' : null, pressed: reacts });
+            const mayTackle = level === 'easy' || level === 'hard' && window.exposed || cpuMayTackle(world, p, seenOpponent);
+            if (gap < 1.38 && reacts && goodWindow) {
+              const move = targetMove(p, seenBall.x, seenBall.z);
+              commitLunge(world, p.id, tick, move);
+              commands.set(p.id, {
+                move, sprint: distance(p, target) > 4,
+                action: (carrier || readsWindow && window.exposed) && mayTackle ? 'tackle' : null,
+                pressed: true,
+              });
+            } else {
+              const move = distance(p, target) < 0.65
+                ? { x: (target.x - p.x) / 1.4 + seen.vx / 7, z: (target.z - p.z) / 1.4 + seen.vz / 7 }
+                : targetMove(p, target.x, target.z);
+              commands.set(p.id, { move, sprint: distance(p, target) > 4 });
+            }
           } else {
             const flight = clamp(distance(p, world.ball) / 8, 0, 0.7);
             commands.set(p.id, { move: targetMove(p, clamp(world.ball.x + world.ball.vx * flight, -FIELD.length / 2, FIELD.length / 2),
@@ -395,9 +418,10 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
           continue;
         }
         if (p.id === cover?.id && carrier?.team !== side && carrier) {
-          const dx = ownGoal.x - carrier.x, dz = -carrier.z;
+          const seen = perceive(world, carrier.id, level, tick);
+          const dx = ownGoal.x - seen.x, dz = -seen.z;
           const length = Math.hypot(dx, dz) || 1;
-          targets.set(p.id, { x: carrier.x + dx / length * longitudinal(0.135), z: carrier.z + dz / length * longitudinal(0.135) });
+          targets.set(p.id, { x: seen.x + dx / length * longitudinal(0.135), z: seen.z + dz / length * longitudinal(0.135) });
           continue;
         }
       }
@@ -410,9 +434,10 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
         if (threat) {
           marking = threat;
           marked.add(threat.id);
-          const dx = ownGoal.x - threat.x, dz = -threat.z;
+          const seen = perceive(world, threat.id, level, tick);
+          const dx = ownGoal.x - seen.x, dz = -seen.z;
           const length = Math.hypot(dx, dz) || 1;
-          target = { x: threat.x + dx / length * 1.5, z: threat.z + dz / length * 1.5 };
+          target = { x: seen.x + dx / length * 1.5, z: seen.z + dz / length * 1.5 };
         }
       }
       if (roleOf(p).line === 'def' && distance(p, world.ball) > 12) {
