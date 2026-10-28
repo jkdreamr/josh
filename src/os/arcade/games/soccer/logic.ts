@@ -12,6 +12,7 @@ export { FIELD } from './field.ts';
 
 export const STEP = 1 / 60;
 export const KEEPER_REACH = { ready: 1.1, dive: 2.4 } as const;
+export const KEEPER_HOLD_SPEED = { body: 17, stretch: 13 } as const;
 export const PLAYER_COUNT = 22;
 export const TEAM_SIZE = 11;
 export const CONTROL_SPEED = 14;
@@ -875,7 +876,8 @@ export function resolveKeeperContact(world: World, previousX: number) {
     ball.x = plane + direction * 0.16;
     ball.z = clamp(ball.z, keeper.z - 2.4, keeper.z + 2.4);
     ball.inNet = false;
-    if (speed < 17) {
+    const atBody = Math.abs(ball.z - keeper.z) <= KEEPER_REACH.ready * multipliers.keeperReach;
+    if (speed < (atBody ? KEEPER_HOLD_SPEED.body : KEEPER_HOLD_SPEED.stretch)) {
       ball.x = keeper.x + direction * 0.25;
       ball.z = keeper.z;
       ball.y = 0.11; ball.vx = ball.vy = ball.vz = 0; ball.grounded = true;
@@ -885,9 +887,10 @@ export function resolveKeeperContact(world: World, previousX: number) {
       keeper.action = 'catch';
       world.event = 'keeper claims it';
     } else {
-      ball.vx = direction * Math.max(4, speed * 0.42);
-      ball.vy = Math.max(1.2, Math.abs(ball.vy) * 0.34);
-      ball.vz = clamp((ball.z - keeper.z) * 2.4, -7, 7);
+      const side = Math.sign(ball.z - keeper.z || ball.z || 1);
+      ball.vx = direction * Math.max(3, speed * 0.22);
+      ball.vy = Math.max(1.6, Math.abs(ball.vy) * 0.34);
+      ball.vz = side * clamp(speed * 0.38, 5, 9);
       ball.grounded = false;
       keeper.action = 'parry';
       world.event = 'keeper parries';

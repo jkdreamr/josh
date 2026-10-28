@@ -8,6 +8,7 @@ const keeperReaction = { easy: 0.6, normal: 0.42, hard: 0.2 } as const;
 const keeperReadDelay = { easy: 0.5, normal: 0.3, hard: 0.16 } as const;
 const keeperReadNoise = { easy: 0.28, normal: 0.08, hard: 0.01 } as const;
 const decisionInterval = { easy: 0.7, normal: 0.3, hard: 0.24 } as const;
+export const KEEPER_MAX_HOLD = 4;
 const noise = { easy: 0.65, normal: 0.2, hard: 0.03 } as const;
 const clamp = (n: number, a: number, b: number) => Math.max(a, Math.min(b, n));
 const outfield = (player: Player) => player.slot !== 'GK' && !player.sentOff;
@@ -50,6 +51,7 @@ type MatchState = {
   runs: Map<number, { until: number; x: number; z: number }>;
   keeperReads: Map<number, KeeperRead>;
   keeperTargets: Map<number, Point>;
+  keeperHold?: { id: number; since: number } | null;
 };
 const matches = new WeakMap<World, MatchState>();
 
@@ -63,6 +65,7 @@ function matchState(world: World, tick: number) {
   if (state.tick === tick) return state;
   state.tick = tick;
   state.carrier = nearestCarrier(world) ?? null;
+  if (state.carrier?.slot !== 'GK') state.keeperHold = null;
   const possession = state.carrier?.team ?? world.lastTouch;
   if (possession !== state.possession) {
     state.possession = possession;
@@ -273,6 +276,16 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
   return wait;
 }
 
+function keeperClearance(world: World, keeper: Player): Command {
+  const dir = teamDir(keeper.team, world.endsSwapped);
+  const opponents = world.players.filter((p) => p.team !== keeper.team && !p.sentOff);
+  const outlet = world.players.filter((q) => q.team === keeper.team && outfield(q) && !q.sentOff && !offsidePosition(world, q))
+    .map((q) => ({ q, score: (q.x - keeper.x) * dir * 0.05 + Math.min(8, ...opponents.map((o) => distance(o, q))) * 0.4 }))
+    .sort((a, b) => b.score - a.score || a.q.id - b.q.id)[0]?.q;
+  const aim = outlet ? { x: outlet.x - keeper.x, z: outlet.z - keeper.z } : { x: dir, z: Math.sign(keeper.z || 1) * 0.6 };
+  return { move: { x: 0, z: 0 }, action: 'lob', pressed: true, power: 0.8, aim };
+}
+
 function shapeTarget(world: World, p: Player, state: MatchState) {
   if (!state.carrier && world.passTarget === p.id && world.passPoint) return { ...world.passPoint };
   const dir = teamDir(p.team, world.endsSwapped);
@@ -316,6 +329,7 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
   const state = matchState(world, tick);
   const carrier = state.carrier;
   const targets = new Map<number, Point>();
+  const chasers = new Set<number>();
   for (const side of [0, 1] as const) {
     if (team !== undefined && team !== side) continue;
     const players = world.players.filter((p) => p.team === side && !p.sentOff);
@@ -343,8 +357,10 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
       }
       if (p.slot === 'GK') {
         if (carrier?.id === p.id) {
-          const command = world.event === 'keeper claims it' && world.eventTime > 0.25
+          if (state.keeperHold?.id !== p.id) state.keeperHold = { id: p.id, since: tick };
+          let command: Command = world.event === 'keeper claims it' && world.eventTime > 0.25
             ? { move: { x: 0, z: 0 } } : carrierCommand(world, p, level, tick);
+          if (!command.action && (tick - state.keeperHold.since) * dt >= KEEPER_MAX_HOLD) command = keeperClearance(world, p);
           command.move = { x: 0, z: 0 };
           commands.set(p.id, command);
           continue;
@@ -389,6 +405,7 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
               sprint: distance(p, target) > 4, action: (carrier || readsWindow && window.exposed) && mayTackle && gap < 1.38 && goodWindow ? 'tackle' : null, pressed: reacts });
           } else {
             const flight = clamp(distance(p, world.ball) / 8, 0, 0.7);
+            if (Math.hypot(world.ball.vx, world.ball.vz) < 1.5 && distance(p, world.ball) < 3) chasers.add(p.id);
             commands.set(p.id, { move: targetMove(p, clamp(world.ball.x + world.ball.vx * flight, -FIELD.length / 2, FIELD.length / 2),
               clamp(world.ball.z + world.ball.vz * flight, -FIELD.width / 2, FIELD.width / 2)), sprint: true });
           }
@@ -468,7 +485,9 @@ export function computeAI(world: World, level: Level, dt: number, tick: number, 
       x += (p.x - mate.x) / Math.max(0.5, gap) * strength;
       z += (p.z - mate.z) / Math.max(0.5, gap) * strength;
     }
-    command.move = { x: command.move.x + x * 1.2, z: command.move.z + z * 1.2 };
+    const spaced = { x: command.move.x + x * 1.2, z: command.move.z + z * 1.2 };
+    const cancelsChase = Math.hypot(spaced.x, spaced.z) < 0.08 || spaced.x * command.move.x + spaced.z * command.move.z <= 0;
+    if (!(chasers.has(p.id) && cancelsChase)) command.move = spaced;
   }
   return commands;
 }
