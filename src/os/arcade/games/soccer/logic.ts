@@ -317,6 +317,15 @@ export function nearestCarrier(world: World) {
   return world.players.find((p) => p.id === world.carrierId && eligible(p)) ?? world.players.find(eligible);
 }
 
+export function possessionTeam(world: World): Team | null {
+  if (world.phase === 'restart') return world.restartTeam;
+  const carrier = nearestCarrier(world);
+  if (carrier) return carrier.team;
+  const target = world.players.find((player) => player.id === world.passTarget);
+  if (target) return target.team;
+  return world.phase === 'live' ? world.lastTouch : null;
+}
+
 function resolveBlocks(world: World, dt: number) {
   const ball = world.ball;
   if (ball.y >= 1.7) return;
@@ -926,6 +935,7 @@ function goalSide(world: World, carrier: Player, team: Team, gap: number): Point
 
 function prepareDefense(world: World, commands: Map<number, Command>, carrier: Player | undefined, dt: number) {
   const now = world.halfLength * world.half - world.clock;
+  const possession = possessionTeam(world);
   world.switchAt ??= [-1, -1]; world.switchWait ??= [0, 0]; world.dribbleAt ??= [-1, -1];
   world.switchCandidate ??= [-1, -1];
   for (const p of world.players) {
@@ -943,8 +953,8 @@ function prepareDefense(world: World, commands: Map<number, Command>, carrier: P
         }
         command.action = null; command.pressed = false;
       }
-      if (carrier?.team !== p.team) command.contain ||= command.heldAction === 'pass';
-      if (world.passTarget !== p.id && (carrier || distance(p, world.ball) > 3)) {
+      if (possession !== p.team) command.contain ||= command.heldAction === 'pass';
+      if (possession !== p.team && world.passTarget !== p.id && (carrier || distance(p, world.ball) > 3)) {
         if (command.action === 'shoot') command.action = 'tackle';
         else if (command.action === 'lob') command.action = 'slide';
         else if (command.action === 'through') command.action = null;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createWorld, type Team } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, possessionTeam, STEP, stepWorld, type Team } from '../src/os/arcade/games/soccer/logic.ts';
 import { phoneAttacking } from '../src/os/arcade/games/soccer/input.ts';
 import { playerForSeat, seatForPlayer } from '../src/os/arcade/games/soccer/seats.ts';
 
@@ -38,6 +38,21 @@ function liveWorldWithCarrier(team: Team) {
   world.ball.z = 0;
   world.ball.vx = 0;
   world.ball.vz = 0;
+  world.lastTouch = team;
+  return world;
+}
+
+function liveWorldWithoutCarrier(lastTouch: Team) {
+  const world = liveWorldWithCarrier(lastTouch);
+  world.carrierId = null;
+  world.passTarget = null;
+  for (const player of world.players) {
+    player.x = 20 + player.id * 2;
+    player.z = 20;
+  }
+  world.ball.x = 0;
+  world.ball.y = 0.11;
+  world.ball.z = 0;
   return world;
 }
 
@@ -76,4 +91,60 @@ test('phone attacking state follows its live carrier', () => {
 
 test('phone attacking state is false while the opponent carries the live ball', () => {
   assert.equal(phoneAttacking(liveWorldWithCarrier(1), 0), false);
+});
+
+test('phone possession follows its team during a dribble knock-on', () => {
+  const world = liveWorldWithCarrier(0);
+  const carrier = world.players.find((player) => player.id === world.carrierId)!;
+  carrier.x = -1.2;
+  assert.equal(phoneAttacking(world, 0), true);
+  assert.equal(possessionTeam(world), 0);
+});
+
+test('phone possession follows an own-team pass target while the ball is airborne', () => {
+  const world = liveWorldWithCarrier(0);
+  world.ball.y = 1.5;
+  world.passTarget = world.players.find((player) => player.team === 0 && player.id !== world.carrierId)!.id;
+  assert.equal(phoneAttacking(world, 0), true);
+});
+
+test('phone possession follows an opponent pass target while the ball is airborne', () => {
+  const world = liveWorldWithCarrier(0);
+  world.ball.y = 1.5;
+  world.passTarget = world.players.find((player) => player.team === 1)!.id;
+  assert.equal(phoneAttacking(world, 0), false);
+});
+
+test('phone possession follows the opponent last touch on a loose ball', () => {
+  const world = liveWorldWithoutCarrier(1);
+  assert.equal(phoneAttacking(world, 0), false);
+});
+
+test('Mac A-pass during an own pass does not defend, but contains against an opponent carrier', () => {
+  const ownPass = liveWorldWithoutCarrier(0);
+  const human = ownPass.players.find((player) => player.id === ownPass.controlled[0])!;
+  const receiver = ownPass.players.find((player) => player.team === 0 && player.id !== human.id)!;
+  const enemy = ownPass.players.find((player) => player.team === 1)!;
+  human.x = 0; human.z = 0;
+  receiver.x = 12; receiver.z = 0;
+  enemy.x = 2; enemy.z = 0;
+  ownPass.ball.y = 1.5;
+  ownPass.passTarget = receiver.id;
+  const beforeX = human.x;
+  stepWorld(ownPass, STEP, new Map([[human.id, { move: { x: 0, z: 0 }, heldAction: 'pass' }]]));
+  assert.equal(possessionTeam(ownPass), 0);
+  assert.equal(human.x, beforeX);
+  assert.notEqual(human.action, 'jockey');
+
+  const defending = liveWorldWithCarrier(1);
+  const defender = defending.players.find((player) => player.id === defending.controlled[0])!;
+  const carrier = defending.players.find((player) => player.id === defending.carrierId)!;
+  defender.x = -2; defender.z = 0;
+  carrier.x = 0; carrier.z = 0;
+  defending.ball.x = carrier.x; defending.ball.z = carrier.z;
+  const beforeDefendingX = defender.x;
+  stepWorld(defending, STEP, new Map([[defender.id, { move: { x: 0, z: 0 }, heldAction: 'pass' }]]));
+  assert.equal(defending.players.find((player) => player.id === defending.controlled[0])?.team, 0);
+  assert.ok(defender.x > beforeDefendingX);
+  assert.equal(defender.action, 'jockey');
 });

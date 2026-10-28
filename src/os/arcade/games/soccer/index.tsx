@@ -5,7 +5,7 @@ import { computeAI, type Level } from './ai.ts';
 import { carryEdge, chargePower, screenToWorld, gamepadInput, keyboardInput, phoneAttacking, phoneControlledPlayer, reconcileControllers, syncControllerSeats, type ControlCommand, type GamepadHistory } from './input.ts';
 import { desiredCameraBasis } from './camera.ts';
 import { acceptMovePacket, consumeCommand, InputFreshness, neutralCommand, movePacket, parsePacket, sameStick, stickSendDelay, trimSnapshot, type RemoteSeat, type LobbyMember } from './net.ts';
-import { createWorld, distance, teamOf, findReceiver, isCross, matchClock, nearestCarrier, setRestart, stepWorld, STEP, type Command, type Point, type Team, type World } from './logic.ts';
+import { createWorld, distance, teamOf, findReceiver, isCross, matchClock, nearestCarrier, possessionTeam, setRestart, stepWorld, STEP, type Command, type Point, type Team, type World } from './logic.ts';
 import { phoneStoppagePrompt, setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { SoccerSound, type CommentaryMode } from './audio.ts';
@@ -1963,7 +1963,10 @@ export function PhoneController() {
   const beginCharge = (action: Command['action']) => {
     holdAim.current = null;
     const taker = phoneWorld.current?.phase === 'restart' && phoneWorld.current.setPiece?.takerId === phonePlayerId();
-    if (!taker && !phoneHasBall() && phoneWorld.current && nearestCarrier(phoneWorld.current) && action !== 'pass') {
+    const snapshot = phoneWorld.current;
+    const team = teamOf(phonePlayerId());
+    const possession = snapshot ? possessionTeam(snapshot) : null;
+    if (!taker && !phoneHasBall() && possession !== null && possession !== team && action !== 'pass') {
       send(action, true, undefined, false, true);
       return;
     }
