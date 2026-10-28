@@ -7,9 +7,9 @@ export const DRILL = defineSetting<DrillId>('soccer:drill', DRILLS.map((drill) =
 
 export type ControlScheme = 'phone' | 'keys' | 'touch';
 const LABELS: Record<ControlScheme, Record<string, string>> = {
-  phone: { stick: 'the left stick', A: 'A', B: 'B', RB: 'RB', LB: 'LB', sprint: 'Sprint' },
-  keys: { stick: 'WASD', A: 'J', B: 'K', RB: 'U', LB: 'U', sprint: 'Shift' },
-  touch: { stick: 'the stick', A: 'pass', B: 'shoot', RB: 'skill / finesse', LB: 'skill / finesse', sprint: 'sprint' },
+  phone: { stick: 'the left stick', A: 'A', B: 'B', RB: 'RB', LB: 'LB (Run)', skill: 'tap LT', run: 'LB', protect: 'LT', sprint: 'RT or push the stick to its edge' },
+  keys: { stick: 'WASD', A: 'J', B: 'K', RB: 'U', LB: 'U', skill: 'U', run: 'teammate run', protect: 'protect', sprint: 'Shift' },
+  touch: { stick: 'the stick', A: 'pass', B: 'shoot', RB: 'skill / finesse', LB: 'skill / finesse', skill: 'skill / finesse', run: 'teammate run', protect: 'protect', sprint: 'sprint' },
 };
 
 export function controlText(text: string, scheme: ControlScheme): ReactNode[] {
@@ -61,6 +61,7 @@ export function PracticePanel({ view, scheme, onPick, compact = false }: { view:
         </div>
         <p className="g-soccer-practice-prompt">{controlText(view.prompt, scheme)}</p>
         <p className="g-soccer-practice-hint">{controlText(view.done ? `${view.newBest ? 'new best! ' : ''}tap {A} to go again, or pick a drill` : view.hint, scheme)}</p>
+        {scheme === 'phone' && <small>{controlText('{run} calls a teammate run · hold {protect} to protect · tap {skill} for a skill move · push the stick to its edge to sprint', scheme)}</small>}
         <div className="g-soccer-practice-score">
           <span>{view.drill === 'free' ? 'goals' : 'score'} <b>{view.score}</b></span>
           {view.best && <span>best <b>{view.best}</b></span>}
@@ -111,6 +112,7 @@ export function PhonePracticeStrip({ status, onPick }: { status: PhonePracticeSt
           <strong>{status.score}</strong>
         </div>
       )}
+      <small>{controlText('{run} calls a teammate run · hold {protect} to protect · tap {skill} for a skill move · push the stick to its edge to sprint', 'phone')}</small>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import type { KeyState } from '../../kit/keys.ts';
 import { isCross, matchClock, possessionTeam, type Command, type Point, type Team, type World } from './logic.ts';
-import { phoneClockLabel } from './pad.ts';
+import { phoneClockLabel, shoulderLabels } from './pad.ts';
 import { phoneStoppagePrompt, setPieceLabels } from './setpieces.ts';
 
 export type ViewBasis = { right: Point; forward: Point };
@@ -51,6 +51,7 @@ export function phoneViewKey(world: World | null, team: Team, playerId: number):
     playerId,
     attacking: phoneAttacking(world, team),
     labels: world ? setPieceLabels(world, team, playerId) : null,
+    shoulders: shoulderLabels(phoneAttacking(world, team), world ? setPieceLabels(world, team, playerId) : null),
     cross: !!world && !!player && isCross(world, player),
     clock: world && !(world.phase === 'restart' && world.restart === 'kickoff')
       ? phoneClockLabel(matchClock(world))
@@ -141,8 +142,8 @@ export function gamepadInput(pad: Pad, previous: GamepadHistory = {}, defending 
 }
 
 export function carryEdge(pending: Partial<Command> | null | undefined, next: Command): Command {
-  if (!pending || next.action && next.pressed || next.switchNearest || next.switchDir) return next;
-  if (!(pending.action && pending.pressed || pending.switchNearest || pending.switchDir)) return next;
+  if (!pending || next.action && next.pressed || next.switchNearest || next.switchDir || next.callRun) return next;
+  if (!(pending.action && pending.pressed || pending.switchNearest || pending.switchDir || pending.callRun)) return next;
   return {
     ...next,
     action: pending.action,
@@ -151,6 +152,7 @@ export function carryEdge(pending: Partial<Command> | null | undefined, next: Co
     aim: pending.aim,
     switchNearest: pending.switchNearest,
     switchDir: pending.switchDir,
+    callRun: pending.callRun,
   };
 }
 
