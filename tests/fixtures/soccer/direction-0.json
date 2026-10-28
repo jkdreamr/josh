@@ -24,7 +24,7 @@
           "z": 0
         },
         "action": "pass",
-        "power": 0.5,
+        "power": 0.1,
         "pressed": true
       }
     }
