@@ -4,15 +4,7 @@ import { failures, metrics, PAIRS, runRow, emptyRow } from './soccer-replay/soak
 import { seedList } from '../scripts/soccer-soak.ts';
 
 for (const [home, away] of PAIRS) {
-  const todo =
-    home === 'easy' && away === 'easy'
-      ? 'main seed 47: players 9/10 overlap >0.5 s at frame 3420'
-      : home === 'hard' && away === 'easy'
-        ? 'main seed 47: players 20/21 overlap at frame 2334; uncontrolled ball stuck >3 s at frame 3613'
-        : home === 'hard' && away === 'normal'
-          ? 'seed 47: goal-kick restart parks players 20/21 0.17 m apart at frame 12410 (restart placement, same bug as above)'
-          : undefined;
-  test('fast full-match soak: ' + home + '/' + away, { todo }, () => {
+  test('fast full-match soak: ' + home + '/' + away, () => {
     const row = runRow(home, away, [47], 240);
     assert.deepEqual(failures(row, false), []);
     assert.ok(row.shots > 0);
