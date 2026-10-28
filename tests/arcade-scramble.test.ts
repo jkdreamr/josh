@@ -7791,6 +7791,20 @@ test('the scene draws each ghillie suit and each pair of dizzy stars once a fram
   for (const k of keys) assert.ok(reset.includes(`drawn.${k} =`), `drawn.${k} is reset each frame`);
 });
 
+import { damp } from '../src/os/arcade/games/scramble/gl.ts';
+
+test('an egg back in sight is drawn in its pose as it is now, not easing over from when it went out of sight', () => {
+  // (a hidden egg's pose isn't worked out: one knocked down in a bush, or off screen, would get up and fall over again)
+  const src = readFileSync(join(import.meta.dirname, '..', 'src', 'os', 'arcade', 'games', 'scramble', 'scene.ts'), 'utf8');
+  const body = src.slice(src.indexOf('function syncEgg('), src.indexOf('\n  }\n', src.indexOf('function syncEgg(')));
+  assert.ok(body.indexOf('const back = shown && !v.root.visible;') >= 0 && body.indexOf('const back') < body.indexOf('v.root.visible = shown;'));
+  assert.match(body, /const ease = back \? Infinity : dt;/);
+  const eased = [...body.matchAll(/v\.(\w+) = damp\(v\.\w+, [^;]*, (\w+)\);/g)].map((x) => [x[1], x[2]]);
+  assert.deepEqual(eased.map((x) => x[0]).sort(), ['bend', 'down', 'lean', 'stride']);
+  for (const [k, by] of eased) assert.equal(by, 'ease', `v.${k} snaps when back in sight`);
+  assert.equal(damp(0, 1, 14, Infinity), 1);
+});
+
 import * as THREE from 'three';
 
 test("the scene's box for eggs in view takes in every egg the camera sees, up high or on the ground, on any screen", () => {

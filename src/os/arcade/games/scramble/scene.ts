@@ -4449,8 +4449,12 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   /** `mate`: its place on the team we see (-1 for none), for its outline's color. */
   function syncEgg(v: EggView, f: Fighter, dt: number, clock: number, focus: boolean, hidden: boolean, mate = -1) {
     const shown = f.phase !== 'out' && f.phase !== 'bus' && !hidden;
+    // back in sight (into view, out of a bush, off the bus): its pose as it is now, not eased over from when it went
+    const back = shown && !v.root.visible;
     v.root.visible = shown;
     if (!shown) return false;
+    const ease = back ? Infinity : dt;
+    if (back) v.sq = v.sqV = 0;
     // wading through a pond sinks an egg to its middle
     v.root.position.set(f.x, f.y - (f.wet && f.phase === 'ground' ? 0.45 : 0), f.z);
     v.body.rotation.y = f.aim;
@@ -4458,9 +4462,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     const walking = f.phase === 'ground' && speed > 0.4;
     if (walking) v.walk += dt * speed * 2.2;
     // the bob and the give of a stride ease in and out as it starts and stops (no hanging in the air mid step)
-    v.stride = damp(v.stride, walking ? 1 : 0, 10, dt);
+    v.stride = damp(v.stride, walking ? 1 : 0, 10, ease);
     const bob = Math.abs(Math.sin(v.walk)) * 0.08 * v.stride;
-    v.lean = damp(v.lean, f.phase === 'ground' ? Math.min(0.18, speed * 0.025) : 0, 8, dt);
+    v.lean = damp(v.lean, f.phase === 'ground' ? Math.min(0.18, speed * 0.025) : 0, 8, ease);
     // lean the way it walks, whichever way it faces
     const mx = speed > 0.1 ? f.vx / speed : 0;
     const mz = speed > 0.1 ? f.vz / speed : 0;
@@ -4473,8 +4477,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     // up in a blink, not from one frame to the next)
     const reviving = f.kind === 'remote' ? (f.show.flags & F_REVIVE) !== 0 : f.reviving >= 0;
     const down = f.down && f.phase === 'ground';
-    v.down = damp(v.down, down ? 1 : 0, 14, dt);
-    v.bend = damp(v.bend, reviving && !down && f.phase === 'ground' ? 1 : 0, 14, dt);
+    v.down = damp(v.down, down ? 1 : 0, 14, ease);
+    v.bend = damp(v.bend, reviving && !down && f.phase === 'ground' ? 1 : 0, 14, ease);
     if (v.bend > 0.001) {
       rx += (0.5 - rx) * v.bend;
       y += (-0.1 - y) * v.bend;
