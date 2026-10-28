@@ -2,10 +2,11 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { computeAI } from '../src/os/arcade/games/soccer/ai.ts';
 import { phoneControlledPlayer, reconcileControllers, syncControllerSeats, type ControlCommand } from '../src/os/arcade/games/soccer/input.ts';
-import { createWorld, nearestCarrier, STEP, stepWorld } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, nearestCarrier, setRestart, STEP, stepWorld } from '../src/os/arcade/games/soccer/logic.ts';
 import { acceptMovePacket, consumeCommand, InputFreshness, movePacket, neutralCommand, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
 import { assignControllers } from '../src/os/arcade/games/soccer/seats.ts';
 import { phoneStoppagePrompt } from '../src/os/arcade/games/soccer/setpieces.ts';
+import { onFoul } from '../src/os/arcade/games/soccer/rules.ts';
 
 test('phone stoppage prompts cover phases and slides but not unrestricted live play', () => {
   const world = createWorld();
@@ -23,6 +24,72 @@ test('phone stoppage prompts cover phases and slides but not unrestricted live p
 const seeds = process.env.SOCCER_SOAK === '1'
   ? Array.from({ length: 20 }, (_, i) => 71423 + i * 7919)
   : [71423, 1234, 98765];
+
+test('a mid-match human red card hands off control, prompts the free kick and restores stick response', () => {
+  const world = createWorld(98765);
+  const preferred = assignControllers([{ seat: 1, role: 'phone', side: 0 }], 'cpu', 'online');
+  let assignments = new Map(preferred);
+  const remote = new Map<number, ControlCommand>([[6, { move: { x: 1, z: 0 } }]]);
+  let tick = 0;
+  const step = () => {
+    const commands = computeAI(world, 'normal', STEP, tick++);
+    for (const [id, command] of remote) {
+      commands.set(id, { ...command });
+      remote.set(id, consumeCommand(command));
+    }
+    stepWorld(world, STEP, commands, 20);
+    const next = reconcileControllers(world, assignments);
+    for (const [seat, id] of next) {
+      const old = assignments.get(seat)!;
+      if (id === old) continue;
+      const held = remote.get(old);
+      remote.delete(old);
+      if (held) remote.set(id, held);
+    }
+    assignments = syncControllerSeats(world, next, preferred);
+  };
+  while ((world.half !== 2 || world.phase !== 'live') && tick < 2400) step();
+  assert.equal(world.half, 2);
+  assert.equal(world.phase, 'live');
+  const offender = world.players[assignments.get(1)!]!;
+  const victim = world.players[17]!;
+  Object.assign(victim, { x: 0, z: 0, facing: Math.PI / 2, vx: 0, vz: 0 });
+  Object.assign(offender, { x: -0.8, z: 0, vx: 8, vz: 0 });
+  Object.assign(world.ball, { x: victim.x, z: victim.z, y: 0.11 });
+  const fouls = world.rules!.stats.fouls[0];
+  assert.equal(onFoul(world, offender, victim, 'slide', false), 'stop');
+  setRestart(world, victim.team, 'free-kick', victim);
+  assert.equal(world.rules!.stats.fouls[0], fouls + 1);
+  assert.equal(world.rules!.stats.reds[0], 1);
+  assert.equal(offender.sentOff, true);
+  step();
+  const replacement = world.players[assignments.get(1)!]!;
+  assert.notEqual(replacement.id, offender.id);
+  assert.equal(replacement.team, offender.team);
+  assert.equal(replacement.human && replacement.controlled && !replacement.sentOff, true);
+  assert.equal(world.controlled[0], replacement.id);
+  assert.equal(remote.has(offender.id), false);
+  assert.ok(remote.has(replacement.id));
+  assert.equal(world.setPiece?.kind, 'free-kick');
+  assert.match(phoneStoppagePrompt(world, replacement.id)!, /FREE-KICK/);
+  for (let wait = 0; world.phase !== 'live' && wait < 1500; wait++) {
+    assert.ok(phoneStoppagePrompt(world, phoneControlledPlayer(world, 6)));
+    step();
+  }
+  assert.equal(world.phase, 'live');
+  let responded = false;
+  for (let response = 0; response < 6; response++) {
+    const player = world.players[assignments.get(1)!]!;
+    const before = { vx: player.vx, facing: player.facing };
+    remote.set(player.id, { move: { x: 1, z: 0 } });
+    step();
+    responded ||= player.vx > 0.2 || player.vx - before.vx > 1e-5
+      || Math.sin(player.facing) - Math.sin(before.facing) > 1e-5;
+    assert.equal(!!player.sentOff, false);
+    assert.equal(world.players.filter((p) => p.human || p.controlled).length, 1);
+  }
+  assert.ok(responded, 'replacement responds to the stick within six steps');
+});
 
 for (const seed of seeds) test(`full-match phone pipeline soak seed ${seed}`, () => {
   const started = performance.now();
