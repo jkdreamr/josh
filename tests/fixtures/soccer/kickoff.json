@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "seed": 254,
+  "clubs": [
+    "bay-city",
+    "northshore"
+  ],
+  "mode": "cpu",
+  "halfLength": 120,
+  "humans": 1,
+  "level": "normal",
+  "seats": {
+    "0": 6
+  },
+  "frames": 180,
+  "commands": [
+    {
+      "from": 0,
+      "to": 0,
+      "seat": 0,
+      "command": {
+        "move": {
+          "x": 0,
+          "z": 0
+        },
+        "aim": {
+          "x": -1,
+          "z": 0
+        },
+        "action": "pass",
+        "power": 0.5,
+        "pressed": true
+      }
+    }
+  ]
+}

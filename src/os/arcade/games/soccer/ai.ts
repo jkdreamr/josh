@@ -258,7 +258,7 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
       && Math.abs(receiver.z) < lateral(0.2) && space > 3) action = 'lob';
     const aim = { x: receiver.x - player.x, z: receiver.z - player.z };
     if (findReceiver(world, player, aim, action === 'through', action === 'lob' && isCross(world, player),
-      !!world.rules?.offside && level !== 'easy')?.id !== receiver.id) continue;
+      !!world.rules?.offside && level !== 'easy', action === 'pass' ? groundPassPower(distance(player, receiver)) : 0.45, 'ai')?.id !== receiver.id) continue;
     const score = forward * 0.16 + Math.min(space, 6) * 0.12 + Math.min(lane, 4) * 0.08
       - gap * 0.025 + (action === 'through' ? 0.5 : 0) + optionNoise
       + (receiver.slot === 'GK' ? -0.8 : 0);

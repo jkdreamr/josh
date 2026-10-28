@@ -1,4 +1,6 @@
 export type SoccerRenderStats = {
+  dpr: number;
+  qualityTier: number;
   rendererCalls: number;
   triangles: number;
   shadowsEnabled: boolean;

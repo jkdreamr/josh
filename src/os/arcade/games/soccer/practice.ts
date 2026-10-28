@@ -425,6 +425,11 @@ function nextAttempt(state: PracticeState, world: World) {
 
 export function stepPractice(state: PracticeState, world: World, dt: number, userCommands: Map<number, Command>, level: Level = 'normal', tick = 0, scratch?: Map<number, Command>) {
   if (state.phase === 'done') { world.eventTime = Math.max(0, world.eventTime - dt); return; }
+  const practiceOffside = state.drill === 'passing' ? world.rules?.offside : undefined;
+  if (practiceOffside !== undefined && world.rules) {
+    world.rules.offside = false;
+    world.rules.snapshot = null;
+  }
   const commands = practiceAI(world, state, level, dt, tick, scratch);
   for (const [id, command] of userCommands) if (isActive(state, id)) commands.set(id, sanitize(state, command));
   if (world.clock < 60) {
@@ -437,6 +442,7 @@ export function stepPractice(state: PracticeState, world: World, dt: number, use
   const goals = world.score[0];
   world.score[1] = 0;
   stepWorld(world, dt, commands);
+  if (practiceOffside !== undefined && world.rules) world.rules.offside = practiceOffside;
   state.time += dt;
   const goal = world.score[0] > goals;
   const goalZ = world.ball.z;
