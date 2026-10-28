@@ -2,7 +2,7 @@ import { Component, useContext, useEffect, useMemo, useRef, useState, useSyncExt
 import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useOnline, useSetting, useMuted, getSetting, Segmented, defineSetting, levelOptions, levelIndex, TouchControls, sfx } from '../../kit';
 import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
-import { chargePower, screenToWorld, gamepadInput, keyboardInput, phoneControlledPlayer, reconcileControllers, syncControllerSeats, type ControlCommand, type GamepadHistory } from './input.ts';
+import { chargePower, screenToWorld, gamepadInput, keyboardInput, phoneAttacking, phoneControlledPlayer, reconcileControllers, syncControllerSeats, type ControlCommand, type GamepadHistory } from './input.ts';
 import { desiredCameraBasis } from './camera.ts';
 import { acceptMovePacket, cloneSnapshot, consumeCommand, InputFreshness, neutralCommand, movePacket, parsePacket, type RemoteSeat, type LobbyMember } from './net.ts';
 import { createWorld, distance, teamOf, findReceiver, isCross, matchClock, nearestCarrier, setRestart, stepWorld, STEP, type Command, type Point, type Team, type World } from './logic.ts';
@@ -1504,7 +1504,7 @@ export function PhoneController() {
   }, []);
   const phoneHasBall = () => {
     const snapshot = phoneWorld.current;
-    return !!snapshot && nearestCarrier(snapshot)?.team === teamOf(phonePlayerId());
+    return phoneAttacking(snapshot, teamOf(phonePlayerId()));
   };
   const phonePlayerId = () => {
     const seat = online?.seat ?? 0;
