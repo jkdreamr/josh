@@ -131,3 +131,37 @@ export function reconcileControllers(world: World, assignments: Map<number, numb
   }
   return next;
 }
+
+export function syncControllerSeats(world: World, assignments: Map<number, number>, preferred: Map<number, number>) {
+  const next = new Map(assignments);
+  for (const [seat, id] of next) {
+    if (!preferred.has(seat)) continue;
+    const player = world.players.find((p) => p.id === id);
+    const target = world.players.find((p) => p.id === preferred.get(seat));
+    if (player && target && player.team === target.team && !player.sentOff) continue;
+    if (player) { player.human = false; player.controlled = false; }
+    next.delete(seat);
+  }
+  for (const [seat, id] of preferred) {
+    if (next.has(seat)) continue;
+    const target = world.players.find((p) => p.id === id);
+    const occupied = new Set(next.values());
+    const replacement = target && !target.sentOff && !occupied.has(id) ? target
+      : world.players.find((p) => p.team === target?.team && !p.sentOff && !occupied.has(p.id));
+    if (replacement) next.set(seat, replacement.id);
+  }
+  for (const id of next.values()) {
+    const player = world.players.find((p) => p.id === id);
+    if (player) { player.human = true; player.controlled = true; }
+  }
+  return next;
+}
+
+export function phoneControlledPlayer(world: World | null, assigned: number) {
+  if (!world) return assigned;
+  const player = world.players.find((p) => p.id === assigned);
+  if (!player || player.human && player.controlled && !player.sentOff) return assigned;
+  const selected = world.players.find((p) => p.id === world.controlled[player.team]);
+  if (selected?.team === player.team && selected.human && selected.controlled && !selected.sentOff) return selected.id;
+  return world.players.find((p) => p.team === player.team && p.human && p.controlled && !p.sentOff)?.id ?? assigned;
+}

@@ -1,8 +1,131 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { acceptMovePacket, consumeCommand, InputFreshness, INPUT_STALE_MS, movePacket, neutralCommand, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
+import { phoneControlledPlayer, reconcileControllers, syncControllerSeats } from '../src/os/arcade/games/soccer/input.ts';
+import { createWorld, setRestart, stepWorld, STEP, transferControl } from '../src/os/arcade/games/soccer/logic.ts';
+import { assignControllers } from '../src/os/arcade/games/soccer/seats.ts';
+import { computeAI } from '../src/os/arcade/games/soccer/ai.ts';
+import { setPieceLabels } from '../src/os/arcade/games/soccer/setpieces.ts';
 
 const emptySeat = (): RemoteSeat => ({ seq: -1, edge: -1, held: null, pressUsed: false });
+
+function transferredOnlineSeat() {
+  const world = createWorld();
+  world.phase = 'live';
+  const preferred = assignControllers([{ seat: 1, role: 'phone', side: 0 }], 'versus', 'online');
+  let assignments = new Map(preferred);
+  transferControl(world, 0, 9);
+  assignments = reconcileControllers(world, assignments);
+  assert.equal(assignments.get(1), 9);
+  assignments = syncControllerSeats(world, assignments, preferred);
+  return { world, assignments };
+}
+
+test('online seat sync preserves transferred control rather than restoring its static player', () => {
+  const { assignments } = transferredOnlineSeat();
+  assert.equal(assignments.get(1), 9);
+});
+
+test('online seat sync leaves no orphan human excluded from both commands and AI', () => {
+  const { world, assignments } = transferredOnlineSeat();
+  const commands = new Map([...assignments.values()].map((id) => [id, neutralCommand()]));
+  const ai = computeAI(world, 'normal', 1 / 60, 0);
+  const orphan = world.players.find((player) => player.human && player.controlled && !commands.has(player.id) && !ai.has(player.id));
+  assert.equal(orphan?.id, undefined);
+});
+
+test('seat sync honors changed teams and clears the previously controlled player', () => {
+  const { world, assignments } = transferredOnlineSeat();
+  const preferred = assignControllers([{ seat: 1, role: 'phone', side: 1 }], 'versus', 'online');
+  const synced = syncControllerSeats(world, assignments, preferred);
+  assert.equal(synced.get(1), 17);
+  assert.equal(world.players[9]!.human, false);
+  assert.equal(world.players[9]!.controlled, false);
+  assert.equal(world.players[17]!.human, true);
+  assert.equal(world.players[17]!.controlled, true);
+});
+
+test('seat sync handles absent players, sent-off defaults and empty seats', () => {
+  const world = createWorld();
+  world.players[6]!.sentOff = true;
+  const synced = syncControllerSeats(world, new Map([[1, 999]]), new Map([[1, 6], [2, 9]]));
+  assert.notEqual(synced.get(1), 6);
+  assert.equal(new Set(synced.values()).size, 2);
+  for (const id of synced.values()) assert.equal(!!world.players[id]!.sentOff, false);
+  assert.deepEqual(syncControllerSeats(world, synced, new Map()), synced);
+  for (const id of synced.values()) {
+    assert.equal(world.players[id]!.human, true);
+    assert.equal(world.players[id]!.controlled, true);
+  }
+  assert.equal(syncControllerSeats(world, new Map(), new Map()).size, 0);
+});
+
+test('quick and cup seat sync retain keyboard seat zero absent from phone assignments', () => {
+  for (const competition of ['quick', 'cup'] as const) {
+    const world = createWorld();
+    const preferred = assignControllers([], 'cpu', competition);
+    const synced = syncControllerSeats(world, new Map([[0, 6]]), preferred);
+    assert.equal(synced.get(0), 6);
+    assert.equal(world.players[6]!.human, true);
+    assert.equal(world.players[6]!.controlled, true);
+  }
+});
+
+test('seat sync retains an unlisted Mac without assigning its player to a phone too', () => {
+  const world = createWorld();
+  const synced = syncControllerSeats(world, new Map([[0, 6]]), new Map([[1, 6]]));
+  assert.equal(synced.get(0), 6);
+  assert.notEqual(synced.get(1), 6);
+  assert.equal(synced.size, 2);
+  assert.equal(world.players[6]!.human, true);
+  assert.equal(world.players[6]!.controlled, true);
+});
+
+test('phone identity follows a transferred goal-kick taker and shows taking labels', () => {
+  const world = createWorld();
+  setRestart(world, 0, 'goal-kick', { x: -47, z: 0 });
+  const player = phoneControlledPlayer(world, 6);
+  assert.equal(player, 0);
+  assert.equal(world.controlled[0], player);
+  assert.equal(world.phase === 'restart' && world.setPiece?.takerId === player, true);
+  const labels = setPieceLabels(world, 0, player);
+  assert.match(labels!.hint, /aim delivery/);
+  assert.doesNotMatch(labels!.hint, /Find space/);
+});
+
+test('phone identity follows receivers and red-card replacements, retaining other human seats', () => {
+  const world = createWorld();
+  assert.equal(phoneControlledPlayer(null, 6), 6);
+  assert.equal(phoneControlledPlayer(world, 6), 6);
+  transferControl(world, 0, 9);
+  assert.equal(phoneControlledPlayer(world, 6), 9);
+  world.players[6]!.sentOff = true;
+  assert.equal(phoneControlledPlayer(world, 6), 9);
+  world.players[7]!.human = world.players[7]!.controlled = true;
+  assert.equal(phoneControlledPlayer(world, 7), 7);
+});
+
+test('human corner aim, target and curl inputs cannot extend the 20-second timeout', () => {
+  for (const clockScale of [0, 1, 20]) {
+    const world = createWorld(1234);
+    setRestart(world, 0, 'corner', { x: 52.35, z: 33.85 });
+    const taker = world.setPiece!.takerId;
+    assert.equal(world.players[taker]!.human, true);
+    let ticks = 0;
+    while (world.phase === 'restart' && ticks < 1201) {
+      const previousClock = world.restartClock;
+      const action = ticks % 2 ? 'through' : 'skill';
+      stepWorld(world, STEP, new Map([[taker, {
+        move: { x: Math.sin(ticks / 7), z: Math.cos(ticks / 11) }, action, pressed: true,
+      }]]), clockScale);
+      assert.ok(world.restartClock > previousClock);
+      if (world.setPiece) assert.equal(world.setPiece.takerId, taker);
+      ticks++;
+    }
+    assert.equal(world.phase, 'live');
+    assert.ok(ticks * STEP <= 20 + 1e-9, `corner took ${ticks * STEP}s at clockScale ${clockScale}`);
+  }
+});
 
 test('held input persists until the freshness watchdog neutralizes it', () => {
   const tracker = new InputFreshness();

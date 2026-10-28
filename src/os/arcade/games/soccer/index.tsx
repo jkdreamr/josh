@@ -2,7 +2,7 @@ import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore,
 import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useOnline, useSetting, useMuted, getSetting, Segmented, defineSetting, levelOptions, levelIndex, TouchControls, sfx } from '../../kit';
 import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
-import { chargePower, IDENTITY_BASIS, screenToWorld, gamepadInput, keyboardInput, reconcileControllers, type ControlCommand, type GamepadHistory } from './input.ts';
+import { chargePower, IDENTITY_BASIS, screenToWorld, gamepadInput, keyboardInput, phoneControlledPlayer, reconcileControllers, syncControllerSeats, type ControlCommand, type GamepadHistory } from './input.ts';
 import { acceptMovePacket, cloneSnapshot, consumeCommand, InputFreshness, neutralCommand, movePacket, parsePacket, type RemoteSeat, type LobbyMember } from './net.ts';
 import { createWorld, distance, teamOf, findReceiver, matchClock, nearestCarrier, setRestart, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
 import { setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
@@ -871,16 +871,11 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         return known ?? { seat: entry.seat, role: entry.seat === 0 ? 'host' : 'phone', side: entry.seat === 0 ? 0 : 1 };
       });
       const assigned = assignControllers(roomMembers, currentMode, currentCompetition);
-      for (const [seat, id] of assigned) {
-        if (currentCompetition === 'online' || !controllerPlayers.current.has(seat)) controllerPlayers.current.set(seat, id);
+      const synced = syncControllerSeats(current, controllerPlayers.current, assigned);
+      for (const [seat, id] of controllerPlayers.current) {
+        if (synced.get(seat) !== id) remoteCommands.current.delete(id);
       }
-      for (const entry of room.players) {
-        if (entry.seat === 0 && displayOnlyRoom.current && currentCompetition !== 'online' || entry.seat < 0) continue;
-        const id = controllerPlayers.current.get(entry.seat);
-        if (id === undefined) continue;
-        const player = current.players[id];
-        if (player) { player.human = true; player.controlled = true; }
-      }
+      controllerPlayers.current = synced;
     } else if (currentMode === 'coop' && controllerPlayers.current.size === 0) {
       controllerPlayers.current.set(0, 6); controllerPlayers.current.set(1, 9);
     }
@@ -1413,17 +1408,14 @@ export function PhoneController() {
   }, []);
   const phoneHasBall = () => {
     const snapshot = phoneWorld.current;
-    const seat = online?.seat ?? 0;
-    const member = lobbyState?.members.find((entry) => entry.seat === seat)
-      ?? { seat, role: 'phone' as const, side: sideForRoom(online?.code) };
-    const playerId = assignControllers([member], mode, lobbyState?.comp ?? 'quick').get(seat)
-      ?? playerForSeat(seat, displayOnly, mode);
-    return !!snapshot && nearestCarrier(snapshot)?.team === teamOf(playerId);
+    return !!snapshot && nearestCarrier(snapshot)?.team === teamOf(phonePlayerId());
   };
   const phonePlayerId = () => {
-    const assigned = playerForSeat(online?.seat ?? 0, displayOnly, mode);
-    const snapshot = phoneWorld.current;
-    return snapshot && !snapshot.players[assigned]?.human ? snapshot.controlled[teamOf(assigned)] : assigned;
+    const seat = online?.seat ?? 0;
+    const members = lobbyState?.members ?? [{ seat, role: 'phone' as const, side: sideForRoom(online?.code) }];
+    const assigned = assignControllers(members, mode, lobbyState?.comp ?? 'quick').get(seat)
+      ?? playerForSeat(seat, displayOnly, mode);
+    return phoneControlledPlayer(phoneWorld.current, assigned);
   };
   const send = (action: Command['action'] = null, pressed = false, power = chargePower(chargeStartedAt.current === null ? 0 : (performance.now() - chargeStartedAt.current) / 1000), switchNearest = false, edge = false) => {
     if (!online) return;
@@ -1531,7 +1523,7 @@ export function PhoneController() {
       if (packet?.k === 'lobby') publishLobby(packet);
       if (packet?.k === 's') {
         phoneWorld.current = packet.state;
-        const phoneTeam = teamOf(playerForSeat(online.seat, displayOnly, mode));
+        const phoneTeam = teamOf(phonePlayerId());
         const feedback = phoneFx(previousScore.current, previousKickKey.current, packet.state, phoneTeam);
         if (feedback) {
           if (feedback === 'goal-for') fxHaptic([70, 40, 120]);
@@ -1565,8 +1557,7 @@ export function PhoneController() {
   }, [online, mode, displayOnly]);
   if (!online) return null;
   if (online.round === 0) return <PhoneTeamPicker online={online} />;
-  const controllerMembers = lobbyState?.members ?? [{ seat: online.seat, role: 'phone' as const, side: sideForRoom(online.code) }];
-  const phonePlayer = assignControllers(controllerMembers, mode, lobbyState?.comp ?? 'quick').get(online.seat) ?? phonePlayerId();
+  const phonePlayer = phonePlayerId();
   const myTeam = teamOf(phonePlayer);
   const attacking = phoneHasBall();
   const labels = phoneWorld.current ? setPieceLabels(phoneWorld.current, teamOf(phonePlayer), phonePlayer) : null;
