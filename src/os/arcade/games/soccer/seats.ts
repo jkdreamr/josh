@@ -1,5 +1,6 @@
 import { TEAM_SIZE, teamOf } from './logic.ts';
 import type { Mode } from './modes.ts';
+import { nextClubId } from './teams.ts';
 export type { Mode } from './modes.ts';
 
 const homeOnly = (mode: Mode) => mode === 'coop' || mode === 'practice';
@@ -27,6 +28,20 @@ export const seatForPlayer = (id: number, displayOnly: boolean, mode: Mode = 'cp
   if (displayOnly && homeOnly(mode)) return position + 1;
   return displayOnly ? position * 2 + side + 1 : position * 2 + side;
 };
+
+export type LobbyNavigationState = { mode: Mode; clubs: [string, string]; focus: [number, number] };
+
+export function applyClubNavigation(
+  state: { mode: Mode; clubs: readonly [string, string]; focus: readonly [number, number] },
+  side: 0 | 1,
+  direction: -1 | 0 | 1,
+): LobbyNavigationState {
+  const clubs: [string, string] = [...state.clubs];
+  const focus: [number, number] = [...state.focus];
+  focus[side] = 1;
+  if (direction) clubs[side] = nextClubId(clubs[side], direction, clubs[1 - side]);
+  return { ...state, clubs, focus };
+}
 
 export type ControllerMember = { seat: number; role: 'host' | 'phone' | 'mac'; side: 0 | 1 };
 
