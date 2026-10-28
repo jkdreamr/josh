@@ -1338,7 +1338,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
     && world.players.some((p) => p !== nearest && !p.sentOff && distance(p, nearest) < 0.75) ? nearest : undefined;
   if (!world.practice) separatePlayers(world.players, t, carrier, world.endsSwapped, claimant);
   const nowCarrier = nearestCarrier(world);
-  const passTargetedCarrier = !!nowCarrier && world.passTarget === nowCarrier.id;
+  const passTargetedCarrier = !!nowCarrier && nowCarrier.human && world.passTarget === nowCarrier.id;
   checkOffside(world, nowCarrier);
   if (world.phase !== 'live') return;
   if (nowCarrier && nowCarrier.id !== previousCarrierId && nowCarrier.id !== previousToucherId) {
