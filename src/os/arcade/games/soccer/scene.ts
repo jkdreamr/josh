@@ -762,12 +762,24 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   /** Compiles every shader the match needs (players included) without blocking, before the first frame draws. */
   async function precompile() {
     warming = true;
+    const warmedActors: { object: T.Object3D; visible: boolean }[] = [];
     try {
       await Promise.allSettled(attachments);
-      if (!disposed) await renderer.compileAsync(scene, camera);
+      if (!disposed) {
+        fxLayer.warm(true);
+        for (const actor of actors.values()) {
+          for (const object of [actor.marker, actor.arrow, actor.carrierRing, actor.powerBar]) {
+            warmedActors.push({ object, visible: object.visible });
+            object.visible = true;
+          }
+        }
+        await renderer.compileAsync(scene, camera);
+      }
     } catch {
       // The first frame compiles whatever is left.
     } finally {
+      fxLayer.warm(false);
+      for (const { object, visible } of warmedActors) object.visible = visible;
       warming = false;
     }
   }
