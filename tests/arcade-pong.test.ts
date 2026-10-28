@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { advanceGuest, BALL_R, COURT, PADDLE, PADDLE_SPEED, WIN_SCORE, aiStep, createAi, createMatch, mergeGuestSnapshot, movePaddle, paddleX, predictY, serve, step } from '../src/os/arcade/games/pong/pong.ts';
+import { advanceGuest, BALL_R, COURT, PADDLE, PADDLE_SPEED, WIN_SCORE, aiStep, createAi, createMatch, extrapolateBall, mergeGuestSnapshot, movePaddle, paddleX, predictY, serve, step } from '../src/os/arcade/games/pong/pong.ts';
 
 const fixed = (v: number) => () => v;
 
@@ -199,4 +199,57 @@ test('paddles stay inside the court', () => {
   movePaddle(p, 500, 0.1);
   assert.equal(p.y, COURT.h - PADDLE.h / 2);
   assert.ok(p.vy > 0);
+});
+
+test('guest extrapolation moves the ball and bounces it off walls without scoring', () => {
+  const m = createMatch(0);
+  m.serveIn = 0;
+  m.ball = { x: 80, y: 3, vx: 60, vy: -40, spin: 0 };
+  extrapolateBall(m, 0.05);
+  assert.ok(m.ball.x > 80);
+  assert.ok(m.ball.vy > 0);
+  assert.ok(m.ball.y >= BALL_R);
+  assert.deepEqual(m.score, [0, 0]);
+  const waiting = createMatch(0);
+  const before = { ...waiting.ball };
+  extrapolateBall(waiting, 0.1);
+  assert.deepEqual(waiting.ball, before);
+});
+
+test('harder computer levels track a fast ball more closely', () => {
+  const miss = (level: 0 | 2) => {
+    let total = 0;
+    for (let i = 0; i < 200; i++) {
+      const m = createMatch(0);
+      m.serveIn = 0;
+      m.ball = { x: 60, y: 40, vx: 130, vy: 20, spin: 0 };
+      const ai = createAi();
+      let seed = i + 1;
+      aiStep(m, 1, level, ai, 0.01, () => ((seed = (seed * 16807) % 2147483647) / 2147483647));
+      total += Math.abs(ai.target - predictY(m.ball, paddleX(1)));
+    }
+    return total / 200;
+  };
+  assert.ok(miss(2) < miss(0));
+});
+
+test('the longest rally lives in the match, so guests and spectators show the host count', () => {
+  const host = createMatch();
+  host.serveIn = 0;
+  host.paddles[0].y = 50;
+  for (let i = 0; i < 3; i++) {
+    Object.assign(host.ball, { x: paddleX(0) + PADDLE.w / 2 + BALL_R + 1, y: 50, vx: -60, vy: 0 });
+    step(host, 1 / 30);
+  }
+  assert.equal(host.rally, 3);
+  assert.equal(host.longest, 3);
+
+  serve(host, fixed(0.5));
+  assert.equal(host.rally, 0);
+  assert.equal(host.longest, 3, 'a new serve keeps the longest rally');
+
+  const guest = createMatch();
+  guest.longest = 2;
+  assert.equal(mergeGuestSnapshot(guest, host).longest, 3, 'the guest takes the host count');
+  assert.equal(createMatch().longest, 0);
 });
