@@ -267,6 +267,17 @@ export function stepShootout(w: World,t: number) {
   if(w.phase==='live') { s.flight=(s.flight??0)+t; if(s.flight>=3.5) {resolveShootoutKick(w,false); return true;} }
   return false;
 }
+export function phoneStoppagePrompt(w: World, playerId: number): string | null {
+  const player = w.players.find((p) => p.id === playerId);
+  if (!player) return null;
+  const labels = setPieceLabels(w, player.team, playerId);
+  if (labels) return `${labels.title} · ${labels.hint}`;
+  if (w.phase === 'restart') return `${w.event || 'Kick off'} · move the stick or press to take`;
+  if (w.phase !== 'live') return w.event || w.phase;
+  if (player.slide) return 'Sliding · movement resumes after the slide';
+  return null;
+}
+
 export function setPieceLabels(w: World,team: Team,playerId?: number): {title:string;hint:string;a:string;b:string;x:string;y:string;lb:string;rb:string}|null {
   const s=w.setPiece; if(w.phase!=='restart'||!s) return null;
   const title=(w.shootout?'PENS '+shootoutScore(w).join('-')+' · ':'')+s.kind.toUpperCase()+' · '+s.option.toUpperCase();
