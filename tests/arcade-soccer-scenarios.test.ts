@@ -209,7 +209,6 @@ scenario(
   'kick-in',
   restartBecame('kick-in', 1),
   'boundary cause awards correct restart',
-  'stepBall bounces at touchline before resolveBoundary can award a throw-in',
 );
 
 test('penalty: correct team takes a shot that resolves', () => {

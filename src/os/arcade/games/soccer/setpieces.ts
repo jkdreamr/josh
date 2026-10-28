@@ -26,6 +26,29 @@ function exclude(w: World, p: Player) {
   if (r < 9.15) { const a = r ? dx / r : -teamDir(w.restartTeam, w.endsSwapped); p.x = w.restartAt.x + a * 9.16; p.z = w.restartAt.z + (r ? dz / r : 0) * 9.16; }
   p.x = clamp(p.x, -52.35, 52.35); p.z = clamp(p.z, -33.85, 33.85);
 }
+const SET_PIECE_GAP = 0.75;
+function spaceOut(w: World, taker: Player) {
+  const active = w.players.filter(p => !p.sentOff), wall = w.setPiece?.wall ?? [];
+  for (let pass = 0; pass < 80; pass++) {
+    let moved = false;
+    for (let i = 0; i < active.length; i++) for (let j = i + 1; j < active.length; j++) {
+      const a = active[i]!, b = active[j]!, gap = distance(a, b);
+      if (gap >= SET_PIECE_GAP || wall.includes(a.id) && wall.includes(b.id)) continue;
+      const dx = gap > 1e-6 ? (b.x - a.x) / gap : 0, dz = gap > 1e-6 ? (b.z - a.z) / gap : (a.id < b.id ? 1 : -1);
+      const push = SET_PIECE_GAP - gap + 1e-3, pinned = (p: Player) => p.id === taker.id || wall.includes(p.id);
+      const share = pinned(a) ? 0 : pinned(b) ? 1 : 0.5;
+      const clear = [a, b].map(p => p.team !== w.restartTeam && distance(p, w.restartAt) >= 9.15);
+      a.x -= dx * push * share; a.z -= dz * push * share;
+      b.x += dx * push * (1 - share); b.z += dz * push * (1 - share);
+      [a, b].forEach((p, k) => {
+        if (clear[k] && distance(p, w.restartAt) < 9.15) exclude(w, p);
+        else { p.x = clamp(p.x, -52.35, 52.35); p.z = clamp(p.z, -33.85, 33.85); }
+      });
+      moved = true;
+    }
+    if (!moved) return;
+  }
+}
 export function arrangeSetPiece(w: World) {
   if (!w.restart || w.restart === 'kickoff') { w.setPiece = null; return; }
   const kind = w.restart === 'kick-in' ? 'throw-in' : w.restart;
@@ -75,6 +98,7 @@ export function arrangeSetPiece(w: World) {
   const aim = w.setPiece.aim, r = distance(w.ball,aim)||1;
   snap(taker,w.ball.x-(aim.x-w.ball.x)/r*0.5,w.ball.z-(aim.z-w.ball.z)/r*0.5);
   taker.facing = Math.atan2(aim.x-taker.x,aim.z-taker.z);
+  spaceOut(w, taker);
   if (team.some(p => p.human)) transferControl(w,w.restartTeam,taker.id);
 }
 
@@ -150,6 +174,13 @@ export function stepSetPiece(w: World, commands: Map<number,Command>, t: number)
     if(marker.human || s.wall.includes(marker.id)) continue;
     const target={...marker,x:mark.x+d*0.8,z:mark.z};
     exclude(w,target);
+    if(distance(target,mark)<SET_PIECE_GAP) {
+      // The exclusion arc pushed the marker onto its man: mark him from the side along the arc instead.
+      const rx=mark.x-w.restartAt.x, rz=mark.z-w.restartAt.z, r=Math.hypot(rx,rz)||1;
+      const side=(marker.x-mark.x)*-rz+(marker.z-mark.z)*rx>=0?1:-1;
+      target.x=w.restartAt.x+rx/r*9.16-rz/r*side*0.8; target.z=w.restartAt.z+rz/r*9.16+rx/r*side*0.8;
+      exclude(w,target);
+    }
     const gap=distance(marker,target);
     movePlayer(marker,{x:(target.x-marker.x)/Math.max(1,gap),z:(target.z-marker.z)/Math.max(1,gap)},gap>2,false,t);
     exclude(w,marker);

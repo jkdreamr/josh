@@ -4,9 +4,9 @@ import { cpuMayTackle, offsidePosition, onsideProgress, stepUpLine } from './rul
 export const LEVEL_NAMES = ['easy', 'normal', 'hard'] as const;
 export type Level = (typeof LEVEL_NAMES)[number];
 const reaction = { easy: 0.6, normal: 0.3, hard: 0.18 } as const;
-const keeperReaction = { easy: 0.6, normal: 0.42, hard: 0.2 } as const;
+const keeperReaction = { easy: 0.6, normal: 0.42, hard: 0.42 } as const;
 const keeperReadDelay = { easy: 0.5, normal: 0.3, hard: 0.16 } as const;
-const keeperReadNoise = { easy: 0.28, normal: 0.08, hard: 0.01 } as const;
+const keeperReadNoise = { easy: 0.28, normal: 0.16, hard: 0.45 } as const;
 const decisionInterval = { easy: 0.7, normal: 0.3, hard: 0.24 } as const;
 export const KEEPER_MAX_HOLD = 4;
 export const DEAD_BALL_UNSTICK = 2;
@@ -256,7 +256,8 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
     const space = Math.min(...opponents.map((p) => distance(p, receiver)));
     const lane = laneClearance(world, player, receiver, player.team);
     const optionNoise = Math.sin((tick + rosterIndex(world, receiver) * 17) * 0.19) * noise[level];
-    if (lane < 0.8 - optionNoise * 0.5 || space < 1.2 - optionNoise * 0.5) continue;
+    const margin = level === 'hard' ? 0.55 : 0;
+    if (lane < 0.8 + margin - optionNoise * 0.5 || space < 1.2 + margin - optionNoise * 0.5) continue;
     let action: 'pass' | 'through' | 'lob' = 'pass';
     if (facingForward && pressure > 3 && forward > longitudinal(0.12) && gap < longitudinal(0.31)
       && receiver.x * dir > lastDefender - 1 && receiver.vx * dir > 2 && space > 4) action = 'through';

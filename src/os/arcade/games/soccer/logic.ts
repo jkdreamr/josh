@@ -12,6 +12,7 @@ export { FIELD } from './field.ts';
 
 export const STEP = 1 / 60;
 export const KEEPER_REACH = { ready: 1.1, dive: 2.4 } as const;
+export const DEAD_PASS_SPEED = 1;
 export const KEEPER_HOLD_SPEED = { body: 17, stretch: 13 } as const;
 export const PLAYER_COUNT = 22;
 export const TEAM_SIZE = 11;
@@ -186,7 +187,9 @@ export function rng(world: World) {
 export function switchPlayer(world: World, team: Team, direction: Point = { x: 0, z: 0 }) {
   const currentId = world.controlled[team];
   const current = world.players.find((p) => p.id === currentId);
-  const candidates = world.players.filter((p) => p.team === team && p.id !== currentId && !p.human && !p.sentOff);
+  const keeperAllowed = world.setPiece?.kind === 'penalty' || !!world.shootout;
+  const candidates = world.players.filter((p) => p.team === team && p.id !== currentId && !p.human && !p.sentOff
+    && (keeperAllowed || p.slot !== 'GK'));
   if (!candidates.length) return currentId;
   const norm = Math.hypot(direction.x, direction.z);
   const angle = (p: Player) => current ? Math.acos(clamp(((p.x - current.x) * direction.x + (p.z - current.z) * direction.z) / ((distance(p, current) || 1) * norm), -1, 1)) : Math.PI;
@@ -1075,6 +1078,14 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
   if (nowCarrier && nowCarrier.id !== previousCarrierId && nowCarrier.id !== previousToucherId) {
     world.stealProtect = world.stealWinnerId !== null && world.stealWinnerId !== undefined ? 0.9 : 0.35;
     world.stealWinnerId = null;
+  }
+  if (!nowCarrier && world.passTarget !== null && world.ball.y < 0.75
+    && Math.hypot(world.ball.vx, world.ball.vz) < DEAD_PASS_SPEED) {
+    const receiver = world.players.find((p) => p.id === world.passTarget);
+    if (!receiver || !receiver.human && distance(receiver, world.ball) > 3) {
+      world.passTarget = null; world.passControl = false; world.passPoint = null; world.passFrom = null;
+      world.setPieceRun = null;
+    }
   }
   if (nowCarrier && world.passTarget !== null) {
     if (world.passTarget === nowCarrier.id && world.passControl && !nowCarrier.human) {

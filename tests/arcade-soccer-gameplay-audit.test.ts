@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { computeAI, DEAD_BALL_UNSTICK, KEEPER_MAX_HOLD } from '../src/os/arcade/games/soccer/ai.ts';
-import { createWorld, FIELD, nearestCarrier, resolveKeeperContact, stepWorld, TEAM_SIZE, teamDir, type Command, type World } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, distance, FIELD, nearestCarrier, resolveKeeperContact, setRestart, stepWorld, switchPlayer, TEAM_SIZE, teamDir, type Command, type World } from '../src/os/arcade/games/soccer/logic.ts';
 
 function liveWorld() {
   const world = createWorld(4242);
@@ -83,4 +83,97 @@ test('a diving keeper parries a firm shot at full stretch but still holds soft o
   assert.equal(shot(1.8, 14, true), 'keeper parries');
   assert.equal(shot(1.8, 12, true), 'keeper claims it');
   assert.equal(shot(0.5, 14, false), 'keeper claims it');
+});
+
+test('a pass that dies short is released so the nearest players contest the loose ball', () => {
+  const world = liveWorld();
+  world.ball.x = 10; world.ball.z = 15; world.ball.y = 0.11; world.ball.vx = world.ball.vy = world.ball.vz = 0; world.ball.grounded = true;
+  world.players.filter((p) => p.slot !== 'GK').forEach((p, i) => { p.x = p.team === 0 ? -30 : -20; p.z = -30 + (i % 11) * 6; p.vx = p.vz = 0; });
+  const near = world.players[TEAM_SIZE + 5]!, receiver = world.players[TEAM_SIZE + 8]!;
+  near.x = 5; near.z = 15; receiver.x = 17; receiver.z = -23;
+  world.lastTouch = 1; world.lastToucherId = TEAM_SIZE + 9; world.passTarget = receiver.id; world.passFrom = TEAM_SIZE + 9;
+  let tick = 0;
+  while (!nearestCarrier(world) && tick < 3 * 60) { stepWorld(world, 1 / 60, commandsFor(world, tick)); tick++; }
+  assert.equal(world.passTarget, null);
+  assert.equal(nearestCarrier(world)?.id, near.id, `dead pass still loose after ${tick} ticks`);
+});
+
+test('a throw-in that dies short ends the set-piece run so the loose ball is contested', () => {
+  const world = liveWorld();
+  world.ball.x = 40.9; world.ball.z = 28.2; world.ball.y = 0.11; world.ball.vx = world.ball.vy = world.ball.vz = 0; world.ball.grounded = true;
+  world.players.filter((p) => p.slot !== 'GK').forEach((p, i) => { p.x = p.team === 0 ? -30 : -20; p.z = -30 + (i % 11) * 6; p.vx = p.vz = 0; });
+  const near = world.players[6]!, receiver = world.players[5]!;
+  near.x = 38; near.z = 27; receiver.x = 30; receiver.z = 12;
+  world.lastTouch = 0; world.lastToucherId = 7; world.passTarget = receiver.id; world.passFrom = 7;
+  world.setPieceRun = { t: 2.8, kind: 'throw-in', runs: { [receiver.id]: { x: 30, z: 12 } }, marks: {}, wall: [] };
+  stepWorld(world, 1 / 60, commandsFor(world, 0));
+  assert.equal(world.setPieceRun, null);
+  assert.equal(world.passTarget, null);
+  let tick = 1;
+  while (!nearestCarrier(world) && tick < 3 * 60) { stepWorld(world, 1 / 60, commandsFor(world, tick)); tick++; }
+  assert.ok(nearestCarrier(world), `dead throw-in still loose after ${tick} ticks`);
+});
+
+test('set pieces never stack the taker or anyone else on top of another player', () => {
+  const restarts = [['kick-in', { x: 10, z: 33.85 }], ['free-kick', { x: -20, z: -10 }], ['free-kick', { x: 30, z: 8 }],
+    ['corner', { x: 52.35, z: -33.85 }], ['goal-kick', { x: -46.5, z: 0 }]] as const;
+  for (const [kind, at] of restarts) {
+    const world = liveWorld();
+    world.players.forEach((p, i) => { p.x = at.x - Math.sign(at.x || 1) * (0.2 + (i % 5) * 0.25); p.z = at.z - Math.sign(at.z || 1) * (0.1 + Math.floor(i / 5) * 0.2); });
+    world.ball.x = at.x; world.ball.z = at.z;
+    setRestart(world, 0, kind, at);
+    const taker = world.players[world.setPiece!.takerId]!;
+    assert.ok(distance(taker, world.ball) < 0.6, `${kind} taker left the ball`);
+    const wall = world.setPiece!.wall;
+    for (let a = 0; a < world.players.length; a++) for (let b = a + 1; b < world.players.length; b++) {
+      const min = wall.includes(a) && wall.includes(b) ? 0.55 : 0.7;
+      assert.ok(distance(world.players[a]!, world.players[b]!) >= min, `${kind} at ${JSON.stringify(at)}: ${a}:${b} overlap`);
+    }
+  }
+});
+
+test('a crowded free-kick wall keeps its spacing while everyone else is spaced out', () => {
+  const world = liveWorld();
+  world.players.forEach((p, i) => { p.x = 39.3 + (i % 4) * 0.2; p.z = -0.6 + Math.floor(i / 4) * 0.2; });
+  world.ball.x = 30; world.ball.z = 0;
+  setRestart(world, 0, 'free-kick', { x: 30, z: 0 });
+  const wall = world.setPiece!.wall;
+  assert.ok(wall.length >= 2);
+  for (let a = 0; a < world.players.length; a++) for (let b = a + 1; b < world.players.length; b++) {
+    const min = wall.includes(a) && wall.includes(b) ? 0.55 : 0.7;
+    assert.ok(distance(world.players[a]!, world.players[b]!) >= min, `${a}:${b} overlap`);
+  }
+  assert.ok(world.players.filter((p) => p.team === 1).every((p) => distance(p, world.ball) >= 9.15));
+});
+
+test('a restart marker pushed back to 9.15 m marks from the side instead of standing on his man', () => {
+  const world = liveWorld();
+  const at = { x: 20, z: 0 };
+  world.ball.x = at.x; world.ball.z = at.z;
+  setRestart(world, 0, 'free-kick', at);
+  const [markerId, markId] = Object.entries(world.setPiece!.marks ?? {}).map(([id, m]) => [Number(id), m] as const)
+    .find(([id]) => !world.setPiece!.wall.includes(id))!;
+  const marker = world.players[markerId]!, mark = world.players[markId]!;
+  mark.x = at.x - teamDir(0, world.endsSwapped) * 8.9; mark.z = at.z + 1.5; mark.vx = mark.vz = 0;
+  marker.x = mark.x - teamDir(0, world.endsSwapped) * 1.5; marker.z = mark.z + 1; marker.vx = marker.vz = 0;
+  let frames = 0, closest = Infinity;
+  while (world.phase === 'restart' && frames < 120) {
+    stepWorld(world, 1 / 60, commandsFor(world, frames));
+    if (++frames > 30 && world.phase === 'restart') closest = Math.min(closest, distance(marker, mark));
+  }
+  assert.ok(frames > 60, `restart only lasted ${frames} frames`);
+  assert.ok(closest >= 0.6, `marker within ${closest.toFixed(2)} m of his man`);
+  assert.ok(distance(marker, world.ball) >= 9.15 - 1e-6);
+});
+
+test('switching never hands the human the goalkeeper outside penalties', () => {
+  const world = createWorld(4242);
+  const keeper = world.players.find((p) => p.team === 0 && p.slot === 'GK')!;
+  world.ball.x = keeper.x + 0.5; world.ball.z = keeper.z;
+  for (let i = 0; i < 12; i++) {
+    assert.notEqual(switchPlayer(world, 0), keeper.id);
+    assert.notEqual(switchPlayer(world, 0, { x: keeper.x - world.players[world.controlled[0]]!.x, z: keeper.z - world.players[world.controlled[0]]!.z }), keeper.id);
+  }
+  setRestart(world, 1, 'penalty', { x: -41.5, z: 0 });
+  assert.equal(world.controlled[0], keeper.id);
 });

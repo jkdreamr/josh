@@ -258,3 +258,64 @@ test('stats observer reads rather than mutates the world', () => {
   observer.observe(world, STEP);
   assert.deepEqual(world, state);
 });
+
+test('shots on target always equal goals from attempts plus the opposing keeper saves', () => {
+  for (const seed of [17, 47, 89, 113, 226, 339, 452, 565]) {
+    const { stats } = observeMatch(seed, 240);
+    for (const team of [0, 1] as const) {
+      const own = stats.teams[team], other = stats.teams[team === 0 ? 1 : 0];
+      const scored = stats.goals.filter((goal) => goal.team === team && goal.kind === 'goal').length;
+      assert.equal(own.onTarget, scored + other.saves, `seed ${seed} team ${team}: ${own.onTarget} on target, ${scored} goals, ${other.saves} saves`);
+      assert.ok(own.onTarget <= own.shots && other.saves >= 0);
+    }
+  }
+});
+
+test('a parried shot that rolls in is a goal, not a save, and a headed goal is an attempt on target', () => {
+  const observer = createStatsObserver();
+  const world = createWorld(5);
+  world.phase = 'live';
+  world.carrierId = null;
+  observer.observe(world, STEP);
+  const shooter = world.players[9]!;
+  const keeper = world.players.find((p) => p.team === 1 && p.slot === 'GK')!;
+  world.kickEvent = { playerId: shooter.id, action: 'shoot', power: 0.8, time: world.clock };
+  observer.observe(world, STEP);
+  world.kickEvent = null;
+  world.event = 'keeper parries';
+  world.eventTime = 1.1;
+  world.lastTouch = 1;
+  world.lastToucherId = keeper.id;
+  observer.observe(world, STEP);
+  world.eventTime = 1;
+  observer.observe(world, STEP);
+  world.score = [1, 0];
+  observer.observe(world, STEP);
+  const [home, away] = observer.stats.teams;
+  assert.deepEqual([home.shots, home.onTarget, home.goals, away.saves], [1, 1, 1, 0]);
+
+  world.phase = 'live';
+  world.kickEvent = { playerId: shooter.id, action: 'lob', power: 0.5, time: world.clock };
+  observer.observe(world, STEP);
+  world.kickEvent = null;
+  world.score = [2, 0];
+  observer.observe(world, STEP);
+  assert.deepEqual([home.shots, home.onTarget, home.goals, away.saves], [2, 2, 2, 0]);
+  assert.equal(home.onTarget, home.goals + away.saves);
+});
+
+test('a headed clearance is not counted as a shot', () => {
+  const observer = createStatsObserver();
+  const world = createWorld(5);
+  world.phase = 'live';
+  world.carrierId = null;
+  observer.observe(world, STEP);
+  world.kickEvent = { playerId: 3, action: 'shoot', power: 0.7, time: world.clock };
+  world.event = 'headed clear';
+  observer.observe(world, STEP);
+  assert.equal(observer.stats.teams[0].shots, 0);
+  world.kickEvent = { playerId: 9, action: 'shoot', power: 0.7, time: world.clock - 1 };
+  world.event = 'header!';
+  observer.observe(world, STEP);
+  assert.equal(observer.stats.teams[0].shots, 1);
+});

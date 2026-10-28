@@ -131,6 +131,7 @@ export function createStatsObserver() {
   let currentHalf: World['half'] = 1;
   let pendingPass: { team: Team; passer: number } | null = null;
   let pendingShot: { team: Team; shooter: number; xg: number } | null = null;
+  let lastSave: { shotTeam: Team; keeperTeam: Team } | null = null;
   let lastKicker: number | null = null;
   let lastCompletedPass: { passer: number; receiver: number; at: number } | null = null;
   let simTime = 0;
@@ -158,6 +159,7 @@ export function createStatsObserver() {
     currentHalf = 1;
     pendingPass = null;
     pendingShot = null;
+    lastSave = null;
     lastKicker = null;
     lastCompletedPass = null;
     simTime = 0;
@@ -233,6 +235,7 @@ export function createStatsObserver() {
       stats.teams[pendingShot.team].onTarget++;
       const keeperTeam = (1 - pendingShot.team) as Team;
       stats.teams[keeperTeam].saves++;
+      lastSave = { shotTeam: pendingShot.team, keeperTeam };
       const keeperId = world.lastToucherId ?? world.players.find((player) => player.team === keeperTeam && player.slot === 'GK')?.id;
       addTicker(world, 'save', keeperTeam, `save by ${keeperId === undefined ? 'keeper' : playerName(keeperId, world)}`);
       pendingShot = null;
@@ -245,9 +248,13 @@ export function createStatsObserver() {
       if (goals <= 0) continue;
       stats.teams[team].goals = world.score[team];
       for (let count = 0; count < goals; count++) {
-        if (pendingShot?.team === team) stats.teams[team].onTarget++;
         const scorer = lastKicker ?? world.lastToucherId ?? undefined;
         const isGoal = scorer !== undefined && teamOf(scorer) === team;
+        if (pendingShot?.team === team) stats.teams[team].onTarget++;
+        else if (lastSave?.shotTeam === team) stats.teams[lastSave.keeperTeam].saves--;
+        else if (isGoal) { stats.teams[team].shots++; stats.teams[team].onTarget++; }
+        pendingShot = null;
+        lastSave = null;
         const kind: TickerKind = isGoal ? 'goal' : 'own-goal';
         const assist = isGoal && scorer !== undefined && lastCompletedPass?.receiver === scorer && now - lastCompletedPass.at < 12
           ? lastCompletedPass.passer
@@ -265,9 +272,10 @@ export function createStatsObserver() {
     const kick = world.kickEvent;
     if (kick) {
       lastKicker = kick.playerId;
+      lastSave = null;
       if (pendingPass && pendingPass.passer !== kick.playerId) resolvePass(kick.playerId, now);
       const team = teamOf(kick.playerId);
-      if (kick.action === 'shoot' || kick.action === 'finesse') {
+      if ((kick.action === 'shoot' || kick.action === 'finesse') && world.event !== 'headed clear') {
         const shooter = world.players[kick.playerId]!;
         const xg = xgFor(world, shooter, team);
         stats.teams[team].shots++;
@@ -300,6 +308,7 @@ export function createStatsObserver() {
 
     if (pendingShot && ((carrier !== null && teamOf(carrier) !== pendingShot.team && !savedThisStep)
       || (world.phase !== 'live' && !scored))) pendingShot = null;
+    if (lastSave && (carrier !== null || world.phase !== 'live' && !scored)) lastSave = null;
 
     if (previousPhase === 'live' && world.phase === 'restart') {
       pendingPass = null;
