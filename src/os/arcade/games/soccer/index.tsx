@@ -43,7 +43,7 @@ const OFFSIDE = defineSetting<'on' | 'off'>('soccer:offside', ['on', 'off'], 'on
 const modeOptions = [['cpu', 'vs CPU'], ['versus', '2P versus'], ['coop', '2P co-op'], PRACTICE_MODE_OPTION] as const;
 const halfOptions = [['2', '2 min'], ['4', '4 min'], ['6', '6 min']] as const;
 const cameraOptions = [['broadcast', 'Broadcast'], ['end', 'End to end']] as const;
-const timeOptions = [['night', 'Night'], ['golden', 'Golden hour'], ['overcast', 'Overcast'], ['rain', 'Rain']] as const;
+const timeOptions = [['day', 'Day'], ['night', 'Night'], ['golden', 'Golden hour'], ['overcast', 'Overcast'], ['rain', 'Rain']] as const;
 const pitchOptions = [['stripes', 'Stripes'], ['checker', 'Checkerboard']] as const;
 const volumeOptions = [['off', 'Off'], ['low', 'Low'], ['mid', 'Mid'], ['full', 'Full']] as const;
 const commentaryOptions = [['voice', 'Voice'], ['captions', 'Captions'], ['off', 'Off']] as const;
@@ -236,7 +236,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const [hud, setHud] = useState<HudState>({
     score0: 0, score1: 0, clock: '00:00', added: null, half: 1,
     phase: 'restart', event: 'kick off', eventTime: 1.35, eventKey: 0,
-    selectedId: 6, stamina: 1, state: null, targetId: null, power: null,
+    selectedId: 6, stamina: 1, rivalId: null, rivalStamina: 1, state: null, targetId: null, power: null,
     replaying: false, statsVersion: 0, presentation: 'live',
   });
   const radarRef = useRef<RadarHandle | null>(null);
@@ -443,7 +443,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     setHud({
       score0: 0, score1: 0, clock: '00:00', added: null, half: 1,
       phase: 'restart', event: fresh.event, eventTime: fresh.eventTime, eventKey: 0,
-      selectedId: 6, stamina: 1, state: null, targetId: null, power: null,
+      selectedId: 6, stamina: 1, rivalId: null, rivalStamina: 1, state: null, targetId: null, power: null,
       replaying: false, statsVersion: 0, presentation: 'live',
     });
     setPracticeHud(practiceRef.current ? practiceView(practiceRef.current) : null);
@@ -1090,10 +1090,15 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         : selected.action === 'shield' ? 'SHIELD'
           : selected.slide ? 'SLIDE' : Math.hypot(selected.vx, selected.vz) > 7.1 ? 'SPRINT' : null;
       const clock = broadcastClock(current, statsObserver.current.stats);
+      let rival: World['players'][number] | null = null;
+      for (const player of current.players) {
+        if (player.team === selected.team) continue;
+        if (!rival || (player.controlled !== rival.controlled ? player.controlled : distance(player, current.ball) < distance(rival, current.ball))) rival = player;
+      }
       const nextHud: HudState = {
         score0: current.score[0], score1: current.score[1], clock: clock.label, added: clock.added,
         half: current.half, phase: current.phase, event: current.event, eventTime: current.eventTime, eventKey: hudEventKey.current,
-        selectedId: selectedPlayerId, stamina: Math.round(selected.stamina * 50) / 50, state: selectedState, targetId: target,
+        selectedId: selectedPlayerId, stamina: Math.round(selected.stamina * 50) / 50, rivalId: rival?.id ?? null, rivalStamina: Math.round((rival?.stamina ?? 1) * 50) / 50, state: selectedState, targetId: target,
         power: indicatorPower, replaying: current.phase === 'goal' && !replaySkipped.current,
         statsVersion: statsObserver.current.stats.version, presentation: presentation.current,
       };

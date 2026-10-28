@@ -15,7 +15,7 @@ import { createFxLayer, type FxDirector } from './fx.ts';
 
 type Three = typeof import('three');
 export type CameraMode = 'broadcast' | 'end' | 'replay' | 'intro' | 'setpiece';
-export type TimeMode = 'night' | 'golden' | 'overcast' | 'rain';
+export type TimeMode = 'day' | 'night' | 'golden' | 'overcast' | 'rain';
 export type SoccerCameraNdc = {
   ball: { x: number; y: number };
   feet: { x: number; y: number };
@@ -23,7 +23,7 @@ export type SoccerCameraNdc = {
   maxAbsX: number;
   maxAbsY: number;
 };
-type Actor = { root: T.Group; anim: SoccerAnimator; team: Team; keeper: boolean; contact: T.Mesh; fallback: T.Group; marker: T.Mesh; arrow: T.Mesh; carrierRing: T.Mesh; powerBar: T.Group; powerFill: T.Mesh; number: T.Mesh; kitMaterials: Record<'shirt' | 'shorts' | 'socks' | 'trim', T.Material>; prevCooldown: number; prevAction: string; lastKick: World['kickEvent']; keeperShot: boolean; celebrated: boolean; lodTick: number; lodDt: number };
+type Actor = { root: T.Group; anim: SoccerAnimator; team: Team; keeper: boolean; contact: T.Mesh; fallback: T.Group; marker: T.Mesh; arrow: T.Mesh; carrierRing: T.Mesh; powerBar: T.Group; powerFill: T.Mesh; number: T.Mesh; kitMaterials: Record<'shirt' | 'shorts' | 'socks' | 'trim', T.Material>; prevCooldown: number; prevAction: string; lastKick: World['kickEvent']; keeperShot: boolean; celebrated: boolean; lodTick: number; lodDt: number; skeletons: T.Skeleton[] };
 type Crowd = { mesh: T.InstancedMesh; count: number; phases: number[]; baseY: number[]; fixtures: T.MeshStandardMaterial[] };
 
 export type SoccerView = {
@@ -178,8 +178,12 @@ function createPlayer(THREE: Three, player: Player, lite: boolean, kits: [Kit, K
   root.add(anim.figure);
   void boots;
   void digit;
-  return { root, anim, team: player.team, keeper: isKeeper(player), contact, fallback, marker, arrow, carrierRing, powerBar, powerFill, number, kitMaterials: { shirt, shorts, socks, trim }, prevCooldown: 0, prevAction: 'idle', lastKick: null, keeperShot: false, celebrated: false, lodTick: 0, lodDt: 0 };
+  return { root, anim, team: player.team, keeper: isKeeper(player), contact, fallback, marker, arrow, carrierRing, powerBar, powerFill, number, kitMaterials: { shirt, shorts, socks, trim }, prevCooldown: 0, prevAction: 'idle', lastKick: null, keeperShot: false, celebrated: false, lodTick: 0, lodDt: 0, skeletons: [] };
 }
+
+// Broadcast telecam framing (main-stand gantry, long lens). Only the framing lives here; follow/smoothing stays in update().
+// aimZ/followZ bias the aim point to the far side so the far ad boards and a band of crowd stay in shot.
+const BROADCAST = { height: 25, distance: 50, fov: 24, pan: 0.55, aimZ: 6, followZ: 0.3 } as const;
 
 export function createScene(THREE: Three, host: HTMLElement, lite: boolean, timeMode: TimeMode, pattern: PitchPattern): SoccerView | null {
   let renderer: T.WebGLRenderer;
@@ -247,7 +251,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const key = new THREE.DirectionalLight('#f0f6ff', 3.2);
   key.position.set(-FIELD.length * 0.18, 34, FIELD.width * 0.19);
   key.castShadow = true;
-  key.shadow.mapSize.set(1024, 1024);
+  key.shadow.mapSize.set(lite ? 1024 : 2048, lite ? 1024 : 2048);
   key.shadow.camera.left = -FIELD.length / 2 - 14; key.shadow.camera.right = FIELD.length / 2 + 14;
   key.shadow.camera.top = FIELD.width / 2 + 12; key.shadow.camera.bottom = -FIELD.width / 2 - 12;
   key.shadow.camera.near = 1; key.shadow.camera.far = 110;
@@ -334,8 +338,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       body.traverse((object) => {
         const mesh = object as T.Mesh;
         if (!mesh.isMesh) return;
-        mesh.castShadow = false;
-        mesh.frustumCulled = false;
+        mesh.castShadow = !lite;
         const source = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
         const variant = `${player.team}:${isKeeper(player) ? 'keeper' : 'field'}`;
         let variants = materialCache.get(variant);
@@ -363,9 +366,58 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       });
       actor.fallback.visible = false;
       bindSoccerRig(THREE, actor.anim, body);
+      // Skinned bounds come from the posed rig; pad them so animated limbs and their shadows never pop.
+      body.updateMatrixWorld(true);
+      body.traverse((object) => {
+        const skinned = object as T.SkinnedMesh;
+        if (!skinned.isSkinnedMesh) return;
+        if (!actor.skeletons.includes(skinned.skeleton)) {
+          actor.skeletons.push(skinned.skeleton);
+          skinned.skeleton.update();
+        }
+        skinned.computeBoundingSphere();
+        skinned.boundingSphere!.radius *= 1.6;
+      });
+      attachBackNumber(actor, body, url);
     }).catch(() => {
       if (import.meta.env.DEV) console.warn(`Soccer player model unavailable: ${url}; using procedural player`);
     }));
+  };
+  // Shirt numbers ride the upper spine bone, placed on the back of each model's chest.
+  const chestBack = new Map<string, { y: number; z: number }>();
+  const attachBackNumber = (actor: Actor, body: T.Object3D, url: string) => {
+    const spine = body.getObjectByName('spine_03') ?? body.getObjectByName('spine_02');
+    if (!spine) return;
+    const figure = actor.anim.figure;
+    figure.updateMatrixWorld(true);
+    let chest = chestBack.get(url);
+    if (!chest) {
+      const toFigure = figure.matrixWorld.clone().invert();
+      const m = new THREE.Matrix4(), v = new THREE.Vector3();
+      const meshes: { position: T.BufferAttribute; matrix: T.Matrix4 }[] = [];
+      body.traverse((object) => {
+        const mesh = object as T.Mesh;
+        const position = mesh.isMesh ? mesh.geometry.getAttribute('position') as T.BufferAttribute | undefined : undefined;
+        if (position) meshes.push({ position, matrix: m.clone().multiplyMatrices(toFigure, mesh.matrixWorld) });
+      });
+      let top = 0;
+      for (const { position, matrix } of meshes) for (let i = 0; i < position.count; i++) top = Math.max(top, v.fromBufferAttribute(position, i).applyMatrix4(matrix).y);
+      let back = 0;
+      for (const { position, matrix } of meshes) for (let i = 0; i < position.count; i++) {
+        v.fromBufferAttribute(position, i).applyMatrix4(matrix);
+        if (v.y > top * 0.66 && v.y < top * 0.76 && Math.abs(v.x) < top * 0.06) back = Math.min(back, v.z);
+      }
+      chest = { y: top * 0.705, z: back };
+      chestBack.set(url, chest);
+    }
+    if (chest.z >= 0) return;
+    const number = actor.number;
+    figure.add(number);
+    number.position.set(0, chest.y, chest.z - 0.015);
+    number.rotation.set(0, Math.PI, 0);
+    number.scale.setScalar(1.2);
+    number.updateMatrixWorld(true);
+    spine.attach(number);
   };
   const ensureActor = (player: Player) => {
     let actor = actors.get(player.id);
@@ -510,7 +562,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     width = Math.max(1, w); height = Math.max(1, h);
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
-    camera.fov = height > width ? 84 : 34;
+    camera.fov = height > width ? 84 : BROADCAST.fov;
     camera.updateProjectionMatrix();
   }
 
@@ -558,11 +610,11 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     target.set(
       trackedX + (portrait && broadcast ? attackDir * FIELD.goalWidth * 0.28 : attackDir * FIELD.goalWidth * 0.2),
       0.55,
-      broadcast ? focusZ * 0.55 : world.ball.z * 0.22,
+      broadcast ? portrait ? focusZ * 0.55 : BROADCAST.aimZ + (focusZ - BROADCAST.aimZ) * BROADCAST.followZ : world.ball.z * 0.22,
     );
     if (cameraMode === 'replay') desired.set(world.ball.x - attackDir * FIELD.goalWidth * 1.1, 5.2, world.ball.z + FIELD.width * 0.2);
     else if (broadcast && portrait) desired.set(target.x - attackDir * FIELD.width * 0.42, FIELD.width * 0.24, target.z);
-    else if (broadcast) desired.set(target.x, FIELD.width * 0.25, -FIELD.width * 0.56);
+    else if (broadcast) desired.set(target.x * BROADCAST.pan, BROADCAST.height, -BROADCAST.distance);
     else desired.set(target.x - attackDir * FIELD.length * 0.26, FIELD.width * 0.2, target.z);
     const setPiece = world.setPiece;
     reticle.visible = world.phase === 'restart' && !!setPiece;
@@ -589,7 +641,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     } else {
       cameraSafeOffset.set(0, 0, 0);
     }
-    const broadcastZoom = portrait ? 68 : 31;
+    const broadcastZoom = portrait ? 68 : BROADCAST.fov;
     const zoom = cameraMode === 'setpiece' ? portrait ? 62 : 42 : cameraMode === 'replay' ? 36 : cameraMode === 'broadcast' || cameraMode === 'intro' ? broadcastZoom : 28;
     if (cameraMode === 'intro') {
       const p = Math.max(0, Math.min(1, (time - (introStartedAt ?? time)) / 5.5));
@@ -737,6 +789,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       if (interval === 1 || actor.lodTick === player.id % interval) {
         updateSoccerAnimator(actor.anim, input, actor.lodDt);
         actor.lodDt = 0;
+        // The renderer only refreshes bones for camera-visible skins; off-shot players still cast shadows into it.
+        if (offscreen) for (const skeleton of actor.skeletons) skeleton.update();
       }
       const lift = Math.max(0, actor.anim.figure.position.y);
       actor.contact.position.x = actor.anim.figure.position.x;
