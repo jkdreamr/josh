@@ -345,3 +345,71 @@
 .g-slither.g-slither-late .arcade-ctrl > button[aria-label='Tap again to restart'] {
   display: none;
 }
+/*
+ * Touch: the shell's toolbar and card buttons stay at least 44px on screen. --g-slither-fu is 1 / the phone or iPad
+ * frame scale, so the toolbar grows by it and the cards zoom by it, which also keeps their text at its own size.
+ */
+@media (pointer: coarse) {
+  .g-slither.arcade-shell .arcade-ctrl button {
+    width: calc(44px * var(--g-slither-fu, 1));
+    height: calc(44px * var(--g-slither-fu, 1));
+  }
+  .g-slither.arcade-shell .arcade-ctrl button.is-armed {
+    width: auto;
+    padding: 0 calc(12px * var(--g-slither-fu, 1));
+    font-size: calc(13px * var(--g-slither-fu, 1));
+  }
+  .g-slither.arcade-shell .arcade-ctrl svg {
+    width: calc(18px * var(--g-slither-fu, 1));
+    height: calc(18px * var(--g-slither-fu, 1));
+  }
+  .g-slither.arcade-shell .arcade-ov .arcade-card {
+    zoom: var(--g-slither-fu, 1);
+  }
+  .g-slither.arcade-shell .arcade-ov :is(.arcade-btn, .arcade-btn-lg, .arcade-seg > button, .arcade-stepper > button, .arcade-input) {
+    height: auto;
+    min-height: 44px;
+  }
+  .g-slither-stage .g-slither-board {
+    top: calc(18px + 50px * var(--g-slither-fu, 1));
+  }
+}
+/*
+ * Narrow touch screens: the bigger toolbar spans the top, so the HUD, notices, results and cards sit under it and the online
+ * badge at the bottom. Notices center in the space left of the Top 10 board.
+ */
+.g-slither-stage {
+  container: g-slither-stage / size;
+}
+@media (pointer: coarse) {
+  @container g-slither-stage (max-width: 560px) {
+    .g-slither-stage .g-slither-hud {
+      top: calc(18px + 50px * var(--g-slither-fu, 1));
+    }
+    .g-slither-stage .g-slither-board {
+      top: calc(56px + 50px * var(--g-slither-fu, 1));
+    }
+    .g-slither-stage .g-slither-notice {
+      top: calc(56px + 50px * var(--g-slither-fu, 1));
+      left: calc((100% - min(calc(136px * var(--g-slither-u, 1)), 38%)) / 2);
+      max-width: calc(100% - min(calc(136px * var(--g-slither-u, 1)), 38%) - 30px);
+    }
+    .g-slither-stage .g-slither-results {
+      top: calc(20px + 50px * var(--g-slither-fu, 1));
+      max-height: calc(100% - 34px - 50px * var(--g-slither-fu, 1));
+      transform: translateX(-50%);
+    }
+  }
+  /* The card is zoomed by fu, so 50px clears the 44px * fu toolbar. */
+  @container arcade-ov (max-width: 560px) {
+    .g-slither.arcade-shell .arcade-ov:not(.arcade-ov-compact) > .arcade-card {
+      margin-top: 50px;
+    }
+  }
+}
+@media (pointer: coarse) and (max-width: 560px) {
+  .g-slither.arcade-shell .arcade-online-status {
+    top: auto;
+    bottom: 14px;
+  }
+}

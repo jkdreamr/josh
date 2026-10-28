@@ -11,7 +11,7 @@ import {
 } from '../src/os/arcade/games/slither/world.ts';
 import {
   applyHeadState, applyOps, loadSnapshot, makeRoster, peopleLine, peopleResults, resultRows, rosterChanges, rosterNotice, standings, startsSoloRound,
-  syncRoster, touchTarget, takeOverSeats, winnerSeat, fillerNames,
+  syncRoster, frameUnit, touchTarget, takeOverSeats, winnerSeat, fillerNames,
 } from '../src/os/arcade/games/slither/session.ts';
 import { overlayLayout } from '../src/os/arcade/games/slither/render.ts';
 
@@ -442,4 +442,13 @@ test('the online game over line names every person still in the room with their 
   assert.deepEqual(people.map((p) => [p.name, p.place, p.length, p.me]), [['Sam', 2, 64, true], ['Host', 4, 31, false]]);
   assert.equal(peopleLine(people), '2 people in the room: you 2nd, length 64; Host 4th, length 31.');
   assert.equal(peopleLine([]), '');
+});
+
+test('frame unit undoes the device frame scale, but not mid app-open animation', () => {
+  assert.equal(frameUnit(300, 300), 1);
+  assert.equal(frameUnit(600, 300), 1);
+  assert.equal(frameUnit(0, 0), 1);
+  assert.equal(frameUnit(18, 300), 1);
+  assert.ok(Math.abs(frameUnit(245.25, 300) - 1.223) < 0.001);
+  assert.equal(frameUnit(150, 300), 1.6);
 });
