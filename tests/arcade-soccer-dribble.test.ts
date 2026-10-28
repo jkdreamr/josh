@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   ASSIST_CONE, ASSIST_RANGE, CONTROL_RADIUS, CONTROL_SPEED, createWorld, distance,
-  FIRST_TOUCH_INTERCEPT_SPEED, FIRST_TOUCH_PULL, FIRST_TOUCH_REACH, firstTouchCandidate, inFirstTouchReach,
+  FIRST_TOUCH_PULL, FIRST_TOUCH_REACH, firstTouchCandidate, inFirstTouchReach,
   KNOCK_ON_REACH, nearestCarrier, SPRINT_TURN_LIMIT, STEP, stepWorld, TEAM_SIZE,
   type Command, type Player, type Team, type World,
 } from '../src/os/arcade/games/soccer/logic.ts';
@@ -144,7 +144,6 @@ test('exports the control and first-touch reach geometry', () => {
   assert.deepEqual(FIRST_TOUCH_REACH, { ahead: 1.5, side: 1.3, behind: 0.9 });
   assert.equal(FIRST_TOUCH_PULL, 0.2);
   assert.equal(KNOCK_ON_REACH, 2.0);
-  assert.equal(FIRST_TOUCH_INTERCEPT_SPEED, 6);
   assert.equal(ASSIST_RANGE, 3.0);
   assert.equal(ASSIST_CONE, Math.PI / 3);
   assert.equal(SPRINT_TURN_LIMIT, 100 * Math.PI / 180);
@@ -264,7 +263,7 @@ test('first-touch collection outcomes are player- and team-agnostic', () => {
   }
 });
 
-test('first-touch candidates respect dispossession, passing, interception speed, and shot speed', () => {
+test('first-touch candidates respect dispossession, passing, opponent possession, and shot speed', () => {
   const dispossessed = fixture();
   loose(dispossessed.world);
   dispossessed.player.touchCd = 1.2;
@@ -290,29 +289,18 @@ test('first-touch candidates respect dispossession, passing, interception speed,
   assert.notEqual(uncontrolled.world.controlled[teammate.team], teammate.id);
   assert.equal(firstTouchCandidate(uncontrolled.world), undefined);
 
-  const interception = fixture();
-  loose(interception.world);
-  interception.player.x = -20; interception.player.z = -20;
-  const opponent = interception.world.players.find((p) => p.team !== interception.player.team && p.slot !== 'GK')!;
-  const passer = interception.world.players.find((p) => p.team === interception.player.team && p.id !== interception.player.id)!;
-  opponent.x = 0; opponent.z = 0; opponent.facing = Math.PI / 2;
-  interception.world.lastToucherId = passer.id;
-  interception.world.lastTouch = passer.team;
-  interception.world.ball.x = 1; interception.world.ball.z = 0;
-  interception.world.ball.vx = -FIRST_TOUCH_INTERCEPT_SPEED + 1;
-  assert.equal(firstTouchCandidate(interception.world)?.id, opponent.id);
-
-  const fastInterception = fixture();
-  loose(fastInterception.world);
-  fastInterception.player.x = -20; fastInterception.player.z = -20;
-  const fastOpponent = fastInterception.world.players.find((p) => p.team !== fastInterception.player.team && p.slot !== 'GK')!;
-  const fastPasser = fastInterception.world.players.find((p) => p.team === fastInterception.player.team
-    && p.id !== fastInterception.player.id)!;
-  fastOpponent.x = 0; fastOpponent.z = 0; fastOpponent.facing = Math.PI / 2;
-  fastInterception.world.lastToucherId = fastPasser.id;
-  fastInterception.world.ball.x = 1; fastInterception.world.ball.z = 0;
-  fastInterception.world.ball.vx = -(FIRST_TOUCH_INTERCEPT_SPEED + 0.5);
-  assert.equal(firstTouchCandidate(fastInterception.world), undefined);
+  const opponentTouched = fixture();
+  loose(opponentTouched.world);
+  opponentTouched.player.facing = Math.PI / 2;
+  const opponent = opponentTouched.world.players.find((p) => p.team !== opponentTouched.player.team && p.slot !== 'GK')!;
+  opponentTouched.world.lastToucherId = opponent.id;
+  opponentTouched.world.lastTouch = opponent.team;
+  opponentTouched.world.ball.x = 1;
+  opponentTouched.world.ball.z = 0;
+  opponentTouched.world.ball.vx = -2;
+  assert.equal(firstTouchCandidate(opponentTouched.world), undefined);
+  opponentTouched.world.ball.x = 0.5;
+  assert.equal(nearestCarrier(opponentTouched.world)?.id, opponentTouched.player.id);
 
   const shot = fixture();
   loose(shot.world);

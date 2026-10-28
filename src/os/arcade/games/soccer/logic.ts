@@ -19,7 +19,6 @@ export const CONTROL_RADIUS = 0.64;
 export const FIRST_TOUCH_REACH = { ahead: 1.5, side: 1.3, behind: 0.9 } as const;
 export const FIRST_TOUCH_PULL = 0.2;
 export const KNOCK_ON_REACH = 2.0;
-export const FIRST_TOUCH_INTERCEPT_SPEED = 6;
 export const ASSIST_RANGE = 3.0;
 export const ASSIST_CONE = Math.PI / 3;
 export const SPRINT_TURN_LIMIT = (100 * Math.PI) / 180;
@@ -131,9 +130,6 @@ export function firstTouchCandidate(world: World): Player | undefined {
   if (nearestCarrier(world) || world.ball.y > 0.75) return undefined;
   const lastToucher = world.players.find((p) => p.id === world.lastToucherId);
   const target = world.players.find((p) => p.id === world.passTarget);
-  const tooFast = (p: Player) => p.slot !== 'GK' && world.passTarget !== p.id
-    && lastToucher !== undefined && lastToucher.team !== p.team
-    && Math.hypot(world.ball.vx - p.vx, world.ball.vz - p.vz) > CONTROL_SPEED;
   return world.players.map((p) => {
     const dx = world.ball.x - p.x;
     const dz = world.ball.z - p.z;
@@ -145,12 +141,13 @@ export function firstTouchCandidate(world: World): Player | undefined {
     const reach = inFirstTouchReach(p, world.ball);
     const eligible = !p.slide && !(p.touchCd! > 0)
       && !(p.cooldown > 0 && (p.action === 'kick' || p.action === 'pass'))
-      && !p.sentOff && !tooFast(p);
+      && !p.sentOff;
     const reachEligible = reach <= 1 && world.controlled[p.team] === p.id || p.knockOn && lastToucher?.id === p.id && gap <= KNOCK_ON_REACH;
     const allowed = eligible && p.slot !== 'GK' && reachEligible && relativeSpeed <= CONTROL_SPEED
       && !(target && p.team === target.team && p.id !== target.id)
       && (radialSpeed <= 0.5 || p.knockOn && lastToucher?.id === p.id)
-      && !(lastToucher && lastToucher.team !== p.team && relativeSpeed > FIRST_TOUCH_INTERCEPT_SPEED);
+      // Interceptions and tackles stay on the ordinary control radius.
+      && !(lastToucher && lastToucher.team !== p.team);
     return allowed ? { player: p, reach } : undefined;
   }).filter((candidate): candidate is { player: Player; reach: number } => candidate !== undefined)
     .sort((a, b) => a.reach - b.reach || a.player.id - b.player.id)[0]?.player;
