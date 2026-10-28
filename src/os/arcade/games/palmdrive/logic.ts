@@ -200,7 +200,12 @@ export type Ai = { pace: number; skill: number; band: number; lane: number; lane
 /** A fall off the road: into what (and whether down a trench), how fast the kart was going, and where it is put back [s, d]. */
 export type Fell = { past: Past; hole: boolean; v: number; to: [number, number] };
 /** What the network last said about a remote kart. */
-export type NetState = { x: number; z: number; h: number; v: number; prog: number; done: number | null; flags: number; at: number };
+/**
+ * A remote kart's last report: where it was at race time `at` (on our clock), how fast it was turning (w, radians a
+ * second, from the report before), and (ox, oz) how far from that the kart was showing when the report came in, a
+ * correction that fades out (see glide). Older reports had neither.
+ */
+export type NetState = { x: number; z: number; h: number; v: number; prog: number; done: number | null; flags: number; at: number; ox?: number; oz?: number; w?: number };
 
 export type Kart = {
   idx: number;
@@ -862,14 +867,33 @@ export function step(r: Race, dt: number) {
   rankKarts(r);
 }
 
-/** Where a remote kart probably is now: its last report carried forward, eased so corrections never jump. */
+/** How far ahead a remote kart's last report is carried, at most. */
+export const GLIDE_MAX = 0.35;
+
+/** Where a report puts its kart `age` seconds on: along its heading, round the bend it was turning through. */
+export function carried(n: Pick<NetState, 'x' | 'z' | 'h' | 'v' | 'w'>, age: number) {
+  const w = n.w ?? 0;
+  if (Math.abs(w) < 1e-3) return { x: n.x + Math.sin(n.h) * n.v * age, z: n.z + Math.cos(n.h) * n.v * age, h: n.h };
+  const h = n.h + w * age;
+  return { x: n.x + (n.v * (Math.cos(n.h) - Math.cos(h))) / w, z: n.z + (n.v * (Math.sin(h) - Math.sin(n.h))) / w, h };
+}
+/**
+ * Where a remote kart probably is now: its last report carried forward. A report that disagrees with where the kart
+ * was showing leaves a correction (ox, oz) that fades out, so the kart never jumps and never trails behind the report
+ * either; one without (from an older client) is eased towards instead.
+ */
 function glide(r: Race, k: Kart, dt: number) {
   const n = k.net;
   if (!n) return;
-  const age = clamp(r.time - n.at, 0, 0.35);
-  const px = n.x + Math.sin(n.h) * n.v * age;
-  const pz = n.z + Math.cos(n.h) * n.v * age;
-  if (Math.hypot(px - k.x, pz - k.z) > 8) {
+  const age = clamp(r.time - n.at, 0, GLIDE_MAX);
+  const { x: px, z: pz, h: ph } = carried(n, age);
+  if (n.ox !== undefined && n.oz !== undefined) {
+    const fade = Math.exp(-10 * dt);
+    n.ox *= fade;
+    n.oz *= fade;
+    k.x = px + n.ox;
+    k.z = pz + n.oz;
+  } else if (Math.hypot(px - k.x, pz - k.z) > 8) {
     k.x = px;
     k.z = pz;
   } else {
@@ -877,7 +901,7 @@ function glide(r: Race, k: Kart, dt: number) {
     k.x += (px - k.x) * w;
     k.z += (pz - k.z) * w;
   }
-  const turn = wrapAngle(n.h - k.h) * (1 - Math.exp(-14 * dt));
+  const turn = wrapAngle(ph - k.h) * (1 - Math.exp(-14 * dt));
   k.h = wrapAngle(k.h + turn);
   // lean and turn the front wheels the way the kart is turning
   if (dt > 0) k.steer = approach(k.steer, clamp(-turn / dt / 1.6, -1, 1), 6 * dt);

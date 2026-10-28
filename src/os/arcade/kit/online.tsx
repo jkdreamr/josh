@@ -21,6 +21,8 @@ type OnlineValue = {
   bots: RoomPlayer[];
   isHost: boolean;
   transport: RoomTransport;
+  /** The connection to the room dropped and this player's seat is being got back (the round carries on meanwhile). */
+  reconnecting: boolean;
   /** Bumps each time the host leaves and hands the room on: a round the old host's game ran is over. */
   handoffs: number;
   /** A quick-play room: it started on its own, and the game sets the match up the same way every time. */
@@ -48,6 +50,7 @@ export function OnlineProvider({
   players,
   bots,
   transport,
+  reconnecting,
   handoffs,
   quick,
   pool,
@@ -56,8 +59,8 @@ export function OnlineProvider({
   children,
 }: Omit<OnlineValue, 'seat' | 'link' | 'isHost' | 'code' | 'start'> & { link: RoomLink | null; seat: number | null; children: ReactNode }) {
   const value = useMemo(
-    () => link && seat !== null ? { link, code: link.code, start: () => link.start(), router, seat, seats, round, started, players, bots, isHost: seat === 0, transport, handoffs, quick, pool, watching, watchers } : null,
-    [link, router, seat, seats, round, started, players, bots, transport, handoffs, quick, pool, watching, watchers],
+    () => link && seat !== null ? { link, code: link.code, start: () => link.start(), router, seat, seats, round, started, players, bots, isHost: seat === 0, transport, reconnecting, handoffs, quick, pool, watching, watchers } : null,
+    [link, router, seat, seats, round, started, players, bots, transport, reconnecting, handoffs, quick, pool, watching, watchers],
   );
   return <OnlineContext.Provider value={value}>{children}</OnlineContext.Provider>;
 }
@@ -77,6 +80,7 @@ export function useOnline() {
       bots: room.bots,
       isHost: room.isHost,
       transport: room.transport,
+      reconnecting: room.reconnecting,
       handoffs: room.handoffs,
       quick: room.quick,
       pool: room.pool,

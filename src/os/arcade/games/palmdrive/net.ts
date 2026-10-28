@@ -35,8 +35,12 @@ const TRAILS = [null, 'banana', 'green', 'red'] as const;
 /** What a held-out item looks like from outside: three bananas are a banana, three greens a green. */
 const trailKind = (item: Item | null) => (item === 'bananas' ? 'banana' : item === 'greens' ? 'green' : item);
 
-/** A kart as the network sees it. fin: finish time, -1 still racing, -2 out of time. look: paint and hat (garage.ts). */
-export type Car = { seat: number; x: number; z: number; y: number; h: number; v: number; p: number; f: number; fin: number; look: number };
+/**
+ * A kart as the network sees it. fin: finish time, -1 still racing, -2 out of time. look: paint and hat (garage.ts).
+ * t: when its owner sampled it, on the owner's race clock (null from older clients, which never said). hold: in the host's
+ * state, how long (ms) the host had a guest's kart before passing it on, so that guest can time the round trip.
+ */
+export type Car = { seat: number; x: number; z: number; y: number; h: number; v: number; p: number; f: number; fin: number; look: number; t: number | null; hold?: number };
 export type NetEv =
   | { y: 'spawn'; id: number; kind: ThingKind; x: number; z: number; vx: number; vz: number; vy: number; yy: number; tg: number; pg: number; gr: number }
   | { y: 'gone'; id: number }
@@ -132,21 +136,29 @@ export function applyFlags(k: Kart, f: number) {
   else if (k.sunk <= 0) k.sunk = Infinity;
 }
 
-export const carOf = (k: Kart, look = -1): Omit<Car, 'seat'> => ({ x: r2(k.x), z: r2(k.z), y: r2(k.y), h: r3(k.h), v: r1(k.v), p: r1(k.prog), f: flagsOf(k), fin: k.done === null ? -1 : r3(k.done), look });
+export const carOf = (k: Kart, look = -1, t: number | null = null): Omit<Car, 'seat'> => ({ x: r2(k.x), z: r2(k.z), y: r2(k.y), h: r3(k.h), v: r1(k.v), p: r1(k.prog), f: flagsOf(k), fin: k.done === null ? -1 : r3(k.done), look, t: t === null ? null : r3(t) });
 
-const packCar = (c: Omit<Car, 'seat'>) => [c.x, c.z, c.y, c.h, c.v, c.p, c.f, c.fin, c.look];
+// (the sample time goes last, where older clients never look)
+function packCar(c: Omit<Car, 'seat'>) {
+  const a = [c.x, c.z, c.y, c.h, c.v, c.p, c.f, c.fin, c.look];
+  if (c.t !== null) a.push(c.t);
+  if (c.t !== null && c.hold !== undefined) a.push(Math.max(0, Math.round(c.hold)));
+  return a;
+}
 function unpackCar(a: unknown): Omit<Car, 'seat'> | null {
   if (!Array.isArray(a) || a.length < 8 || !a.slice(0, 8).every(num)) return null;
   const [x, z, y, h, v, p, f, fin] = a as number[];
   const look = num(a[8]) ? (a[8] as number) | 0 : -1;
-  return { x, z, y, h, v, p, f: f | 0, fin, look };
+  const t = num(a[9]) ? (a[9] as number) : null;
+  const hold = t !== null && num(a[10]) && a[10] >= 0 ? (a[10] as number) : undefined;
+  return { x, z, y, h, v, p, f: f | 0, fin, look, t, ...(hold !== undefined ? { hold } : {}) };
 }
 
 export const hostState = (round: number, go: number, cc: string, roster: number[], cars: Car[], course = 'palm') => ({
   t: 'pk',
   r: round,
   k: 'S',
-  go: r2(go),
+  go: r3(go),
   cc,
   co: course,
   ro: roster,

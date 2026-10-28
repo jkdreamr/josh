@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type PointerEvent as RPointerEvent, type RefObject } from 'react';
-import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
+import { GameShell, Segmented, defineSetting, every, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
 import { cycleAt, gripAt, openRuns, pointAt, timed, traffic, type Past, type Track } from './track';
@@ -23,26 +23,15 @@ import {
   STROKE_T,
   TIDE_LAP,
   hazardV,
-  boom,
-  catchCloud,
-  createRace,
   fmtTime,
   isCc,
   lapOf,
   ordinal,
-  powFrom,
   pressGas,
-  removeThing,
-  robbed,
   RIVALS,
   soloRace,
-  spawn,
   standings,
-  hornAt,
-  inkFrom,
   step,
-  stolen,
-  strike,
   trailable,
   turboLevel,
   type Cc,
@@ -50,10 +39,10 @@ import {
   type Item,
   type Kart,
   type Race,
-  type Racer,
 } from './logic';
-import { applyFlags, carOf, configOf, endOf, events, finishOrder, guestState, hostState, parsePacket, winnerOf, type Car, type NetEv } from './net';
-import { deposit, freshGarage, fromLook, loadGarage, lookFor, lookOf, payout, saveGarage, subscribeGarage, type Look } from './garage';
+import { configOf, finishOrder, parsePacket } from './net';
+import { advance, flushEvents, newNet, onHostClock, onlineRace, outgoing, Pacer, racersOf, receive, SEND_MS, tick, TIME_LIMIT, type Net } from './netsync';
+import { deposit, freshGarage, loadGarage, lookFor, lookOf, payout, saveGarage, subscribeGarage } from './garage';
 import { CoinIcon, GarageSheet, HowToPlay, ItemIcon, paintFill } from './hud';
 import { BPM, JINGLE_DONE, JINGLE_WIN, Sequencer, hz, type Note } from './music';
 import { COURSES, COURSE_IDS, DIFFICULTY, isCourse, trackOf, type CourseId } from './courses';
@@ -71,14 +60,10 @@ const musicOptions = [
   ['on', 'On'],
   ['off', 'Off'],
 ] as const;
-/** Online karts take their color from their seat. */
-const SEAT_COLORS = ['#e53935', '#1e88e5', '#3fae4a', '#fdd835', '#8e24aa', '#fb8c00', '#ec407a', '#00acc1'];
 /** Online bots are the CPU drivers from solo races, quickest first. */
 const BOT_NAMES = RIVALS.map((rival) => rival.name);
 /** The host gives everyone a moment to get its first packet before the lights start. */
 const HOST_LEAD = 1.2;
-/** Once someone finishes, everyone else has this long. */
-const TIME_LIMIT = 30;
 
 // Palm Drive used to keep a best distance under its own id, then three-lap race times per class. Races are five
 // laps now and timed on new boards; the old numbers would read as impossible bests on the Start card.
@@ -367,32 +352,6 @@ function Stage() {
   return <Play key={current.current.key} mode={current.current.mode} />;
 }
 
-type OnlineApi = NonNullable<ReturnType<typeof useOnline>>;
-
-/** Everyone in an online race, people and bots, in seat order (the order of the grid). */
-const racersOf = (o: OnlineApi) => [...new Set([...o.players.map((p) => p.seat), ...o.bots.map((b) => b.seat)])].sort((a, b) => a - b);
-
-/**
- * Everyone online starts in their seat's color; karts take their owner's look once their first state arrives.
- * Bots race as the CPU drivers they are named after: the host drives them and everyone else sees them through its packets.
- */
-function onlineRace(o: OnlineApi, cc: Cc, course: CourseId, roster: number[], countdown: number, look: Look): Race {
-  const racers: Racer[] = roster.map((seat) => {
-    const bot = o.bots.findIndex((b) => b.seat === seat);
-    if (bot >= 0) return { ...RIVALS[bot % RIVALS.length], name: o.bots[bot].name, kind: o.isHost ? 'cpu' : 'remote', seat };
-    return {
-      name: o.players.find((p) => p.seat === seat)?.name ?? `Player ${seat + 1}`,
-      color: seat === o.seat ? look.color : SEAT_COLORS[seat % SEAT_COLORS.length],
-      hat: seat === o.seat ? look.hat : 'cap',
-      gear: seat === o.seat ? look.gear : undefined,
-      kind: seat === o.seat ? 'player' : 'remote',
-      seat,
-    };
-  });
-  return createRace({ cc, course, racers, countdown, idBase: o.seat * 1_000_000 + 1 });
-}
-
-
 /** Plays one note of the soundtrack on the arcade synth, `delay` seconds from now. */
 function playNote(note: Note, delay: number, stepLen: number) {
   const dur = note.len * stepLen;
@@ -497,28 +456,12 @@ function Play({ mode }: { mode: Mode }) {
     if (!live) race.current = soloRace(cc, undefined, lookFor(loadGarage()), course);
     else race.current = onlineRace(online!, cc, course, racersOf(online!), online!.isHost ? COUNTDOWN + HOST_LEAD : 60, lookFor(loadGarage()));
   }
-  const net = useRef({
-    synced: !live || online!.isHost,
-    ticks: 0,
-    roster: live ? racersOf(online!) : [],
-    /** On the host: the bots it drives this race, and those still out on the course when time ran out. */
-    bots: new Set(live && online!.isHost ? online!.bots.map((b) => b.seat) : []),
-    botsOut: new Set<number>(),
-    /** Racers who left this race: out for good, even if a newcomer takes their seat number. */
-    gone: new Set<number>(),
-    cars: new Map<number, Car>(),
-    /**
-     * Item events to send, in the order they happened, in runs by the seat of the kart that made them (this player's,
-     * or a bot the host drives).
-     */
-    outbox: [] as [number, NetEv[]][],
-    dnf: false,
-    end: null as { w: number | null; order: [number, number][] } | null,
-    endSends: 0,
-    reported: false,
-    over: false,
-    banked: false,
-  });
+  /** The online race (see netsync), and this player's side of its ending: the result reported, the race over here, the coins banked. */
+  const net = useRef<Net & { reported: boolean; over: boolean; banked: boolean }>(null!);
+  net.current ??= { ...newNet(live ? online! : null), reported: false, over: false, banked: false };
+  /** Online, the race keeps to the wall clock (see Pacer); and when the last frame ran, to tell a page in the background. */
+  const pacer = useRef(new Pacer());
+  const frameAt = useRef(0);
   const tap = useRef({ back: false, gas: false, cash: false, slam: false });
   /** The item button was holding a banana or shell out behind last frame. */
   const holding = useRef(false);
@@ -644,127 +587,67 @@ function Play({ mode }: { mode: Mode }) {
     if (me.done !== null) bests[r.course][r.cc].submit(Math.round(me.done * 1000));
     shellRef.current.gameOver(undefined, me.done === null ? { title, detail: head + tail } : { title, detail: head + tail, board: boardOf(r.course, r.cc), rank: Math.round(me.done * 1000) });
   };
-  const leave = (k: Kart) => {
-    k.left = true;
-    k.net = null;
-    k.x = k.z = 1e5;
-    k.v = 0;
-  };
   const finishRef = useRef(finishOnline);
   finishRef.current = finishOnline;
 
-  const applyCar = (r: Race, seat: number, car: Omit<Car, 'seat'>) => {
-    const k = r.karts.find((x) => x.seat === seat && x.kind === 'remote');
-    if (!k || k.left) return;
-    k.net = { x: car.x, z: car.z, h: car.h, v: car.v, prog: car.p, done: car.fin >= 0 ? car.fin : null, flags: car.f, at: r.time };
-    k.y = car.y;
-    applyFlags(k, car.f);
-    const look = car.look >= 0 ? fromLook(car.look) : null;
-    if (look) Object.assign(k, look);
-  };
-
-  const applyEvent = (r: Race, from: number, ev: NetEv) => {
-    const idx = (seat: number) => r.karts.findIndex((k) => k.seat === seat);
-    if (ev.y === 'spawn') {
-      if (!r.things.some((t) => t.id === ev.id)) spawn(r, { id: ev.id, kind: ev.kind, owner: idx(from), x: ev.x, z: ev.z, y: ev.yy, vx: ev.vx, vz: ev.vz, vy: ev.vy, grace: ev.gr, target: ev.tg >= 0 ? idx(ev.tg) : -1, prog: ev.pg }, false);
-    } else if (ev.y === 'gone') removeThing(r, ev.id, false);
-    else if (ev.y === 'bolt') strike(r, idx(from));
-    else if (ev.y === 'ink') inkFrom(r, idx(from));
-    else if (ev.y === 'horn') hornAt(r, idx(from), ev.x, ev.z);
-    else if (ev.y === 'boom') boom(r, ev.x, ev.z, idx(from));
-    else if (ev.y === 'stole') {
-      // the coin goes to the kart whose slam it was, if this client drives it: this player's, or a bot on the host
-      const k = r.karts.find((x) => x.seat === ev.to);
-      if (k && (k.idx === r.me || k.kind === 'cpu')) stolen(r, k);
-    } else if (ev.y === 'boo' || ev.y === 'cloud') {
-      // someone's Boo took the item of a kart we drive, or their thunder cloud jumped onto it
-      const k = r.karts.find((x) => x.seat === ev.to);
-      if (!k || (k.idx !== r.me && k.kind !== 'cpu')) return;
-      if (ev.y === 'cloud') catchCloud(r, k, ev.left, idx(from));
-      else {
-        if (k.item) r.events.push({ t: 'boo', k: k.idx, by: idx(from), item: k.item });
-        robbed(r, k);
+  /** Runs the online race on to the wall clock (at most `cap` seconds of it now), sending what its events say. */
+  const runOnline = (r: Race, cap: number, background: boolean) => {
+    const n = net.current;
+    const v = view.current;
+    // (a guest's race also keeps to the host's clock, see onHostClock)
+    advance(r, onHostClock(n, !!onlineRef.current?.isHost, pacer.current.take(performance.now(), cap)), (evs) => {
+      for (const e of evs) {
+        // (no sound or sparks for a page nobody is looking at: they would all go off at once when it comes back)
+        if (!background) {
+          react(r, e);
+          v?.react(e, r, r.me);
+        }
+        outgoing(n, r, e);
       }
-    } else if (ev.y === 'pow') powFrom(r, idx(from), ev.at);
+    });
+    const o = onlineRef.current;
+    if (o && n.outbox.length) for (const d of flushEvents(n, o.round)) o.send(d);
   };
+  const runRef = useRef(runOnline);
+  runRef.current = runOnline;
 
   useEffect(() => {
     if (!live) return;
     const n = net.current;
     const off = onlineRef.current!.onMessage((from, d) => {
       const o = onlineRef.current;
-      const p = parsePacket(d);
-      if (!o || !p || p.round !== o.round) return;
-      let r = race.current!;
-      if (p.k === 's') {
-        if (!o.isHost || from === 0) return;
-        n.cars.set(from, { seat: from, ...p.car });
-        applyCar(r, from, p.car);
-      } else if (p.k === 'S') {
-        if (o.isHost || from !== 0) return;
-        if (!n.synced) {
-          // Left out of the host's race (joined just as it was set): sit it out rather than wait for good.
-          if (!p.roster.includes(o.seat)) {
-            if (shellRef.current.status === 'playing') shellRef.current.gameOver(undefined, { title: 'Sitting This One Out', detail: 'You Will Race the Next One.' });
-            return;
-          }
-          r = race.current = onlineRace(o, isCc(p.cc) ? p.cc : r.cc, isCourse(p.course) ? p.course : r.course, p.roster, p.go, lookFor(loadGarage()));
-          n.roster = p.roster;
-          n.synced = true;
-          setRaceKey((x) => x + 1);
-        }
-        for (const car of p.cars) if (car.seat !== o.seat) applyCar(r, car.seat, car);
-      } else if (p.k === 'e') {
-        if (p.o === o.seat) return;
-        for (const ev of p.ev) applyEvent(r, p.o, ev);
-        if (o.isHost) o.send(d);
-      } else if (p.k === 'end') {
-        if (from !== 0 || o.isHost || n.end) return;
-        n.end = { w: p.w, order: p.order };
-        finishRef.current(p.order, p.w);
-      }
+      const r = race.current;
+      if (!o || !r) return;
+      const heard = receive(n, r, o, from, d, () => lookFor(loadGarage()));
+      if (!heard) return;
+      if (heard.sitOut) {
+        if (shellRef.current.status === 'playing') shellRef.current.gameOver(undefined, { title: 'Sitting This One Out', detail: 'You Will Race the Next One.' });
+      } else if (heard.race) {
+        race.current = heard.race;
+        pacer.current.reset(performance.now());
+        setRaceKey((x) => x + 1);
+      } else if (heard.end) finishRef.current(heard.end.order, heard.end.w);
+      else if (heard.relay !== undefined) o.send(heard.relay);
     });
-    const timer = window.setInterval(() => {
+    // The network's tick comes from a timer that keeps going in a background tab (see every), not the frame loop. While
+    // no frames come (the page is hidden), it runs the race on too, with hands off the controls, so this player's
+    // kart, and on the host its bots and the call at the end, carry on for everyone else.
+    const stop = every(SEND_MS, () => {
       const o = onlineRef.current;
       const r = race.current;
       if (!o || !r || !n.synced) return;
-      n.ticks++;
-      const me = r.karts[r.me];
-      const car = carOf(me, lookRef.current);
-      const mine = { ...car, fin: n.dnf ? -2 : car.fin };
-      // a kart whose driver left the room is parked out of sight, rather than frozen on the track
-      for (const k of r.karts) if (k.kind === 'remote' && !k.left && !o.players.some((p) => p.seat === k.seat) && !o.bots.some((b) => b.seat === k.seat)) leave(k);
-      if (!o.isHost) {
-        o.send(guestState(o.round, mine), { fast: n.ticks % 5 !== 0 && mine.fin === -1 });
-        return;
+      if (performance.now() - frameAt.current > 250) {
+        const me = r.karts[r.me];
+        if (me && document.hidden) Object.assign(me.input, { steer: 0, fwd: false, brake: false, drift: false, hold: false, use: false, hop: false });
+        runRef.current(r, 2, true);
       }
-      for (const seat of n.roster) if (!n.bots.has(seat) && !o.players.some((p) => p.seat === seat)) n.gone.add(seat);
-      const present = n.roster.filter((seat) => !n.bots.has(seat) && !n.gone.has(seat));
-      // bots run out of time like everyone else, 30 seconds after the first kart home
-      const bots = r.karts.filter((k) => k.kind === 'cpu' && n.bots.has(k.seat));
-      if (r.first !== null && r.time - r.first > TIME_LIMIT) for (const k of bots) if (k.done === null) n.botsOut.add(k.seat);
-      const botCar = (k: Kart): Car => {
-        const car = carOf(k);
-        return { seat: k.seat, ...car, fin: n.botsOut.has(k.seat) ? -2 : car.fin };
-      };
-      const botCars = bots.map(botCar);
-      const cars: Car[] = [{ seat: o.seat, ...mine }, ...present.filter((s) => s !== o.seat && n.cars.has(s)).map((s) => n.cars.get(s)!), ...botCars];
-      o.send(hostState(o.round, -r.time, r.cc, n.roster, cars, r.course), { fast: n.ticks % 5 !== 0 });
-      // the host calls the race once nobody still in the room, and no bot, is racing
-      const fins: [number, number][] = [...present.map((s): [number, number] => [s, s === o.seat ? mine.fin : n.cars.get(s)?.fin ?? -1]), ...botCars.map((c): [number, number] => [c.seat, c.fin])];
-      if (!n.end && r.time > 0 && fins.every(([, fin]) => fin !== -1)) {
-        const order = finishOrder(fins);
-        n.end = { w: winnerOf(order), order };
-        finishRef.current(order, n.end.w);
-      }
-      if (n.end && n.endSends < 4) {
-        n.endSends++;
-        o.send(endOf(o.round, n.end.w, n.end.order));
-      }
-    }, 66);
+      const { out, end } = tick(n, r, o, lookRef.current);
+      for (const { d, fast } of out) o.send(d, fast ? { fast: true } : undefined);
+      if (end) finishRef.current(end.order, end.w);
+    });
     return () => {
       off();
-      window.clearInterval(timer);
+      stop();
     };
   }, [live]);
 
@@ -813,15 +696,16 @@ function Play({ mode }: { mode: Mode }) {
       }
       tap.current = { back: false, gas: false, cash: false, slam: false };
 
-      step(r, dt);
-      const evs = r.events.splice(0);
-      for (const e of evs) {
-        react(r, e);
-        v?.react(e, r, r.me);
-        if (live) outgoing(r, e);
-      }
-      if (live && o && n.outbox.length) {
-        for (const [origin, evs] of n.outbox.splice(0)) o.send(events(o.round, origin, evs));
+      if (live) {
+        // online the race keeps to the wall clock: a slow frame is caught up rather than played in slow motion
+        frameAt.current = performance.now();
+        runOnline(r, 0.25, false);
+      } else {
+        step(r, dt);
+        for (const e of r.events.splice(0)) {
+          react(r, e);
+          v?.react(e, r, r.me);
+        }
       }
 
       // roulette ticks and the spark color clicking up while you drift
@@ -1177,34 +1061,6 @@ function Play({ mode }: { mode: Mode }) {
         }
       }
     });
-  }
-
-  function outgoing(r: Race, e: Ev) {
-    const me = r.karts[r.me]?.seat ?? 0;
-    // an event goes out under the kart that made it: ours, or on the host a bot it drives
-    const by = (k: number) => (k === r.me || r.karts[k]?.kind === 'cpu' ? r.karts[k].seat : me);
-    const send = (seat: number, ev: NetEv) => {
-      const out = net.current.outbox;
-      const run = out[out.length - 1];
-      if (run && run[0] === seat) run[1].push(ev);
-      else out.push([seat, [ev]]);
-    };
-    if (e.t === 'spawn' && e.thing.local) {
-      const th = e.thing;
-      send(by(th.owner), { y: 'spawn', id: th.id, kind: th.kind, x: round(th.x), z: round(th.z), vx: round(th.vx), vz: round(th.vz), vy: round(th.vy), yy: round(th.y), tg: r.karts[th.target]?.seat ?? -1, pg: round(th.prog), gr: round(th.grace) });
-    } else if (e.t === 'gone' && e.local) send(me, { y: 'gone', id: e.id });
-    else if (e.t === 'bolt') send(by(e.k), { y: 'bolt' });
-    else if (e.t === 'ink') send(by(e.k), { y: 'ink' });
-    else if (e.t === 'horn') send(by(e.k), { y: 'horn', x: round(e.x), z: round(e.z) });
-    else if (e.t === 'boom') send(me, { y: 'boom', x: round(e.x), z: round(e.z) });
-    // a kart we drive was slammed by someone else's: tell them they won its coin
-    else if (e.t === 'slammed' && e.coin && (e.k === r.me || r.karts[e.k]?.kind === 'cpu') && r.karts[e.by]?.kind === 'remote') send(by(e.k), { y: 'stole', to: r.karts[e.by].seat });
-    else if (e.t === 'pow') send(by(e.k), { y: 'pow', at: round(e.at) });
-    // a kart we drive took someone else's item with a Boo, or bumped its thunder cloud onto them: their client takes it
-    // from here
-    else if ((e.t === 'boo' || e.t === 'cloud') && (e.by === r.me || r.karts[e.by]?.kind === 'cpu') && r.karts[e.k]?.kind === 'remote') {
-      send(by(e.by), e.t === 'boo' ? { y: 'boo', to: r.karts[e.k].seat } : { y: 'cloud', to: r.karts[e.k].seat, left: round(e.left) });
-    }
   }
 
   function react(r: Race, e: Ev) {
@@ -1641,6 +1497,8 @@ function Play({ mode }: { mode: Mode }) {
       banner = lapBanner.current.text;
       note = lapBanner.current.note;
     }
+    // the connection to the room dropped: the race carries on here while the seat is got back
+    if (banner === null && onlineRef.current?.reconnecting) banner = 'reconnecting…';
     const next: Hud = {
       place: me.place,
       field: r.karts.length,

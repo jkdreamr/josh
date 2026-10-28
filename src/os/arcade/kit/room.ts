@@ -4,9 +4,20 @@ import { channelUsable, fastSendBlocked, parseOpenRooms, relayPlan, sendLabels, 
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 /**
  * The room protocol this client speaks: 2 follows a host hand-off when the host leaves (see the 'host' event), 3 knows
- * spectators and is told on the socket why a room turned it away (see the 'closed' event).
+ * spectators and is told on the socket why a room turned it away (see the 'closed' event), 4 comes back to its own
+ * seat when its connection drops (see reconnect).
  */
-export const ROOM_PROTOCOL = 3;
+export const ROOM_PROTOCOL = 4;
+/** How often the link checks on its socket, and pings the room when it has heard nothing for a while. */
+const WATCH_MS = 1_000;
+const PING_MS = 5_000;
+/** A ping unanswered this long (and nothing else heard since) means the connection is dead, though the socket says open. */
+const DEAD_MS = 5_000;
+/** How long a dropped link keeps trying to get its seat back: a little under the room's hold on it (HOLD_MS, 20 s). */
+const RESUME_MS = 18_000;
+const RETRY_MS = [250, 600, 1200, 2000, 3000, 4000];
+/** The most messages kept to send once a dropped link is back in. */
+const HELD_MAX = 256;
 /** A spectator gets the host's fast messages (snapshots that the next one replaces) at most this often, each kind. */
 const WATCH_FAST_MS = 66;
 const ICE_SERVERS = [{ urls: 'stun:stun.cloudflare.com:3478' }, { urls: 'stun:stun.l.google.com:19302' }];
@@ -50,7 +61,10 @@ type RoomEvents = {
    */
   closed: { reason: string; watch: boolean };
   transport: RoomTransport;
+  /** The connection dropped and the link is getting its seat back ('reconnecting'), or is through to the room ('ok'). */
+  link: LinkState;
 };
+export type LinkState = 'ok' | 'reconnecting';
 
 type Listener<T> = (value: T) => void;
 
@@ -111,7 +125,22 @@ export class RoomLink {
   watchers: string[] = [];
   watchable: boolean | null = null;
   private readonly watchSent = new Map<string, number>();
-  private readonly socket: WebSocket;
+  private socket: WebSocket;
+  private readonly api: string;
+  /** The seat's key from a room that lets people come back to their seat (protocol 4), and that relays to several seats at once. */
+  private key: string | null = null;
+  private multi = false;
+  /** The room's round as this link last heard it. */
+  private round = 0;
+  private linkValue: LinkState = 'ok';
+  /** When anything last came in, and when the last ping went out (Date.now()). */
+  private heardAt = 0;
+  private pingAt = 0;
+  private resumeFrom = 0;
+  private resumeTimer: ReturnType<typeof setTimeout> | null = null;
+  private tries = 0;
+  /** What waits to go to the room once the link is back in (see sendSocket). */
+  private held: string[] = [];
   private readonly listeners = new Map<keyof RoomEvents, Set<Listener<never>>>();
   private readonly peers = new Map<number, Peer>();
   private readonly retryCounts = new Map<number, number>();
@@ -125,19 +154,46 @@ export class RoomLink {
     this.code = code.toUpperCase();
     this.name = name;
     this.watching = watch;
-    const base = new URL(api);
-    base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
-    base.pathname = `${base.pathname.replace(/\/+$/, '')}/rooms/${encodeURIComponent(this.code)}/ws`;
-    base.search = new URLSearchParams({ name, v: String(ROOM_PROTOCOL), ...(watch ? { watch: '1' } : {}) }).toString();
-    this.socket = new WebSocket(base);
-    this.socket.addEventListener('open', this.onOpen);
-    this.socket.addEventListener('message', this.onSocketMessage);
-    this.socket.addEventListener('close', this.onSocketClose);
-    this.socket.addEventListener('error', this.onSocketError);
+    this.api = api;
+    this.socket = this.connect();
+    globalThis.addEventListener?.('pagehide', this.onPageHide);
   }
+
+  /**
+   * The page is going away for good (closed, reloaded, navigated off): a goodbye, so the room doesn't hold the seat for
+   * us. One kept to come back to (the back-forward cache) gets its seat back like any dropped connection.
+   */
+  private readonly onPageHide = (event: Event) => {
+    if (!(event as Event & { persisted?: boolean }).persisted) this.close();
+  };
 
   get transport(): RoomTransport {
     return this.transportValue;
+  }
+
+  /** Whether the link is through to the room, or getting its seat back after its connection dropped. */
+  get link(): LinkState {
+    return this.linkValue;
+  }
+
+  /** A socket to the room: as a newcomer, or (`resume`) back to this link's own seat with its key. */
+  private connect(resume = false): WebSocket {
+    const base = new URL(this.api);
+    base.protocol = base.protocol === 'https:' ? 'wss:' : 'ws:';
+    base.pathname = `${base.pathname.replace(/\/+$/, '')}/rooms/${encodeURIComponent(this.code)}/ws`;
+    const query: Record<string, string> = { name: this.name, v: String(ROOM_PROTOCOL), ...(this.watching ? { watch: '1' } : {}) };
+    if (resume && this.key && this.seat !== null) Object.assign(query, { seat: String(this.seat), key: this.key });
+    base.search = new URLSearchParams(query).toString();
+    const socket = new WebSocket(base);
+    // (a socket this link has moved on from says nothing more)
+    const mine = <E,>(handler: (event: E) => void) => (event: E) => {
+      if (socket === this.socket) handler(event);
+    };
+    socket.addEventListener('open', mine(this.onOpen));
+    socket.addEventListener('message', mine(this.onSocketMessage));
+    socket.addEventListener('close', mine(this.onSocketClose));
+    socket.addEventListener('error', mine(this.onSocketError));
+    return socket;
   }
 
   on<K extends keyof RoomEvents>(event: K, listener: Listener<RoomEvents[K]>): () => void {
@@ -205,9 +261,13 @@ export class RoomLink {
         channel.send(payload);
       }
     }
-    if (plan.relayAll) this.sendSocket({ t: 'msg', d });
-    else for (const seat of plan.relay) this.sendSocket({ t: 'msg', to: this.seat === 0 ? seat : 0, d });
-    if (!recipients.length && options.to !== undefined) this.sendSocket({ t: 'msg', to: options.to, d });
+    // (a fast message says so: the next one replaces it, so the room never keeps it for someone away for a moment)
+    const fast = options.fast && !options.reliable ? { f: 1 } : {};
+    if (plan.relayAll) this.sendSocket({ t: 'msg', d, ...fast });
+    // (several seats the room relays to: one message for all of them, where the room takes a list)
+    else if (this.multi && this.seat === 0 && plan.relay.length > 1) this.sendSocket({ t: 'msg', to: plan.relay, d, ...fast });
+    else for (const seat of plan.relay) this.sendSocket({ t: 'msg', to: this.seat === 0 ? seat : 0, d, ...fast });
+    if (!recipients.length && options.to !== undefined) this.sendSocket({ t: 'msg', to: options.to, d, ...fast });
     if (plan.relay.length || (!recipients.length && options.to !== undefined)) this.setTransport('relay');
     // What the host's game says to everyone, spectators see too, through the room (fast snapshots a few times a second).
     if (this.seat === 0 && options.to === undefined && this.watchers.length) {
@@ -223,25 +283,110 @@ export class RoomLink {
   close() {
     if (this.closed) return;
     this.closed = true;
+    globalThis.removeEventListener?.('pagehide', this.onPageHide);
     if (this.pingTimer !== null) globalThis.clearInterval(this.pingTimer);
     this.pingTimer = null;
-    this.socket.removeEventListener('open', this.onOpen);
-    this.socket.removeEventListener('message', this.onSocketMessage);
-    this.socket.removeEventListener('close', this.onSocketClose);
-    this.socket.removeEventListener('error', this.onSocketError);
-    this.socket.close();
+    if (this.resumeTimer !== null) globalThis.clearTimeout(this.resumeTimer);
+    this.resumeTimer = null;
+    const socket = this.socket;
+    // (whatever it says from here on is for nobody)
+    this.socket = { readyState: 3 } as WebSocket;
+    try {
+      // a goodbye: the room lets the seat go now rather than holding it for us to come back to
+      socket.close(1000, 'leave');
+    } catch {
+      /* never opened */
+    }
     for (const timer of this.retryTimers.values()) globalThis.clearTimeout(timer);
     this.retryTimers.clear();
     this.dropPeers();
   }
 
   private readonly onOpen = () => {
-    this.pingTimer = globalThis.setInterval(() => {
-      if (this.socket.readyState === WebSocket.OPEN) this.socket.send('ping');
-    }, 25_000);
+    this.heardAt = Date.now();
+    this.pingAt = 0;
+    if (this.pingTimer === null) {
+      this.pingTimer = globalThis.setInterval(this.check, WATCH_MS);
+      // (a watch never keeps a process alive on its own, where timers can say so)
+      (this.pingTimer as { unref?: () => void }).unref?.();
+    }
   };
 
+  /**
+   * Every few seconds: a ping when the room has been quiet (answered by the room without waking it), and a connection
+   * that stopped answering is treated as dropped, though the browser may take minutes to say so.
+   */
+  private readonly check = () => {
+    if (this.closed || this.linkValue !== 'ok' || this.socket.readyState !== WebSocket.OPEN) return;
+    const now = Date.now();
+    // a ping still unanswered: the connection is dead once it has been too long
+    if (this.pingAt > this.heardAt) {
+      if (now - this.pingAt >= DEAD_MS) this.drop();
+      return;
+    }
+    if (now - this.heardAt >= PING_MS) {
+      this.pingAt = now;
+      try {
+        this.socket.send('ping');
+      } catch {
+        this.drop();
+      }
+    }
+  };
+
+  /** The connection is gone: get the seat back when the room lets us, else say so. */
+  private drop() {
+    if (this.closed) return;
+    const socket = this.socket;
+    this.socket = { readyState: 3 } as WebSocket;
+    try {
+      socket.close();
+    } catch {
+      /* already closed */
+    }
+    if (!this.key || this.seat === null || this.watching) {
+      this.stopWatch();
+      this.emit('closed', { reason: 'connection-lost', watch: false });
+      return;
+    }
+    this.resumeFrom = Date.now();
+    this.tries = 0;
+    this.setLink('reconnecting');
+    this.setTransport('relay');
+    this.retry();
+  }
+
+  /** The next try at getting the seat back, or giving up once the room will have let it go. */
+  private retry() {
+    if (this.closed) return;
+    const wait = RETRY_MS[Math.min(this.tries, RETRY_MS.length - 1)];
+    if (Date.now() + wait - this.resumeFrom > RESUME_MS) {
+      this.held = [];
+      this.stopWatch();
+      this.setLink('ok');
+      this.emit('closed', { reason: 'connection-lost', watch: false });
+      return;
+    }
+    this.tries++;
+    this.resumeTimer = globalThis.setTimeout(() => {
+      this.resumeTimer = null;
+      if (!this.closed) this.socket = this.connect(true);
+    }, wait);
+  }
+
+  private stopWatch() {
+    if (this.pingTimer !== null) globalThis.clearInterval(this.pingTimer);
+    this.pingTimer = null;
+  }
+
+  private setLink(value: LinkState) {
+    if (this.linkValue === value) return;
+    this.linkValue = value;
+    this.emit('link', value);
+  }
+
   private readonly onSocketMessage = (event: MessageEvent<string>) => {
+    this.heardAt = Date.now();
     if (typeof event.data !== 'string') return;
     let message: Record<string, unknown>;
     try {
@@ -249,7 +394,23 @@ export class RoomLink {
     } catch {
       return;
     }
-    if (message.t === 'welcome' && Number.isInteger(message.seat) && typeof message.game === 'string' && Number.isInteger(message.seats)) {
+    if (message.t === 'welcome' && message.resumed === true && this.linkValue === 'reconnecting' && message.seat === this.seat) {
+      // back in our own seat: the room carries on as if we never left, and what we said meanwhile goes now
+      this.setLink('ok');
+      for (const data of this.held.splice(0)) this.socket.send(data);
+      this.players = this.asPlayers(message.players);
+      // a direct link that went down with the connection is set up afresh by the host (see 'back'); one still up stays
+      for (const [seat, peer] of this.peers) if (peer.pc.connectionState !== 'connected') this.dropPeer(seat);
+      this.emit('players', this.players);
+      if (Array.isArray(message.bots)) {
+        this.bots = this.asSeats(message.bots);
+        this.emit('bots', this.bots);
+      }
+      this.takeListed(message.listed);
+      this.takeWatchers(message);
+      if (typeof message.started === 'boolean') this.emit('started', message.started);
+      if (Number.isSafeInteger(message.round)) this.round = message.round as number;
+    } else if (message.t === 'welcome' && Number.isInteger(message.seat) && typeof message.game === 'string' && Number.isInteger(message.seats)) {
       // a spectator has no seat: it sends nothing, and the host never links to it
       const watching = this.watching && message.watch === true;
       this.seat = watching ? null : message.seat as number;
@@ -258,6 +419,9 @@ export class RoomLink {
       this.players = this.asPlayers(message.players);
       this.bots = Array.isArray(message.bots) ? this.asSeats(message.bots) : null;
       const round = Number.isSafeInteger(message.round) && (message.round as number) > 0 ? message.round as number : 0;
+      this.round = round;
+      this.key = !watching && typeof message.key === 'string' && /^[0-9a-f]{32}$/.test(message.key) ? message.key : null;
+      this.multi = message.multi === true;
       this.quick = message.quick === true;
       this.pool = this.quick && typeof message.pool === 'string' && /^[a-z0-9-]{1,16}$/.test(message.pool) ? message.pool : '';
       const startIn = this.startIn(message);
@@ -287,8 +451,16 @@ export class RoomLink {
       if (this.quick) this.emit('gather', this.startIn(message));
       if (typeof message.started === 'boolean') this.emit('started', message.started);
       this.updateTransport();
+    } else if (message.t === 'back' && Number.isInteger(message.seat)) {
+      // someone came back after their connection dropped: the host links up with them directly again
+      const seat = message.seat as number;
+      if (this.seat === 0 && seat !== 0 && this.peers.get(seat)?.pc.connectionState !== 'connected') {
+        this.dropPeer(seat);
+        if (typeof RTCPeerConnection !== 'undefined') void this.offerTo(seat);
+      }
     } else if (message.t === 'start') {
       this.players = this.asPlayers(message.players);
+      if (Number.isSafeInteger(message.round)) this.round = message.round as number;
       const bots = this.asSeats(message.bots);
       this.emit('start', { players: this.players, round: Number.isSafeInteger(message.round) && (message.round as number) > 0 ? message.round as number : null, bots });
       void this.beginPeers();
@@ -297,14 +469,21 @@ export class RoomLink {
     } else if (message.t === 'signal' && Number.isInteger(message.from)) {
       void this.receiveSignal(message.from as number, message.d);
     } else if (message.t === 'closed' && typeof message.reason === 'string') {
-      this.emit('closed', { reason: message.reason, watch: message.watch === true });
+      // (the room let our seat go before we got back to it: to us, the connection was lost)
+      const reason = message.reason === 'expired' ? 'connection-lost' : message.reason;
+      this.held = [];
+      this.setLink('ok');
+      this.emit('closed', { reason, watch: message.watch === true });
       // said once: the socket closing after it is the same news
       this.close();
     }
   };
 
   private readonly onSocketClose = () => {
-    if (!this.closed) this.emit('closed', { reason: 'connection-lost', watch: false });
+    if (this.closed) return;
+    // a try at getting the seat back that didn't get through: the next one
+    if (this.linkValue === 'reconnecting') this.retry();
+    else this.drop();
   };
 
   private readonly onSocketError = () => {
@@ -333,6 +512,15 @@ export class RoomLink {
         await this.offerTo(player.seat);
       }
     }
+  }
+
+  private dropPeer(seat: number) {
+    const peer = this.peers.get(seat);
+    if (!peer) return;
+    peer.pc.close();
+    this.peers.delete(seat);
+    this.clearPeerRetry(seat);
+    this.retryCounts.delete(seat);
   }
 
   /** Closes the direct links: all of them, or those to anyone no longer among `keep` (a newcomer may take their seat). */
@@ -464,8 +652,16 @@ export class RoomLink {
     if (d) this.sendSocket({ t: 'signal', to: seat, d });
   }
 
-  private sendSocket(message: unknown) {
+  /**
+   * To the room. While the link is getting its seat back, what can't be replaced by the next message waits (a move, a
+   * result) and goes once it is back in; fast messages, signals for links that are gone, and spectators' words don't.
+   */
+  private sendSocket(message: { t: string; f?: number; [key: string]: unknown }) {
     if (this.watching) return;
+    if (this.linkValue === 'reconnecting') {
+      if (message.t !== 'signal' && message.t !== 'watch' && !message.f && this.held.length < HELD_MAX) this.held.push(JSON.stringify(message));
+      return;
+    }
     if (this.socket.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(message));
   }
 

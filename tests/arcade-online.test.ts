@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
+import { mock, test } from 'node:test';
 import { roomApp } from '../src/os/arcade/apps.ts';
 import { advanceOnlineRound, botPlayers, canStartNext, channelUsable, FAST_BUFFER_LIMIT, fastSendBlocked, MAX_SEATS, nextOnlineRound, relayPlan, roundLeftVerdict, RoundRouter, sendLabels, tagRound, openRoomAction, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, handOffSettled, parseRacePacket, raceSeats, raceStandings, raceVerdict, type OpenRoom, type RaceScores, type SettledRace } from '../src/os/arcade/kit/online-core.ts';
 import { createRoom, listRooms, quickRoom, RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
@@ -31,8 +31,10 @@ class FakeWebSocket {
   send(message: string) {
     this.sent.push(message);
   }
-  close() {
+  closedWith: [number?, string?] = [];
+  close(code?: number, reason?: string) {
     this.closed = true;
+    this.closedWith = [code, reason];
     this.readyState = 3;
   }
   emit(type: string, event: unknown) {
@@ -326,7 +328,7 @@ test('RoomLink uses host-only relay fallback without WebRTC', async () => {
     const events: unknown[] = [];
     link.on('welcome', (welcome) => events.push(['welcome', welcome.started]));
     link.on('start', (start) => events.push(['start', start.round, start.players.length]));
-    assert.equal(socket.url.href, 'wss://arcade.test/rooms/ABCD/ws?name=Guest&v=3', 'names the protocol, so the room can hand it the host role');
+    assert.equal(socket.url.href, 'wss://arcade.test/rooms/ABCD/ws?name=Guest&v=4', 'names the protocol, so the room can hand it the host role');
     socket.readyState = FakeWebSocket.OPEN;
     socket.emit('open', new Event('open'));
     socket.emit('message', { data: JSON.stringify({ t: 'welcome', seat: 1, code: 'ABCD', game: 'pong', seats: 2, players: [{ seat: 0, name: 'Host' }, { seat: 1, name: 'Guest' }] }) });
@@ -336,7 +338,7 @@ test('RoomLink uses host-only relay fallback without WebRTC', async () => {
     assert.deepEqual(events, [['welcome', false], ['start', null, 2], ['start', 4, 2]]);
     assert.equal(link.bots, null, 'a room for a game without bots offers none');
     link.send({ paddle: 0.5 }, { fast: true });
-    assert.deepEqual(JSON.parse(socket.sent.at(-1)!), { t: 'msg', to: 0, d: { paddle: 0.5 } });
+    assert.deepEqual(JSON.parse(socket.sent.at(-1)!), { t: 'msg', to: 0, d: { paddle: 0.5 }, f: 1 }, 'fast: the room needn’t keep it for anyone away for a moment');
     assert.equal(link.transport, 'relay');
     link.close();
     assert.equal(socket.closed, true);
@@ -361,7 +363,7 @@ test('RoomLink relays a host broadcast once when every recipient is relayed', as
     link.send({ frame: 2 }, { to: 1 });
 
     assert.deepEqual(socket.sent.map((message) => JSON.parse(message)), [
-      { t: 'msg', d: { frame: 1 } },
+      { t: 'msg', d: { frame: 1 }, f: 1 },
       { t: 'msg', to: 1, d: { frame: 2 } },
     ]);
     link.close();
@@ -984,7 +986,7 @@ test('RoomLink watches as a spectator: no seat, nothing sent, and the room round
   await withFakeRoom(async () => {
     const link = new RoomLink('PPPP', 'Ana', 'https://arcade.test', { watch: true });
     const socket = FakeWebSocket.last;
-    assert.equal(socket.url.href, 'wss://arcade.test/rooms/PPPP/ws?name=Ana&v=3&watch=1');
+    assert.equal(socket.url.href, 'wss://arcade.test/rooms/PPPP/ws?name=Ana&v=4&watch=1');
     const seen: unknown[] = [];
     link.on('welcome', (w) => seen.push(['welcome', w.seat, w.watching, w.started, w.round]));
     link.on('watchers', (w) => seen.push(['watchers', w.names, w.on]));
@@ -1116,4 +1118,55 @@ test('a host hand-off keeps each finished racer on their own score', () => {
   assert.deepEqual([0, 1, 2].map((s) => handOffSeat(s, 2)), [2, 1, 0]);
   const after = raceStandings(scores, [0]);
   assert.deepEqual(after.standings.map((s) => [s.seat, s.score]), [[0, 110]]);
+});
+
+test('RoomLink gets its seat back when its connection drops, and says goodbye when it leaves', async () => {
+  mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: 1_000_000 });
+  try {
+    await withFakeRoom(() => {
+      const key = 'c'.repeat(32);
+      const players = [{ seat: 0, name: 'Host' }, { seat: 1, name: 'Ann' }];
+      const link = new RoomLink('ABCD', 'Ann', 'https://arcade.test');
+      const first = FakeWebSocket.last;
+      const states: string[] = [];
+      const closed: unknown[] = [];
+      link.on('link', (s) => states.push(s));
+      link.on('closed', (c) => closed.push(c));
+      first.open();
+      first.receive({ t: 'welcome', seat: 1, code: 'ABCD', game: 'palmdrive', seats: 8, players, started: true, round: 2, key, multi: true });
+      // the connection drops: no Connection Lost, a try at the seat a moment later
+      first.emit('close', { code: 1006 });
+      assert.deepEqual(states, ['reconnecting']);
+      assert.deepEqual(closed, []);
+      link.send({ move: 1 });
+      link.send({ snap: 1 }, { fast: true });
+      mock.timers.tick(300);
+      const second = FakeWebSocket.last;
+      assert.notEqual(second, first);
+      assert.equal(second.url.searchParams.get('seat'), '1');
+      assert.equal(second.url.searchParams.get('key'), key);
+      second.open();
+      second.receive({ t: 'welcome', seat: 1, code: 'ABCD', game: 'palmdrive', seats: 8, players, started: true, round: 2, key, multi: true, resumed: true });
+      assert.deepEqual(states, ['reconnecting', 'ok']);
+      assert.deepEqual(second.sent.map((m) => JSON.parse(m)), [{ t: 'msg', to: 0, d: { move: 1 } }], 'what it said meanwhile goes now; a snapshot does not');
+      // a connection that goes quiet (nothing heard, a ping unanswered) is dropped and got back the same way
+      for (let i = 0; i < 12; i++) mock.timers.tick(1000);
+      assert.ok(second.sent.includes('ping'));
+      assert.deepEqual(states, ['reconnecting', 'ok', 'reconnecting']);
+      // and once the room has let the seat go, it is a lost connection after all
+      mock.timers.tick(300);
+      FakeWebSocket.last.open();
+      FakeWebSocket.last.receive({ t: 'closed', reason: 'expired' });
+      assert.deepEqual(closed, [{ reason: 'connection-lost', watch: false }]);
+    });
+    await withFakeRoom(() => {
+      const link = new RoomLink('ABCD', 'Bo', 'https://arcade.test');
+      const socket = FakeWebSocket.last;
+      socket.open();
+      link.close();
+      assert.deepEqual(socket.closedWith, [1000, 'leave'], 'a goodbye, so the room lets the seat go at once');
+    });
+  } finally {
+    mock.timers.reset();
+  }
 });
