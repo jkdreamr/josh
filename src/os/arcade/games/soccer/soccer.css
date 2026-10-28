@@ -1598,3 +1598,22 @@
 .g-soccer-scoreboard { min-width: 0; }
 .g-soccer-player-crest.is-svg { width: auto; height: auto; border: 0; clip-path: none; background: none; }
 .g-soccer-player-crest.is-svg > svg { display: block; width: 1.65em; height: 1.65em; }
+
+/* Set-piece chip lives inside the scoreboard grid, so it can never cover the clubs or score. */
+.g-soccer-scoreboard > .g-soccer-setpiece-status {
+  position: static;
+  grid-column: 1 / -1;
+  max-width: none;
+  margin: .3em -.2em -.1em;
+  padding: .2em .55em;
+  border-radius: .3em;
+  font-size: .62em;
+  line-height: 1.4;
+}
+
+/* Lobby club cards: full club names and stat lines instead of ellipsis/clipping. */
+.g-soccer-club-picker-copy strong,
+.g-soccer-club-picker-copy span { white-space: normal; overflow: visible; text-overflow: clip; overflow-wrap: anywhere; }
+
+/* Phone picker header clears the shell's top-right mute/chat/grid pill. */
+.g-soccer-phone-picker header { box-sizing: border-box; align-items: center; min-height: 40px; padding-right: 116px; }

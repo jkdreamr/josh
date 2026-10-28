@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { simulateCpuMatch } from '../src/os/arcade/games/soccer/ai.ts';
-import { broadcastClock, CLUBS, createMatchStats, createStatsObserver, passAccuracy, playerName, possessionShare, REGULAR, xgFor } from '../src/os/arcade/games/soccer/broadcast.ts';
+import { broadcastClock, CLUBS, createMatchStats, matchClubs, createStatsObserver, passAccuracy, playerName, possessionShare, REGULAR, xgFor } from '../src/os/arcade/games/soccer/broadcast.ts';
 import { createWorld, FIELD, STEP, teamDir, TEAM_SIZE, type Team } from '../src/os/arcade/games/soccer/logic.ts';
+import { CLUB_IDS, clubById, DEFAULT_CLUBS, rosterName } from '../src/os/arcade/games/soccer/teams.ts';
 import { applyStoppageCard, checkOffside, noteKick, onFoul } from '../src/os/arcade/games/soccer/rules.ts';
 
 function observeMatch(seed: number, seconds: number) {
@@ -66,12 +67,31 @@ test('rules clock maps the whole half to regulation and rules stoppage to added 
     minutes: 3, left: world.halfLength / 45 * 3, elapsed: world.halfLength / 45 * 1.5, hold: 0,
   };
   stats.added[0] = 3;
-  assert.equal(broadcastClock(world, stats).label, '46:30');
+  assert.equal(broadcastClock(world, stats).label, '45:00', 'clock freezes at 45:00 during added time');
   assert.equal(broadcastClock(world, stats).minute, "45+2'");
   assert.equal(broadcastClock(world, stats).added, 3);
   world.half = 2;
   stats.added[1] = 3;
   assert.equal(broadcastClock(world, stats).minute, "90+2'");
+  assert.equal(broadcastClock(world, stats).label, '90:00', 'clock freezes at 90:00 during added time');
+  world.rules!.stoppage = { minutes: 1, left: 0, elapsed: world.halfLength / 45 * 1.2, hold: 0 };
+  stats.added[1] = 1;
+  assert.equal(broadcastClock(world, stats).label, '90:00');
+  assert.equal(broadcastClock(world, stats).minute, "90+1'");
+  assert.equal(broadcastClock(world, stats).added, 1);
+});
+
+test('one roster source names players everywhere, including picked clubs', () => {
+  const world = createWorld(1, 90);
+  for (const id of [6, 9, 17]) {
+    const team = id < 11 ? 0 : 1;
+    assert.equal(playerName(id, world), rosterName(clubById(DEFAULT_CLUBS[team]), id % 11));
+    assert.equal(playerName(id), matchClubs(world)[team].roster[id % 11]);
+  }
+  world.clubs = [CLUB_IDS[4]!, CLUB_IDS[7]!];
+  assert.equal(playerName(6, world), rosterName(clubById(CLUB_IDS[4]), 6));
+  assert.equal(matchClubs(world)[1].roster[3], rosterName(clubById(CLUB_IDS[7]), 3));
+  assert.equal(matchClubs(world)[0].name, clubById(CLUB_IDS[4]).name);
 });
 
 test('clock and restart heuristic retain legacy behavior without rules', () => {
@@ -80,7 +100,7 @@ test('clock and restart heuristic retain legacy behavior without rules', () => {
   const stats = createMatchStats();
   world.clock = 0;
   stats.added[0] = 3;
-  assert.equal(broadcastClock(world, stats).label, '48:00');
+  assert.equal(broadcastClock(world, stats).label, '45:00');
   assert.equal(broadcastClock(world, stats).minute, "45+3'");
   world.half = 2;
   world.clock = world.halfLength;
@@ -231,9 +251,10 @@ test('broadcast clock advances monotonically through a regular half', () => {
 test('player names are unique and follow formation order', () => {
   const names = Array.from({ length: 22 }, (_, id) => playerName(id));
   assert.equal(new Set(names).size, 22);
-  assert.equal(playerName(0), 'A. MORGAN');
-  assert.equal(playerName(6), 'J. KIM');
-  assert.equal(playerName(9), 'M. RIVERA');
+  assert.equal(playerName(0), rosterName(clubById(DEFAULT_CLUBS[0]), 0));
+  assert.equal(playerName(6), 'G. Hush', 'same name as the HUD panel and on-pitch tag');
+  assert.equal(playerName(9), 'J. Yew');
+  assert.deepEqual(CLUBS[0].roster, clubById(DEFAULT_CLUBS[0]).players.map((player) => player.name));
   assert.equal(CLUBS[0].roster.length, 11);
   assert.equal(CLUBS[1].roster.length, 11);
 });
