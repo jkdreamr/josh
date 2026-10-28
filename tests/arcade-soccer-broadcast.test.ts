@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { simulateCpuMatch } from '../src/os/arcade/games/soccer/ai.ts';
 import { broadcastClock, CLUBS, createMatchStats, createStatsObserver, passAccuracy, playerName, possessionShare, REGULAR, xgFor } from '../src/os/arcade/games/soccer/broadcast.ts';
-import { createWorld, FIELD, STEP, teamDir, type Team } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, FIELD, STEP, teamDir, TEAM_SIZE, type Team } from '../src/os/arcade/games/soccer/logic.ts';
+import { applyStoppageCard, checkOffside, noteKick, onFoul } from '../src/os/arcade/games/soccer/rules.ts';
 
 function observeMatch(seed: number, seconds: number) {
   const observer = createStatsObserver();
@@ -51,13 +52,32 @@ test('expected goals reward central close shots and reject impossible values', (
   assert.equal(xgFor(swapped, { x: swappedGoalX - teamDir(team, true) * 11, z: 0 }, team), penaltyXg);
 });
 
-test('broadcast clock formats regular time, added time, and the second-half start', () => {
+test('rules clock maps the whole half to regulation and rules stoppage to added time', () => {
   const world = createWorld(1, 90);
   const stats = createMatchStats();
-  assert.equal(broadcastClock(world, stats).label, '00:00');
-  assert.equal(broadcastClock(world, stats).minute, "1'");
-  world.clock = world.halfLength * (1 - (REGULAR - 0.001));
+  world.clock = world.halfLength * 0.5;
+  assert.equal(broadcastClock(world, stats).label, '22:30');
+  assert.equal(broadcastClock(world, stats).minute, "23'");
+  world.clock = 0;
+  assert.equal(broadcastClock(world, stats).label, '45:00');
   assert.equal(broadcastClock(world, stats).minute, "45'");
+
+  world.rules!.stoppage = {
+    minutes: 3, left: world.halfLength / 45 * 3, elapsed: world.halfLength / 45 * 1.5, hold: 0,
+  };
+  stats.added[0] = 3;
+  assert.equal(broadcastClock(world, stats).label, '46:30');
+  assert.equal(broadcastClock(world, stats).minute, "45+2'");
+  assert.equal(broadcastClock(world, stats).added, 3);
+  world.half = 2;
+  stats.added[1] = 3;
+  assert.equal(broadcastClock(world, stats).minute, "90+2'");
+});
+
+test('clock and restart heuristic retain legacy behavior without rules', () => {
+  const world = createWorld(1, 90);
+  delete world.rules;
+  const stats = createMatchStats();
   world.clock = 0;
   stats.added[0] = 3;
   assert.equal(broadcastClock(world, stats).label, '48:00');
@@ -65,6 +85,133 @@ test('broadcast clock formats regular time, added time, and the second-half star
   world.half = 2;
   world.clock = world.halfLength;
   assert.equal(broadcastClock(world, stats).label, '45:00');
+
+  world.half = 1;
+  world.halfLength = 48;
+  world.phase = 'live';
+  world.clock = world.halfLength * (1 - (REGULAR - 1 / 48));
+  const observer = createStatsObserver();
+  observer.observe(world, STEP);
+  world.phase = 'restart';
+  world.restart = 'free-kick';
+  world.restartTeam = 1;
+  observer.observe(world, STEP);
+  assert.equal(observer.stats.teams[0].fouls, 1);
+  assert.equal(observer.stats.ticker.at(-1)?.kind, 'foul');
+  assert.equal(observer.stats.added[0], 1);
+});
+
+test('rules stoppage sets the scoreboard tab while frequent restarts do not invent added time', () => {
+  const world = createWorld(1, 90);
+  world.phase = 'live';
+  const observer = createStatsObserver();
+  observer.observe(world, STEP);
+  const version = observer.stats.version;
+  world.rules!.stoppage = { minutes: 3, left: 6, elapsed: 0, hold: 0 };
+  observer.observe(world, STEP);
+  assert.equal(observer.stats.added[0], 3);
+  assert.equal(observer.stats.version, version + 1);
+  assert.equal(broadcastClock(world, observer.stats).added, 3);
+
+  const restarted = createWorld(2, 90);
+  restarted.phase = 'live';
+  restarted.clock = 0;
+  const restartObserver = createStatsObserver();
+  restartObserver.observe(restarted, STEP);
+  for (let count = 0; count < 8; count++) {
+    restarted.phase = 'restart';
+    restarted.restart = 'free-kick';
+    restarted.restartTeam = 1;
+    restartObserver.observe(restarted, STEP);
+    restarted.phase = 'live';
+    restarted.restart = null;
+    restartObserver.observe(restarted, STEP);
+  }
+  assert.equal(restartObserver.stats.added[0], null);
+});
+
+test('offside restarts use the rules event and do not count as fouls', () => {
+  const world = createWorld(3, 90);
+  world.phase = 'live';
+  world.restart = null;
+  const observer = createStatsObserver();
+  observer.observe(world, STEP);
+  const passer = world.players[6]!;
+  const runner = world.players[9]!;
+  for (const player of world.players) {
+    player.z = 0;
+    if (player.team === 1) player.x = 10;
+  }
+  passer.x = 0;
+  runner.x = 30;
+  world.ball.x = 0;
+  noteKick(world, passer, 'pass');
+  world.lastToucherId = passer.id;
+  checkOffside(world, runner);
+  observer.observe(world, STEP);
+  assert.equal(world.restart, 'free-kick');
+  assert.equal(observer.stats.teams[0].fouls, 0);
+  assert.equal(world.rules!.stats.fouls[0], 0);
+  assert.deepEqual(observer.stats.ticker.at(-1), {
+    id: 1,
+    minute: "1'",
+    team: 0,
+    kind: 'offside',
+    text: `offside, ${CLUBS[0].short.toLowerCase()}`,
+  });
+});
+
+test('foul totals mirror the rules state without double-counting restart events', () => {
+  const world = createWorld(4, 90);
+  world.phase = 'live';
+  const observer = createStatsObserver();
+  observer.observe(world, STEP);
+  const offender = world.players[TEAM_SIZE + 6]!;
+  const victim = world.players[6]!;
+  offender.x = -1; offender.z = 0; offender.vx = 0;
+  victim.x = 0; victim.z = 0; victim.facing = Math.PI / 2;
+  onFoul(world, offender, victim, 'tackle', false);
+  observer.observe(world, STEP);
+  assert.equal(world.rules!.stats.fouls[offender.team], 1);
+  assert.equal(observer.stats.teams[offender.team].fouls, 1);
+
+  world.phase = 'restart';
+  world.restart = 'free-kick';
+  world.restartTeam = victim.team;
+  world.event = 'foul';
+  observer.observe(world, STEP);
+  assert.equal(observer.stats.teams[offender.team].fouls, 1);
+});
+
+test('card changes produce yellow, second-yellow and straight-red ticker entries', () => {
+  const world = createWorld(5, 90);
+  world.phase = 'live';
+  const observer = createStatsObserver();
+  observer.observe(world, STEP);
+  const player = world.players[6]!;
+  world.rules!.pendingCard = { playerId: player.id, card: 'yellow' };
+  applyStoppageCard(world);
+  observer.observe(world, STEP);
+  assert.equal(observer.stats.ticker.at(-1)?.kind, 'yellow');
+  assert.equal(observer.stats.ticker.at(-1)?.text, `yellow card, ${playerName(player.id, world)}`);
+
+  world.rules!.pendingCard = { playerId: player.id, card: 'second-yellow' };
+  applyStoppageCard(world);
+  observer.observe(world, STEP);
+  assert.equal(observer.stats.ticker.at(-1)?.kind, 'red');
+  assert.ok(observer.stats.ticker.at(-1)?.text.startsWith('second yellow'));
+  assert.deepEqual(observer.stats.ticker.map((item) => item.kind), ['yellow', 'red']);
+
+  const sentOff = createWorld(6, 90);
+  sentOff.phase = 'live';
+  const redObserver = createStatsObserver();
+  redObserver.observe(sentOff, STEP);
+  const redPlayer = sentOff.players[TEAM_SIZE + 6]!;
+  sentOff.rules!.pendingCard = { playerId: redPlayer.id, card: 'red' };
+  applyStoppageCard(sentOff);
+  redObserver.observe(sentOff, STEP);
+  assert.equal(redObserver.stats.ticker.at(-1)?.kind, 'red');
+  assert.ok(redObserver.stats.ticker.at(-1)?.text.startsWith('red card'));
 });
 
 test('broadcast clock advances monotonically through a regular half', () => {

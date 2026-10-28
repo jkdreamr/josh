@@ -114,13 +114,14 @@ export function adTexture(THREE: Three) {
   return texture;
 }
 
-export type SkyLook = 'night' | 'golden' | 'overcast' | 'rain';
+export type SkyLook = 'day' | 'night' | 'golden' | 'overcast' | 'rain';
 export function skyTexture(THREE: Three) {
   const canvas = document.createElement('canvas');
   canvas.width = 256; canvas.height = 128;
   const ctx = canvas.getContext('2d')!;
   const texture = canvasTexture(THREE, canvas);
   const stops: Record<SkyLook, string[]> = {
+    day: ['#3f78c0', '#6f9fd6', '#a9c8e6', '#d9e4ea'],
     night: ['#030812', '#0a1730', '#1d3150', '#3a4c66'],
     golden: ['#5f86ab', '#c9b9a6', '#f5b27a', '#e07b4c'],
     overcast: ['#7b8794', '#9aa5b0', '#b4bcc4', '#a6adb3'],
@@ -140,7 +141,7 @@ export function skyTexture(THREE: Three) {
       for (let i = 0; i < 70; i++) {
         const x = random() * 256, y = 20 + random() * 80, r = 10 + random() * 24;
         const cloud = ctx.createRadialGradient(x, y, 0, x, y, r);
-        const shade = look === 'rain' ? 40 + random() * 30 : 150 + random() * 60;
+        const shade = look === 'rain' ? 40 + random() * 30 : look === 'day' ? 215 + random() * 40 : 150 + random() * 60;
         cloud.addColorStop(0, `rgba(${shade},${shade + 4},${shade + 10},.35)`); cloud.addColorStop(1, 'rgba(0,0,0,0)');
         ctx.fillStyle = cloud; ctx.fillRect(x - r, y - r, r * 2, r * 2);
       }
