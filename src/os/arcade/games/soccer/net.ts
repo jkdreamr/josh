@@ -6,6 +6,7 @@ import type { CupSummary } from './cup.ts';
 import { validRules } from './rules.ts';
 
 export type MovePacket = { t: 'soccer'; k: 'mv'; r: number; seq: number; seat: number; x: number; z: number; ax: number; az: number; power: number; buttons: number; held: number; e?: number; sx?: number; sz?: number };
+export type PingPacket = { t: 'soccer'; k: 'pg'; id: number; at: number };
 export type SnapshotPacket = { t: 'soccer'; k: 's'; r: number; seq: number; state: World };
 export type ConfigPacket = { t: 'soccer'; k: 'cfg'; r: number; seq: number; half: 2 | 3 | 4 | 6; level: 0 | 1 | 2; displayOnly: boolean; mode?: Mode; comp?: CompetitionId; clubs?: [string, string]; offside?: boolean };
 export type LobbyMember = { seat: number; role: 'host' | 'phone' | 'mac'; side: 0 | 1 };
@@ -14,8 +15,15 @@ export type HiPacket = { t: 'soccer'; k: 'hi'; r: number; seq: number; seat: num
 export type NavPacket = { t: 'soccer'; k: 'nav'; r: number; seq: number; seat: number; dx: -1 | 0 | 1; dy: -1 | 0 | 1; a: boolean; b: boolean };
 export type PracticePickPacket = { t: 'soccer'; k: 'pd'; r: number; seq: number; seat: number; pick: string };
 export type PracticeStatusPacket = { t: 'soccer'; k: 'pp'; r: number; seq: number; drill: string; prompt: string; hint: string; score: string; best: string; done: boolean; tutorial: string };
-export type SoccerPacket = MovePacket | SnapshotPacket | ConfigPacket | LobbyPacket | HiPacket | NavPacket | PracticePickPacket | PracticeStatusPacket;
+export type SoccerPacket = MovePacket | PingPacket | SnapshotPacket | ConfigPacket | LobbyPacket | HiPacket | NavPacket | PracticePickPacket | PracticeStatusPacket;
 export type RemoteSeat = { seq: number; edge: number; held: ControlCommand['heldAction'] | null; pressUsed: boolean };
+export const STICK_MIN_GAP_MS = 8;
+export function sameStick(a: { x: number; z: number }, b: { x: number; z: number }): boolean {
+  return Math.round(a.x * 100) === Math.round(b.x * 100) && Math.round(a.z * 100) === Math.round(b.z * 100);
+}
+export function stickSendDelay(now: number, lastSentAt: number): number {
+  return Math.max(0, STICK_MIN_GAP_MS - (now - lastSentAt));
+}
 const shortText = (value: unknown, max = 160) => typeof value === 'string' && value.length <= max;
 const finite = (v: unknown, abs: number) => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= abs;
 const quantized = (v: unknown) => finite(v, 1) && Math.abs((v as number) * 100 - Math.round((v as number) * 100)) < 1e-6;
@@ -127,7 +135,12 @@ export function movePacket(round: number, seq: number, seat: number, command: Co
 export function parsePacket(value: unknown): SoccerPacket | null {
   if (!value || typeof value !== 'object') return null;
   const p = value as Record<string, unknown>;
-  if (p.t !== 'soccer' || !Number.isSafeInteger(p.r) || (p.r as number) < 0 || !Number.isSafeInteger(p.seq) || (p.seq as number) < 0) return null;
+  if (p.t !== 'soccer') return null;
+  if (p.k === 'pg') {
+    if (!Number.isSafeInteger(p.id) || (p.id as number) < 0 || !inRange(p.at, 0, Number.MAX_VALUE)) return null;
+    return { t: 'soccer', k: 'pg', id: p.id as number, at: p.at as number };
+  }
+  if (!Number.isSafeInteger(p.r) || (p.r as number) < 0 || !Number.isSafeInteger(p.seq) || (p.seq as number) < 0) return null;
   if (p.k === 'cfg') {
     if (![2, 3, 4, 6].includes(p.half as number) || ![0, 1, 2].includes(p.level as number)
       || (p.displayOnly !== undefined && typeof p.displayOnly !== 'boolean')

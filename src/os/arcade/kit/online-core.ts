@@ -20,6 +20,20 @@ export const MAX_SEATS = 20;
 
 export type RelayPlan = { direct: number[]; relay: number[]; relayAll: boolean };
 
+export function sendLabels(fast?: boolean, reliable?: boolean): ('u' | 'r')[] {
+  return fast ? reliable ? ['u', 'r'] : ['u'] : ['r'];
+}
+
+export function channelUsable(readyState: string, connectionState: string): boolean {
+  return readyState === 'open' && !['disconnected', 'failed', 'closed'].includes(connectionState);
+}
+
+export const FAST_BUFFER_LIMIT = 64 * 1024;
+
+export function fastSendBlocked(bufferedAmount: number): boolean {
+  return bufferedAmount > FAST_BUFFER_LIMIT;
+}
+
 export function relayPlan(recipients: number[], open: (seat: number) => boolean, broadcast: boolean): RelayPlan {
   const direct: number[] = [];
   const relay: number[] = [];

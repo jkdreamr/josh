@@ -14,6 +14,7 @@ import type { PracticeMarker } from './practice.ts';
 import { approachAngle, bindSoccerRig, bodyFrameVelocity, createSoccerAnimationInput, createSoccerAnimator, kickingFoot, playSoccerClip, preferredFoot, soccerClipActive, soccerDribbleOffset, updateSoccerAnimator, type SoccerAnimator, type SoccerClip } from './player.ts';
 import type { SoccerRenderStats } from './perf.ts';
 import { createFxLayer, type FxDirector } from './fx.ts';
+import { createQualityGovernor } from './quality.ts';
 
 type Three = typeof import('three');
 export type TimeMode = 'night' | 'golden' | 'overcast' | 'rain';
@@ -418,14 +419,12 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const debug = typeof location !== 'undefined' && new URLSearchParams(location.search).has('soccerdebug');
   const quality = {
     dpr: Math.min(window.devicePixelRatio || 1, lite ? 1.5 : 2),
-    slow: 0,
     stable: 0,
-    lastRender: 0,
-    avgMs: 16.7,
     shadows: true,
     crowdHalf: false,
     nextLog: 0,
   };
+  const governor = createQualityGovernor();
   renderer.setPixelRatio(quality.dpr);
   const onLost = (event: Event) => event.preventDefault();
   canvas.addEventListener('webglcontextlost', onLost);
@@ -692,28 +691,17 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   function render() {
     if (warming) return;
     const now = performance.now();
-    if (quality.lastRender > 0) {
-      const frameMs = now - quality.lastRender;
-      quality.avgMs = quality.avgMs * 0.92 + frameMs * 0.08;
-      if (quality.avgMs > 20) {
-        quality.slow++;
-        quality.stable = 0;
-        if (quality.slow >= 45) {
-          reduceQuality();
-          quality.slow = 0;
-        }
-      } else {
-        quality.slow = 0;
-        quality.stable++;
-      }
-    }
-    quality.lastRender = now;
+    if (governor.sample(now)) {
+      reduceQuality();
+      quality.stable = 0;
+    } else if (governor.avgMs <= 20) quality.stable++;
+    else quality.stable = 0;
     renderer.render(scene, camera);
     if (debug && now >= quality.nextLog) {
       quality.nextLog = now + 3000;
       console.info('[soccerdebug]', {
         dpr: quality.dpr,
-        frameMs: Number(quality.avgMs.toFixed(1)),
+        frameMs: Number(governor.avgMs.toFixed(1)),
         calls: renderer.info.render.calls,
         triangles: renderer.info.render.triangles,
         shadows: quality.shadows,

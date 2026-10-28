@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { acceptMovePacket, commandFromPacket, consumeCommand, mergeRemoteCommand, movePacket, parsePacket, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
+import { acceptMovePacket, commandFromPacket, consumeCommand, mergeRemoteCommand, movePacket, parsePacket, sameStick, stickSendDelay, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
 import { chargePower } from '../src/os/arcade/games/soccer/input.ts';
 
 const remoteSeat = (): RemoteSeat => ({ seq: -1, edge: -1, held: null, pressUsed: false });
@@ -10,6 +10,23 @@ test('online move packets round-trip validated inputs', () => {
   assert.deepEqual(parsePacket(packet), packet);
   assert.equal(commandFromPacket(packet).action, 'shoot');
   assert.equal(commandFromPacket(packet).heldAction, 'shoot');
+});
+
+test('stick changes use move packet quantization and an 8ms minimum gap', () => {
+  assert.equal(sameStick({ x: 0.004, z: 0 }, { x: 0, z: 0 }), true);
+  assert.equal(sameStick({ x: 0.006, z: 0 }, { x: 0, z: 0 }), false);
+  assert.equal(stickSendDelay(100, 93), 1);
+  assert.equal(stickSendDelay(100, 92), 0);
+  assert.equal(stickSendDelay(110, 100), 0);
+});
+
+test('ping packets validate ids and timestamps', () => {
+  const ping = { t: 'soccer', k: 'pg', id: 3, at: 125.5 };
+  assert.deepEqual(parsePacket(ping), ping);
+  for (const bad of [
+    { ...ping, id: -1 }, { ...ping, id: 1.5 }, { ...ping, at: Number.NaN },
+    { ...ping, at: -1 }, { t: 'soccer', k: 'pg', id: 1 }, { t: 'soccer', k: 'pg', at: 1 },
+  ]) assert.equal(parsePacket(bad), null);
 });
 
 test('held action packets round-trip every supported charged action', () => {
@@ -91,6 +108,17 @@ test('a repeated delivery recovers a lost action edge and is applied once', () =
   const second = acceptMovePacket(first.seat, consumed, { ...repeat, seq: 5 }, false);
   assert.equal(second.command?.action, null);
   assert.equal(second.command?.pressed, false);
+});
+
+test('a duplicate move delivery with the same sequence and edge is applied only once', () => {
+  const packet = movePacket(1, 4, 0, { move: { x: 0.5, z: 0 }, action: 'shoot', pressed: true, power: 0.8 }, 7);
+  const first = acceptMovePacket(remoteSeat(), undefined, packet, false);
+  assert.equal(first.command?.action, 'shoot');
+  const consumed = consumeCommand(first.command!);
+  const duplicate = acceptMovePacket(first.seat, consumed, packet, false);
+  assert.equal(duplicate.command, null);
+  assert.equal(duplicate.seat.seq, packet.seq);
+  assert.equal(duplicate.seat.edge, packet.e);
 });
 
 test('defensive held shot becomes an immediate action and its release is discarded', () => {

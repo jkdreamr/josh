@@ -1,5 +1,5 @@
 import { ARCADE_API } from './leaderboard.ts';
-import { parseOpenRooms, relayPlan, type OpenRoom } from './online-core.ts';
+import { channelUsable, fastSendBlocked, parseOpenRooms, relayPlan, sendLabels, type OpenRoom } from './online-core.ts';
 
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
 /**
@@ -114,6 +114,8 @@ export class RoomLink {
   private readonly socket: WebSocket;
   private readonly listeners = new Map<keyof RoomEvents, Set<Listener<never>>>();
   private readonly peers = new Map<number, Peer>();
+  private readonly retryCounts = new Map<number, number>();
+  private readonly retryTimers = new Map<number, ReturnType<typeof setTimeout>>();
   private pingTimer: ReturnType<typeof setInterval> | null = null;
   private transportValue: RoomTransport = 'relay';
   private closed = false;
@@ -177,20 +179,32 @@ export class RoomLink {
     this.sendSocket({ t: 'over', round });
   }
 
-  send(d: unknown, options: { to?: number; fast?: boolean } = {}) {
-    const label = options.fast ? 'u' : 'r';
+  send(d: unknown, options: { to?: number; fast?: boolean; reliable?: boolean } = {}) {
+    const labels = sendLabels(options.fast, options.reliable);
+    const primary = labels[0]!;
     const payload = JSON.stringify(d);
     const recipients = this.seat === 0
       ? options.to === undefined ? this.players.map(({ seat }) => seat).filter((seat) => seat !== 0) : [options.to]
       : this.seat === null ? [] : [0];
-    const channels = new Map<number, RTCDataChannel>();
+    const channels = new Map<number, Map<'r' | 'u', RTCDataChannel>>();
     const plan = relayPlan(recipients, (seat) => {
-      const channel = this.peers.get(seat)?.channels.get(label);
-      if (channel?.readyState !== 'open') return false;
-      channels.set(seat, channel);
+      const peer = this.peers.get(seat);
+      if (!peer || !channelUsable(peer.channels.get(primary)?.readyState ?? 'closed', peer.pc.connectionState)) return false;
+      const usable = new Map<'r' | 'u', RTCDataChannel>();
+      for (const label of labels) {
+        const channel = peer.channels.get(label);
+        if (channel && channelUsable(channel.readyState, peer.pc.connectionState)) usable.set(label, channel);
+      }
+      channels.set(seat, usable);
       return true;
     }, this.seat === 0 && options.to === undefined);
-    for (const seat of plan.direct) channels.get(seat)?.send(payload);
+    for (const seat of plan.direct) {
+      for (const label of labels) {
+        const channel = channels.get(seat)?.get(label);
+        if (!channel || label === 'u' && fastSendBlocked(channel.bufferedAmount)) continue;
+        channel.send(payload);
+      }
+    }
     if (plan.relayAll) this.sendSocket({ t: 'msg', d });
     else for (const seat of plan.relay) this.sendSocket({ t: 'msg', to: this.seat === 0 ? seat : 0, d });
     if (!recipients.length && options.to !== undefined) this.sendSocket({ t: 'msg', to: options.to, d });
@@ -216,6 +230,8 @@ export class RoomLink {
     this.socket.removeEventListener('close', this.onSocketClose);
     this.socket.removeEventListener('error', this.onSocketError);
     this.socket.close();
+    for (const timer of this.retryTimers.values()) globalThis.clearTimeout(timer);
+    this.retryTimers.clear();
     this.dropPeers();
   }
 
@@ -302,6 +318,9 @@ export class RoomLink {
       return;
     }
     if (this.seat === 0) {
+      this.retryCounts.clear();
+      for (const timer of this.retryTimers.values()) globalThis.clearTimeout(timer);
+      this.retryTimers.clear();
       for (const player of this.players) {
         if (player.seat === 0) continue;
         const peer = this.peers.get(player.seat);
@@ -309,6 +328,7 @@ export class RoomLink {
         if (peer && (peer.pc.connectionState === 'failed' || peer.pc.connectionState === 'closed')) {
           peer.pc.close();
           this.peers.delete(player.seat);
+          this.clearPeerRetry(player.seat);
         } else if (peer) continue;
         await this.offerTo(player.seat);
       }
@@ -321,7 +341,33 @@ export class RoomLink {
       if (keep?.some((player) => player.seat === seat)) continue;
       peer.pc.close();
       this.peers.delete(seat);
+      this.clearPeerRetry(seat);
+      this.retryCounts.delete(seat);
     }
+  }
+
+  private clearPeerRetry(seat: number) {
+    const timer = this.retryTimers.get(seat);
+    if (timer !== undefined) globalThis.clearTimeout(timer);
+    this.retryTimers.delete(seat);
+  }
+
+  private retryPeer(seat: number, peer: Peer) {
+    if (this.closed || this.retryTimers.has(seat) || (this.retryCounts.get(seat) ?? 0) >= 3) return;
+    const timer = globalThis.setTimeout(() => {
+      this.retryTimers.delete(seat);
+      if (this.closed || this.peers.get(seat) !== peer || !this.players.some((player) => player.seat === seat)) return;
+      this.retryCounts.set(seat, (this.retryCounts.get(seat) ?? 0) + 1);
+      peer.pc.close();
+      this.peers.delete(seat);
+      void this.offerTo(seat);
+    }, 1000);
+    this.retryTimers.set(seat, timer);
+  }
+
+  private resetPeerRetries(seat: number) {
+    this.retryCounts.delete(seat);
+    this.clearPeerRetry(seat);
   }
 
   private async offerTo(seat: number) {
@@ -347,6 +393,7 @@ export class RoomLink {
     if (signal.type === 'offer' && stale?.pc.remoteDescription) {
       stale.pc.close();
       this.peers.delete(from);
+      this.clearPeerRetry(from);
     }
     const peer = this.createPeer(from);
     if (!peer) return;
@@ -387,7 +434,14 @@ export class RoomLink {
       this.bindChannels(seat, peer);
     };
     pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') this.setTransport('relay');
+      if (this.peers.get(seat) !== peer) return;
+      if (pc.connectionState === 'connected') {
+        this.updateTransport();
+        if (this.seat === 0) this.resetPeerRetries(seat);
+      } else if (pc.connectionState === 'failed' || pc.connectionState === 'closed' || pc.connectionState === 'disconnected') {
+        this.setTransport('relay');
+        if (pc.connectionState === 'failed' && this.seat === 0) this.retryPeer(seat, peer);
+      }
     };
     return peer;
   }
@@ -420,7 +474,10 @@ export class RoomLink {
       ? this.players.filter(({ seat }) => seat !== 0)
       : this.seat === null ? [] : this.players.filter(({ seat }) => seat === 0);
     const direct = peers.length > 0 && peers.every((player) =>
-      (['r', 'u'] as const).every((label) => this.peers.get(player.seat)?.channels.get(label)?.readyState === 'open'),
+      (['r', 'u'] as const).every((label) => {
+        const peer = this.peers.get(player.seat);
+        return !!peer && channelUsable(peer.channels.get(label)?.readyState ?? 'closed', peer.pc.connectionState);
+      }),
     );
     this.setTransport(direct ? 'direct' : 'relay');
   }
