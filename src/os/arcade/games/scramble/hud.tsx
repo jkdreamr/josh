@@ -993,7 +993,7 @@ const THROW_HELP: Record<ThrowId, string> = {
   flour: 'Bursts into a cloud. Nobody outside it can see in, or through it.',
   sauce: 'Splashes a burning puddle that hurts anyone standing in it, you too.',
   jam: `A sticky puddle that lasts ${THROWS.jam.time} seconds: anyone wading through it slows to a crawl.`,
-  bush: `Grows a bush where it lands for ${THROWS.bush.time} seconds. Stand in it and nobody sees you from a distance until you fire.`,
+  bush: `Grows a bush where it lands for ${THROWS.bush.time} seconds. Stand in it a moment and nobody sees you from a distance until you fire.`,
   mirv: `Goes off ${THROWS.mirv.fuse} seconds after you throw it, then scatters ${THROWS.mirv.split?.n} bomblets that each go off a moment later. Clears a room.`,
   stun: `A blinding flash ${THROWS.stun.fuse} seconds after you throw it. Every egg that can see it (not you) is dazed for up to ${THROWS.stun.time} seconds: slowed, and its screen washed out.`,
 };
@@ -1222,7 +1222,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>The diner and the windmill.</b> Every island has one of each, now and then a second of one, each going by its own name. The diner has booths, a counter and, in the kitchen at the back, two fridges and a chest. The windmill has one way in, flour sacks and a millstone, and a chest across from the door as good as a supply drop.
           </li>
           <li>
-            <b>Bushes and cornfields.</b> Stand in one and nobody sees you from a distance until you fire.
+            <b>Bushes and cornfields.</b> Stand in one a moment and nobody sees you from a distance until you fire.
           </li>
           <li>
             <b>Barrels.</b> Shoot or smack one and it blows up, hurting everyone nearby and setting off other barrels.
