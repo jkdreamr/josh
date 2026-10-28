@@ -136,14 +136,31 @@ function tone({ freq, to, dur = 0.12, type = 'square', vol = 0.18, delay = 0, mu
   o.stop(t + dur + 0.02);
 }
 
+/** Bursts of noise already made, a few of each length, taken in turn: a game that plays one a frame makes no garbage. */
+const noises = new Map<number, { bufs: AudioBuffer[]; next: number }>();
+const NOISE_KINDS = 3;
+
+function noiseBuffer(ac: AudioContext, len: number) {
+  let got = noises.get(len);
+  if (!got || got.bufs[0].sampleRate !== ac.sampleRate) {
+    if (noises.size > 64) noises.clear();
+    noises.set(len, (got = { bufs: [], next: 0 }));
+  }
+  const k = got.next++ % NOISE_KINDS;
+  if (!got.bufs[k]) {
+    const buf = ac.createBuffer(1, len, ac.sampleRate);
+    const d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+    got.bufs[k] = buf;
+  }
+  return got.bufs[k];
+}
+
 function noise(dur = 0.25, vol = 0.25, delay = 0, music = false) {
   if (muted) return;
   const ac = audio();
   if (!ac || !master || !musicBus) return;
-  const len = Math.max(1, Math.floor(ac.sampleRate * dur));
-  const buf = ac.createBuffer(1, len, ac.sampleRate);
-  const d = buf.getChannelData(0);
-  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const buf = noiseBuffer(ac, Math.max(1, Math.floor(ac.sampleRate * dur)));
   const src = ac.createBufferSource();
   const g = ac.createGain();
   g.gain.value = vol;

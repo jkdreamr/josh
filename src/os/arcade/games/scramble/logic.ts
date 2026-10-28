@@ -186,8 +186,10 @@ export const GHILLIE = { still: 0.6, near: 4 };
 export const LEADER_MIN = 3;
 /** About how far a bounce pad carries an egg that glides straight on. */
 export const PAD_FLY = Math.round((PAD.y / FALL) * GLIDE);
-/** Remote eggs are drawn this far in the past, between the last two updates. */
+/** Remote eggs are drawn at least this far in the past, between the reports either side of then... */
 export const INTERP = 0.1;
+/** ...and as far back as the gaps between their reports have lately needed (a slow or patchy connection), up to this. */
+export const INTERP_MAX = 0.3;
 /** The slot numbers: two guns, the melee weapon, and whatever there is to throw. */
 export const SLOT_MELEE = 2;
 export const SLOT_THROW = 3;
@@ -453,6 +455,10 @@ export type Ai = {
   below: number[];
   /** The stairway we're making for this step (see head), or -1: we keep off any other (see steer). */
   steps: number;
+  /** When we last came through a stairway, and a few steps on from where it let us out (see decide). */
+  stairAt: number;
+  stairX: number;
+  stairZ: number;
 };
 
 export type Fighter = {
@@ -557,6 +563,18 @@ export type Fighter = {
   ai: Ai | null;
   /** Remote eggs: recent reports, newest last, and what they hold. */
   snaps: Snap[];
+  /**
+   * Remote eggs: how far in the past they're drawn (see INTERP), the longest wait for a report lately (easing off),
+   * and what's left of the last correction to where they're drawn (meters, and radians of aim), eased out.
+   */
+  lag: number;
+  need: number;
+  /** Remote eggs: when the last report came, and the usual wait between them. */
+  heard: number;
+  gap: number;
+  ox: number;
+  oz: number;
+  oa: number;
   show: { w: Held | null; r: number; flags: number };
   /** Loot ids asked of the host, and when. */
   pending: Map<number, number>;
@@ -1120,6 +1138,13 @@ function newFighter(id: number, e: Entrant, x: number, z: number, team: number):
     input: noInput(),
     ai: null,
     snaps: [],
+    lag: INTERP,
+    need: 0,
+    heard: 0,
+    gap: 1 / 15,
+    ox: 0,
+    oz: 0,
+    oa: 0,
     show: { w: null, r: 0, flags: 0 },
     pending: new Map(),
     keyAsk: -1,
@@ -1240,6 +1265,9 @@ function newAi(m: Match, f: Fighter): Ai {
     cheered: 0,
     below: [],
     steps: -1,
+    stairAt: -99,
+    stairX: 0,
+    stairZ: 0,
   };
 }
 
@@ -1372,6 +1400,12 @@ export function viewOf(f: Fighter) {
   const far = SCOPE_VIEW[clamp(f.scope, 0, MAX_SCOPE)] ?? 0;
   return (isDeep(f.x) ? Math.min(DEEP_VIEW, far) : far) + (f.phase === 'ground' ? levelOf(f.y) * HIGH_VIEW : 0);
 }
+
+/** How much of the island a screen shows round the egg it follows (half the screen's height, in meters): on foot, and gliding down. */
+export const GROUND_VIEW = 14;
+export const DROP_VIEW = 34;
+/** What a screen following egg `f` shows of the island (half its height, in meters): more through a scope, up high, and from up in the air. */
+export const viewAt = (f: Fighter) => (f.phase === 'drop' ? DROP_VIEW + (f.y / BUS_Y) * 20 : GROUND_VIEW + viewOf(f));
 
 /** Does an egg carry the scope of this level? 1x (level 0) it always has. */
 export const hasScope = (f: { scopes: number }, lv: number) => lv === 0 || (lv > 0 && lv <= MAX_SCOPE && (f.scopes & (1 << (lv - 1))) !== 0);
@@ -1864,6 +1898,13 @@ function takeStairs(m: Match, f: Fighter, s: Stair) {
   f.stillT = 0;
   if (f.reviving >= 0) stopReviving(m, f);
   if (f.ai && down && !f.ai.below.includes(s.u)) f.ai.below.push(s.u);
+  if (f.ai) {
+    // (on the way it walked: below on past the foot, up top back off the top end)
+    const k = down ? STAIR_ON : -STAIR_ON;
+    f.ai.stairAt = m.time;
+    f.ai.stairX = p.x + s.dx * k;
+    f.ai.stairZ = p.z + s.dz * k;
+  }
   emit(m, { t: 'stairs', f: f.id, down });
 }
 
@@ -4092,36 +4133,112 @@ export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: n
   }
   f.show = { w: s.w, r: s.r, flags: s.flags };
   f.hitT = s.flags & F_HIT ? 0.2 : 0;
-  snaps.push({ at: m.clock, x: s.x, z: s.z, y: s.y, aim: s.aim, vx: s.vx, vz: s.vz });
+  // the wait for this report since the one before: the longest lately sets how far back the egg is drawn, and one
+  // that comes hard on the heels of the last (held up on the way) counts from a little after it, so the egg doesn't
+  // dart between the two
+  const prev = snaps[snaps.length - 1];
+  let when = m.clock;
+  if (prev) {
+    const wait = m.clock - f.heard;
+    if (Math.abs(prev.vx) + Math.abs(prev.vz) < STILL_V) {
+      // it stood still, and one standing still is only reported now and then (nothing changes): that wait says nothing
+      // of the link, and it stood there until about a usual wait before this report (not setting off slowly long ago)
+      f.need = Math.max(0, f.need - wait * NEED_EASE);
+      if (m.clock - prev.at > f.gap * 1.5) snaps.push({ ...prev, at: m.clock - f.gap });
+    } else {
+      f.gap += (wait - f.gap) * 0.1;
+      when = Math.max(m.clock, prev.at + f.gap * 0.6);
+      f.need = Math.max(when - prev.at, f.need - wait * NEED_EASE);
+    }
+  }
+  f.heard = m.clock;
+  snaps.push({ at: when, x: s.x, z: s.z, y: s.y, aim: s.aim, vx: s.vx, vz: s.vz });
   if (snaps.length > 8) snaps.splice(0, snaps.length - 8);
   if (snaps.length === 1) {
     f.x = s.x;
     f.z = s.z;
     f.y = s.y;
     f.aim = s.aim;
+    f.ox = f.oz = f.oa = 0;
+    return;
   }
+  // news that it isn't quite where we've been drawing it (it turned while we guessed it went straight on): it stays
+  // where it's drawn, and eases over to the right place (see follow), unless that's far off
+  trace(snaps, m.clock - f.lag);
+  const ox = f.x - traced.x;
+  const oz = f.z - traced.z;
+  const far = ox * ox + oz * oz > SNAP_D * SNAP_D;
+  f.ox = far ? 0 : ox;
+  f.oz = far ? 0 : oz;
+  f.oa = far ? 0 : angleDiff(f.aim, traced.aim);
 }
 
-/** Moves a remote egg to where it was INTERP seconds ago, between the reports either side of then. */
-function follow(m: Match, f: Fighter, dt: number) {
-  const snaps = f.snaps;
-  if (!snaps.length || f.phase === 'out') return;
-  const t = m.clock - INTERP;
+/** How fast the longest wait for a report eases off (seconds a second). */
+const NEED_EASE = 0.05;
+/** Slower than this (meters a second, along x and z together), a remote egg is standing still. */
+const STILL_V = 0.3;
+/** How fast a remote egg is drawn further back when its reports come further apart, and nearer again (seconds a second). */
+const LAG_UP = 0.2;
+const LAG_DOWN = 0.05;
+/** A correction this far (meters) is made at once; anything less eases out at this rate. */
+const SNAP_D = 3;
+const EASE = 10;
+/** Where trace puts a remote egg. */
+const traced = { x: 0, z: 0, y: 0, aim: 0, vx: 0, vz: 0 };
+
+/** Where an egg was at time `t` by its reports: between the two either side of then, or a moment on from the last. */
+function trace(snaps: Snap[], t: number) {
   const last = snaps[snaps.length - 1];
+  let a = last;
+  let b = last;
+  let u = 0;
   if (t >= last.at) {
     // nothing newer yet: carry on a moment at the last speed
     const ahead = Math.min(0.25, t - last.at);
-    place(f, last, last.x + last.vx * ahead, last.z + last.vz * ahead, last.y, last.aim);
-  } else if (t <= snaps[0].at) {
-    place(f, snaps[0], snaps[0].x, snaps[0].z, snaps[0].y, snaps[0].aim);
-  } else {
+    traced.x = last.x + last.vx * ahead;
+    traced.z = last.z + last.vz * ahead;
+    traced.y = last.y;
+    traced.aim = last.aim;
+    traced.vx = last.vx;
+    traced.vz = last.vz;
+    return;
+  }
+  if (t <= snaps[0].at) a = b = snaps[0];
+  else {
     let i = 0;
     while (i < snaps.length - 2 && snaps[i + 1].at <= t) i++;
-    const a = snaps[i];
-    const b = snaps[i + 1];
-    const u = clamp((t - a.at) / Math.max(1e-6, b.at - a.at), 0, 1);
-    place(f, b, a.x + (b.x - a.x) * u, a.z + (b.z - a.z) * u, a.y + (b.y - a.y) * u, a.aim + angleDiff(b.aim, a.aim) * u);
+    a = snaps[i];
+    b = snaps[i + 1];
+    u = clamp((t - a.at) / Math.max(1e-6, b.at - a.at), 0, 1);
   }
+  traced.x = a.x + (b.x - a.x) * u;
+  traced.z = a.z + (b.z - a.z) * u;
+  traced.y = a.y + (b.y - a.y) * u;
+  traced.aim = a.aim + angleDiff(b.aim, a.aim) * u;
+  traced.vx = b.vx;
+  traced.vz = b.vz;
+}
+
+/**
+ * Moves a remote egg to where it was a moment ago (see INTERP), between the reports either side of then: further back
+ * while they come further apart, so it glides on rather than stopping short and jumping, with any correction eased in.
+ */
+function follow(m: Match, f: Fighter, dt: number) {
+  const snaps = f.snaps;
+  if (!snaps.length || f.phase === 'out') return;
+  const want = clamp(f.need + 0.02, INTERP, INTERP_MAX);
+  f.lag = clamp(want, f.lag - LAG_DOWN * dt, f.lag + LAG_UP * dt);
+  trace(snaps, m.clock - f.lag);
+  const k = Math.exp(-EASE * dt);
+  f.ox *= k;
+  f.oz *= k;
+  f.oa *= k;
+  f.x = clampX(traced.x + f.ox, 30);
+  f.z = clamp(traced.z + f.oz, -EDGE - 30, EDGE + 30);
+  f.y = traced.y;
+  f.aim = traced.aim + f.oa;
+  f.vx = traced.vx;
+  f.vz = traced.vz;
   if (f.phase === 'ground' && f.y < 0.5) {
     f.bush = coverOf(m, f.x, f.z);
     f.inside = buildingAt(m.map, f.x, f.z);
@@ -4134,15 +4251,6 @@ function follow(m: Match, f: Fighter, dt: number) {
     f.wet = false;
     f.warm = false;
   }
-}
-
-function place(f: Fighter, speed: Snap, x: number, z: number, y: number, aim: number) {
-  f.x = clampX(x, 30);
-  f.z = clamp(z, -EDGE - 30, EDGE + 30);
-  f.y = y;
-  f.aim = aim;
-  f.vx = speed.vx;
-  f.vz = speed.vz;
 }
 
 // -------------------------------------------------------------------------------------------------------------------
@@ -4172,6 +4280,34 @@ export function concealed(m: Match, f: Fighter, viewer: Fighter | undefined) {
   if (!m.zones.length) return false;
   const cloud = zoneAt(m, 'flour', f.x, f.z);
   return !!cloud && cloud !== zoneAt(m, 'flour', viewer.x, viewer.z);
+}
+
+/**
+ * How long a screen keeps showing an egg once something says to hide it (a bush, a cornfield, flour, a roof, a
+ * ghillie suit, the wall beside the doorway we peek through), and keeps it hidden once that says to show it, in
+ * seconds: an egg on the edge of one, or a step either side of where it starts to show, never blinks out or in, and
+ * one running through a bush stays in sight. Once hidden it stays gone a little while (`gone`), so it never blinks out
+ * for a moment either; one that fires shows at once.
+ */
+export const SEEN_HOLD = { hide: 0.5, show: 0.15, gone: 0.45 };
+
+/** What a screen shows of an egg: `on` while it's drawn, how long that has been so (`since`), and how long whatever hides it has said otherwise (`t`). */
+export type Seen = { on: boolean; t: number; since: number };
+
+/**
+ * One frame (`dt` seconds) of what a screen shows of an egg that whatever hides it says to `hide` or not (see
+ * SEEN_HOLD); `now` makes the change at once (an egg that has just fired, or one that has only now come into view).
+ * Whether it's drawn.
+ */
+export function seenStep(s: Seen, hide: boolean, dt: number, now = false) {
+  s.since += dt;
+  if (s.on !== hide) s.t = 0;
+  else if (now || ((s.t += dt) >= (hide ? SEEN_HOLD.hide : SEEN_HOLD.show) && (hide || s.since >= SEEN_HOLD.gone))) {
+    s.on = !hide;
+    s.t = 0;
+    s.since = 0;
+  }
+  return s.on;
 }
 
 /** In a ghillie suit, still and quiet on the grass: hard to make out from more than a few steps away. */
@@ -4558,6 +4694,7 @@ function think(m: Match, f: Fighter, dt: number) {
     // stand still behind cover while it takes (or out of our box, see goOut)
   } else if (hiding) head(m, f, ai, ai.hideX, ai.hideZ, dt, 0.5);
   else if (via) head(m, f, ai, via.x, via.z, dt, 0);
+  else if (m.time - ai.stairAt < STAIR_STAY && levelAt(m, ai.gx, ai.gz) !== levelAt(m, f.x, f.z) && ai.goal !== 'zone' && ai.goal !== 'chase' && ai.goal !== 'revive') head(m, f, ai, ai.stairX, ai.stairZ, dt, 0.5);
   else head(m, f, ai, ai.gx, ai.gz, dt, ai.goal === 'roam' ? 2 : ai.goal === 'smash' ? 1.4 : ai.goal === 'vault' ? 0.6 : ai.goal === 'revive' ? REVIVE_R - 0.8 : ai.goal === 'mate' ? (ai.askK ? 1.8 : m.time < ai.followUntil ? 3 : 6) : 0.4);
   // facing the way we go, or where a teammate saw an enemy
   inp.aim = m.clock < ai.lookUntil ? Math.atan2(ai.lookX - topX(f.x), ai.lookZ - f.z) : Math.hypot(f.vx, f.vz) > 0.5 ? Math.atan2(f.vx, f.vz) : f.aim;
@@ -4868,6 +5005,16 @@ function scopeFor(m: Match, f: Fighter, ai: Ai) {
   for (let lv = f.inside >= 0 ? Math.min(best, 1) : best; lv > 0; lv--) if (hasScope(f, lv)) return lv;
   return 0;
 }
+
+/**
+ * Seconds a computer egg keeps on from a stairway it has just come through before it may turn back (unless there's
+ * something to fight, the storm, a fight to chase or a teammate to revive), and how far on it walks meanwhile: never
+ * down and straight back up, gone from sight for a blink.
+ */
+const STAIR_STAY = 2;
+const STAIR_ON = 3;
+/** Which side of the stairs a point is on: up top (-2), or the basement it's in. */
+const levelAt = (m: Match, x: number, z: number) => (isDeep(x) ? basementAt(m.map, x, z) : -2);
 
 /** The widest a computer egg's aim strays (radians), however far off and quick the target. */
 const MISS = 0.35;
@@ -5191,12 +5338,19 @@ function pickGoal(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   }
 }
 
+/** The containers in each building, by building, for stocked. */
+const holds = new WeakMap<GameMap, number[][]>();
+
 /** Whether a basement still has something in it: a container nobody has opened or broken, or loot on its floor. */
 function stocked(m: Match, u: number) {
   const b = m.map.buildings[u];
   if (!b) return false;
   const inside = (x: number, z: number) => Math.abs(x - b.x) < b.w / 2 && Math.abs(z - b.z) < b.d / 2;
-  for (const c of m.map.containers) if (!m.opened[c.id] && c.kind !== 'supply' && inside(c.x, c.z)) return true;
+  // (the containers in each building, found once a map: every computer egg asks of every stairway, often)
+  let held = holds.get(m.map);
+  if (!held) holds.set(m.map, (held = []));
+  const ids = (held[u] ??= m.map.containers.filter((c) => c.kind !== 'supply' && inside(c.x, c.z)).map((c) => c.id));
+  for (const id of ids) if (!m.opened[id]) return true;
   let any = false;
   lootNear(m, b.x, b.z, Math.max(b.w, b.d) / 2, (l) => {
     if (inside(l.x, l.z)) any = true;

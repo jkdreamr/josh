@@ -23,6 +23,8 @@ export function createGL(THREE: Three, host: HTMLElement, opts: { alpha?: boolea
     return null;
   }
   renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, opts.maxDpr ?? 2));
+  // asking the GPU for a shader's build log is a wait on it: only while developing
+  renderer.debug.checkShaderErrors = import.meta.env.DEV;
   const canvas = renderer.domElement;
   canvas.style.display = 'block';
   canvas.style.width = '100%';
