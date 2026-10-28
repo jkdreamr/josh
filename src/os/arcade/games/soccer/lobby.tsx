@@ -37,7 +37,7 @@ const modeLabels: Record<Mode, string> = { cpu: 'vs cpu', versus: '2 player vers
 const competitionOptions = COMPETITIONS.map(({ id, label }) => [id, label] as const);
 const halfOptions = [['2', '2 min'], ['4', '4 min'], ['6', '6 min']] as const;
 const cameraOptions = [['broadcast', 'Broadcast'], ['end', 'End to end']] as const;
-const timeOptions = [['night', 'Night'], ['golden', 'Golden hour'], ['overcast', 'Overcast'], ['rain', 'Rain']] as const;
+const timeOptions = [['day', 'Day'], ['night', 'Night'], ['golden', 'Golden hour'], ['overcast', 'Overcast'], ['rain', 'Rain']] as const;
 const clampIndex = (index: number) => (index + CLUBS.length) % CLUBS.length;
 const nextClubId = (id: string, direction: number, other: string) => {
   let index = clampIndex(CLUBS.findIndex((club) => club.id === id));

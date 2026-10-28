@@ -46,7 +46,7 @@ export type TeamStats = {
   possession: number;
 };
 
-export type TickerKind = 'goal' | 'own-goal' | 'save' | 'corner' | 'foul' | 'penalty' | 'chance' | 'half-time' | 'full-time';
+export type TickerKind = 'goal' | 'own-goal' | 'save' | 'corner' | 'foul' | 'offside' | 'yellow' | 'red' | 'penalty' | 'chance' | 'half-time' | 'full-time';
 export type TickerItem = { id: number; minute: string; team: Team | null; kind: TickerKind; text: string; scorer?: number; assist?: number | null };
 export type MatchStats = { teams: [TeamStats, TeamStats]; ticker: TickerItem[]; goals: TickerItem[]; added: [number | null, number | null]; version: number };
 
@@ -85,7 +85,18 @@ export function broadcastClock(world: World, stats: MatchStats): { label: string
   const frac = world.halfLength === 0 ? 1 : clamp((world.halfLength - world.clock) / world.halfLength, 0, 1);
   let totalSeconds: number;
   let minute: string;
-  if (frac < REGULAR) {
+  if (world.rules) {
+    const gameSeconds = frac * 2700;
+    const stoppage = world.rules.stoppage;
+    if (stoppage) {
+      const extraSeconds = stoppage.elapsed / (world.halfLength / 45) * 60;
+      totalSeconds = (base + 45) * 60 + extraSeconds;
+      minute = `${base + 45}+${Math.min(stoppage.minutes, Math.floor(extraSeconds / 60) + 1)}'`;
+    } else {
+      totalSeconds = base * 60 + gameSeconds;
+      minute = `${Math.min(base + 45, Math.floor(base + gameSeconds / 60) + 1)}'`;
+    }
+  } else if (frac < REGULAR) {
     const gameSeconds = frac / REGULAR * 2700;
     totalSeconds = base * 60 + gameSeconds;
     minute = `${Math.min(base + 45, Math.floor(base + gameSeconds / 60) + 1)}'`;
@@ -115,6 +126,8 @@ export function createStatsObserver() {
   let previousActions = Array<string>(TEAM_SIZE * 2).fill('');
   let previousCooldowns = Array<number>(TEAM_SIZE * 2).fill(0);
   let previousSlideWon = Array<boolean>(TEAM_SIZE * 2).fill(false);
+  let previousYellows = new Set<number>();
+  let previousSentOff = Array<boolean>(TEAM_SIZE * 2).fill(false);
   let currentHalf: World['half'] = 1;
   let pendingPass: { team: Team; passer: number } | null = null;
   let pendingShot: { team: Team; shooter: number; xg: number } | null = null;
@@ -140,6 +153,8 @@ export function createStatsObserver() {
     previousActions = Array<string>(TEAM_SIZE * 2).fill('');
     previousCooldowns = Array<number>(TEAM_SIZE * 2).fill(0);
     previousSlideWon = Array<boolean>(TEAM_SIZE * 2).fill(false);
+    previousYellows = new Set<number>();
+    previousSentOff = Array<boolean>(TEAM_SIZE * 2).fill(false);
     currentHalf = 1;
     pendingPass = null;
     pendingShot = null;
@@ -190,8 +205,10 @@ export function createStatsObserver() {
         previousActions[player.id] = player.action;
         previousCooldowns[player.id] = player.cooldown;
         previousSlideWon[player.id] = !!player.slide?.won;
+        previousSentOff[player.id] = !!player.sentOff;
         stats.teams[player.team].goals = world.score[player.team];
       }
+      previousYellows = new Set(world.rules?.yellows ?? []);
     }
 
     if (world.half !== currentHalf) {
@@ -271,6 +288,16 @@ export function createStatsObserver() {
       previousSlideWon[player.id] = !!player.slide?.won;
     }
 
+    if (world.rules) {
+      for (const team of [0, 1] as const) {
+        const fouls = world.rules.stats.fouls[team];
+        if (stats.teams[team].fouls !== fouls) {
+          stats.teams[team].fouls = fouls;
+          stats.version++;
+        }
+      }
+    }
+
     if (pendingShot && ((carrier !== null && teamOf(carrier) !== pendingShot.team && !savedThisStep)
       || (world.phase !== 'live' && !scored))) pendingShot = null;
 
@@ -283,14 +310,35 @@ export function createStatsObserver() {
           stats.teams[world.restartTeam].corners++;
           addTicker(world, 'corner', world.restartTeam, `corner, ${clubById(world.clubs?.[world.restartTeam] ?? DEFAULT_CLUBS[world.restartTeam]).short.toLowerCase()}`);
         } else if (world.restart === 'free-kick') {
-          stats.teams[1 - world.restartTeam].fouls++;
-          addTicker(world, 'foul', world.restartTeam, `foul, ${clubById(world.clubs?.[world.restartTeam] ?? DEFAULT_CLUBS[world.restartTeam]).short.toLowerCase()}`);
+          const offendingTeam = (1 - world.restartTeam) as Team;
+          if (!world.rules) stats.teams[offendingTeam].fouls++;
+          if (world.rules && world.event === 'offside') {
+            addTicker(world, 'offside', offendingTeam, `offside, ${clubById(world.clubs?.[offendingTeam] ?? DEFAULT_CLUBS[offendingTeam]).short.toLowerCase()}`);
+          } else {
+            addTicker(world, 'foul', world.restartTeam, `foul, ${clubById(world.clubs?.[world.restartTeam] ?? DEFAULT_CLUBS[world.restartTeam]).short.toLowerCase()}`);
+          }
         } else if (world.restart === 'penalty') {
-          stats.teams[1 - world.restartTeam].fouls++;
+          if (!world.rules) stats.teams[1 - world.restartTeam].fouls++;
           addTicker(world, 'penalty', world.restartTeam, `penalty, ${clubById(world.clubs?.[world.restartTeam] ?? DEFAULT_CLUBS[world.restartTeam]).short.toLowerCase()}`);
         }
       }
     }
+
+    if (world.rules) {
+      for (const id of world.rules.yellows) {
+        if (previousYellows.has(id)) continue;
+        const player = world.players.find((candidate) => candidate.id === id);
+        if (player) addTicker(world, 'yellow', player.team, `yellow card, ${playerName(id, world)}`);
+      }
+      for (const player of world.players) {
+        if (!previousSentOff[player.id] && player.sentOff) {
+          const kind = previousYellows.has(player.id) ? 'second yellow' : 'red card';
+          addTicker(world, 'red', player.team, `${kind}, ${playerName(player.id, world)}`);
+        }
+      }
+      previousYellows = new Set(world.rules.yellows);
+    }
+    for (const player of world.players) previousSentOff[player.id] = !!player.sentOff;
 
     if (previousPhase !== 'half-time' && world.phase === 'half-time') {
       addTicker(world, 'half-time', null, `half time, ${clubById(world.clubs?.[0] ?? DEFAULT_CLUBS[0]).short} ${world.score[0]}-${world.score[1]} ${clubById(world.clubs?.[1] ?? DEFAULT_CLUBS[1]).short}`);
@@ -299,10 +347,18 @@ export function createStatsObserver() {
       addTicker(world, 'full-time', null, `full time, ${clubById(world.clubs?.[0] ?? DEFAULT_CLUBS[0]).short} ${world.score[0]}-${world.score[1]} ${clubById(world.clubs?.[1] ?? DEFAULT_CLUBS[1]).short}`);
     }
 
-    const frac = world.halfLength === 0 ? 1 : clamp((world.halfLength - world.clock) / world.halfLength, 0, 1);
-    if (frac >= REGULAR - 1 / 48 && stats.added[world.half - 1] === null) {
-      stats.added[world.half - 1] = clamp(1 + goalsThisHalf + Math.floor(stoppagesThisHalf / 6), 1, 5);
-      stats.version++;
+    if (world.rules) {
+      const stoppage = world.rules.stoppage;
+      if (stoppage && stats.added[world.half - 1] !== stoppage.minutes) {
+        stats.added[world.half - 1] = stoppage.minutes;
+        stats.version++;
+      }
+    } else {
+      const frac = world.halfLength === 0 ? 1 : clamp((world.halfLength - world.clock) / world.halfLength, 0, 1);
+      if (frac >= REGULAR - 1 / 48 && stats.added[world.half - 1] === null) {
+        stats.added[world.half - 1] = clamp(1 + goalsThisHalf + Math.floor(stoppagesThisHalf / 6), 1, 5);
+        stats.version++;
+      }
     }
 
     previousPhase = world.phase;
