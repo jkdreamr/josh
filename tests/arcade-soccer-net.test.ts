@@ -1,15 +1,36 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { acceptMovePacket, commandFromPacket, consumeCommand, mergeRemoteCommand, movePacket, parsePacket, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
-import { chargePower } from '../src/os/arcade/games/soccer/input.ts';
+import { chargePower, screenToWorld } from '../src/os/arcade/games/soccer/input.ts';
+import { desiredCameraBasis } from '../src/os/arcade/games/soccer/camera.ts';
+import { createWorld, STEP, stepWorld } from '../src/os/arcade/games/soccer/logic.ts';
 
 const remoteSeat = (): RemoteSeat => ({ seq: -1, edge: -1, held: null, pressUsed: false });
+const stickDirections = [
+  { x: 0, z: -1 },
+  { x: Math.SQRT1_2, z: -Math.SQRT1_2 },
+  { x: 1, z: 0 },
+  { x: -Math.SQRT1_2, z: Math.SQRT1_2 },
+];
+const assertVectorClose = (actual: { x: number; z: number } | null | undefined, expected: { x: number; z: number }) => {
+  assert.ok(actual);
+  assert.ok(Math.hypot(actual.x - expected.x, actual.z - expected.z) < 0.02);
+};
 
 test('online move packets round-trip validated inputs', () => {
   const packet = movePacket(2, 42, 1, { move: { x: 0.32, z: -1 }, sprint: true, action: 'shoot', heldAction: 'shoot', pressed: true });
   assert.deepEqual(parsePacket(packet), packet);
   assert.equal(commandFromPacket(packet).action, 'shoot');
   assert.equal(commandFromPacket(packet).heldAction, 'shoot');
+});
+
+test('club navigation packets round-trip the optional club flag', () => {
+  const nav = { t: 'soccer', k: 'nav', r: 1, seq: 2, seat: 1, dx: 1, dy: 0, a: false, b: false, club: true };
+  assert.deepEqual(parsePacket(nav), nav);
+  assert.equal(parsePacket({ ...nav, club: 'yes' }), null);
+  const legacy = { ...nav };
+  delete (legacy as { club?: boolean }).club;
+  assert.deepEqual(parsePacket(legacy), legacy);
 });
 
 test('neutral aim remains neutral in online move packets', () => {
@@ -98,6 +119,132 @@ test('a repeated delivery recovers a lost action edge and is applied once', () =
   const second = acceptMovePacket(first.seat, consumed, { ...repeat, seq: 5 }, false);
   assert.equal(second.command?.action, null);
   assert.equal(second.command?.pressed, false);
+});
+
+test('repeated pass edges retain their already converted world aim', () => {
+  const previous = { move: { x: 0, z: 0 }, action: 'pass' as const, pressed: true, power: 0.8, aim: { x: 0, z: 1 } };
+  const seat: RemoteSeat = { seq: 1, edge: 7, held: null, pressUsed: false };
+  const packet = movePacket(1, 2, 0, {
+    move: { x: 0, z: -1 },
+    action: 'pass',
+    pressed: true,
+    power: 0.8,
+    aim: { x: 0, z: -1 },
+  }, 7);
+  const flip = (point: { x: number; z: number }) => ({ x: -point.x, z: -point.z });
+  const accepted = acceptMovePacket(seat, previous, packet, false, flip);
+  assert.deepEqual(accepted.command?.aim, previous.aim);
+  const neutralAim = acceptMovePacket(
+    { ...seat, seq: 2 },
+    previous,
+    { ...packet, seq: 3, e: 8, ax: 0.05, az: 0 },
+    false,
+    flip,
+  );
+  assert.deepEqual(neutralAim.command?.aim, { x: 0, z: 0 });
+});
+
+test('remote pass and shot releases with two repeats retain broadcast-converted directions and kick once', () => {
+  const actions = ['pass', 'shoot'] as const;
+  for (const action of actions) for (const stick of stickDirections) {
+    const world = createWorld(651, 60, 1);
+    world.phase = 'live';
+    world.restart = null;
+    world.setPiece = null;
+    world.controlled[0] = 6;
+    for (const player of world.players) {
+      player.human = player.id === 6;
+      player.controlled = player.id === 6;
+      player.vx = 0;
+      player.vz = 0;
+      player.cooldown = 0;
+      player.touchCd = 0;
+      if (player.id !== 6) {
+        player.x = player.team === 0 ? -15 : 35;
+        player.z = player.team === 0 ? -35 : 15;
+      }
+    }
+    const carrier = world.players[6]!;
+    carrier.x = 0;
+    carrier.z = 0;
+    world.ball = { x: 0.3, y: 0.11, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false };
+    world.carrierId = carrier.id;
+    world.lastToucherId = carrier.id;
+    const basis = desiredCameraBasis(world, 0, 16 / 9, 'broadcast');
+    const toWorld = (point: { x: number; z: number }) => screenToWorld(point, basis);
+    let seat = remoteSeat();
+    let previous = acceptMovePacket(seat, undefined, movePacket(1, 1, 1, {
+      move: stick,
+      heldAction: action,
+      aim: stick,
+      power: 0.8,
+    }, 0), false, toWorld);
+    seat = previous.seat;
+    let command = previous.command!;
+    const release = movePacket(1, 2, 1, { move: stick, action, pressed: true, aim: stick, power: 0.8 }, 1);
+    previous = acceptMovePacket(seat, command, release, false, toWorld);
+    seat = previous.seat;
+    command = previous.command!;
+    for (const seq of [3, 4]) {
+      previous = acceptMovePacket(seat, command, movePacket(1, seq, 1, {
+        move: stick,
+        action,
+        pressed: true,
+        aim: stick,
+        power: 0.8,
+      }, 1), false, toWorld);
+      seat = previous.seat;
+      command = previous.command!;
+    }
+    assertVectorClose(command.aim, toWorld(stick));
+    assertVectorClose(command.move, toWorld(stick));
+    stepWorld(world, STEP, new Map([[carrier.id, command]]));
+    assert.equal(world.kickEvent?.playerId, carrier.id);
+    assert.equal(world.kickEvent?.action, action);
+    if (action === 'pass') {
+      const speed = Math.hypot(world.ball.vx, world.ball.vz);
+      const expected = toWorld(stick);
+      const alignment = (world.ball.vx * expected.x + world.ball.vz * expected.z) / speed;
+      assert.ok(alignment > Math.cos(Math.PI / 60), `pass launch differs by more than 3° for ${JSON.stringify(stick)}: ${alignment}`);
+    }
+
+    const consumed = consumeCommand(command);
+    const after = acceptMovePacket(seat, consumed, movePacket(1, 5, 1, {
+      move: stick,
+      action,
+      pressed: true,
+      aim: stick,
+      power: 0.8,
+    }, 1), false, toWorld);
+    stepWorld(world, STEP, new Map([[carrier.id, after.command!]]));
+    assert.equal(world.kickEvent, null, 'the repeated edge must not fire a second kick');
+  }
+});
+
+test('directional switches retain world-space vectors through repeated packets', () => {
+  for (const stick of stickDirections) {
+    const world = createWorld(652, 60, 1);
+    const basis = desiredCameraBasis(world, 0, 16 / 9, 'broadcast');
+    const toWorld = (point: { x: number; z: number }) => screenToWorld(point, basis);
+    const first = acceptMovePacket(remoteSeat(), undefined, movePacket(1, 1, 1, {
+      move: stick,
+      switchNearest: true,
+      switchDir: stick,
+    }, 1), false, toWorld);
+    let seat = first.seat;
+    let command = first.command!;
+    for (const seq of [2, 3]) {
+      const repeated = acceptMovePacket(seat, command, movePacket(1, seq, 1, {
+        move: stick,
+        switchNearest: true,
+        switchDir: stick,
+      }, 1), false, toWorld);
+      seat = repeated.seat;
+      command = repeated.command!;
+    }
+    assertVectorClose(command.switchDir, toWorld(stick));
+    assertVectorClose(command.move, toWorld(stick));
+  }
 });
 
 test('defensive held shot becomes an immediate action and its release is discarded', () => {

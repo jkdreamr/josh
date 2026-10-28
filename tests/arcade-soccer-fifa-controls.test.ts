@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { computeAI } from '../src/os/arcade/games/soccer/ai.ts';
-import { createWorld, distance, FIELD, findReceiver, groundPassSpeed, kick, setRestart, STEP, stepWorld, TEAM_SIZE, type Command } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, distance, FIELD, findReceiver, groundPassSpeed, kick, setRestart, STEP, stepWorld, TEAM_SIZE, transferControl, type Command } from '../src/os/arcade/games/soccer/logic.ts';
 import { faceLabels, haptic, phoneClockLabel } from '../src/os/arcade/games/soccer/pad.ts';
 import { sendOff } from '../src/os/arcade/games/soccer/rules.ts';
 
@@ -320,6 +320,17 @@ test('red-card send-off transfers the seated controller to a replacement', () =>
   assertSeatInvariant(world);
 });
 
+test('same-player transfer restores a seated player as human and controlled', () => {
+  const world = worldWithSeats(513, [null, 6, null, null]);
+  const player = world.players[6]!;
+  player.human = false;
+  player.controlled = false;
+  transferControl(world, 0, player.id, player.id);
+  assert.equal(player.human, true);
+  assert.equal(player.controlled, true);
+  assert.equal(world.controlledSeats?.[1], player.id);
+});
+
 test('phone A press and release on the kickoff carrier produces one kick event', () => {
   const world = worldWithSeats(520, [null, 6, null, null]);
   stepWorld(world, STEP);
@@ -372,6 +383,7 @@ test('phone practice strip is one ellipsized line, below the score and hidden in
   assert.match(controlCss, /\.g-soccer-pad-stick\s*\{[^}]*position:\s*absolute/s);
   assert.match(controlCss, /\.g-soccer-pad-stick\s*>\s*i\s*\{[^}]*display:\s*block[^}]*position:\s*absolute[^}]*left:\s*50%[^}]*top:\s*50%[^}]*border-radius:\s*50%/s);
   assert.match(controlCss, /\.g-soccer-pad-stick\s*>\s*i::after\s*\{[^}]*content:\s*""[^}]*position:\s*absolute[^}]*inset:\s*0[^}]*margin:\s*auto[^}]*border-radius:\s*50%/s);
+  assert.match(controlCss, /\.g-soccer-pad \.g-soccer-setpiece-hint\s*\{[^}]*max-width:\s*44vw[^}]*overflow:\s*hidden[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/s);
   assert.match(controlCss, /\.g-soccer-pad \.g-soccer-stick::after\s*\{\s*display:\s*none;/);
   assert.match(controlCss, /\.g-soccer-pad-rotate svg\s*\{[^}]*width:\s*48px[^}]*height:\s*48px[^}]*fill:\s*none[^}]*stroke:\s*currentColor/s);
   assert.match(controlSource, /<svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor"/);

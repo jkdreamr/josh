@@ -1415,6 +1415,22 @@
   font: 500 10px/1 inherit;
   white-space: nowrap;
 }
+.g-soccer-pad .g-soccer-setpiece-hint {
+  display: block;
+  width: 100%;
+  max-width: 44vw;
+  min-width: 0;
+  overflow: hidden;
+  padding: 3px 7px;
+  border: 1px solid #ffffff1c;
+  border-radius: 8px;
+  background: #181b20cc;
+  color: #f5f5f7;
+  font: 500 11px/1.2 system-ui;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .g-soccer-pad-shoulders {
   position: absolute;

@@ -5,7 +5,7 @@ import { computeAI, type Level } from './ai.ts';
 import { chargePower, screenToWorld, gamepadInput, keyboardInput, phoneControlledPlayer, reconcileControllers, syncControllerSeats, type ControlCommand, type GamepadHistory } from './input.ts';
 import { desiredCameraBasis } from './camera.ts';
 import { acceptMovePacket, cloneSnapshot, consumeCommand, InputFreshness, neutralCommand, movePacket, parsePacket, type RemoteSeat, type LobbyMember } from './net.ts';
-import { createWorld, distance, teamOf, findReceiver, isCross, matchClock, nearestCarrier, setRestart, stepWorld, STEP, type Command, type Team, type World } from './logic.ts';
+import { createWorld, distance, teamOf, findReceiver, isCross, matchClock, nearestCarrier, setRestart, stepWorld, STEP, type Command, type Point, type Team, type World } from './logic.ts';
 import { phoneStoppagePrompt, setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { SoccerSound, type CommentaryMode } from './audio.ts';
@@ -633,22 +633,16 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         const seat = remoteSeats.current.get(from) ?? { seq: -1, edge: -1, held: null, pressUsed: false };
         const previous = remoteCommands.current.get(player.id);
         const carrier = nearestCarrier(current);
-        const accepted = acceptMovePacket(seat, previous, packet, !!carrier && carrier.team !== player.team);
+        const remoteRole = lobbyState?.members.find((member) => member.seat === from)?.role;
+        const basis = displayOnlyRoom.current && remoteRole !== 'mac'
+          ? viewRef.current?.viewBasis() ?? desiredCameraBasis(current, player.team, 16 / 9, 'broadcast')
+          : null;
+        const toWorld = basis ? (point: Point) => screenToWorld(point, basis) : undefined;
+        const accepted = acceptMovePacket(seat, previous, packet, !!carrier && carrier.team !== player.team, toWorld);
         remoteSeats.current.set(from, accepted.seat);
         if (!accepted.command) return;
         telemetryRef.current?.seq(packet.seq, packet.seat);
         const command = accepted.command;
-        const freshSequence = packet.seq > seat.seq;
-        const freshEdge = packet.e !== undefined && packet.e > seat.edge;
-        if (displayOnlyRoom.current) {
-          const basis = viewRef.current?.viewBasis() ?? desiredCameraBasis(current, player.team, 16 / 9, 'broadcast');
-          if (freshSequence) command.move = screenToWorld(command.move, basis);
-          if (freshSequence || freshEdge) {
-            if (command.switchDir) command.switchDir = screenToWorld(command.switchDir, basis);
-            const aim = screenToWorld(command.aim ?? { x: 0, z: 0 }, basis);
-            command.aim = Math.hypot(aim.x, aim.z) > 0.05 ? aim : { x: 0, z: 0 };
-          }
-        }
         remoteCommands.current.set(player.id, command);
         return;
       }
@@ -692,7 +686,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       }
     });
     return off;
-  }, [audioEnabled, online, online?.round, online?.isHost, setHalfChoice, setLevelChoice, setModeChoice, setCompetitionChoice, setHomeClubChoice, setAwayClubChoice, setOffsideChoice, sound]);
+  }, [audioEnabled, online, online?.round, online?.isHost, lobbyState?.members, setHalfChoice, setLevelChoice, setModeChoice, setCompetitionChoice, setHomeClubChoice, setAwayClubChoice, setOffsideChoice, sound]);
 
   useEffect(() => {
     if (!online?.isHost) return;
