@@ -1,4 +1,4 @@
-import { createWorld, distance, FIELD, FORMATION, KEEPER_REACH, findReceiver, groundPassPower, isCross, movePlayer, nearestCarrier, restartTaker, shotAim, shotError, shotOverchargeThreshold, shotSpeed, STEP, stepWorld, tackleWindow, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
+import { createWorld, distance, FIELD, FORMATION, KEEPER_REACH, findReceiver, groundPassPower, isCross, movePlayer, nearestCarrier, restartTaker, shotAim, shotError, shotOverchargeThreshold, shotSpeed, STEP, stepWorld, teamDir, type Command, type Player, type Point, type Team, type World } from './logic.ts';
 import { cpuMayTackle, offsidePosition, onsideProgress, stepUpLine } from './rules.ts';
 import { activeLunge, commitLunge, observe, passRead, perceive, perceivedTackleWindow } from './perception.ts';
 
