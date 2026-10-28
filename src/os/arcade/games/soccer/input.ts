@@ -1,5 +1,7 @@
 import type { KeyState } from '../../kit/keys.ts';
-import { possessionTeam, type Command, type Point, type Team, type World } from './logic.ts';
+import { isCross, matchClock, possessionTeam, type Command, type Point, type Team, type World } from './logic.ts';
+import { phoneClockLabel } from './pad.ts';
+import { phoneStoppagePrompt, setPieceLabels } from './setpieces.ts';
 
 export type ViewBasis = { right: Point; forward: Point };
 export const IDENTITY_BASIS: ViewBasis = { right: { x: 1, z: 0 }, forward: { x: 0, z: -1 } };
@@ -40,6 +42,22 @@ export function chargePower(seconds: number) {
 
 export function phoneAttacking(world: World | null, team: Team): boolean {
   return !!world && possessionTeam(world) === team;
+}
+
+export function phoneViewKey(world: World | null, team: Team, playerId: number): string {
+  const player = world?.players.find((candidate) => candidate.id === playerId);
+  return JSON.stringify({
+    team,
+    playerId,
+    attacking: phoneAttacking(world, team),
+    labels: world ? setPieceLabels(world, team, playerId) : null,
+    cross: !!world && !!player && isCross(world, player),
+    clock: world && !(world.phase === 'restart' && world.restart === 'kickoff')
+      ? phoneClockLabel(matchClock(world))
+      : null,
+    stoppagePrompt: world ? phoneStoppagePrompt(world, playerId) : null,
+    taking: world?.phase === 'restart' && world.setPiece?.takerId === playerId,
+  });
 }
 
 export function keyboardInput(keys: KeyState, p2 = false, arrows = false): InputState {

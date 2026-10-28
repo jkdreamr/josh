@@ -2,7 +2,7 @@ import { Component, useContext, useEffect, useMemo, useRef, useState, useSyncExt
 import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useOnline, useSetting, useMuted, getSetting, Segmented, defineSetting, levelOptions, levelIndex, TouchControls, sfx } from '../../kit';
 import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
-import { carryEdge, chargePower, screenToWorld, gamepadInput, keyboardInput, phoneAttacking, phoneControlledPlayer, reconcileControllers, syncControllerSeats, type ControlCommand, type GamepadHistory } from './input.ts';
+import { carryEdge, chargePower, screenToWorld, gamepadInput, keyboardInput, phoneAttacking, phoneControlledPlayer, phoneViewKey, reconcileControllers, syncControllerSeats, type ControlCommand, type GamepadHistory } from './input.ts';
 import { desiredCameraBasis } from './camera.ts';
 import { acceptMovePacket, consumeCommand, InputFreshness, neutralCommand, movePacket, parsePacket, sameStick, stickSendDelay, trimSnapshot, type RemoteSeat, type LobbyMember } from './net.ts';
 import { createWorld, distance, teamOf, findReceiver, isCross, matchClock, nearestCarrier, possessionTeam, setRestart, stepWorld, STEP, type Command, type Point, type Team, type World } from './logic.ts';
@@ -1715,6 +1715,7 @@ export function PhoneController() {
   const faceRefs = useRef<Partial<Record<FaceKey, HTMLButtonElement | null>>>({});
   const facePointers = useRef(new Map<number, FaceKey | null>());
   const [score, setScore] = useState<[number, number]>([0, 0]);
+  const [viewKey, setViewKey] = useState('');
   const previousScore = useRef<[number, number]>([0, 0]);
   const previousKickKey = useRef<string | null>(null);
   const reducedMotion = useRef(typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
@@ -2057,7 +2058,9 @@ export function PhoneController() {
         telemetryRef.current?.setPhase(packet.state.phase);
         telemetryRef.current?.match(packet.state.phase !== 'full-time');
         phoneWorld.current = packet.state;
-        const phoneTeam = teamOf(phonePlayerId());
+        const phonePlayer = phonePlayerId();
+        const phoneTeam = teamOf(phonePlayer);
+        setViewKey(phoneViewKey(packet.state, phoneTeam, phonePlayer));
         const feedback = phoneFx(previousScore.current, previousKickKey.current, packet.state, phoneTeam);
         if (feedback) {
           if (feedback === 'goal-for') fxHaptic([70, 40, 120]);
@@ -2102,8 +2105,7 @@ export function PhoneController() {
   }, [online, mode, displayOnly]);
   if (!online) return null;
   if (phoneRoute(online.round, online.started, lobbyState?.screen) === 'picker') return <PhoneTeamPicker online={online} />;
-  const controllerMembers = lobbyState?.members ?? [{ seat: online.seat, role: 'phone' as const, side: sideForRoom(online.code) }];
-  const phonePlayer = assignControllers(controllerMembers, mode, lobbyState?.comp ?? 'quick').get(online.seat) ?? phonePlayerId();
+  const phonePlayer = phonePlayerId();
   const attacking = phoneHasBall();
   const labels = phoneWorld.current ? setPieceLabels(phoneWorld.current, teamOf(phonePlayer), phonePlayer) : null;
   const phonePlayerState = phoneWorld.current?.players[phonePlayer];
@@ -2169,7 +2171,7 @@ export function PhoneController() {
   const lbLabel = labels?.lb ?? (attacking ? 'Skill' : 'Switch');
   const rbLabel = labels?.rb ?? (attacking ? 'Finesse' : 'Press');
   return (
-    <div className={`g-soccer-phone-controller g-soccer-pad ${attacking ? 'is-attack' : 'is-defend'}`}>
+    <div className={`g-soccer-phone-controller g-soccer-pad ${attacking ? 'is-attack' : 'is-defend'}`} data-view-key={viewKey}>
       {phoneFlash && <div key={phoneFlash.id} className={`g-soccer-phone-flash is-${phoneFlash.kind}`} aria-hidden="true" onAnimationEnd={() => setPhoneFlash(null)} />}
       <PadStick key={stickReset} movement={movement} onChange={sendStickChange} />
       <div className="g-soccer-pad-strip">

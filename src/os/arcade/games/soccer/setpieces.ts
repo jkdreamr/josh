@@ -216,6 +216,14 @@ export function takeSetPiece(w: World, action: Action = 'lob', power = 0.65) {
   taker.touchCd=0.5; taker.cooldown=0.5; taker.action='kick';
   w.lastTouch=w.restartTeam; w.lastToucherId=taker.id; w.carrierId=null;
   w.phase='live'; w.restart=null; w.setPiece=null; w.setPieceRun=run;
+  if (s.kind === 'goal-kick' && taker.human && w.controlled[w.restartTeam] === taker.id) {
+    const receiver = w.players.find((player) => player.id === w.passTarget
+      && player.team === w.restartTeam && player.slot !== 'GK' && !player.sentOff && !player.human);
+    const next = receiver ?? w.players.filter((player) => player.team === w.restartTeam
+      && player.slot !== 'GK' && !player.sentOff && !player.human)
+      .sort((a, b) => distance(a, w.ball) - distance(b, w.ball))[0];
+    if (next) transferControl(w, w.restartTeam, next.id, taker.id);
+  }
   if (w.shootout) w.shootout.flight=0;
 }
 export function stepSetPiece(w: World, commands: Map<number,Command>, t: number) {

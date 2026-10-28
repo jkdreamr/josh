@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createWorld, possessionTeam, STEP, stepWorld, type Team } from '../src/os/arcade/games/soccer/logic.ts';
-import { phoneAttacking } from '../src/os/arcade/games/soccer/input.ts';
+import { createWorld, possessionTeam, setRestart, STEP, stepWorld, type Team } from '../src/os/arcade/games/soccer/logic.ts';
+import { phoneAttacking, phoneViewKey } from '../src/os/arcade/games/soccer/input.ts';
 import { playerForSeat, seatForPlayer } from '../src/os/arcade/games/soccer/seats.ts';
 
 function restartWorld(team: Team) {
@@ -118,6 +118,38 @@ test('phone possession follows an opponent pass target while the ball is airborn
 test('phone possession follows the opponent last touch on a loose ball', () => {
   const world = liveWorldWithoutCarrier(1);
   assert.equal(phoneAttacking(world, 0), false);
+});
+
+test('phone view key changes when possession flips without a score change', () => {
+  const attacking = liveWorldWithCarrier(0);
+  const defending = liveWorldWithCarrier(1);
+  assert.deepEqual(attacking.score, defending.score);
+  assert.notEqual(phoneViewKey(attacking, 0, 6), phoneViewKey(defending, 0, 6));
+});
+
+test('phone view key changes when the displayed clock minute changes', () => {
+  const earlier = liveWorldWithCarrier(0);
+  const later = liveWorldWithCarrier(0);
+  earlier.clock = earlier.halfLength;
+  later.clock = 0;
+  assert.notEqual(phoneViewKey(earlier, 0, 6), phoneViewKey(later, 0, 6));
+});
+
+test('phone view key changes when the restart taker changes', () => {
+  const world = createWorld();
+  setRestart(world, 0, 'goal-kick', { x: -47, z: 0 });
+  const phonePlayer = world.setPiece!.takerId;
+  const before = phoneViewKey(world, 0, phonePlayer);
+  world.setPiece!.takerId = world.players.find((player) => player.team === 0 && player.id !== phonePlayer && player.slot !== 'GK')!.id;
+  assert.notEqual(before, phoneViewKey(world, 0, phonePlayer));
+});
+
+test('phone view key ignores ball-position changes within the same possession', () => {
+  const world = liveWorldWithCarrier(0);
+  const moved = structuredClone(world);
+  moved.ball.x += 0.2;
+  assert.equal(possessionTeam(world), possessionTeam(moved));
+  assert.equal(phoneViewKey(world, 0, 6), phoneViewKey(moved, 0, 6));
 });
 
 test('Mac A-pass during an own pass does not defend, but contains against an opponent carrier', () => {

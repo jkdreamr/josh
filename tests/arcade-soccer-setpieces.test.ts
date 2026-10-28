@@ -43,6 +43,15 @@ function goalKickWithAttackers(zs: [number, number], seed = 1234) {
   setRestart(w, 0, 'goal-kick', { x: -47, z: 0 });
   return w;
 }
+function humanGoalKickWorld() {
+  const w = createWorld(1234);
+  const initial = w.players.find(p => p.id === w.controlled[0])!;
+  initial.human = true;
+  initial.controlled = true;
+  w.controlledSeats = [initial.id, null, null, null];
+  setRestart(w, 0, 'goal-kick', { x: -47, z: 0 });
+  return w;
+}
 function assertGoalKickSpacing(w: World) {
   for (let i = 0; i < w.players.length; i++) {
     for (let j = i + 1; j < w.players.length; j++) {
@@ -76,6 +85,36 @@ test('goal-kick spacing moves attackers inward rather than beyond the touchline'
   assert.ok(Math.min(st.z, rw.z) < 33.6);
   assert.ok([st, rw].every(p => p.z >= -33.85 && p.z <= 33.85));
   assert.ok(distance(st, rw) >= 2 - 1e-6);
+});
+test('human goal-kick taker hands control to the delivery target', () => {
+  const w = humanGoalKickWorld();
+  const keeper = w.players.find(p => p.team === 0 && p.slot === 'GK')!;
+  assert.equal(w.setPiece!.takerId, keeper.id);
+  assert.equal(w.controlled[0], keeper.id);
+
+  takeSetPiece(w, 'lob', 0.65);
+  const receiver = w.passTarget;
+  assert.notEqual(receiver, null);
+  ticks(w, 3);
+  assert.notEqual(w.controlled[0], keeper.id);
+  assert.equal(w.controlled[0], receiver);
+});
+test('human goal-kick without a target hands control to the nearest eligible outfielder', () => {
+  const w = humanGoalKickWorld();
+  const keeper = w.players.find(p => p.team === 0 && p.slot === 'GK')!;
+  for (const player of w.players.filter(p => p.team === 0 && p.slot !== 'GK')) {
+    player.x = -30;
+    player.z = 0;
+  }
+  w.setPiece!.aim = { x: -52, z: 0, y: 0.11 };
+  const nearest = w.players.filter(p => p.team === 0 && p.slot !== 'GK' && !p.sentOff && !p.human)
+    .sort((a, b) => distance(a, w.ball) - distance(b, w.ball))[0]!;
+
+  takeSetPiece(w, 'pass', 0.65);
+  assert.equal(w.passTarget, null);
+  ticks(w, 3);
+  assert.notEqual(w.controlled[0], keeper.id);
+  assert.equal(w.controlled[0], nearest.id);
 });
 test('goal-kick spacing is deterministic', () => {
   const a = goalKickWithAttackers([20.2, 20.6]);
