@@ -169,12 +169,15 @@ test('manual switch weights goal-side, excludes current/other humans and flick u
 });
 
 test('command switch flags and defending raw context actions share the logic path', () => {
-  for (const command of [{ switchNearest: true }, { action: 'pass', pressed: true, power: 0.1 }, { switchDir: { x: 1, z: 0 } }] as Partial<Command>[]) {
+  for (const command of [{ switchNearest: true }, { switchDir: { x: 1, z: 0 } }] as Partial<Command>[]) {
     const { world, defender, tick } = fixture(); const mate = world.players[2]!;
     mate.human = false; mate.x = -1; mate.z = 0;
     tick({ move: { x: 0, z: 0 }, ...command });
     assert.equal(world.controlled[0], mate.id); assert.equal(defender.human, false);
   }
+  const tap = fixture();
+  tap.tick({ move: { x: 0, z: 0 }, action: 'pass', pressed: true, power: 0.1 });
+  assert.equal(tap.world.controlled[0], tap.defender.id, 'tap A contains instead of switching');
   for (const [action, expected] of [['shoot', 'tackle'], ['lob', 'slide'], ['through', 'idle']] as const) {
     const { defender, tick } = fixture(); defender.x = 1.2;
     tick({ move: { x: 0, z: 0 }, action, pressed: true });
