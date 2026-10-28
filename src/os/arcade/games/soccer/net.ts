@@ -355,7 +355,8 @@ export function consumeCommand(command: ControlCommand): ControlCommand {
 }
 
 export function cloneSnapshot(world: World) {
-  return JSON.parse(JSON.stringify(world)) as Omit<World, 'seed'> & { seed: number };
+  return JSON.parse(JSON.stringify(world, (key, value) =>
+    key === 'passStrikeAt' || key === 'passAim' ? undefined : value)) as Omit<World, 'seed'> & { seed: number };
 }
 
 export const SNAPSHOT_MAX_BYTES = 8 * 1024 - 256;
@@ -363,6 +364,7 @@ const snapshotEncoder = new TextEncoder();
 
 export function trimSnapshot(world: World): World {
   const serialize = (decimals: number, dropHostFields = false) => JSON.stringify(world, (key, value) => {
+    if (key === 'passStrikeAt' || key === 'passAim') return undefined;
     if (dropHostFields && key === 'buffer') return null;
     if (dropHostFields && key === 'touchCd') return undefined;
     return typeof value === 'number' && Number.isFinite(value) && !Number.isInteger(value)

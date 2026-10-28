@@ -96,6 +96,8 @@ export type World = {
   kickEvent: { playerId: number; action: Action; power: number; time: number } | null;
   passTarget: number | null;
   passFrom?: number | null;
+  passStrikeAt?: number | null;
+  passAim?: Point | null;
   passControl: boolean;
   carrierId?: number | null;
   lastToucherId?: number | null;
@@ -204,7 +206,7 @@ export function createWorld(seed = 71423, halfLength = 120, humans: 1 | 2 = 1, c
     ...(clubs ? { clubs: [...clubs] as [string, string] } : {}),
     score: [0, 0], clock: halfLength, halfLength, half: 1, endsSwapped: false,
     phase: 'restart', restart: 'kickoff', restartTeam: 0, restartAt: { x: 0, z: 0 },
-    lastTouch: 0, seed: seed >>> 0 || 1, event: 'kick off', eventTime: 1.35, restartClock: 0, controlled: [6, TEAM_SIZE + 6], controlledSeats: [null, null, null, null], kickEvent: null, passTarget: null, passFrom: null, passControl: false, carrierId: null, lastToucherId: null, passPoint: null,
+    lastTouch: 0, seed: seed >>> 0 || 1, event: 'kick off', eventTime: 1.35, restartClock: 0, controlled: [6, TEAM_SIZE + 6], controlledSeats: [null, null, null, null], kickEvent: null, passTarget: null, passFrom: null, passStrikeAt: null, passAim: null, passControl: false, carrierId: null, lastToucherId: null, passPoint: null,
     switchAt: [-1, -1], switchWait: [0, 0], switchCandidate: [-1, -1], dribbleAt: [-1, -1], stealProtect: 0, stealWinnerId: null,
     rules: createRules(),
   };
@@ -325,6 +327,33 @@ export function nearestCarrier(world: World) {
   return world.players.find((p) => p.id === world.carrierId && eligible(p)) ?? world.players.find(eligible);
 }
 
+export function receiverAssistActive(world: World, player: Player, move: Point): Point | null {
+  const passAim = world.passAim;
+  const moveLength = Math.hypot(move.x, move.z);
+  const passAimLength = passAim ? Math.hypot(passAim.x, passAim.z) : 0;
+  const active = world.phase === 'live' && player.human && world.controlled[player.team] === player.id
+    && world.passTarget === player.id && !nearestCarrier(world)
+    && !!passAim && moveLength >= 0.15 && passAimLength > 0
+    && (move.x * passAim.x + move.z * passAim.z) / (moveLength * passAimLength) >= Math.cos(35 * Math.PI / 180);
+  if (!active) return null;
+
+  const ballSpeed = Math.hypot(world.ball.vx, world.ball.vz);
+  let receiveTarget: Point = { x: world.ball.x, z: world.ball.z };
+  if (world.passPoint) receiveTarget = { ...world.passPoint };
+  else if (ballSpeed > 2) {
+    const direction = { x: world.ball.vx / ballSpeed, z: world.ball.vz / ballSpeed };
+    const projection = (player.x - world.ball.x) * direction.x + (player.z - world.ball.z) * direction.z;
+    if (projection > 0) receiveTarget = {
+      x: world.ball.x + direction.x * projection,
+      z: world.ball.z + direction.z * projection,
+    };
+  }
+  if (ballSpeed < 4 || distance(player, receiveTarget) <= 1.5) {
+    return { x: world.ball.x, z: world.ball.z };
+  }
+  return receiveTarget;
+}
+
 export function possessionTeam(world: World): Team | null {
   if (world.phase === 'restart') return world.restartTeam;
   const carrier = nearestCarrier(world);
@@ -401,14 +430,14 @@ function rollingFlight(speed: number, range: number) {
   return { speed: travelled >= range ? ball.vx : 0, time };
 }
 
-export function groundPassSpeed(range: number, arrivalSpeed = 4) {
+export function groundPassSpeed(range: number, arrivalSpeed = 4, maxSpeed = 25) {
   let low = 4, high = 40;
   for (let i = 0; i < 14; i++) {
     const mid = (low + high) / 2;
     if (rollingFlight(mid, range).speed < arrivalSpeed) low = mid;
     else high = mid;
   }
-  return clamp((low + high) / 2, 8, 25);
+  return clamp((low + high) / 2, 8, Number.isFinite(maxSpeed) ? maxSpeed : 25);
 }
 
 export function groundPassPower(range: number, arrivalSpeed = 4) {
@@ -559,7 +588,7 @@ export function kick(world: World, player: Player, action: Action, command: Comm
       const range = distance(world.ball, receiver ?? target);
       speed = command.finesse || command.finesseHeld
         ? clamp(Math.max(groundPassSpeed(range) * 1.3, 20), 20, 26)
-        : clamp(Math.max(groundPassSpeed(range) * (0.9 + 0.3 * charge), 12 + 2 * charge), 12, 26);
+        : clamp(groundPassSpeed(range, 9 + 4 * charge, 28), 12, 28);
       if (receiver) target = groundPassTarget(world.ball, receiver, speed);
     } else {
       if (receiver) target = legacyGroundPassTarget(world.ball, receiver);
@@ -650,6 +679,8 @@ export function kick(world: World, player: Player, action: Action, command: Comm
     world.passTarget = receiverForRun?.id ?? null;
     world.passFrom = receiverForRun ? player.id : null;
     world.passControl = !!receiverForRun && humanKicker;
+    world.passStrikeAt = humanKicker && world.passTarget !== null ? world.halfLength * world.half - world.clock : null;
+    world.passAim = world.passStrikeAt === null ? null : { x: aim.x, z: aim.z };
     if (humanKicker && receiver && !receiver.human) {
       transferControl(world, player.team, receiver.id, player.id);
       world.passControl = false;
@@ -657,6 +688,8 @@ export function kick(world: World, player: Player, action: Action, command: Comm
   } else {
     world.passTarget = null;
     world.passFrom = null;
+    world.passStrikeAt = null;
+    world.passAim = null;
     world.passControl = false;
   }
   player.action = action === 'shoot' || action === 'finesse' ? 'kick' : 'pass';
@@ -923,6 +956,8 @@ export function setRestart(world: World, team: Team, restart: Exclude<Restart, n
   world.passPoint = null;
   world.passTarget = null;
   world.passFrom = null;
+  world.passStrikeAt = null;
+  world.passAim = null;
   for (const p of world.players) { p.buffer = null; p.slide = null; }
   world.switchWait = [0, 0];
   world.switchCandidate = [-1, -1];
@@ -1229,13 +1264,30 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
       if (world.phase !== 'live') return;
       continue;
     }
-    const neutral = Math.hypot(command?.move.x ?? 0, command?.move.z ?? 0) < 0.15;
-    const receiving = world.passTarget === p.id && !carrier && (!p.human || neutral);
+    const move = command?.move ?? { x: 0, z: 0 };
+    const stickLength = Math.hypot(move.x, move.z);
+    const neutral = stickLength < 0.15;
+    const assistedTarget = receiverAssistActive(world, p, move);
+    const receiving = world.passTarget === p.id && !carrier
+      && (!p.human || neutral || assistedTarget !== null);
     if (p.human && !receiving && !p.buffer && (!p.controlled || !command)) continue;
     if (receiving && world.passPoint && distance(p, world.passPoint) < 0.7 && !world.setPieceRun) world.passPoint = null;
-    const receiveTarget = world.passPoint ?? world.ball;
+    let receiveTarget: Point = assistedTarget ?? world.passPoint ?? world.ball;
+    if (!assistedTarget && p.human && !world.passPoint) {
+      const ballSpeed = Math.hypot(world.ball.vx, world.ball.vz);
+      if (ballSpeed > 2) {
+        const direction = { x: world.ball.vx / ballSpeed, z: world.ball.vz / ballSpeed };
+        const projection = (p.x - world.ball.x) * direction.x + (p.z - world.ball.z) * direction.z;
+        if (projection > 0) receiveTarget = {
+          x: world.ball.x + direction.x * projection,
+          z: world.ball.z + direction.z * projection,
+        };
+      }
+    }
     const receiveGap = distance(p, receiveTarget);
-    let receiveMove = receiving ? { x: (receiveTarget.x - p.x) / Math.max(2, receiveGap), z: (receiveTarget.z - p.z) / Math.max(2, receiveGap) } : command?.move ?? { x: 0, z: 0 };
+    let receiveMove = assistedTarget
+      ? { x: (receiveTarget.x - p.x) / (receiveGap || 1) * Math.max(0.7, stickLength), z: (receiveTarget.z - p.z) / (receiveGap || 1) * Math.max(0.7, stickLength) }
+      : receiving ? { x: (receiveTarget.x - p.x) / Math.max(2, receiveGap), z: (receiveTarget.z - p.z) / Math.max(2, receiveGap) } : move;
     const enemy = carrier && carrier.team !== p.team ? carrier : undefined;
     const contain = enemy && (command?.contain || command?.heldAction === 'pass');
     const jockey = !!command?.jockey || !!(command?.autoJockey && enemy && distance(p, enemy) < 4 && !command.sprint && Math.hypot(command.move.x, command.move.z) > 0.1);
@@ -1283,6 +1335,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
     && world.players.some((p) => p !== nearest && !p.sentOff && distance(p, nearest) < 0.75) ? nearest : undefined;
   if (!world.practice) separatePlayers(world.players, t, carrier, world.endsSwapped, claimant);
   const nowCarrier = nearestCarrier(world);
+  const passTargetedCarrier = !!nowCarrier && world.passTarget === nowCarrier.id;
   checkOffside(world, nowCarrier);
   if (world.phase !== 'live') return;
   if (nowCarrier && nowCarrier.id !== previousCarrierId && nowCarrier.id !== previousToucherId) {
@@ -1294,6 +1347,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
     const receiver = world.players.find((p) => p.id === world.passTarget);
     if (!receiver || !receiver.human && distance(receiver, world.ball) > 3) {
       world.passTarget = null; world.passControl = false; world.passPoint = null; world.passFrom = null;
+      world.passStrikeAt = null; world.passAim = null;
       world.setPieceRun = null;
     }
   }
@@ -1305,6 +1359,8 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
       if (current) transferControl(world, nowCarrier.team, nowCarrier.id, current.id);
     }
     world.passTarget = null;
+    world.passStrikeAt = null;
+    world.passAim = null;
     world.passControl = false;
     world.passPoint = null;
     world.passFrom = null;
@@ -1326,7 +1382,8 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
     const rel = Math.hypot(world.ball.vx - nowCarrier.vx, world.ball.vz - nowCarrier.vz, world.ball.vy);
     const dribble = worldMultipliers(world, nowCarrier.id).dribble;
     const badChance = clamp(((rel - 10) * 0.05 + (command?.sprint ? 0.12 : 0) + (pressure < 1.5 ? 0.12 : 0) + (world.ball.y > 0.3 ? 0.1 : 0) - (stick < 0.15 ? 0.05 : 0)) * (2 - dribble), 0, 0.7);
-    const heavy = world.carrierId !== nowCarrier.id && world.lastToucherId !== nowCarrier.id && rel > 4 && badChance > 0 && rng(world) < badChance;
+    const heavy = world.carrierId !== nowCarrier.id && world.lastToucherId !== nowCarrier.id && rel > 4
+      && badChance > 0 && rng(world) < badChance && !passTargetedCarrier;
     clearKnockOns(world);
     world.lastToucherId = nowCarrier.id;
     noteTouch(world, nowCarrier.id);

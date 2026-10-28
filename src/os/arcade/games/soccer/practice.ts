@@ -157,7 +157,7 @@ function clearBall(world: World, at: Point, carrier?: Player) {
   const x = carrier ? carrier.x + Math.sin(facing) * 0.45 : at.x;
   const z = carrier ? carrier.z + Math.cos(facing) * 0.45 : at.z;
   world.ball = { x, y: 0.11, z, vx: 0, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false };
-  world.phase = 'live'; world.restart = null; world.passTarget = null; world.passControl = false; world.passPoint = null;
+  world.phase = 'live'; world.restart = null; world.passTarget = null; world.passStrikeAt = null; world.passAim = null; world.passControl = false; world.passPoint = null;
   world.carrierId = null; world.lastToucherId = carrier?.id ?? null; world.lastTouch = carrier?.team ?? 0; world.kickEvent = null;
 }
 
