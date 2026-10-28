@@ -637,7 +637,10 @@ export function kick(world: World, player: Player, action: Action, command: Comm
     world.passTarget = receiverForRun?.id ?? null;
     world.passFrom = receiverForRun ? player.id : null;
     world.passControl = !!receiverForRun && humanKicker;
-    if (humanKicker && receiver && !receiver.human) transferControl(world, player.team, receiver.id, player.id);
+    if (humanKicker && receiver && !receiver.human) {
+      transferControl(world, player.team, receiver.id, player.id);
+      world.passControl = false;
+    }
   } else {
     world.passTarget = null;
     world.passFrom = null;

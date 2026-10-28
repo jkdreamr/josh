@@ -7,7 +7,7 @@ import { createWorld, distance, FIELD, stepWorld, teamDir, TEAM_SIZE, type Playe
 let measured: ReturnType<typeof simulateCpuMatchStats>[] | undefined;
 const normalMatches = () => measured ??= [2, 17, 31, 47, 59, 71, 89, 103].map((seed) => simulateCpuMatchStats(seed, 'normal', 'normal', 480));
 let additional: ReturnType<typeof simulateCpuMatchStats>[] | undefined;
-const additionalMatches = () => additional ??= [127, 139, 151, 163, 179, 191, 211, 229].map((seed) => simulateCpuMatchStats(seed, 'normal', 'normal', 480));
+const additionalMatches = () => additional ??= [127, 139, 151, 163, 179, 191, 211, 229, 241, 251, 263, 271, 283, 293, 307, 311].map((seed) => simulateCpuMatchStats(seed, 'normal', 'normal', 480));
 
 function tacticalWorld() {
   const world = createWorld(47);

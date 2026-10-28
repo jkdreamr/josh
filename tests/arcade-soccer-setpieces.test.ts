@@ -33,6 +33,55 @@ test('phone snapshots preserve pending deliveries, open play and shootouts',()=>
   if(pens?.k==='s')assert.deepEqual(pens.state.shootout,w.shootout);
 });
 function ticks(w: World, n: number) { for(let i=0;i<n;i++) stepWorld(w,STEP); }
+function goalKickWithAttackers(zs: [number, number], seed = 1234) {
+  const w = createWorld(seed);
+  const st = w.players.find(p => p.team === 1 && p.slot === 'ST')!;
+  const rw = w.players.find(p => p.team === 1 && p.slot === 'RW')!;
+  st.x = rw.x = -40;
+  st.z = zs[0];
+  rw.z = zs[1];
+  setRestart(w, 0, 'goal-kick', { x: -47, z: 0 });
+  return w;
+}
+function assertGoalKickSpacing(w: World) {
+  for (let i = 0; i < w.players.length; i++) {
+    for (let j = i + 1; j < w.players.length; j++) {
+      const a = w.players[i]!, b = w.players[j]!;
+      if (a.sentOff || b.sentOff || a.team !== b.team) continue;
+      assert.ok(distance(a, b) >= 2 - 1e-6, `players ${a.id}/${b.id} are too close`);
+    }
+  }
+}
+function freeKickWallWorld(seed = 1234) {
+  const w = createWorld(seed);
+  const runner = w.players.find(p => p.team === 0 && p.slot === 'RW')!;
+  runner.x = 41.5;
+  runner.z = 0;
+  setRestart(w, 0, 'free-kick', { x: 33.2, z: -2.22 });
+  return w;
+}
+test('goal-kick placement separates attackers while keeping them outside the box', () => {
+  const w = goalKickWithAttackers([20.2, 20.6]);
+  const st = w.players.find(p => p.team === 1 && p.slot === 'ST')!;
+  const rw = w.players.find(p => p.team === 1 && p.slot === 'RW')!;
+  assertGoalKickSpacing(w);
+  assert.equal(st.x, -34);
+  assert.equal(rw.x, -34);
+  assert.ok(distance(w.players[w.setPiece!.takerId]!, w.ball) < 0.64);
+});
+test('goal-kick spacing moves attackers inward rather than beyond the touchline', () => {
+  const w = goalKickWithAttackers([33.6, 33.6]);
+  const st = w.players.find(p => p.team === 1 && p.slot === 'ST')!;
+  const rw = w.players.find(p => p.team === 1 && p.slot === 'RW')!;
+  assert.ok(Math.min(st.z, rw.z) < 33.6);
+  assert.ok([st, rw].every(p => p.z >= -33.85 && p.z <= 33.85));
+  assert.ok(distance(st, rw) >= 2 - 1e-6);
+});
+test('goal-kick spacing is deterministic', () => {
+  const a = goalKickWithAttackers([20.2, 20.6]);
+  const b = goalKickWithAttackers([20.2, 20.6]);
+  assert.deepEqual(a.players.map(p => ({ x: p.x, z: p.z })), b.players.map(p => ({ x: p.x, z: p.z })));
+});
 test('corner layout has zones, a nearby taker and legal defenders',()=>{
   const w=setup('corner');
   assert.ok(distance(w.players[w.setPiece!.takerId]!,w.ball)<0.64);
@@ -71,6 +120,46 @@ test('wall sizes, exclusion and low-shot block',()=>{
   Object.assign(w.ball,{x:p.x+0.1,z:p.z,y:0.5,vx:25,vy:0});
   stepSetPieceRun(w,STEP,p.x-0.1);
   assert.ok(w.ball.vx<0); assert.match(w.event,/wall/);
+});
+test('free-kick markers stay clear of the wall and outside the exclusion radius', () => {
+  const w = freeKickWallWorld();
+  const wallIds = new Set(w.setPiece!.wall);
+  const wall = w.setPiece!.wall.map(id => w.players[id]!);
+  const defenders = w.players.filter(p => p.team === 1);
+  const runner = w.players.find(p => p.team === 0 && p.slot === 'RW')!;
+  assert.equal(runner.x, 41.5);
+  assert.equal(runner.z, 0);
+  assert.ok(wall.length > 0);
+
+  for (const defender of defenders) {
+    assert.ok(distance(defender, w.ball) >= 9.15 - 1e-6, `defender ${defender.id} is too close to the ball`);
+    if (wallIds.has(defender.id)) continue;
+    for (const member of wall) {
+      assert.ok(
+        distance(defender, member) >= 2 - 1e-6,
+        `defender ${defender.id} is too close to wall player ${member.id}`,
+      );
+    }
+  }
+
+  const attackerOrder = ['ST', 'LW', 'RW', 'CM', 'LB', 'RB', 'CB'];
+  const attackers = w.players
+    .filter(p => p.team === 0 && p.id !== w.setPiece!.takerId && p.slot !== 'GK')
+    .sort((a, b) => attackerOrder.indexOf(a.slot) - attackerOrder.indexOf(b.slot) || a.id - b.id);
+  const defenderOrder = defenders.filter(p => p.slot !== 'GK');
+  const runnerIndex = attackers.findIndex(p => p.id === runner.id);
+  const markerIndex = defenderOrder.findIndex((_, i) => (i - 3 + attackers.length) % attackers.length === runnerIndex);
+  const marker = defenderOrder[markerIndex]!;
+  assert.ok(marker && !wallIds.has(marker.id));
+  assert.equal(w.setPiece!.marks?.[marker.id], undefined);
+});
+test('free-kick wall clearance placement is deterministic', () => {
+  const a = freeKickWallWorld();
+  const b = freeKickWallWorld();
+  assert.deepEqual(
+    a.players.map(p => ({ x: p.x, z: p.z })),
+    b.players.map(p => ({ x: p.x, z: p.z })),
+  );
 });
 test('restart markers track a moving human runner without moving the wall',()=>{
   for(const kind of ['corner','free-kick'] as const) {
@@ -141,6 +230,31 @@ test('penalty overcharge skies, correct guess saves and wrong guess loses',()=>{
   while(w.ball.x<52.4) stepBall(w.ball,STEP);
   assert.equal(w.score[0],0);
   assert.ok(w.ball.y>2.44);
+});
+test('penalty staging keeps non-takers separated for either restarting team', () => {
+  for (const team of [0, 1] as const) {
+    const w = createWorld(1234 + team);
+    setRestart(w, team, 'penalty', { x: 41.5, z: 0 });
+    const takerId = w.setPiece!.takerId;
+    const goalKeeperId = w.players.find(p => p.team !== team && p.slot === 'GK')!.id;
+    const nonTakers = w.players.filter(p => p.id !== takerId && p.id !== goalKeeperId);
+
+    for (let i = 0; i < nonTakers.length; i++) {
+      for (let j = i + 1; j < nonTakers.length; j++) {
+        assert.ok(
+          distance(nonTakers[i]!, nonTakers[j]!) >= 1.5 - 1e-6,
+          `team ${team}: players ${nonTakers[i]!.id}/${nonTakers[j]!.id} are too close`,
+        );
+      }
+    }
+
+    for (const player of w.players.filter(p => p.id !== takerId && p.slot !== 'GK')) {
+      assert.ok(distance(player, w.restartAt) >= 9.15, `team ${team}: player ${player.id} is too close to the spot`);
+      assert.ok(Math.abs(player.z) <= 33.85, `team ${team}: player ${player.id} is beyond the touchline`);
+    }
+
+    assert.ok(distance(w.players[takerId]!, w.ball) < 0.64, `team ${team}: taker is not at the ball`);
+  }
 });
 test('human keeper commits a side and receives keeper labels',()=>{
   const w=setup('penalty'); w.players[17]!.human=true; w.players[17]!.controlled=true;

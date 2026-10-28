@@ -49,6 +49,64 @@ function spaceOut(w: World, taker: Player) {
     if (!moved) return;
   }
 }
+function spaceTeammates(w: World, fixed: number, min = 2) {
+  for (const team of [0, 1] as const) {
+    const players = w.players.filter(p => p.team === team && !p.sentOff);
+    for (let pass = 0; pass < 4; pass++) {
+      for (let i = 0; i < players.length; i++) {
+        for (let j = i + 1; j < players.length; j++) {
+          const a = players[i]!, b = players[j]!;
+          if (distance(a, b) >= min) continue;
+          const aFixed = a.id === fixed || a.slot === 'GK';
+          const bFixed = b.id === fixed || b.slot === 'GK';
+          if (aFixed && bFixed) continue;
+          const moverIndex = bFixed ? i : j;
+          const otherIndex = bFixed ? j : i;
+          const mover = players[moverIndex]!, other = players[otherIndex]!;
+          const dx = mover.x - other.x;
+          const offset = Math.sqrt(Math.max(0, min * min - dx * dx));
+          let direction = Math.sign(mover.z - other.z) || Math.sign(moverIndex - otherIndex);
+          let z = other.z + direction * offset;
+          if (z < -33.85 || z > 33.85) {
+            direction *= -1;
+            z = other.z + direction * offset;
+          }
+          snap(mover, mover.x, z);
+        }
+      }
+    }
+  }
+}
+function clearWall(w: World) {
+  const setPiece = w.setPiece;
+  if (!setPiece?.wall.length) return;
+  const members = setPiece.wall.map(id => w.players[id]!).filter(p => !p.sentOff);
+  if (!members.length) return;
+  const g = goal(w), range = distance(w.ball, { x: g, z: 0 }) || 1;
+  const dx = (g - w.ball.x) / range, dz = -w.ball.z / range;
+  const c = members.reduce((sum, p) => ({ x: sum.x + p.x / members.length, z: sum.z + p.z / members.length }), { x: 0, z: 0 });
+  const halfWidth = Math.max(...members.map(p => Math.abs((p.x - c.x) * -dz + (p.z - c.z) * dx)));
+  const wallIds = new Set(setPiece.wall);
+  for (const p of w.players) {
+    if (p.team === w.restartTeam || wallIds.has(p.id) || p.slot === 'GK' || p.human || p.sentOff) continue;
+    const px = p.x - c.x, pz = p.z - c.z;
+    const depth = px * dx + pz * dz, lateral = px * -dz + pz * dx;
+    if (Math.abs(depth) >= 2 || Math.abs(lateral) >= halfWidth + 2) continue;
+    const target = (side: number) => ({
+      x: c.x + dx * depth - dz * side * (halfWidth + 2),
+      z: c.z + dz * depth + dx * side * (halfWidth + 2),
+    });
+    let side = Math.sign(lateral) || 1;
+    let position = target(side);
+    if (position.z < -33.85 || position.z > 33.85) {
+      side *= -1;
+      position = target(side);
+    }
+    snap(p, position.x, position.z);
+    exclude(w, p);
+    if (setPiece.marks) delete setPiece.marks[p.id];
+  }
+}
 export function arrangeSetPiece(w: World) {
   if (!w.restart || w.restart === 'kickoff') { w.setPiece = null; return; }
   const kind = w.restart === 'kick-in' ? 'throw-in' : w.restart;
@@ -85,8 +143,9 @@ export function arrangeSetPiece(w: World) {
       for(const id of w.setPiece.wall) delete w.setPiece.marks[id];
     }
     enemies.forEach(p => exclude(w,p));
+    if (kind === 'free-kick' && w.setPiece.wall.length) clearWall(w);
   } else if (kind === 'penalty') {
-    w.players.filter(p => p.id !== taker.id).forEach((p,i) => snap(p,w.shootout ? (i%3-1)*3 : w.restartAt.x-d*(12+i%3),w.shootout ? (Math.floor(i/3)-3)*1.5 : (i%2 ? 1 : -1)*(22+i%4)));
+    w.players.filter(p => p.id !== taker.id).forEach((p,i) => snap(p,w.shootout ? (i%3-1)*3 : w.restartAt.x-d*(12+i%3),w.shootout ? (Math.floor(i/3)-3)*1.5 : (i%2 ? 1 : -1)*(21 + Math.floor(i/2)*1.25)));
     const keeper = enemies.find(p => p.slot === 'GK')!; snap(keeper,g-d*0.15,0);
     if (enemies.some(p => p.human) && !keeper.human) transferControl(w,keeper.team,keeper.id);
   } else if (kind === 'goal-kick') {
@@ -100,6 +159,7 @@ export function arrangeSetPiece(w: World) {
   taker.facing = Math.atan2(aim.x-taker.x,aim.z-taker.z);
   spaceOut(w, taker);
   if (team.some(p => p.human) && !taker.human) transferControl(w,w.restartTeam,taker.id);
+  if (kind === 'goal-kick') spaceTeammates(w, taker.id);
 }
 
 // Fixed-time shooting solves all three components against the simulation integrator.

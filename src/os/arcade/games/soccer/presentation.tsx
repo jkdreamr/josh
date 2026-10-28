@@ -151,14 +151,14 @@ export function IntroCard() {
   return (
     <div className="g-soccer-intro" aria-label="matchday">
       <div className="g-soccer-intro-card">
-        <small>matchday · harbor park</small>
+        <small>Matchday · Harbor Park</small>
         <div className="g-soccer-intro-clubs">
           {clubs.map((club) => (
             <span key={club.abbr} className="g-soccer-intro-crest" style={{ '--g-soccer-crest': club.primary, '--g-soccer-crest-ink': club.secondary } as CSSProperties}><b>{club.abbr}</b></span>
           ))}
         </div>
         <h1><b>{clubs[0].name}</b><span>vs</span><b>{clubs[1].name}</b></h1>
-        <p>4-3-3 · 4-3-3 <i /> harbor park · kick off</p>
+        <p>4-3-3 · 4-3-3 <i /> Harbor Park · kick off</p>
         <div className="g-soccer-intro-rosters">
           {clubs.map((club) => (
             <section key={club.abbr}>
@@ -171,7 +171,7 @@ export function IntroCard() {
             </section>
           ))}
         </div>
-        <strong className="g-soccer-intro-hint">press any button to skip</strong>
+        <strong className="g-soccer-intro-hint">Press any button on your phone to skip</strong>
       </div>
     </div>
   );
@@ -201,21 +201,21 @@ export function StatsScreen({ presentation, statsVersion }: { presentation: 'hal
   }, [presentation]);
   const [homePossession, awayPossession] = stats ? possessionShare(stats) : [50, 50];
   const rows: { label: string; home: number; away: number; displayHome: string; displayAway: string }[] = [
-    { label: 'possession', home: homePossession, away: awayPossession, displayHome: `${homePossession}%`, displayAway: `${awayPossession}%` },
-    { label: 'shots', home: home.shots, away: away.shots, displayHome: `${home.shots}`, displayAway: `${away.shots}` },
-    { label: 'shots on target', home: home.onTarget, away: away.onTarget, displayHome: `${home.onTarget}`, displayAway: `${away.onTarget}` },
-    { label: 'xg', home: home.xg, away: away.xg, displayHome: home.xg.toFixed(1), displayAway: away.xg.toFixed(1) },
-    { label: 'passes', home: home.passes, away: away.passes, displayHome: `${home.passes}`, displayAway: `${away.passes}` },
-    { label: 'pass accuracy', home: passAccuracy(home), away: passAccuracy(away), displayHome: `${passAccuracy(home)}%`, displayAway: `${passAccuracy(away)}%` },
-    { label: 'tackles', home: home.tackles, away: away.tackles, displayHome: `${home.tackles}`, displayAway: `${away.tackles}` },
-    { label: 'fouls', home: home.fouls, away: away.fouls, displayHome: `${home.fouls}`, displayAway: `${away.fouls}` },
-    { label: 'corners', home: home.corners, away: away.corners, displayHome: `${home.corners}`, displayAway: `${away.corners}` },
-    { label: 'saves', home: home.saves, away: away.saves, displayHome: `${home.saves}`, displayAway: `${away.saves}` },
+    { label: 'Possession', home: homePossession, away: awayPossession, displayHome: `${homePossession}%`, displayAway: `${awayPossession}%` },
+    { label: 'Shots', home: home.shots, away: away.shots, displayHome: `${home.shots}`, displayAway: `${away.shots}` },
+    { label: 'Shots on target', home: home.onTarget, away: away.onTarget, displayHome: `${home.onTarget}`, displayAway: `${away.onTarget}` },
+    { label: 'xG', home: home.xg, away: away.xg, displayHome: home.xg.toFixed(1), displayAway: away.xg.toFixed(1) },
+    { label: 'Passes', home: home.passes, away: away.passes, displayHome: `${home.passes}`, displayAway: `${away.passes}` },
+    { label: 'Pass accuracy', home: passAccuracy(home), away: passAccuracy(away), displayHome: `${passAccuracy(home)}%`, displayAway: `${passAccuracy(away)}%` },
+    { label: 'Tackles', home: home.tackles, away: away.tackles, displayHome: `${home.tackles}`, displayAway: `${away.tackles}` },
+    { label: 'Fouls', home: home.fouls, away: away.fouls, displayHome: `${home.fouls}`, displayAway: `${away.fouls}` },
+    { label: 'Corners', home: home.corners, away: away.corners, displayHome: `${home.corners}`, displayAway: `${away.corners}` },
+    { label: 'Saves', home: home.saves, away: away.saves, displayHome: `${home.saves}`, displayAway: `${away.saves}` },
   ];
   return (
     <div className="g-soccer-stats-overlay" data-version={statsVersion}>
       <section className="g-soccer-stats-panel">
-        <header><small>harbor park · match report</small><h2>{presentation === 'half-time' ? 'half time' : 'full time'}</h2></header>
+        <header><small>Harbor Park · match report</small><h2>{presentation === 'half-time' ? 'Half-time' : 'Full-time'}</h2></header>
         <div className="g-soccer-stats-score">
           <i className="is-home" /><b className="is-home">{clubs[0].abbr}</b><strong>{score[0]}</strong><span>:</span><strong>{score[1]}</strong><b className="is-away">{clubs[1].abbr}</b><i className="is-away" />
         </div>
@@ -239,7 +239,7 @@ export function StatsScreen({ presentation, statsVersion }: { presentation: 'hal
             );
           })}
         </div>
-        <footer>{presentation === 'half-time' ? `second half starts in ${seconds}s · press any button` : 'press any button to continue'}</footer>
+        <footer>{presentation === 'half-time' ? `Second half in ${seconds}s · press any button on your phone to skip` : 'Press any button on your phone to continue'}</footer>
       </section>
     </div>
   );
@@ -259,10 +259,10 @@ export function PausePanel({ match }: { match: MatchData }) {
         <i className="is-home" /><b className="is-home">{clubs[0].abbr}</b><strong>{world.score[0]}</strong><span>:</span><strong>{world.score[1]}</strong><b className="is-away">{clubs[1].abbr}</b><i className="is-away" /><time>{clock.label}</time>
       </div>
       <div className="g-soccer-pause-stats">
-        <span>possession <b>{homePossession}-{awayPossession}%</b></span>
-        <span>shots <b>{home.shots}-{away.shots}</b></span>
-        <span>on target <b>{home.onTarget}-{away.onTarget}</b></span>
-        <span>xg <b>{home.xg.toFixed(1)}-{away.xg.toFixed(1)}</b></span>
+        <span>Possession <b>{homePossession}-{awayPossession}%</b></span>
+        <span>Shots <b>{home.shots}-{away.shots}</b></span>
+        <span>On target <b>{home.onTarget}-{away.onTarget}</b></span>
+        <span>xG <b>{home.xg.toFixed(1)}-{away.xg.toFixed(1)}</b></span>
       </div>
       <ul>{stats.ticker.slice(-3).map((item) => <li key={item.id}><time>{item.minute}</time> {item.text}</li>)}</ul>
     </section>
