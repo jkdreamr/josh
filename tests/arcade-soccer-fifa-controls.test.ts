@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
-import { createWorld, distance, FIELD, findReceiver, groundPassSpeed, kick, STEP, stepWorld } from '../src/os/arcade/games/soccer/logic.ts';
-import { faceLabels, haptic } from '../src/os/arcade/games/soccer/pad.ts';
+import { computeAI } from '../src/os/arcade/games/soccer/ai.ts';
+import { createWorld, distance, FIELD, findReceiver, groundPassSpeed, kick, setRestart, STEP, stepWorld, TEAM_SIZE, type Command } from '../src/os/arcade/games/soccer/logic.ts';
+import { faceLabels, haptic, phoneClockLabel } from '../src/os/arcade/games/soccer/pad.ts';
 
 const controlCss = readFileSync(new URL('../src/os/arcade/games/soccer/soccer.css', import.meta.url), 'utf8');
+const controlSource = readFileSync(new URL('../src/os/arcade/games/soccer/index.tsx', import.meta.url), 'utf8');
 const practiceSource = readFileSync(new URL('../src/os/arcade/games/soccer/practice-mode.tsx', import.meta.url), 'utf8');
 
 function directionAt(angle: number, distance: number) {
@@ -13,6 +15,71 @@ function directionAt(angle: number, distance: number) {
 
 function angularDifference(a: number, b: number) {
   return Math.abs(Math.atan2(Math.sin(a - b), Math.cos(a - b)));
+}
+
+function worldWithSeats(seed: number, seats: (number | null)[]) {
+  const count = Math.max(1, seats.filter((id) => id !== null).length) as 1 | 2;
+  const world = createWorld(seed, 120, count);
+  world.controlledSeats = [...seats];
+  for (const player of world.players) {
+    player.human = seats.includes(player.id);
+    player.controlled = player.human;
+  }
+  world.controlled = [
+    seats.find((id) => id !== null && world.players[id]?.team === 0) ?? 6,
+    seats.find((id) => id !== null && world.players[id]?.team === 1) ?? TEAM_SIZE + 6,
+  ];
+  return world;
+}
+
+function assertSeatInvariant(world: ReturnType<typeof createWorld>) {
+  const seats = world.controlledSeats ?? [];
+  for (const team of [0, 1] as const) {
+    const expected = seats.filter((id) => id !== null && world.players[id]?.team === team).sort((a, b) => a! - b!);
+    const actual = world.players.filter((player) => player.team === team && player.human).map((player) => player.id).sort((a, b) => a - b);
+    assert.deepEqual(actual, expected);
+    for (const id of expected) {
+      assert.equal(world.players[id!]?.human, true);
+      assert.equal(world.players[id!]?.controlled, true);
+    }
+    if (expected.length === 1) assert.equal(world.controlled[team], expected[0]);
+  }
+}
+
+function aiCommands(world: ReturnType<typeof createWorld>, tick: number) {
+  const commands = new Map<number, Command>();
+  for (const team of [0, 1] as const) {
+    for (const [id, command] of computeAI(world, 'normal', STEP, tick, team)) commands.set(id, command);
+  }
+  return commands;
+}
+
+function preparePhonePass(world: ReturnType<typeof createWorld>, seat: number, commands: Map<number, Command>) {
+  const originalSentOff = world.players.map((player) => player.sentOff);
+  const id = world.controlledSeats?.[seat];
+  assert.notEqual(id, null);
+  assert.notEqual(id, undefined);
+  const passer = world.players[id!]!;
+  const receiver = world.players.find((player) => player.team === passer.team && player.id !== passer.id && !player.human)!;
+  for (const teammate of world.players.filter((player) => player.team === passer.team)) {
+    teammate.sentOff = teammate.id !== receiver.id && teammate.id !== passer.id && !teammate.human;
+    if (teammate.id === receiver.id) Object.assign(teammate, { x: 15, z: 0, vx: 0, vz: 0 });
+    else if (teammate.human && teammate.id !== passer.id) Object.assign(teammate, { x: -20, z: 0, vx: 0, vz: 0 });
+  }
+  for (const opponent of world.players.filter((player) => player.team !== passer.team)) opponent.sentOff = true;
+  world.phase = 'live';
+  world.restart = null;
+  world.setPiece = null;
+  Object.assign(passer, { x: 0, z: 0, vx: 0, vz: 0, cooldown: 0, touchCd: 0 });
+  world.ball = { x: 0.3, y: 0.11, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false };
+  world.carrierId = passer.id;
+  world.lastToucherId = passer.id;
+  commands.set(passer.id, { move: { x: 0, z: 0 }, action: 'pass', pressed: true, aim: { x: 1, z: 0 }, power: 0.5 });
+  return { passer, receiver, originalSentOff };
+}
+
+function restorePlayers(world: ReturnType<typeof createWorld>, originalSentOff: boolean[]) {
+  world.players.forEach((player, index) => { player.sentOff = originalSentOff[index]!; });
 }
 
 test('through balls without a cone receiver launch along all eight stick directions', () => {
@@ -164,10 +231,115 @@ test('co-op LB switching preserves independent assignments for both human seats'
   assert.equal(world.players[p2]!.human, true);
 });
 
+test('control-seat ownership stays exact through kickoff, AI play, passes, restarts and defensive auto-switches', () => {
+  const scenarios = [
+    { seed: 510, seats: [null, 6, null, null], phoneSeat: 1 },
+    { seed: 511, seats: [6, 9, null, null], phoneSeat: 0 },
+  ];
+  for (const { seed, seats, phoneSeat } of scenarios) {
+    const world = worldWithSeats(seed, seats);
+    assertSeatInvariant(world);
+
+    stepWorld(world, STEP);
+    assertSeatInvariant(world);
+    const kickoffOwner = world.controlledSeats?.[phoneSeat]!;
+    stepWorld(world, STEP, new Map([[kickoffOwner, { move: { x: 0.2, z: 0 } }]]));
+    assert.equal(world.phase, 'live');
+    assertSeatInvariant(world);
+    assert.equal(world.controlledSeats?.[phoneSeat], kickoffOwner);
+
+    for (let frame = 0; frame < 600; frame++) {
+      const commands = aiCommands(world, frame);
+      if (frame % 120 === 0) {
+        const { passer, receiver, originalSentOff } = preparePhonePass(world, phoneSeat, commands);
+        stepWorld(world, STEP, commands);
+        assert.equal(world.kickEvent?.playerId, passer.id);
+        assertSeatInvariant(world);
+        if (!receiver.human) assert.equal(world.controlledSeats?.[phoneSeat], receiver.id);
+        restorePlayers(world, originalSentOff);
+      } else {
+        stepWorld(world, STEP, commands);
+        assertSeatInvariant(world);
+      }
+    }
+
+    setRestart(world, 0, 'kick-in', { x: 8, z: FIELD.width / 2 - 0.2 });
+    assertSeatInvariant(world);
+    for (let frame = 0; frame < 20; frame++) {
+      stepWorld(world, STEP, aiCommands(world, 700 + frame));
+      assertSeatInvariant(world);
+    }
+
+    const seatId = world.controlledSeats?.[phoneSeat]!;
+    const current = world.players[seatId]!;
+    const replacement = world.players.find((player) => player.team === current.team && !player.human && !player.sentOff)!;
+    world.phase = 'live';
+    world.restart = null;
+    world.setPiece = null;
+    world.passTarget = null;
+    world.carrierId = null;
+    world.lastToucherId = null;
+    world.dribbleAt[0] = world.halfLength * world.half - world.clock - 1;
+    world.switchAt[0] = world.halfLength * world.half - world.clock - 1;
+    world.switchWait[0] = 0;
+    world.switchCandidate[0] = -1;
+    Object.assign(current, { x: -15, z: 0, vx: 0, vz: 0, touchCd: 0, cooldown: 0 });
+    Object.assign(replacement, { x: 3, z: 0, vx: 0, vz: 0, touchCd: 0, cooldown: 0 });
+    for (const player of world.players) {
+      if (player.id !== current.id && player.id !== replacement.id) Object.assign(player, { x: 35, z: 25, vx: 0, vz: 0 });
+      player.sentOff = false;
+    }
+    world.ball = { x: 0, y: 0.11, z: 0, vx: 5, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false };
+    let autoSwitched = false;
+    for (let frame = 0; frame < 30; frame++) {
+      stepWorld(world, STEP);
+      assertSeatInvariant(world);
+      if (world.controlledSeats?.[phoneSeat] !== seatId) { autoSwitched = true; break; }
+    }
+    assert.equal(autoSwitched, true);
+    assert.equal(world.controlledSeats?.[phoneSeat], replacement.id);
+    assertSeatInvariant(world);
+  }
+});
+
+test('phone A press and release on the kickoff carrier produces one kick event', () => {
+  const world = worldWithSeats(520, [null, 6, null, null]);
+  stepWorld(world, STEP);
+  const kickoffOwner = world.controlledSeats![1]!;
+  stepWorld(world, STEP, new Map([[kickoffOwner, { move: { x: 0.2, z: 0 } }]]));
+  assert.equal(world.phase, 'live');
+
+  const carrierId = world.controlledSeats![1]!;
+  const carrier = world.players[carrierId]!;
+  Object.assign(carrier, { x: 0, z: 0, vx: 0, vz: 0, cooldown: 0, touchCd: 0 });
+  world.ball = { x: 0.3, y: 0.11, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false };
+  world.carrierId = carrierId;
+  world.lastToucherId = carrierId;
+
+  let kickEvents = 0;
+  stepWorld(world, STEP, new Map([[carrierId, { move: { x: 0, z: 0 }, action: 'pass', pressed: true, aim: { x: 1, z: 0 }, power: 0.45 }]]));
+  assert.equal(world.kickEvent?.playerId, carrierId);
+  assert.equal(world.kickEvent?.action, 'pass');
+  kickEvents += Number(world.kickEvent !== null);
+  assertSeatInvariant(world);
+  const releaseId = world.controlledSeats![1]!;
+  stepWorld(world, STEP, new Map([[releaseId, { move: { x: 0, z: 0 }, action: null, pressed: false }]]));
+  kickEvents += Number(world.kickEvent !== null);
+  assert.equal(world.kickEvent, null);
+  assert.equal(kickEvents, 1);
+});
+
 test('phone face labels switch between attacking and defending actions', () => {
-  assert.deepEqual(faceLabels(true), { a: 'Pass', b: 'Shoot', x: 'Lob · Cross', y: 'Through' });
+  assert.deepEqual(faceLabels(true), { a: 'Pass', b: 'Shoot', x: 'Lob', y: 'Through' });
+  assert.deepEqual(faceLabels(true, null, true), { a: 'Pass', b: 'Shoot', x: 'Cross', y: 'Through' });
   assert.deepEqual(faceLabels(false), { a: 'Contain', b: 'Tackle', x: 'Slide', y: 'Press' });
   assert.deepEqual(faceLabels(false, { a: 'Restart', y: 'Through' }), { a: 'Restart', b: 'Tackle', x: 'Slide', y: 'Press' });
+});
+
+test('phone match clock uses broadcast minutes and hides a missing pre-kickoff value', () => {
+  assert.equal(phoneClockLabel(null), null);
+  assert.equal(phoneClockLabel(0), "0'");
+  assert.equal(phoneClockLabel(12), "12'");
 });
 
 test('phone practice strip is one ellipsized line, below the score and hidden in portrait', () => {
@@ -175,6 +347,13 @@ test('phone practice strip is one ellipsized line, below the score and hidden in
   assert.match(controlCss, /\.g-soccer-pad \.g-soccer-phone-practice-row p\s*\{[^}]*text-overflow:\s*ellipsis[^}]*white-space:\s*nowrap/s);
   assert.match(controlCss, /\.g-soccer-pad \.g-soccer-phone-practice-row\s*\{[^}]*flex-wrap:\s*nowrap/s);
   assert.match(controlCss, /@media \(orientation: portrait\)[\s\S]*?\.g-soccer-pad-strip,[\s\S]*?\.g-soccer-pad-rotate\s*\{[\s\S]*?display:\s*flex !important/s);
+  assert.match(controlCss, /\.g-soccer-pad-rotate\s*\{\s*display:\s*none;/);
+  assert.match(controlCss, /--diamond-width:\s*calc\(var\(--btn\)\s*\*\s*3\.2\)/);
+  assert.match(controlCss, /--diamond-height:\s*calc\(var\(--btn\)\s*\*\s*3\.1\)/);
+  assert.match(controlCss, /\.g-soccer-pad-diamond\s*\{[^}]*right:\s*calc\(var\(--sa-r\)\s*\+\s*24px\)[^}]*bottom:\s*calc\(var\(--sa-b\)\s*\+\s*25px\)[^}]*width:\s*var\(--diamond-width\)[^}]*height:\s*var\(--diamond-height\)/s);
+  assert.match(controlCss, /\.g-soccer-pad \.g-soccer-stick::after\s*\{\s*display:\s*none;/);
+  assert.match(controlCss, /\.g-soccer-pad-rotate svg\s*\{[^}]*width:\s*48px[^}]*height:\s*48px[^}]*fill:\s*none[^}]*stroke:\s*currentColor/s);
+  assert.match(controlSource, /<svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor"/);
   const strip = practiceSource.slice(practiceSource.indexOf('export function PhonePracticeStrip'));
   assert.equal((strip.match(/className="g-soccer-phone-practice-row"/g) ?? []).length, 2);
   assert.match(strip, /<button type="button" onClick=\{\(\) => onPick\('skip'\)\}>Skip<\/button>/);

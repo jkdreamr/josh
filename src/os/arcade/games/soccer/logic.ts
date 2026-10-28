@@ -194,8 +194,6 @@ export function switchPlayer(world: World, team: Team, direction: Point = { x: 0
   const chosen = eligible.sort((a, b) => norm > 0.2 ? angle(a) - angle(b) : switchScore(world, a) - switchScore(world, b))[0];
   if (!chosen) return currentId;
   transferControl(world, team, chosen.id, currentId);
-  const seat = world.controlledSeats?.indexOf(currentId) ?? -1;
-  if (seat >= 0) world.controlledSeats![seat] = chosen.id;
   return chosen.id;
 }
 
@@ -205,7 +203,7 @@ function switchScore(world: World, p: Player) {
 
 export function transferControl(world: World, team: Team, id: number, fromId = world.controlled[team]) {
   const next = world.players.find((p) => p.id === id && p.team === team && !p.sentOff);
-  if (!next || id === fromId) return world.controlled[team];
+  if (!next) return world.controlled[team];
   for (const p of world.players) {
     if (p.team !== team) continue;
     if (p.id === fromId) {
@@ -217,6 +215,7 @@ export function transferControl(world: World, team: Team, id: number, fromId = w
       p.controlled = true;
     }
   }
+  if (world.controlledSeats) world.controlledSeats = world.controlledSeats.map((seatId) => seatId === fromId ? id : seatId);
   if (fromId === world.controlled[team]) world.controlled[team] = id;
   (world.switchAt ??= [-1, -1])[team] = world.halfLength * world.half - world.clock;
   (world.switchWait ??= [0, 0])[team] = 0;
@@ -1262,6 +1261,5 @@ export function matchClock(world: Pick<World, 'half' | 'halfLength' | 'clock'>) 
 
 export function humanControl(world: World, team: Team, playerId: number) {
   if (world.players.find((p) => p.id === playerId)?.sentOff) return;
-  for (const p of world.players) if (p.team === team && p.human) p.controlled = p.id === playerId;
-  world.controlled[team] = playerId;
+  transferControl(world, team, playerId);
 }

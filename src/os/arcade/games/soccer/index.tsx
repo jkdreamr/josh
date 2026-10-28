@@ -17,7 +17,7 @@ import { broadcastClock, createStatsObserver, possessionShare } from './broadcas
 import { IntroCard, MatchContext, PausePanel, StatsScreen, type MatchData, type Presentation } from './presentation.tsx';
 import { captureSnapshot, createSnapshot, interpolateInto, type Snapshot } from './render-lerp.ts';
 import { publishSoccerPerf, recordSoccerPerf, recordSoccerRendererStats, soccerPerfEnabled } from './perf.ts';
-import { clampOrigin, faceLabels, followOrigin, haptic as padHaptic, hitButton, STICK, stickVector, type PadPoint } from './pad.ts';
+import { clampOrigin, faceLabels, followOrigin, haptic as padHaptic, hitButton, phoneClockLabel, STICK, stickVector, type PadPoint } from './pad.ts';
 import { assignControllers, missingPhoneSeats, playerForSeat, type ControllerMember, type Mode } from './seats.ts';
 import type { PitchPattern } from './stadium.ts';
 import { createPracticeState, createTutorial, markTutorialSeen, selectDrill, setupDrill, stepPractice, stepTutorial, tutorialSeen, TUTORIAL_SECONDS, DRILLS, type DrillId, type PracticeState, type TutorialState } from './practice.ts';
@@ -895,13 +895,6 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         if (active !== undefined && active !== null) controllerPlayers.current.set(seat, active);
         else if (!controllerPlayers.current.has(seat)) controllerPlayers.current.set(seat, id);
       }
-      for (const entry of room.players) {
-        if (entry.seat === 0 && displayOnlyRoom.current && currentCompetition !== 'online' || entry.seat < 0) continue;
-        const id = current.controlledSeats?.[entry.seat] ?? controllerPlayers.current.get(entry.seat);
-        if (id === undefined) continue;
-        const player = current.players[id];
-        if (player) { player.human = true; player.controlled = true; }
-      }
     } else if (currentMode === 'coop' && controllerPlayers.current.size === 0) {
       controllerPlayers.current.set(0, 6); controllerPlayers.current.set(1, 9);
     }
@@ -983,9 +976,9 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
           if (tutorialRef.current.finished) endTutorial();
         }
         const assignments = reconcileControllers(current, controllerPlayers.current);
-        for (const [seat, id] of assignments) {
-          if (current.controlledSeats && current.controlledSeats[seat] !== null) assignments.set(seat, current.controlledSeats[seat]!);
-          else if (current.controlledSeats && id !== undefined) current.controlledSeats[seat] = id;
+        for (const seat of assignments.keys()) {
+          const assigned = current.controlledSeats?.[seat];
+          if (assigned !== undefined && assigned !== null) assignments.set(seat, assigned);
         }
         for (const [seat, id] of assignments) {
           const old = controllerPlayers.current.get(seat);
@@ -1470,8 +1463,7 @@ export function PhoneController() {
   const phonePlayerId = () => {
     const seat = online?.seat ?? 0;
     const snapshot = phoneWorld.current;
-    const assigned = snapshot?.controlledSeats?.[seat] ?? playerForSeat(seat, displayOnly, mode);
-    return snapshot && !snapshot.players[assigned]?.human ? snapshot.controlled[teamOf(assigned)] : assigned;
+    return snapshot?.controlledSeats?.[seat] ?? playerForSeat(seat, displayOnly, mode);
   };
   const aimForKick = () => {
     const now = performance.now();
@@ -1655,9 +1647,14 @@ export function PhoneController() {
   const phonePlayer = phonePlayerId();
   const attacking = phoneHasBall();
   const labels = phoneWorld.current ? setPieceLabels(phoneWorld.current, teamOf(phonePlayer), phonePlayer) : null;
+  const phonePlayerState = phoneWorld.current?.players[phonePlayer];
+  const cross = !!phoneWorld.current && !!phonePlayerState && isCross(phoneWorld.current, phonePlayerState);
+  const phoneClock = phoneWorld.current && !(phoneWorld.current.phase === 'restart' && phoneWorld.current.restart === 'kickoff')
+    ? phoneClockLabel(matchClock(phoneWorld.current))
+    : null;
   const taking = phoneWorld.current?.phase === 'restart' && phoneWorld.current.setPiece?.takerId === phonePlayer;
   const chargingKey = FACE_KEYS.find((key) => FACE[key] === chargingAction) ?? null;
-  const faceLabel = faceLabels(attacking, labels ? { a: labels.a, b: labels.b, x: labels.x, y: labels.y } : null);
+  const faceLabel = faceLabels(attacking, labels ? { a: labels.a, b: labels.b, x: labels.x, y: labels.y } : null, cross);
   const faceAt = (event: PointerEvent<HTMLElement>) => hitButton({ x: event.clientX, y: event.clientY }, FACE_KEYS.flatMap((id) => {
     const rect = faceRefs.current[id]?.getBoundingClientRect();
     return rect ? [{ id, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, r: rect.width / 2 }] : [];
@@ -1718,7 +1715,7 @@ export function PhoneController() {
       <div className="g-soccer-pad-strip">
         <div className="g-soccer-pad-score" aria-label={`Score ${score[0]} to ${score[1]}`}>
           <strong>{score[0]} <i>–</i> {score[1]}</strong>
-          <span>{phoneWorld.current ? matchClock(phoneWorld.current) : '00:00'}</span>
+          {phoneClock && <span>{phoneClock}</span>}
         </div>
         {practiceStatus && <PhonePracticeStrip status={practiceStatus} onPick={(pick) => online.send({ t: 'soccer', k: 'pd', r: online.round || 1, seq: sequence.current++, seat: online.seat, pick })} />}
       </div>
@@ -1771,7 +1768,7 @@ export function PhoneController() {
         <button className="g-soccer-pad-trigger" {...pad('RT: Sprint (hold)', sprintDown, sprintUp)}><b>RT</b><small>Sprint</small></button>
       </div>
       <div className="g-soccer-pad-rotate" aria-live="polite">
-        <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M9 17h30v18H9zM15 12h18v5H15z" /><path d="M17 29c3-4 8-4 11 0m-3-4 3 4-4 1" /></svg>
+        <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor" aria-hidden="true"><path d="M9 17h30v18H9zM15 12h18v5H15z" /><path d="M17 29c3-4 8-4 11 0m-3-4 3 4-4 1" /></svg>
         <strong>Rotate your phone</strong>
         <span>The controller works in landscape</span>
       </div>
