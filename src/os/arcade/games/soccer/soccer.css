@@ -1468,8 +1468,28 @@
 }
 .g-soccer-pad-stick::before { content: ""; position: absolute; inset: 8px; border: 1px solid #ffffff14; border-radius: 50%; }
 .g-soccer-pad-stick[data-active] { width: 136px; height: 136px; opacity: .95; box-shadow: 0 0 0 1px #ffffff30; }
-.g-soccer-pad-stick > i { width: 48%; height: 48%; border: 1px solid #ffffff2c; background: #30353d; box-shadow: inset 0 2px 8px #0008; }
-.g-soccer-pad-stick > i::after { width: 24px; height: 24px; background: #565d67; }
+.g-soccer-pad-stick > i {
+  display: block;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 48%;
+  height: 48%;
+  border: 1px solid #ffffff2c;
+  border-radius: 50%;
+  background: #30353d;
+  box-shadow: inset 0 2px 8px #0008;
+}
+.g-soccer-pad-stick > i::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #565d67;
+}
 .g-soccer-pad .g-soccer-stick::after { display: none; }
 
 .g-soccer-pad-face {

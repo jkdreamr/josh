@@ -4,6 +4,7 @@ import { test } from 'node:test';
 import { computeAI } from '../src/os/arcade/games/soccer/ai.ts';
 import { createWorld, distance, FIELD, findReceiver, groundPassSpeed, kick, setRestart, STEP, stepWorld, TEAM_SIZE, type Command } from '../src/os/arcade/games/soccer/logic.ts';
 import { faceLabels, haptic, phoneClockLabel } from '../src/os/arcade/games/soccer/pad.ts';
+import { sendOff } from '../src/os/arcade/games/soccer/rules.ts';
 
 const controlCss = readFileSync(new URL('../src/os/arcade/games/soccer/soccer.css', import.meta.url), 'utf8');
 const controlSource = readFileSync(new URL('../src/os/arcade/games/soccer/index.tsx', import.meta.url), 'utf8');
@@ -302,6 +303,23 @@ test('control-seat ownership stays exact through kickoff, AI play, passes, resta
   }
 });
 
+test('red-card send-off transfers the seated controller to a replacement', () => {
+  const world = worldWithSeats(512, [null, 6, null, null]);
+  const sentOff = world.players[6]!;
+  sendOff(world, sentOff);
+
+  const replacementId = world.controlledSeats?.[1];
+  assert.notEqual(replacementId, null);
+  assert.notEqual(replacementId, undefined);
+  assert.notEqual(replacementId, sentOff.id);
+  assert.equal(sentOff.sentOff, true);
+  assert.equal(world.players[replacementId!]?.human, true);
+  assert.equal(world.players[replacementId!]?.controlled, true);
+  assert.equal(world.players.filter((player) => player.team === 0 && player.human).length, 1);
+  assert.equal(world.controlled[0], replacementId);
+  assertSeatInvariant(world);
+});
+
 test('phone A press and release on the kickoff carrier produces one kick event', () => {
   const world = worldWithSeats(520, [null, 6, null, null]);
   stepWorld(world, STEP);
@@ -351,6 +369,9 @@ test('phone practice strip is one ellipsized line, below the score and hidden in
   assert.match(controlCss, /--diamond-width:\s*calc\(var\(--btn\)\s*\*\s*3\.2\)/);
   assert.match(controlCss, /--diamond-height:\s*calc\(var\(--btn\)\s*\*\s*3\.1\)/);
   assert.match(controlCss, /\.g-soccer-pad-diamond\s*\{[^}]*right:\s*calc\(var\(--sa-r\)\s*\+\s*24px\)[^}]*bottom:\s*calc\(var\(--sa-b\)\s*\+\s*25px\)[^}]*width:\s*var\(--diamond-width\)[^}]*height:\s*var\(--diamond-height\)/s);
+  assert.match(controlCss, /\.g-soccer-pad-stick\s*\{[^}]*position:\s*absolute/s);
+  assert.match(controlCss, /\.g-soccer-pad-stick\s*>\s*i\s*\{[^}]*display:\s*block[^}]*position:\s*absolute[^}]*left:\s*50%[^}]*top:\s*50%[^}]*border-radius:\s*50%/s);
+  assert.match(controlCss, /\.g-soccer-pad-stick\s*>\s*i::after\s*\{[^}]*content:\s*""[^}]*position:\s*absolute[^}]*inset:\s*0[^}]*margin:\s*auto[^}]*border-radius:\s*50%/s);
   assert.match(controlCss, /\.g-soccer-pad \.g-soccer-stick::after\s*\{\s*display:\s*none;/);
   assert.match(controlCss, /\.g-soccer-pad-rotate svg\s*\{[^}]*width:\s*48px[^}]*height:\s*48px[^}]*fill:\s*none[^}]*stroke:\s*currentColor/s);
   assert.match(controlSource, /<svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor"/);
