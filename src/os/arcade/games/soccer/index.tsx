@@ -5,7 +5,7 @@ import { computeAI, type Level } from './ai.ts';
 import { chargePower, IDENTITY_BASIS, screenToWorld, gamepadInput, keyboardInput, phoneControlledPlayer, reconcileControllers, syncControllerSeats, type ControlCommand, type GamepadHistory } from './input.ts';
 import { acceptMovePacket, cloneSnapshot, consumeCommand, InputFreshness, neutralCommand, movePacket, parsePacket, type RemoteSeat, type LobbyMember } from './net.ts';
 import { createWorld, distance, teamOf, findReceiver, matchClock, nearestCarrier, setRestart, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
-import { setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
+import { phoneStoppagePrompt, setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { SoccerSound, type CommentaryMode } from './audio.ts';
 import type { CameraMode, SoccerView, TimeMode } from './scene.ts';
@@ -1561,6 +1561,7 @@ export function PhoneController() {
   const myTeam = teamOf(phonePlayer);
   const attacking = phoneHasBall();
   const labels = phoneWorld.current ? setPieceLabels(phoneWorld.current, teamOf(phonePlayer), phonePlayer) : null;
+  const stoppagePrompt = phoneWorld.current ? phoneStoppagePrompt(phoneWorld.current, phonePlayer) : null;
   const taking = phoneWorld.current?.phase === 'restart' && phoneWorld.current.setPiece?.takerId === phonePlayer;
   if (showGame) return <><Play key={`phone-game-${online.round ?? 0}`} audioEnabled={false} /><button className="g-soccer-phone-show" type="button" onClick={() => setShowGame(false)}>Controller</button></>;
   const chargeName = chargingAction === 'pass' ? 'Pass' : chargingAction === 'shoot' ? 'Shoot' : chargingAction === 'through' ? 'Through' : chargingAction === 'lob' ? 'Lob' : chargingAction === 'skill' ? 'Skill' : 'Hold to charge';
@@ -1679,7 +1680,7 @@ export function PhoneController() {
         <div className={`g-soccer-pad-meter${chargeProgress > 0.85 ? ' is-over' : ''}`} role="progressbar" aria-label={`${chargeName} power`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.round(chargeProgress * 100)}>
           <i style={{ width: `${chargeProgress * 100}%` }} />
           <span>{chargingAction ? `${chargeName} · ${Math.round(chargeProgress * 100)}%` : 'Hold a button to charge'}</span>
-          {labels && <small className="g-soccer-setpiece-hint">{labels.title} · {labels.hint}</small>}
+          {stoppagePrompt && <small className="g-soccer-setpiece-hint">{stoppagePrompt}</small>}
         </div>
         <div className="g-soccer-pad-center">
           <em className="g-soccer-pad-mode">{attacking ? 'Attack' : 'Defend'}</em>

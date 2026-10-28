@@ -186,3 +186,23 @@ test('rejected sequence packets still keep the controller link fresh', () => {
     assert.deepEqual(tracker.staleSeats(now + 1400, [1]), []);
   }
 });
+
+test('pass reception transfers the current human after switching away from the passer', () => {
+  for (const missingPrimary of [false, true]) {
+    const world = createWorld(1234);
+    world.phase = 'live';
+    for (const player of world.players) { player.x = -30 + player.id * 2; player.z = 20; }
+    Object.assign(world.players[10]!, { x: 0, z: 0 });
+    Object.assign(world.ball, { x: 0, z: 0, y: 0.11, vx: 0, vy: 0, vz: 0 });
+    world.passFrom = 6;
+    world.passTarget = 10;
+    world.passControl = true;
+    transferControl(world, 0, 7);
+    if (missingPrimary) world.controlled[0] = 6;
+    assert.deepEqual(world.players.filter((p) => p.human).map((p) => p.id), [7]);
+    stepWorld(world, STEP, new Map([[7, { move: { x: 0, z: 1 } }]]));
+    assert.deepEqual(world.players.filter((p) => p.human || p.controlled).map((p) => p.id), [10]);
+    assert.equal(world.controlled[0], 10);
+    assert.equal(reconcileControllers(world, new Map([[1, 7]])).get(1), 10);
+  }
+});

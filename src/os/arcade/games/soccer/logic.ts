@@ -214,7 +214,7 @@ export function transferControl(world: World, team: Team, id: number, fromId = w
       p.controlled = true;
     }
   }
-  if (fromId === world.controlled[team]) world.controlled[team] = id;
+  if (fromId === world.controlled[team] || !world.players.some((p) => p.id === world.controlled[team] && p.human && !p.sentOff)) world.controlled[team] = id;
   (world.switchAt ??= [-1, -1])[team] = world.halfLength * world.half - world.clock;
   (world.switchWait ??= [0, 0])[team] = 0;
   (world.switchCandidate ??= [-1, -1])[team] = -1;
@@ -1075,7 +1075,10 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
   }
   if (nowCarrier && world.passTarget !== null) {
     if (world.passTarget === nowCarrier.id && world.passControl && !nowCarrier.human) {
-      transferControl(world, nowCarrier.team, nowCarrier.id, world.passFrom ?? world.controlled[nowCarrier.team]);
+      const current = world.players.find((p) => p.id === world.passFrom && p.team === nowCarrier.team && p.human && !p.sentOff)
+        ?? world.players.find((p) => p.id === world.controlled[nowCarrier.team] && p.human && !p.sentOff)
+        ?? world.players.find((p) => p.team === nowCarrier.team && p.human && !p.sentOff);
+      if (current) transferControl(world, nowCarrier.team, nowCarrier.id, current.id);
     }
     world.passTarget = null;
     world.passControl = false;
