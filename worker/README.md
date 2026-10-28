@@ -94,3 +94,25 @@ curl -X POST -H "Authorization: Bearer $LOUNGE_ADMIN_TOKEN" https://josh-arcade.
 ```
 
 It answers `{ "ok": true, "removed": <count> }`, 401 for a wrong token, or 404 for a channel that doesn't exist. Without the secret, clearing is off (403). To test locally, start `wrangler dev` with `scripts/smoke/wrangler.jsonc`, which sets the token to `test-admin-token`, and run `node scripts/smoke-lounge.mjs` (the exact commands are at the top of that file).
+
+## Soccer Telemetry
+
+Soccer display and phone-controller pages send privacy-scrubbed error reports and 30-second match performance summaries to `POST /telemetry`. Batches are limited to 16 KB and 20 events; clients send at most 20 events per minute. The Worker validates the wire schema, then rate-limits to 120 events and 30 batches per minute per salted IP hash. IP addresses and hashes are held only in memory for rate limiting and are never stored. Error messages are limited to 500 characters, stacks to 2 KB, and user agents to 256 characters. Unknown fields are discarded.
+
+The global `Telemetry` Durable Object stores events in SQLite for 14 days, prunes expired rows, and caps storage at 100,000 rows. `GET /telemetry/summary?hours=336&build=<hex-prefix>` returns deduplicated errors and role/device performance percentiles; `hours` can be 1–336. The summary endpoint is token-protected and does not enable CORS.
+
+Set the summary token as a Worker secret and deploy the v6 SQLite migration from `worker/`:
+
+```sh
+npx wrangler secret put TELEMETRY_TOKEN
+npx wrangler deploy
+```
+
+The token is never included in client code or source control. To read a summary from the repository root, provide that same secret in `TELEMETRY_TOKEN` without printing or committing it:
+
+```sh
+TELEMETRY_TOKEN="$TELEMETRY_TOKEN" node scripts/soccer-telemetry.mjs --hours 72
+node scripts/soccer-telemetry.mjs --hours 336 --build abc123 --json
+```
+
+The script also accepts `--api URL`; otherwise it uses `ARCADE_API`, `PUBLIC_ARCADE_API`, or the production Worker URL, in that order.

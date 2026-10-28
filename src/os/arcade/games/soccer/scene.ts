@@ -467,6 +467,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const debug = typeof location !== 'undefined' && new URLSearchParams(location.search).has('soccerdebug');
   const quality = {
     dpr: Math.min(window.devicePixelRatio || 1, lite ? 1.5 : 2),
+    tier: 0,
     slow: 0,
     stable: 0,
     lastRender: 0,
@@ -712,17 +713,20 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     if (quality.dpr > 1.01) {
       quality.dpr = quality.dpr > 1.75 ? 1.5 : quality.dpr > 1.35 ? 1.25 : 1;
       renderer.setPixelRatio(quality.dpr);
+      quality.tier++;
       return;
     }
     if (quality.shadows) {
       quality.shadows = false;
       key.castShadow = false;
       renderer.shadowMap.enabled = false;
+      quality.tier++;
       return;
     }
     if (!quality.crowdHalf) {
       quality.crowdHalf = true;
       stadium.reduceCrowd();
+      quality.tier++;
     }
   }
 
@@ -786,6 +790,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     },
     perfStats() {
       return {
+        dpr: quality.dpr,
+        qualityTier: quality.tier,
         rendererCalls: renderer.info.render.calls,
         triangles: renderer.info.render.triangles,
         shadowsEnabled: renderer.shadowMap.enabled,
