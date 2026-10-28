@@ -30,6 +30,8 @@ type Crowd = { mesh: T.InstancedMesh; count: number; phases: number[]; baseY: nu
 
 export type SoccerView = {
   resize(width: number, height: number): void;
+  /** Fraction of the view height covered by the bottom HUD; the broadcast keeps play above it. */
+  setSafeBottom(fraction: number): void;
   viewBasis(): ViewBasis;
   getCameraNdc(): SoccerCameraNdc;
   perfStats(): SoccerRenderStats;
@@ -486,6 +488,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const onLost = (event: Event) => event.preventDefault();
   canvas.addEventListener('webglcontextlost', onLost);
 
+  let safeBottom = 0;
   function resize(w: number, h: number) {
     width = Math.max(1, w); height = Math.max(1, h);
     renderer.setSize(width, height, false);
@@ -530,7 +533,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       reticle.scale.setScalar(mouth ? 1 : 4);
       reticle.position.set(setPiece.aim.x, mouth ? setPiece.aim.y : 0.12, setPiece.aim.z);
     }
-    const goal = cameraGoal(world, humanTeam, camera.aspect, cameraMode, (time - (introStartedAt ?? time)) / 5.5);
+    const goal = cameraGoal(world, humanTeam, camera.aspect, cameraMode, (time - (introStartedAt ?? time)) / 5.5, safeBottom);
     // Camera FX enter the same bounded springs; no render-only displacement or zoom bypasses them.
     if (fxDirector) {
       const shiftX = fxDirector.nudgeX + fxDirector.shakeX;
@@ -804,6 +807,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
 
   return {
     resize,
+    setSafeBottom(fraction) { safeBottom = Number.isFinite(fraction) ? Math.max(0, Math.min(0.45, fraction)) : 0; },
     viewBasis() {
       const basis = lastViewBasis ?? desiredBroadcastBasis ?? { forward: { x: 0, z: 1 }, right: { x: -1, z: 0 } };
       return { right: { ...basis.right }, forward: { ...basis.forward } };

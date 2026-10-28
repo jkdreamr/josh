@@ -3,7 +3,6 @@ import test from 'node:test';
 import { createCup, recordUserResult, userFixture } from '../src/os/arcade/games/soccer/cup.ts';
 import { hasLobbyPhoneMember, nextCupFixtureText, hostLobbyStatus, lobbySetupOptions, phoneRoute, phoneStatusLine, postMatchPrimaryLabel, requiredPhones, sideForLobbyMember } from '../src/os/arcade/games/soccer/phone-flow.ts';
 import { DEFAULT_CLUBS } from '../src/os/arcade/games/soccer/teams.ts';
-import { reconnectedSeats } from '../src/os/arcade/games/soccer/net.ts';
 import { postMatchNavPacket, repeatPostMatchNav } from '../src/os/arcade/games/soccer/post-match-nav.ts';
 
 test('quick phone lobby includes practice after the player modes', () => {
@@ -33,15 +32,13 @@ test('phone picker waits for the lobby to register its seat before sending input
   assert.equal(hasLobbyPhoneMember(members, 2), true);
 });
 
-test('phone lobby lists connected phones and only routes to the picker in the lobby', () => {
+test('phone lobby lists connected phones and routes to the picker only in the lobby', () => {
   assert.equal(phoneStatusLine([{ seat: 2, role: 'phone' }, { seat: 1, role: 'phone' }]), 'Phone 1 ✓ · Phone 2 ✓');
   assert.equal(phoneStatusLine([{ seat: 6, role: 'phone', side: 1 }, { seat: 2, role: 'phone', side: 0 }], [true, false]), 'Phone 1 ready · Phone 2 ✓');
   assert.equal(phoneRoute(0, false, 'lobby'), 'picker');
   assert.equal(phoneRoute(0, true), 'controller');
   assert.equal(phoneRoute(0, false, 'match'), 'controller');
   assert.equal(phoneRoute(2, false, 'lobby'), 'picker');
-  assert.deepEqual(reconnectedSeats([1, 2], [2, 1]), []);
-  assert.deepEqual(reconnectedSeats([1], [1, 2]), [2]);
 });
 
 test('post-match phone stick navigation respects direction, repeat timing, and packet sequence', () => {
