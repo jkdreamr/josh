@@ -4,7 +4,7 @@ import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
 import { carryEdge, chargePower, screenToWorld, gamepadInput, keyboardInput, phoneAttacking, phoneControlledPlayer, reconcileControllers, syncControllerSeats, type ControlCommand, type GamepadHistory } from './input.ts';
 import { desiredCameraBasis } from './camera.ts';
-import { acceptMovePacket, cloneSnapshot, consumeCommand, InputFreshness, neutralCommand, movePacket, parsePacket, type RemoteSeat, type LobbyMember } from './net.ts';
+import { acceptMovePacket, consumeCommand, InputFreshness, neutralCommand, movePacket, parsePacket, sameStick, stickSendDelay, trimSnapshot, type RemoteSeat, type LobbyMember } from './net.ts';
 import { createWorld, distance, teamOf, findReceiver, isCross, matchClock, nearestCarrier, setRestart, stepWorld, STEP, type Command, type Point, type Team, type World } from './logic.ts';
 import { phoneStoppagePrompt, setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
@@ -319,6 +319,8 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const inputTimer = useRef(0);
   const configSequence = useRef(0);
   const remoteCommands = useRef(new Map<number, Command>());
+  const pendingRemoteMoveAt = useRef(new Map<number, number[]>());
+  const lastRemoteMoveAt = useRef(new Map<number, number>());
   const userCommands = useRef(new Map<number, Command>());
   const pendingLocalEdges = useRef(new Map<number, Partial<Command>>());
   const simulationCommands = useRef(new Map<number, Command>());
@@ -631,7 +633,12 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       const room = onlineRef.current;
       if (!room || from === room.seat) return;
       const packet = parsePacket(data);
-      if (!packet || packet.r !== (room.round || 1)) return;
+      if (!packet) return;
+      if (packet.k === 'pg') {
+        if (room.isHost) room.send(packet, { to: from, fast: true });
+        return;
+      }
+      if (packet.r !== (room.round || 1)) return;
       if (room.isHost && packet.k === 'mv') {
         if (packet.seat !== from || packet.seat < 0 || packet.seat > 3) return;
         if (inputFreshness.current.record(performance.now(), from)) {
@@ -655,6 +662,15 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         remoteSeats.current.set(from, accepted.seat);
         if (!accepted.command) return;
         telemetryRef.current?.seq(packet.seq, packet.seat);
+        if (soccerPerfEnabled) {
+          const arrival = performance.now();
+          const previousArrival = lastRemoteMoveAt.current.get(from);
+          if (previousArrival !== undefined) recordSoccerPerf('moveGapMs', arrival - previousArrival);
+          lastRemoteMoveAt.current.set(from, arrival);
+          const arrivals = pendingRemoteMoveAt.current.get(from) ?? [];
+          arrivals.push(arrival);
+          pendingRemoteMoveAt.current.set(from, arrivals);
+        }
         const command = accepted.command;
         remoteCommands.current.set(player.id, command);
         return;
@@ -1000,8 +1016,8 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       const command = commandsForUsers.get(frameLocalPlayerIds[0]!)!;
       if (command.action && command.pressed || command.switchNearest || command.switchDir) pendingNetworkAction.current = command;
       inputTimer.current += dt;
-      if (inputTimer.current >= 1 / 30) {
-        inputTimer.current %= 1 / 30;
+      if (inputTimer.current >= 1 / 60) {
+        inputTimer.current %= 1 / 60;
         const pending = pendingNetworkAction.current;
         const moveOnly = { ...command, ...(pending ? { action: pending.action, pressed: pending.pressed, power: pending.power, aim: pending.aim, switchNearest: pending.switchNearest, switchDir: pending.switchDir } : {}) };
         room.send(movePacket(room.round || 1, inputSequence.current++, room.seat, moveOnly));
@@ -1127,7 +1143,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       snapshotTimer.current += dt;
       if (snapshotTimer.current >= 0.05) {
         snapshotTimer.current %= 0.05;
-        const state = cloneSnapshot(current);
+        const state = trimSnapshot(current);
         if (!state.kickEvent && pendingSnapshotKick.current) state.kickEvent = { ...pendingSnapshotKick.current };
         pendingSnapshotKick.current = null;
         const ack = [0, 1, 2, 3].map((seat) => remoteSeats.current.get(seat)?.seq ?? -1);
@@ -1290,6 +1306,11 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         framePerfStart.current = null;
       }
       if (stats) recordSoccerRendererStats(stats);
+      const renderedAt = performance.now();
+      for (const arrivals of pendingRemoteMoveAt.current.values()) {
+        for (const arrival of arrivals) recordSoccerPerf('inputAgeMs', renderedAt - arrival);
+      }
+      pendingRemoteMoveAt.current.clear();
       publishSoccerPerf();
     }
     renderDirty.current = false;
@@ -1350,12 +1371,14 @@ function PadStick({ movement, onChange }: { movement: { current: { x: number; z:
   const knob = useRef<HTMLElement>(null);
   const pointer = useRef<number | null>(null);
   const origin = useRef<PadPoint>({ x: 0, y: 0 });
+  const cachedMetrics = useRef<{ rect: DOMRect; margin: number; travel: number } | null>(null);
   useEffect(() => {
     const reset = () => {
       if (pointer.current !== null) {
         try { zone.current?.releasePointerCapture(pointer.current); } catch {}
       }
       pointer.current = null;
+      cachedMetrics.current = null;
       movement.current = { x: 0, z: 0 };
       onChange?.();
       if (base.current) {
@@ -1368,11 +1391,6 @@ function PadStick({ movement, onChange }: { movement: { current: { x: number; z:
     window.addEventListener('soccer-pad-reset', reset);
     return () => window.removeEventListener('soccer-pad-reset', reset);
   }, [movement, onChange]);
-  const metrics = (event: PointerEvent<HTMLDivElement>) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const size = base.current?.offsetWidth ?? 0;
-    return { rect, margin: size / 2, travel: size * STICK.travel, thumb: { x: event.clientX - rect.left, y: event.clientY - rect.top } };
-  };
   const draw = (thumb: PadPoint, travel: number) => {
     const { knob: offset, move } = stickVector(thumb.x - origin.current.x, thumb.y - origin.current.y, travel);
     movement.current = move;
@@ -1386,6 +1404,7 @@ function PadStick({ movement, onChange }: { movement: { current: { x: number; z:
   const release = (event: PointerEvent<HTMLDivElement>) => {
     if (pointer.current !== event.pointerId) return;
     pointer.current = null;
+    cachedMetrics.current = null;
     movement.current = { x: 0, z: 0 };
     onChange?.();
     if (base.current) {
@@ -1406,7 +1425,12 @@ function PadStick({ movement, onChange }: { movement: { current: { x: number; z:
         event.preventDefault();
         pointer.current = event.pointerId;
         event.currentTarget.setPointerCapture(event.pointerId);
-        const { rect, margin, travel, thumb } = metrics(event);
+        const rect = event.currentTarget.getBoundingClientRect();
+        const size = base.current?.offsetWidth ?? 0;
+        const margin = size / 2;
+        const travel = size * STICK.travel;
+        const thumb = { x: event.clientX - rect.left, y: event.clientY - rect.top };
+        cachedMetrics.current = { rect, margin, travel };
         origin.current = clampOrigin(thumb, rect.width, rect.height, margin);
         if (base.current) base.current.dataset.active = '';
         padHaptic(8);
@@ -1414,9 +1438,11 @@ function PadStick({ movement, onChange }: { movement: { current: { x: number; z:
       }}
       onPointerMove={(event) => {
         if (pointer.current !== event.pointerId) return;
-        const { rect, margin, travel, thumb } = metrics(event);
-        origin.current = clampOrigin(followOrigin(origin.current, thumb, travel), rect.width, rect.height, margin);
-        draw(thumb, travel);
+        const cached = cachedMetrics.current;
+        if (!cached) return;
+        const thumb = { x: event.clientX - cached.rect.left, y: event.clientY - cached.rect.top };
+        origin.current = clampOrigin(followOrigin(origin.current, thumb, cached.travel), cached.rect.width, cached.rect.height, cached.margin);
+        draw(thumb, cached.travel);
       }}
       onPointerUp={release}
       onPointerCancel={release}
@@ -1439,7 +1465,10 @@ export function PhoneController() {
   const edgeSequence = useRef(0);
   const edgeRepeat = useRef<{ id: number; until: number; action: Command['action']; heldAction: Command['action']; pressed: boolean; power: number; finesse: boolean; aim: { x: number; z: number }; switchNearest: boolean; switchDir?: { x: number; z: number } } | null>(null);
   const lastPacketSentAt = useRef(0);
+  const lastSentMove = useRef({ x: 0, z: 0 });
   const stickSendTimer = useRef(0);
+  const pingSequence = useRef(0);
+  const outstandingPings = useRef(new Set<number>());
   const phoneWorld = useRef<World | null>(null);
   const shoulder = useRef(false);
   const press = useRef(false);
@@ -1535,6 +1564,7 @@ export function PhoneController() {
     };
     const onWake = () => { void requestWakeLock(); };
     const preventScroll = (event: TouchEvent) => { if (event.cancelable) event.preventDefault(); };
+    // These non-passive guards prevent iOS scrolling and zooming.
     document.addEventListener('gesturestart', preventGesture, { passive: false });
     document.addEventListener('touchmove', preventScroll, { passive: false });
     document.addEventListener('dblclick', preventGesture, { passive: false });
@@ -1669,13 +1699,22 @@ export function PhoneController() {
       switchDir: repeat.switchDir,
     });
     const seq = sequence.current++;
-    online.send(movePacket(online.round || 1, seq, online.seat, command, repeat?.id), { fast: true });
+    const packet = movePacket(online.round || 1, seq, online.seat, command, repeat?.id);
+    online.send(packet, edge ? { fast: true, reliable: true } : { fast: true });
+    lastSentMove.current = { x: packet.x, z: packet.z };
     telemetryRef.current?.sent(seq);
     lastPacketSentAt.current = now;
   };
   const sendStickChange = () => {
-    const remaining = 16 - (performance.now() - lastPacketSentAt.current);
-    if (remaining <= 0) {
+    if (sameStick(movement.current, lastSentMove.current)) {
+      if (stickSendTimer.current) {
+        window.clearTimeout(stickSendTimer.current);
+        stickSendTimer.current = 0;
+      }
+      return;
+    }
+    const delay = stickSendDelay(performance.now(), lastPacketSentAt.current);
+    if (delay === 0) {
       send();
       return;
     }
@@ -1683,7 +1722,7 @@ export function PhoneController() {
     stickSendTimer.current = window.setTimeout(() => {
       stickSendTimer.current = 0;
       sendStickChange();
-    }, remaining);
+    }, delay);
   };
   const beginCharge = (action: Command['action']) => {
     holdAim.current = null;
@@ -1764,6 +1803,13 @@ export function PhoneController() {
     const off = online.onMessage((from, data) => {
       if (from !== 0) return;
       const packet = parsePacket(data);
+      if (packet?.k === 'pg') {
+        if (outstandingPings.current.delete(packet.id)) {
+          recordSoccerPerf('rttMs', performance.now() - packet.at);
+          publishSoccerPerf();
+        }
+        return;
+      }
       if (packet?.k === 'lobby') publishLobby(packet);
       if (packet?.k === 's') {
         telemetryRef.current?.seq(packet.seq);
@@ -1785,7 +1831,7 @@ export function PhoneController() {
         const kick = packet.state.kickEvent;
         previousKickKey.current = kick ? `${kick.playerId}:${kick.time}:${kick.action}` : null;
         previousScore.current = [...packet.state.score];
-        setScore(packet.state.score);
+        setScore((previous) => previous[0] === packet.state.score[0] && previous[1] === packet.state.score[1] ? previous : packet.state.score);
       } else if (packet?.k === 'cfg') {
         setDisplayOnly(true);
         if (packet.mode) setMode(packet.mode);
@@ -1799,8 +1845,18 @@ export function PhoneController() {
       send();
       if (chargeStartedAt.current !== null) setChargeProgress(Math.min(1, (performance.now() - chargeStartedAt.current) / 1000));
     }, 1000 / 30);
+    const pingTimer = soccerPerfEnabled ? window.setInterval(() => {
+      const id = pingSequence.current++;
+      const at = performance.now();
+      outstandingPings.current.add(id);
+      online.send({ t: 'soccer', k: 'pg', id, at }, { fast: true });
+    }, 1000) : 0;
     return () => {
-      off(); window.clearInterval(timer); window.clearTimeout(stickSendTimer.current);
+      off();
+      window.clearInterval(timer);
+      if (pingTimer) window.clearInterval(pingTimer);
+      outstandingPings.current.clear();
+      window.clearTimeout(stickSendTimer.current);
       document.removeEventListener('visibilitychange', resetInput);
       window.removeEventListener('pagehide', resetInput);
     };

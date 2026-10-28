@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { roomApp } from '../src/os/arcade/apps.ts';
-import { advanceOnlineRound, botPlayers, canStartNext, MAX_SEATS, nextOnlineRound, relayPlan, roundLeftVerdict, RoundRouter, tagRound, openRoomAction, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, handOffSettled, parseRacePacket, raceSeats, raceStandings, raceVerdict, type OpenRoom, type RaceScores, type SettledRace } from '../src/os/arcade/kit/online-core.ts';
+import { advanceOnlineRound, botPlayers, canStartNext, channelUsable, FAST_BUFFER_LIMIT, fastSendBlocked, MAX_SEATS, nextOnlineRound, relayPlan, roundLeftVerdict, RoundRouter, sendLabels, tagRound, openRoomAction, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, handOffSettled, parseRacePacket, raceSeats, raceStandings, raceVerdict, type OpenRoom, type RaceScores, type SettledRace } from '../src/os/arcade/kit/online-core.ts';
 import { createRoom, listRooms, quickRoom, RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
 import { agreedWinner, agreedWinners, isPool, isRelayMessage, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, canWatchRoom, endRound, GATHER_FULL_MS, GATHER_MS, gatherFull, gathering, joinable, LISTING_REFRESH_MS, lowestFreeSeat, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, pickQuick, QUICK_LATE_MS, QUICK_PENDING_MS, roomListing, roundPlayable, roundSeats, seatsFor, sortListings, WATCHERS_MAX, type LobbyRow, type RoomState } from '../worker/src/room-core.ts';
 import { ONLINE_SPECS } from '../worker/src/specs.gen.ts';
@@ -48,6 +48,68 @@ class FakeWebSocket {
   }
 }
 
+class FakeRTCDataChannel {
+  readyState = 'connecting';
+  bufferedAmount = 0;
+  sent: string[] = [];
+  onopen: ((event: Event) => void) | null = null;
+  onclose: ((event: Event) => void) | null = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  readonly label: string;
+  constructor(label: string) {
+    this.label = label;
+  }
+  send(data: string) {
+    this.sent.push(data);
+  }
+  close() {
+    this.readyState = 'closed';
+    this.onclose?.(new Event('close'));
+  }
+  open() {
+    this.readyState = 'open';
+    this.onopen?.(new Event('open'));
+  }
+}
+
+class FakeRTCPeerConnection {
+  static instances: FakeRTCPeerConnection[] = [];
+  connectionState = 'new';
+  localDescription: RTCSessionDescriptionInit | null = null;
+  remoteDescription: RTCSessionDescriptionInit | null = null;
+  onicecandidate: ((event: RTCPeerConnectionIceEvent) => void) | null = null;
+  ondatachannel: ((event: RTCDataChannelEvent) => void) | null = null;
+  onconnectionstatechange: ((event: Event) => void) | null = null;
+  readonly channels = new Map<string, FakeRTCDataChannel>();
+  constructor() {
+    FakeRTCPeerConnection.instances.push(this);
+  }
+  createDataChannel(label: string) {
+    const channel = new FakeRTCDataChannel(label);
+    this.channels.set(label, channel);
+    return channel;
+  }
+  async createOffer(): Promise<RTCSessionDescriptionInit> {
+    return { type: 'offer', sdp: 'offer' };
+  }
+  async setLocalDescription(description: RTCSessionDescriptionInit) {
+    this.localDescription = description;
+  }
+  async setRemoteDescription(description: RTCSessionDescriptionInit) {
+    this.remoteDescription = description;
+  }
+  close() {
+    this.setConnectionState('closed');
+  }
+  setConnectionState(state: string) {
+    this.connectionState = state;
+    this.onconnectionstatechange?.(new Event('connectionstatechange'));
+  }
+  openChannels() {
+    for (const channel of this.channels.values()) channel.open();
+  }
+}
+
 /** Runs a test with FakeWebSocket installed and WebRTC missing, so RoomLink relays everything through the room. */
 async function withFakeRoom(run: () => Promise<void> | void) {
   const originalWebSocket = globalThis.WebSocket;
@@ -61,6 +123,32 @@ async function withFakeRoom(run: () => Promise<void> | void) {
     if (originalPeerDescriptor) Object.defineProperty(globalThis, 'RTCPeerConnection', originalPeerDescriptor);
     else Reflect.deleteProperty(globalThis, 'RTCPeerConnection');
   }
+}
+
+async function withFakePeerRoom(run: () => Promise<void> | void) {
+  const originalWebSocket = globalThis.WebSocket;
+  const originalPeerDescriptor = Object.getOwnPropertyDescriptor(globalThis, 'RTCPeerConnection');
+  FakeRTCPeerConnection.instances.length = 0;
+  try {
+    globalThis.WebSocket = FakeWebSocket as unknown as typeof WebSocket;
+    Object.defineProperty(globalThis, 'RTCPeerConnection', { value: FakeRTCPeerConnection as unknown as typeof RTCPeerConnection, configurable: true });
+    await run();
+  } finally {
+    globalThis.WebSocket = originalWebSocket;
+    if (originalPeerDescriptor) Object.defineProperty(globalThis, 'RTCPeerConnection', originalPeerDescriptor);
+    else Reflect.deleteProperty(globalThis, 'RTCPeerConnection');
+  }
+}
+
+async function startFakeHostPeer() {
+  const link = new RoomLink('ABCD', 'Host', 'https://arcade.test');
+  const socket = FakeWebSocket.last;
+  const players = [{ seat: 0, name: 'Host' }, { seat: 1, name: 'Guest' }];
+  socket.open();
+  socket.receive({ t: 'welcome', seat: 0, code: 'ABCD', game: 'soccer', seats: 2, players });
+  socket.receive({ t: 'start', players });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  return { link, socket, peer: FakeRTCPeerConnection.instances[0]! };
 }
 
 test('online rounds advance independently from local game rounds', () => {
@@ -94,6 +182,20 @@ test('relay plans preserve direct and per-seat relays unless every broadcast rec
   assert.deepEqual(relayPlan([1, 2], (seat) => seat === 1, true), { direct: [1], relay: [2], relayAll: false });
   assert.deepEqual(relayPlan([1], () => false, true), { direct: [], relay: [1], relayAll: false });
   assert.deepEqual(relayPlan([1, 2], () => false, false), { direct: [], relay: [1, 2], relayAll: false });
+});
+
+test('online sends choose channel labels and apply connection and fast-buffer guards', () => {
+  assert.deepEqual(sendLabels(), ['r']);
+  assert.deepEqual(sendLabels(false, true), ['r']);
+  assert.deepEqual(sendLabels(true), ['u']);
+  assert.deepEqual(sendLabels(true, true), ['u', 'r']);
+  assert.equal(channelUsable('open', 'connected'), true);
+  assert.equal(channelUsable('open', 'connecting'), true);
+  assert.equal(channelUsable('closed', 'connected'), false);
+  for (const state of ['disconnected', 'failed', 'closed']) assert.equal(channelUsable('open', state), false);
+  assert.equal(FAST_BUFFER_LIMIT, 64 * 1024);
+  assert.equal(fastSendBlocked(FAST_BUFFER_LIMIT), false);
+  assert.equal(fastSendBlocked(FAST_BUFFER_LIMIT + 1), true);
 });
 
 test('rooms lock after starting unless the game lets players join between rounds', () => {
@@ -262,6 +364,65 @@ test('RoomLink relays a host broadcast once when every recipient is relayed', as
       { t: 'msg', d: { frame: 1 } },
       { t: 'msg', to: 1, d: { frame: 2 } },
     ]);
+    link.close();
+  });
+});
+
+test('RoomLink sends fast and reliable messages on usable direct channels', async () => {
+  await withFakePeerRoom(async () => {
+    const { link, socket, peer } = await startFakeHostPeer();
+    peer.openChannels();
+    peer.setConnectionState('connected');
+    const fast = peer.channels.get('u')!;
+    const reliable = peer.channels.get('r')!;
+    link.send({ frame: 1 }, { fast: true });
+    link.send({ frame: 2 }, { fast: true, reliable: true });
+    fast.bufferedAmount = FAST_BUFFER_LIMIT + 1;
+    link.send({ frame: 3 }, { fast: true });
+    assert.deepEqual(fast.sent.map((message) => JSON.parse(message)), [{ frame: 1 }, { frame: 2 }]);
+    assert.deepEqual(reliable.sent.map((message) => JSON.parse(message)), [{ frame: 2 }]);
+    assert.equal(socket.sent.filter((message) => JSON.parse(message).t === 'msg').length, 0, 'a blocked fast send is dropped, not relayed');
+    link.close();
+  });
+});
+
+test('RoomLink relays one copy when the direct peer is disconnected', async () => {
+  await withFakePeerRoom(async () => {
+    const { link, socket, peer } = await startFakeHostPeer();
+    peer.openChannels();
+    peer.setConnectionState('disconnected');
+    link.send({ frame: 1 }, { fast: true, reliable: true });
+    assert.equal(peer.channels.get('u')!.sent.length, 0);
+    assert.equal(peer.channels.get('r')!.sent.length, 0);
+    assert.deepEqual(socket.sent.map((message) => JSON.parse(message).t === 'msg' ? JSON.parse(message) : null).filter(Boolean), [
+      { t: 'msg', to: 1, d: { frame: 1 } },
+    ]);
+    link.close();
+  });
+});
+
+test('RoomLink retries a failed host peer after one second, at most three times', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  await withFakePeerRoom(async () => {
+    const { link, peer: first } = await startFakeHostPeer();
+    first.setConnectionState('failed');
+    t.mock.timers.tick(999);
+    assert.equal(FakeRTCPeerConnection.instances.length, 1);
+    t.mock.timers.tick(1);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(FakeRTCPeerConnection.instances.length, 2);
+
+    for (let retry = 0; retry < 2; retry++) {
+      FakeRTCPeerConnection.instances.at(-1)!.setConnectionState('failed');
+      t.mock.timers.tick(1000);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      assert.equal(FakeRTCPeerConnection.instances.length, retry + 3);
+    }
+
+    FakeRTCPeerConnection.instances.at(-1)!.setConnectionState('failed');
+    t.mock.timers.tick(5000);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    assert.equal(FakeRTCPeerConnection.instances.length, 4);
     link.close();
   });
 });

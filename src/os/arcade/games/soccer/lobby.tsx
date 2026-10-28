@@ -173,7 +173,7 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
     const off = online.onMessage((from, data) => {
       if (from === online.seat) return;
       const packet = parsePacket(data);
-      if (!packet || packet.r !== (online.round || 1)) return;
+      if (!packet || packet.k === 'pg' || packet.r !== (online.round || 1)) return;
       if ((packet.k === 'hi' || packet.k === 'nav' || packet.k === 'mv') && packet.seat !== from) return;
       if (packet.k === 'hi') {
         if (packet.seq <= (received.current.get(from) ?? -1)) return;

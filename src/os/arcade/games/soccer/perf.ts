@@ -44,6 +44,7 @@ if (soccerPerfEnabled && typeof window !== 'undefined') {
 export function recordSoccerPerf(name: string, value: number) {
   const samples = raw[name] ?? (raw[name] = []);
   samples.push(value);
+  if (samples.length > 600) samples.splice(0, samples.length - 600);
 }
 
 export function recordSoccerRendererStats(stats: SoccerRenderStats) {
