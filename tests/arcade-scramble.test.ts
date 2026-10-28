@@ -7875,8 +7875,8 @@ test("the scene's box for eggs in view takes in every egg the camera sees, up hi
 
 test('online over a lossy link that reorders fast packets, no screen sees an egg blink out or in, go back up in the air or onto the bus, or jump', () => {
   const players: Player[] = Array.from({ length: 4 }, (_, seat) => ({ seat, name: `P${seat + 1}` }));
-  const rng = rng32(23 * 7 + 1);
-  const host = hostMatch(players, 0, 23, 'hard', MAX_FIGHTERS, COUNTDOWN + 1.2);
+  const rng = rng32(25 * 7 + 1);
+  const host = hostMatch(players, 0, 25, 'hard', MAX_FIGHTERS, COUNTDOWN + 1.2);
   type C = { me: Me; s: Session; m: Match | null; inbox: { at: number; from: number; d: unknown }[]; lastRel: number };
   const clients: C[] = players.map((p) => ({ me: { seat: p.seat, isHost: p.seat === 0, round: 1 }, s: newSession(p.seat === 0, p.seat === 0 ? host.roster : []), m: p.seat === 0 ? host.match : null, inbox: [], lastRel: 0 }));
   autopilot(host.match, host.match.fighters[host.match.me]);
