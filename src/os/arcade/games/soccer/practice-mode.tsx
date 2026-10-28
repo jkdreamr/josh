@@ -76,9 +76,10 @@ const TUTORIAL_TEXT: Record<TutorialState['step'], string> = {
   shoot: 'hold {B}, aim, then let go to shoot',
   done: "you're ready. have fun!",
 };
-export const tutorialText = (tutorial: TutorialState) => TUTORIAL_TEXT[tutorial.step];
+export const tutorialText = (tutorial: TutorialState, defending = false) =>
+  tutorial.step === 'pass' && defending ? 'Win the ball, then tap {A} to pass' : TUTORIAL_TEXT[tutorial.step];
 
-export function TutorialOverlay({ tutorial, scheme, seconds, onSkip }: { tutorial: TutorialState; scheme: ControlScheme; seconds: number; onSkip: () => void }) {
+export function TutorialOverlay({ tutorial, scheme, seconds, defending = false, onSkip }: { tutorial: TutorialState; scheme: ControlScheme; seconds: number; defending?: boolean; onSkip: () => void }) {
   const steps = ['move', 'pass', 'shoot'] as const;
   const index = tutorial.step === 'done' ? steps.length : steps.indexOf(tutorial.step);
   return (
@@ -86,7 +87,7 @@ export function TutorialOverlay({ tutorial, scheme, seconds, onSkip }: { tutoria
       <div className="g-soccer-tutorial-steps">
         {steps.map((step, i) => <i key={step} className={i < index ? 'is-done' : i === index ? 'is-on' : ''}>{i + 1} · {step}</i>)}
       </div>
-      <p>{controlText(TUTORIAL_TEXT[tutorial.step], scheme)}</p>
+      <p>{controlText(tutorialText(tutorial, defending), scheme)}</p>
       <div className="g-soccer-tutorial-bar"><span style={{ width: `${Math.max(0, 100 - (tutorial.total / seconds) * 100)}%` }} /></div>
       <button type="button" onClick={onSkip} onPointerDown={(event) => event.stopPropagation()}>Skip tutorial</button>
     </div>

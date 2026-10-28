@@ -15,6 +15,7 @@ type OnlineValue = {
   seat: number;
   seats: number;
   round: number;
+  started: boolean;
   players: RoomPlayer[];
   /** Computer players: this round's while one is under way, otherwise the ones the host has added so far. */
   bots: RoomPlayer[];
@@ -43,6 +44,7 @@ export function OnlineProvider({
   seat,
   seats,
   round,
+  started,
   players,
   bots,
   transport,
@@ -54,8 +56,8 @@ export function OnlineProvider({
   children,
 }: Omit<OnlineValue, 'seat' | 'link' | 'isHost' | 'code' | 'start'> & { link: RoomLink | null; seat: number | null; children: ReactNode }) {
   const value = useMemo(
-    () => link && seat !== null ? { link, code: link.code, start: () => link.start(), router, seat, seats, round, players, bots, isHost: seat === 0, transport, handoffs, quick, pool, watching, watchers } : null,
-    [link, router, seat, seats, round, players, bots, transport, handoffs, quick, pool, watching, watchers],
+    () => link && seat !== null ? { link, code: link.code, start: () => link.start(), router, seat, seats, round, started, players, bots, isHost: seat === 0, transport, handoffs, quick, pool, watching, watchers } : null,
+    [link, router, seat, seats, round, started, players, bots, transport, handoffs, quick, pool, watching, watchers],
   );
   return <OnlineContext.Provider value={value}>{children}</OnlineContext.Provider>;
 }
@@ -70,6 +72,7 @@ export function useOnline() {
       start: () => room.link.start(),
       seats: room.seats,
       round: room.round,
+      started: room.started,
       players: room.players,
       bots: room.bots,
       isHost: room.isHost,

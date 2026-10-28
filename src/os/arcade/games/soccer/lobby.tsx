@@ -6,6 +6,7 @@ import { CLUBS, clubById, DEFAULT_CLUBS } from './teams.ts';
 import { MODE, COMPETITION, HOME_CLUB, AWAY_CLUB, HALF, LEVEL, CAMERA, TIME } from './settings.ts';
 import type { Mode } from './modes.ts';
 import { clearCup, createCup, cupSummary, loadCup, saveCup, userFixture, type Cup } from './cup.ts';
+import { hostLobbyStatus, lobbySetupOptions, phoneStatusLine, requiredPhones, sideForLobbyMember } from './phone-flow.ts';
 import { parsePacket, type LobbyMember, type LobbyPacket } from './net.ts';
 import { Crest } from './crest.tsx';
 import { preloadSoccer } from './load.ts';
@@ -33,7 +34,7 @@ export function sideForRoom(roomCode: string | undefined): 0 | 1 {
   return params.get('side') === '1' && (params.get('room') ?? '').toUpperCase() === roomCode.toUpperCase() ? 1 : 0;
 }
 
-const modeLabels: Record<Mode, string> = { cpu: 'vs cpu', versus: '2 player versus', coop: '2 player co-op', practice: 'practice' };
+const modeLabels: Record<Mode, string> = { cpu: 'vs cpu', versus: '2 player versus', coop: '2 player co-op', practice: 'practice · learn the controls' };
 const competitionOptions = COMPETITIONS.map(({ id, label }) => [id, label] as const);
 const halfOptions = [['2', '2 min'], ['4', '4 min'], ['6', '6 min']] as const;
 const cameraOptions = [['broadcast', 'Broadcast'], ['end', 'End to end']] as const;
@@ -132,7 +133,7 @@ function CupLobbyCard({ cup, homeId, setHomeId, setCup }: { cup: Cup | null; hom
   return <CupCard cup={cup} onNew={onNew} />;
 }
 
-function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline>> }) {
+function HostLobby({ online, postMatch = false }: { online: NonNullable<ReturnType<typeof useOnline>>; postMatch?: boolean }) {
   const [mode, setMode] = useSetting(MODE);
   const [competition, setCompetition] = useSetting(COMPETITION);
   const [homeId, setHomeId] = useSetting(HOME_CLUB);
@@ -142,11 +143,12 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
   const [camera, setCamera] = useSetting(CAMERA);
   const [time, setTime] = useSetting(TIME);
   const [qr, setQr] = useState('');
-  const [focus, setFocus] = useState<[number, number]>([0, 0]);
+  const [focus, setFocus] = useState<[number, number]>([1, 0]);
   const [ready, setReady] = useState<[boolean, boolean]>([false, false]);
   const [countdown, setCountdown] = useState<number | null>(null);
   const [members, setMembers] = useState<LobbyMember[]>([{ seat: 0, role: 'host', side: 0 }]);
   const [cup, setCup] = useState<Cup | null>(() => loadCup());
+  const matchStarted = useRef(false);
   const sequence = useRef(0);
   const received = useRef(new Map<number, number>());
   const navState = useRef(new Map<number, { x: number; y: number; time: number }>());
@@ -160,12 +162,22 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
   settingsRef.current = { homeId, awayId };
   const def = competitionById(competition);
   const connected = online.players.filter((player) => player.seat > 0);
-  const memberList = currentMembers(members, online.players);
+  const memberList = currentMembers(members, online.players).map((member) => ({
+    ...member,
+    side: sideForLobbyMember(competition, mode, member.role, member.seat, member.side),
+  }));
   const phoneCount = memberList.filter((member) => member.role === 'phone').length;
+  const phoneStatus = phoneStatusLine(memberList);
   const guestMac = memberList.some((member) => member.role === 'mac' && member.side === 1);
   const sideOnePhones = memberList.filter((member) => member.role === 'phone' && member.side === 1).length;
-  const requiredPhones = competition === 'online' ? 0 : mode === 'cpu' || mode === 'practice' ? 1 : 2;
-  const enoughPlayers = competition === 'online' ? guestMac : phoneCount >= requiredPhones;
+  const phonesNeeded = requiredPhones(competition, mode);
+  const enoughPlayers = competition === 'online' ? guestMac : phoneCount >= phonesNeeded;
+  const inviteUrl = online.code && typeof location !== 'undefined'
+    ? `${location.protocol}//${location.host}/?game=soccer&room=${online.code}`
+    : '';
+  const statusLine = countdown === null
+    ? hostLobbyStatus({ competition, mode, phoneCount, guestMac })
+    : `Starting in ${countdown}…`;
   const isRunningCup = competition === 'cup' && cup !== null && cup.round < 3 && !cup.out;
 
   useEffect(() => {
@@ -173,10 +185,9 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
   }, [online.isHost]);
 
   useEffect(() => {
-    if (!online.code || typeof location === 'undefined') return;
-    const url = `${location.protocol}//${location.host}/?game=soccer&room=${online.code}`;
-    void QRCode.toDataURL(url, { errorCorrectionLevel: 'H', margin: 2, width: 250 }).then(setQr).catch(() => setQr(''));
-  }, [online.code]);
+    if (!inviteUrl) return;
+    void QRCode.toDataURL(inviteUrl, { errorCorrectionLevel: 'H', margin: 2, width: 250 }).then(setQr).catch(() => setQr(''));
+  }, [inviteUrl]);
 
   useEffect(() => {
     const off = online.onMessage((from, data) => {
@@ -189,7 +200,7 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
         received.current.set(from, packet.seq);
         setMembers((previous) => {
           const next = previous.filter((member) => member.seat !== from);
-          next.push({ seat: from, role: packet.role, side: packet.side });
+          next.push({ seat: from, role: packet.role, side: sideForLobbyMember(compRef.current, modeRef.current, packet.role, from, packet.side) });
           return next.sort((a, b) => a.seat - b.seat);
         });
       }
@@ -205,7 +216,7 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
         } else navState.current.set(from, { x: 0, y: 0, time: now });
         const member = membersRef.current.find((entry) => entry.seat === from);
         if (!member) return;
-        const side = member.side;
+        const side = sideForLobbyMember(compRef.current, modeRef.current, member.role, from, member.side);
         if (packet.a) setReady((previous) => previous.map((value, index) => index === side ? true : value) as [boolean, boolean]);
         if (packet.b) setReady((previous) => previous.map((value, index) => index === side ? false : value) as [boolean, boolean]);
         if (packet.dx || packet.dy) {
@@ -214,7 +225,7 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
         }
         if (packet.dy) setFocus((previous) => previous.map((value, index) => index === side ? 1 - value : value) as [number, number]);
         if (packet.dx && focus[side] === 0 && side === 0) {
-          const arrangements = competitionById(compRef.current).arrangements;
+          const arrangements = lobbySetupOptions(compRef.current);
           const current = arrangements.indexOf(modeRef.current);
           setMode(arrangements[(current + packet.dx + arrangements.length) % arrangements.length]!);
         } else if (packet.dx && focus[side] === 1) {
@@ -229,8 +240,9 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
   }, [online, online.round, online.seat, focus, setAwayId, setCompetition, setHomeId]);
 
   useEffect(() => {
-    if (!def.arrangements.includes(mode)) setMode(def.arrangements[0]!);
-  }, [competition, def, mode, setMode]);
+    const arrangements = lobbySetupOptions(competition);
+    if (!arrangements.includes(mode)) setMode(arrangements[0]!);
+  }, [competition, mode, setMode]);
 
   useEffect(() => {
     if (competition === 'cup' && cup && cup.user !== homeId && cup.round < 3 && !cup.out) setHomeId(cup.user);
@@ -240,16 +252,18 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
     const packet: LobbyPacket = {
       t: 'soccer', k: 'lobby', r: online.round || 1, seq: sequence.current++, comp: competition, mode,
       clubs: [homeId, awayId], focus, ready, countdown, members: memberList, ...(cup ? { cup: cupSummary(cup) } : {}),
+      ...(postMatch ? { screen: matchStarted.current ? 'match' as const : 'lobby' as const } : {}),
     };
     publishLobby(packet);
-    if (online.round === 0) online.send(packet);
-  }, [online, competition, mode, homeId, awayId, focus, ready, countdown, members, cup]);
+    if (online.round === 0 || postMatch) online.send(packet);
+  }, [online, competition, mode, homeId, awayId, focus, ready, countdown, members, cup, postMatch]);
 
   useEffect(() => {
     if (countdown === null || !online.isHost) return;
     const timer = window.setTimeout(() => {
       if (countdown > 1) setCountdown(countdown - 1);
       else {
+        matchStarted.current = true;
         let nextCup = cup;
         if (compRef.current === 'cup' && (!nextCup || nextCup.round >= 3 || nextCup.out)) {
           nextCup = createCup(settingsRef.current.homeId, Math.floor(Date.now() % 0xffff_ffff));
@@ -260,8 +274,12 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
         const packet: LobbyPacket = {
           t: 'soccer', k: 'lobby', r: online.round || 1, seq: sequence.current++, comp: compRef.current, mode: modeRef.current,
           clubs: [latestCup && compRef.current === 'cup' ? latestCup.user : settingsRef.current.homeId, settingsRef.current.awayId],
-          focus, ready: [true, true], countdown: null, members: currentMembers(membersRef.current, online.players),
+          focus, ready: [true, true], countdown: null, members: currentMembers(membersRef.current, online.players).map((member) => ({
+            ...member,
+            side: sideForLobbyMember(compRef.current, modeRef.current, member.role, member.seat, member.side),
+          })),
           ...(latestCup ? { cup: cupSummary(latestCup) } : {}),
+          ...(postMatch ? { screen: 'match' as const } : {}),
         };
         online.send(packet);
         publishLobby(packet);
@@ -270,7 +288,7 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
       }
     }, 1000);
     return () => window.clearTimeout(timer);
-  }, [countdown, online, cup, focus]);
+  }, [countdown, online, cup, focus, postMatch]);
 
   useEffect(() => {
     if (online.isHost && countdown === null && enoughPlayers && ready[0] && (competition !== 'online' || ready[1])) setCountdown(3);
@@ -295,17 +313,20 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
   };
 
   return (
-    <div className={`g-soccer-phone-lobby${connected.length ? ' is-connected' : ''}`}>
+    <div className={`g-soccer-phone-lobby${connected.length ? ' is-connected' : ''}${phonesNeeded === 2 && phoneCount === 1 ? ' needs-second-phone' : ''}`}>
       <div className="g-soccer-phone-qr">
         {qr && <img src={qr} alt="Connect phone QR code" />}
-        <strong>{connected.length ? 'your phone is connected' : 'connect a phone'}</strong>
+        <strong>{phoneCount ? 'Scan to add a second phone' : 'Scan with your iPhone camera'}</strong>
+        {!phoneCount && <p>Your phone becomes the controller. No app needed.</p>}
+        {inviteUrl && <a href={inviteUrl}>{inviteUrl}</a>}
       </div>
       <div className="g-soccer-phone-lobby-content">
+        <p className="g-soccer-lobby-status" role="status">{statusLine}</p>
         <div className="g-soccer-phone-connections" role="status">
-          <span className={phoneCount ? '' : 'is-waiting'}>{phoneCount ? `your phone ✓` : 'waiting for your phone'}</span>
-          {competition === 'online' && <span className={guestMac ? '' : 'is-waiting'}>{guestMac ? 'friend mac ✓' : 'waiting for the other mac'}</span>}
-          {competition === 'online' && <span className={sideOnePhones ? '' : 'is-waiting'}>{sideOnePhones ? 'friend phone ✓' : 'friend phone optional'}</span>}
-          {competition !== 'online' && mode !== 'cpu' && <span className={phoneCount > 1 ? '' : 'is-waiting'}>{phoneCount > 1 ? 'second phone ✓' : 'waiting for a second phone'}</span>}
+          {phoneStatus ? <span>{phoneStatus}</span> : phonesNeeded > 0 && <span className="is-waiting">Phone 1 waiting</span>}
+          {competition === 'online' && <span className={guestMac ? '' : 'is-waiting'}>{guestMac ? 'Other Mac connected' : 'Waiting for the other Mac'}</span>}
+          {competition === 'online' && <span className={sideOnePhones ? '' : 'is-waiting'}>{sideOnePhones ? 'Other phone connected' : 'Other phone optional'}</span>}
+          {competition !== 'online' && phonesNeeded === 2 && phoneCount === 1 && <span className="is-waiting">Waiting for a second phone</span>}
         </div>
         {connected.length > 0 && (
           <>
@@ -319,12 +340,12 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
             </div>
             {competition === 'cup' && <CupLobbyCard cup={cup} homeId={homeId} setHomeId={setHomeId} setCup={setCup} />}
             {competition !== 'cup' && (
-              <Segmented label="setup" value={mode} options={def.arrangements.map((arrangement) => [arrangement, modeLabels[arrangement]] as const)} onChange={(value) => { setReady([false, false]); setCountdown(null); setMode(value); }} />
+              <Segmented label="setup" value={mode} options={lobbySetupOptions(competition).map((arrangement) => [arrangement, modeLabels[arrangement]] as const)} onChange={(value) => { setReady([false, false]); setCountdown(null); setMode(value); }} />
             )}
             <div className="g-soccer-lobby-ready">
-              <span>you {ready[0] ? 'ready' : 'choose a club'} · friend {ready[1] ? 'ready' : 'waiting'}</span>
+              <span>{memberList.filter((member) => member.role === 'phone').map((member, index) => `Phone ${index + 1} ${ready[member.side] ? 'ready' : 'connected'}`).join(' · ')}</span>
               <button type="button" className="arcade-btn arcade-btn-primary" disabled={!enoughPlayers || countdown !== null} onClick={start}>
-                {countdown === null ? 'kick off' : `starting in ${countdown}`}
+                Start match
               </button>
             </div>
           </>
@@ -400,11 +421,11 @@ function GuestMacLobby({ online }: { online: NonNullable<ReturnType<typeof useOn
   );
 }
 
-export function PhoneLobby() {
+export function PhoneLobby({ postMatch = false }: { postMatch?: boolean } = {}) {
   const online = useOnline();
   const shell = useShell();
   if (!online || shell.touch) return null;
-  return online.isHost ? <HostLobby online={online} /> : <GuestMacLobby online={online} />;
+  return online.isHost ? <HostLobby online={online} postMatch={postMatch} /> : <GuestMacLobby online={online} />;
 }
 
 function PickStick({ movement }: { movement: { current: { x: number; z: number } } }) {
@@ -442,7 +463,8 @@ export function PhoneTeamPicker({ online }: { online: NonNullable<ReturnType<typ
   const pendingDx = useRef<-1 | 0 | 1>(0);
   const pendingDy = useRef<-1 | 0 | 1>(0);
   const received = useRef(-1);
-  const side = sideForRoom(online.code);
+  const ownMember = lobby?.members.find((entry) => entry.seat === online.seat);
+  const side = lobby ? ownMember?.side ?? 0 : sideForRoom(online.code);
   const selfReady = lobby?.ready[side] ?? false;
   const selected = clubById(lobby?.clubs[side] ?? DEFAULT_CLUBS[side]);
   const focus = lobby?.focus[side] ?? 0;
@@ -487,8 +509,8 @@ export function PhoneTeamPicker({ online }: { online: NonNullable<ReturnType<typ
 
   return (
     <div className="g-soccer-phone-picker">
-      <header><strong>pick your club</strong><span>{side === 1 ? 'away side' : 'home side'}</span></header>
-      {!lobby ? <p className="g-soccer-picker-wait">waiting for the mac to open the lobby…</p> : (
+      <header><strong>Tilt the stick to pick your club, press A</strong><span>{side === 1 ? 'Away side' : 'Home side'}</span></header>
+      {!lobby ? <p className="g-soccer-picker-wait" role="status">{online.round > 0 ? 'Match in progress — reconnecting to your Mac…' : 'Connecting to your Mac…'}</p> : (
         <>
           <div className="g-soccer-picker-mode">
             <span className={focus === 0 ? 'is-focused' : ''}>setup</span>
@@ -510,7 +532,6 @@ export function PhoneTeamPicker({ online }: { online: NonNullable<ReturnType<typ
               <button type="button" className="is-ready" onClick={() => { pendingA.current = true; }}>{selfReady ? 'ready ✓' : 'A · ready'}</button>
             </div>
           </div>
-          <p className="g-soccer-picker-help">move the stick to browse · left and right to change · A to ready</p>
         </>
       )}
     </div>

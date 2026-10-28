@@ -116,6 +116,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const [round, setRound] = useState(0);
   const [score, setScoreState] = useState<number | null>(null);
   const [result, setResult] = useState<Result | null>(null);
+  const [hidePhoneFirstResultCard, setHidePhoneFirstResultCard] = useState(false);
   const [docVisible, setDocVisible] = useState(true);
   const [seen, setSeen] = useState(true);
   const [touch, setTouch] = useState(false);
@@ -199,6 +200,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const raceReported = useRef(-1);
   const active = onlineMode || (host.active && docVisible && seen);
   const consumedRoom = useRef<string | null>(null);
+  const autoPhoneConnect = useRef(false);
   const router = useMemo(() => new RoundRouter(), []);
   const fmt = useCallback((n: number) => (formatScore ? formatScore(n) : n.toLocaleString('en-US')), [formatScore]);
 
@@ -272,6 +274,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       statusRef.current = 'over';
       keys.clear();
       const isBest = final !== undefined && submit(final);
+      setHidePhoneFirstResultCard(!!(phoneFirstOn && info?.hideShellCard));
       setResult({ id: Date.now(), score: final, best: null, isBest, ...info });
       setBoardOpen(false);
       setName(savedName());
@@ -279,7 +282,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setStatus('over');
       if (race && onlineModeRef.current) finishRace(info.rank ?? final ?? null);
     },
-    [keys, submit, race, finishRace],
+    [keys, submit, race, finishRace, phoneFirstOn],
   );
   /** Changes the card that is up, for a round that goes on after this player is out. */
   const updateOver = useCallback((info: GameOverInfo) => {
@@ -411,7 +414,10 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setOnlineSeat(message.seat);
       setOnlineSeats(message.seats);
       setOnlinePlayers(message.players);
-      if (phoneFirst && isTouchDevice() && message.seat > 0 && !message.watching) setOnlineOpen(false);
+      if (phoneFirst && isTouchDevice() && message.seat > 0 && !message.watching) {
+        setOnlineOpen(false);
+        setOnlineRound(message.round);
+      }
       setOnlineInProgress(message.started);
       setRoomStarted(message.started);
       setOnlineBots(message.bots);
@@ -610,6 +616,13 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     void makeRoom({ listed: false, name: hostName });
   }, [makeRoom, onlineName, setVisibility]);
 
+  useEffect(() => {
+    if (!phoneFirstOn || status !== 'ready' || joinCode || autoPhoneConnect.current) return;
+    if (touch || !!os?.mobile || isTouchDevice()) return;
+    autoPhoneConnect.current = true;
+    connectPhone();
+  }, [connectPhone, joinCode, os?.mobile, phoneFirstOn, status, touch]);
+
   /** Quick play: into a match that is gathering people, or a new one for others to find. */
   const findMatch = useCallback(async () => {
     setOnlineOpen(true);
@@ -801,11 +814,6 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     };
   }, [keys, onlineMode, onlineOpen, pause, play, playAgain, quickOn, restart, resume, start]);
 
-  const api = useMemo<ShellApi>(
-    () => ({ meta, status, round, active, compact, touch, keys, root, start, pause, resume, restart, gameOver, updateOver, setScore, invalidate, onInvalidate }),
-    [meta, status, round, active, compact, touch, keys, start, pause, resume, restart, gameOver, updateOver, setScore, invalidate, onInvalidate],
-  );
-
   // Party games keep scores and secrets in the round, so Restart asks for a second tap within a few seconds.
   const confirmRestart = meta.category === 'party' || meta.category === 'drinking';
   const [restartArmed, setRestartArmed] = useState(false);
@@ -902,6 +910,14 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     if (onlineLink) leaveRoom();
     onExit?.();
   }, [leaveRoom, onExit, onlineLink]);
+  const api = useMemo<ShellApi>(
+    () => ({
+      meta, status, round, active, compact, touch, keys, root, start, pause, resume, restart,
+      ...(phoneFirstOn ? { playAgain: () => playAgain(), backToArcade } : {}),
+      gameOver, updateOver, setScore, invalidate, onInvalidate,
+    }),
+    [meta, status, round, active, compact, touch, keys, start, pause, resume, restart, playAgain, backToArcade, phoneFirstOn, gameOver, updateOver, setScore, invalidate, onInvalidate],
+  );
 
   return (
     <OnlineProvider
@@ -910,6 +926,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       seat={onlineSeat}
       seats={onlineSeats}
       round={onlineRound}
+      started={phoneFirstOn ? onlineInProgress : false}
       players={onlinePlayers}
       bots={gameBots}
       transport={onlineTransport}
@@ -1010,12 +1027,17 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                 {phoneFirst && touch && !!joinCode && onlineSeat !== 0 ? (
                   onlineError ? (
                     <>
-                      <p className="arcade-phone-first-error" role="alert">{onlineError}</p>
+                      <p className="arcade-phone-first-error" role="alert">Couldn't reach the Mac</p>
                       <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" disabled={onlineBusy} onClick={() => joinRoom(lostCode || joinCode)}>
-                        {onlineBusy ? 'Connecting…' : 'Try again'}
+                        {onlineBusy ? 'Connecting to your Mac…' : 'Try again'}
                       </button>
                     </>
-                  ) : <p role="status">Connecting to your match…</p>
+                  ) : (
+                    <div className="g-soccer-phone-connecting" role="status">
+                      <span className="g-soccer-phone-spinner" aria-hidden="true" />
+                      <p>Connecting to your Mac…</p>
+                    </div>
+                  )
                 ) : (
                   <>
                     {onlineError && (
@@ -1023,7 +1045,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                         {onlineError}
                       </p>
                     )}
-                    {onlineSeat === 0 ? hostSetup : onlineBusy ? <p role="status">Creating your room…</p> : hostSetup}
+                    {onlineSeat === 0 ? hostSetup : onlineBusy ? <p role="status">Getting your room ready…</p> : hostSetup}
                     {onlineError && !touch && <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={connectPhone}>Try again</button>}
                   </>
                 )}
@@ -1083,13 +1105,13 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
               <div className="arcade-card">
                 {glyph}
                 <h2>{meta.title}</h2>
+                {phoneFirstOn && <p>Your iPhone is the controller.</p>}
                 {!phoneFirstOn && <p>{meta.controls}</p>}
                 {setup && !quickOn && !phoneFirstOn && <div className="arcade-setup">{setup}</div>}
                 {quickOn && quickSetup && <div className="arcade-setup">{quickSetup}</div>}
                 <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={phoneFirstOn ? connectPhone : quickOn ? () => play() : start} ref={autoFocus}>
                   {phoneFirstOn ? 'Connect Phone' : 'Play'}
                 </button>
-                {phoneFirstOn && <button type="button" className="arcade-phone-first-link" onClick={start}>Play on this computer instead</button>}
                 {/* with quick play, the game's settings are for playing on this device, so they go with that button */}
                 {quickOn && (
                   <>
@@ -1191,6 +1213,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
         )}
 
         {status === 'over' &&
+          !(phoneFirstOn && hidePhoneFirstResultCard) &&
           !boardOpen &&
           (compact ? (
             <button type="button" className="arcade-ov arcade-ov-compact" onClick={restart}>
