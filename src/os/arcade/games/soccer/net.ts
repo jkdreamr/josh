@@ -24,6 +24,36 @@ export function sameStick(a: { x: number; z: number }, b: { x: number; z: number
 export function stickSendDelay(now: number, lastSentAt: number): number {
   return Math.max(0, STICK_MIN_GAP_MS - (now - lastSentAt));
 }
+export const INPUT_STALE_MS = 1500;
+
+export class InputFreshness {
+  private arrivals = new Map<number, number>();
+
+  sync(now: number, seats: readonly number[], reset = false) {
+    for (const seat of this.arrivals.keys()) if (!seats.includes(seat)) this.arrivals.delete(seat);
+    for (const seat of seats) if (reset || !this.arrivals.has(seat)) this.arrivals.set(seat, now);
+  }
+
+  record(now: number, seat: number) {
+    const stale = this.staleSeats(now, [seat]).length > 0;
+    this.arrivals.set(seat, now);
+    return stale;
+  }
+
+  staleSeats(now: number, seats: readonly number[]) {
+    return seats.filter((seat) => {
+      const arrival = this.arrivals.get(seat);
+      return arrival !== undefined && now - arrival > INPUT_STALE_MS;
+    });
+  }
+}
+
+export function neutralCommand(): ControlCommand {
+  return { move: { x: 0, z: 0 }, aim: { x: 0, z: 0 }, action: null, pressed: false,
+    heldAction: null, sprint: false, contain: false, jockey: false, autoJockey: false,
+    press: false, finesseHeld: false, switchNearest: false, switchDir: null };
+}
+
 const shortText = (value: unknown, max = 160) => typeof value === 'string' && value.length <= max;
 const finite = (v: unknown, abs: number) => typeof v === 'number' && Number.isFinite(v) && Math.abs(v) <= abs;
 const quantized = (v: unknown) => finite(v, 1) && Math.abs((v as number) * 100 - Math.round((v as number) * 100)) < 1e-6;

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { ROOM_MESSAGE_MAX_BYTES } from '../worker/src/room-core.ts';
 import { computeAI } from '../src/os/arcade/games/soccer/ai.ts';
 import { createWorld, STEP, stepWorld, type Command, type World } from '../src/os/arcade/games/soccer/logic.ts';
-import { acceptMovePacket, commandFromPacket, consumeCommand, mergeRemoteCommand, movePacket, parsePacket, sameStick, stickSendDelay, trimSnapshot, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
+import { acceptMovePacket, commandFromPacket, consumeCommand, InputFreshness, mergeRemoteCommand, movePacket, parsePacket, sameStick, stickSendDelay, trimSnapshot, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
 import { chargePower } from '../src/os/arcade/games/soccer/input.ts';
 import { startShootout } from '../src/os/arcade/games/soccer/setpieces.ts';
 
@@ -281,4 +281,28 @@ test('trimSnapshot rounds fractions and preserves integers', () => {
   assert.equal(snapshot.seed, world.seed);
   assert.equal(snapshot.players[0].id, world.players[0].id);
   assert.deepEqual(snapshot.score, world.score);
+});
+
+test('a held-still stick stays fresh through the 30 Hz keepalive despite change-only stick sends', () => {
+  const tracker = new InputFreshness();
+  tracker.sync(0, [1]);
+  let lastSent = { x: 0.6, z: 0 };
+  let lastSentAt = 0;
+  for (let now = 0; now <= 5000; now += 1) {
+    const stick = { x: 0.6, z: 0 };
+    if (!sameStick(stick, lastSent) && stickSendDelay(now, lastSentAt) === 0) { lastSent = stick; lastSentAt = now; tracker.record(now, 1); }
+    if (now % 33 === 0) { lastSentAt = now; tracker.record(now, 1); }
+    assert.deepEqual(tracker.staleSeats(now, [1]), []);
+  }
+});
+
+test('after a stale reset the reliable copy of an edge packet is applied only once', () => {
+  const tracker = new InputFreshness();
+  tracker.sync(0, [1]);
+  const edge = movePacket(1, 0, 1, { move: { x: 0, z: 0 }, action: 'shoot', pressed: true }, 4);
+  assert.equal(tracker.record(2000, 1), true);
+  const first = acceptMovePacket(remoteSeat(), undefined, edge, false);
+  assert.equal(first.command?.action, 'shoot');
+  assert.equal(tracker.record(2001, 1), false);
+  assert.equal(acceptMovePacket(first.seat, first.command!, edge, false).command, null);
 });
