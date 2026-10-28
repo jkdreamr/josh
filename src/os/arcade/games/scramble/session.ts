@@ -365,6 +365,25 @@ export function ending(s: Session, m: Match, me: Me, clock: number): 'report' | 
 
 /** The longest step the match takes without frames, the same as a frame's. */
 const STEP_MAX = 1 / 20;
+/** The most of a slow frame made up online (a longer stall is let go, as any frame longer than a step is solo). */
+export const LATE_MAX = 0.2;
+
+/**
+ * How far a frame moves an online match on: the loop's `dt`, or, when the loop cut the frame short (it took longer
+ * than a step may), all the time `since` the last one, up to LATE_MAX. The match keeps the room's time on a slow
+ * phone, rather than our egg and the ones we see falling behind everyone else's.
+ */
+export const frameTime = (dt: number, since: number) => (dt >= STEP_MAX - 1e-6 ? Math.max(dt, Math.min(LATE_MAX, since)) : dt);
+
+/** Moves the match on by `seconds` in steps no longer than a frame's. */
+export function stepIn(m: Match, seconds: number) {
+  let left = seconds;
+  do {
+    const d = Math.min(STEP_MAX, left);
+    step(m, d);
+    left -= d;
+  } while (left > 1e-4);
+}
 
 /**
  * Whether the timer moves the match on instead of the frame loop: a hidden tab gets no frames, and a host who is done

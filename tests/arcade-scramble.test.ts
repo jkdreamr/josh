@@ -198,7 +198,7 @@ import { ASK_T, EMOTE_GAP, EMOTE_IDS, EMOTE_SPAN, EMOTE_T, FACE_EMOTES, TEAM_EMO
 import { actorOf, parseTeams, teamAsk } from '../src/os/arcade/games/scramble/net.ts';
 import { nextTeam, pinTeam, teamsFor, winnersOf } from '../src/os/arcade/games/scramble/session.ts';
 import { MAX_KICK, applyNet, configOf, endOf, guestState, hitCap, hostState, packDoors, packEvents, packGlass, packPiece, parsePacket, pieceEv, placesOf, stateOf, toNet, unpackDoors, unpackGlass, unpackPiece, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
-import { END_PAUSE, FAR_EVERY, FIRST_GRACE, FLUSH, NEAR, OUT_EVERY, QUICK_LEVEL, STALE, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
+import { END_PAUSE, FAR_EVERY, FIRST_GRACE, FLUSH, LATE_MAX, NEAR, OUT_EVERY, QUICK_LEVEL, STALE, TICK_MS, catchUp, ending, flush, frameTime, guestMatch, hostBots, hostMatch, newSession, offscreen, receive, resultCard, share, stepIn, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
 import { meta } from '../src/os/arcade/games/scramble/meta.ts';
 
 const DT = 1 / 60;
@@ -1174,6 +1174,32 @@ test('eggs from another client glide between the reports that arrive for them', 
   assert.equal(r.show.w, 'smg');
   run(m, 1);
   assert.ok(r.x <= 1 + 6 * 0.25 + 1e-9, 'carries on a moment, then waits');
+});
+
+test('online a slow frame is made up in steps, so a guest on a slow phone keeps the room\'s time', () => {
+  // a frame the loop didn't cut short is what it is; one it did counts all the time since the last, up to a point
+  assert.equal(frameTime(1 / 60, 1 / 60), 1 / 60);
+  assert.equal(frameTime(0, 5), 0, 'the first frame after a pause');
+  assert.ok(Math.abs(frameTime(1 / 20, 0.125) - 0.125) < 1e-12);
+  assert.equal(frameTime(1 / 20, 3), LATE_MAX, 'a stall is let go');
+  assert.equal(frameTime(1 / 20, 0.01), 1 / 20);
+  // our egg walks as far, and the match clock goes as far, at 8 frames a second as at 60
+  const walk = (fps: number) => {
+    const m = createMatch({ seed: 1, role: 'guest', level: 'normal', entrants: [{ name: 'a', color: '#fff', kind: 'player', seat: 1 }, { name: 'b', color: '#fff', kind: 'remote', seat: 0 }], me: 0, countdown: 0 });
+    const f = m.fighters[0];
+    land(f, 0, 0);
+    const clock = m.clock;
+    for (let t = 0; t < 1 - 1e-9; t += 1 / fps) {
+      f.input.mx = 1;
+      stepIn(m, frameTime(Math.min(1 / 20, 1 / fps), 1 / fps));
+    }
+    return { x: f.x, clock: m.clock - clock };
+  };
+  const fast = walk(60);
+  const slow = walk(8);
+  assert.ok(fast.x > 3, `it walked: ${fast.x}`);
+  assert.ok(Math.abs(slow.clock - fast.clock) < 1e-6, `the same time: ${slow.clock} and ${fast.clock}`);
+  assert.ok(Math.abs(slow.x - fast.x) < 0.25, `as far: ${slow.x} and ${fast.x}`);
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
