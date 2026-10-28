@@ -54,6 +54,36 @@ function spaceTeammates(w: World, fixed: number, min = 2) {
     }
   }
 }
+function clearWall(w: World) {
+  const setPiece = w.setPiece;
+  if (!setPiece?.wall.length) return;
+  const members = setPiece.wall.map(id => w.players[id]!).filter(p => !p.sentOff);
+  if (!members.length) return;
+  const g = goal(w), range = distance(w.ball, { x: g, z: 0 }) || 1;
+  const dx = (g - w.ball.x) / range, dz = -w.ball.z / range;
+  const c = members.reduce((sum, p) => ({ x: sum.x + p.x / members.length, z: sum.z + p.z / members.length }), { x: 0, z: 0 });
+  const halfWidth = Math.max(...members.map(p => Math.abs((p.x - c.x) * -dz + (p.z - c.z) * dx)));
+  const wallIds = new Set(setPiece.wall);
+  for (const p of w.players) {
+    if (p.team === w.restartTeam || wallIds.has(p.id) || p.slot === 'GK' || p.human || p.sentOff) continue;
+    const px = p.x - c.x, pz = p.z - c.z;
+    const depth = px * dx + pz * dz, lateral = px * -dz + pz * dx;
+    if (Math.abs(depth) >= 2 || Math.abs(lateral) >= halfWidth + 2) continue;
+    const target = (side: number) => ({
+      x: c.x + dx * depth - dz * side * (halfWidth + 2),
+      z: c.z + dz * depth + dx * side * (halfWidth + 2),
+    });
+    let side = Math.sign(lateral) || 1;
+    let position = target(side);
+    if (position.z < -33.85 || position.z > 33.85) {
+      side *= -1;
+      position = target(side);
+    }
+    snap(p, position.x, position.z);
+    exclude(w, p);
+    if (setPiece.marks) delete setPiece.marks[p.id];
+  }
+}
 export function arrangeSetPiece(w: World) {
   if (!w.restart || w.restart === 'kickoff') { w.setPiece = null; return; }
   const kind = w.restart === 'kick-in' ? 'throw-in' : w.restart;
@@ -90,8 +120,9 @@ export function arrangeSetPiece(w: World) {
       for(const id of w.setPiece.wall) delete w.setPiece.marks[id];
     }
     enemies.forEach(p => exclude(w,p));
+    if (kind === 'free-kick' && w.setPiece.wall.length) clearWall(w);
   } else if (kind === 'penalty') {
-    w.players.filter(p => p.id !== taker.id).forEach((p,i) => snap(p,w.shootout ? (i%3-1)*3 : w.restartAt.x-d*(12+i%3),w.shootout ? (Math.floor(i/3)-3)*1.5 : (i%2 ? 1 : -1)*(22+i%4)));
+    w.players.filter(p => p.id !== taker.id).forEach((p,i) => snap(p,w.shootout ? (i%3-1)*3 : w.restartAt.x-d*(12+i%3),w.shootout ? (Math.floor(i/3)-3)*1.5 : (i%2 ? 1 : -1)*(21 + Math.floor(i/2)*1.25)));
     const keeper = enemies.find(p => p.slot === 'GK')!; snap(keeper,g-d*0.15,0);
     if (enemies.some(p => p.human) && !keeper.human) transferControl(w,keeper.team,keeper.id);
   } else if (kind === 'goal-kick') {
