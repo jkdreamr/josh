@@ -559,6 +559,23 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   }, [size.w, size.h, shell]);
 
   useEffect(() => {
+    const stage = ref.current?.parentElement;
+    if (!stage) return;
+    const frame = requestAnimationFrame(() => {
+      const box = stage.getBoundingClientRect();
+      let top = box.bottom;
+      stage.querySelectorAll('.g-soccer-radar, .g-soccer-player-tag').forEach((el) => {
+        const r = el.getBoundingClientRect();
+        if (r.height > 0 && r.top > box.top + box.height / 2) top = Math.min(top, r.top);
+      });
+      viewRef.current?.setSafeBottom(box.height > 0 ? (box.bottom - top) / box.height : 0);
+      renderDirty.current = true;
+      shell.invalidate();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [size.w, size.h, shell, hud.presentation, ref]);
+
+  useEffect(() => {
     viewRef.current?.setTime(timeChoice);
     renderDirty.current = true;
     shell.invalidate();
