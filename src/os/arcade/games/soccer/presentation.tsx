@@ -85,7 +85,8 @@ export const GoalBanner = memo(function GoalBanner({ statsVersion }: { statsVers
 });
 
 const tickerGlyph: Record<TickerItem['kind'], string> = {
-  goal: '⚽', 'own-goal': '↗', save: '●', corner: '◢', foul: '!', penalty: '●', chance: '↗', 'half-time': 'Ⅱ', 'full-time': 'Ⅲ',
+  goal: '⚽', 'own-goal': '↗', save: '●', corner: '◢', foul: '!', offside: '⚑', yellow: '▮', red: '▮',
+  penalty: '●', chance: '↗', 'half-time': 'Ⅱ', 'full-time': 'Ⅲ',
 };
 
 export const Ticker = memo(function Ticker({ statsVersion }: { statsVersion: number }) {

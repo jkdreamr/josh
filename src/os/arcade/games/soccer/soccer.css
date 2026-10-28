@@ -455,6 +455,9 @@
 .g-soccer-ticker-item time { color: #d7ff70; font-weight: 900; }
 .g-soccer-ticker-item i { display: grid; place-items: center; width: 1.1em; height: 1.1em; border-radius: 50%; color: #10202a; background: #d7ff70; font-size: .84em; font-style: normal; }
 .g-soccer-ticker-item span { overflow: hidden; font-weight: 800; text-overflow: ellipsis; white-space: nowrap; }
+.g-soccer-ticker-item.is-yellow i { background: #ffd23f; }
+.g-soccer-ticker-item.is-red i { color: #fff; background: #e0322b; }
+.g-soccer-ticker-item.is-offside i { background: #ffb02e; }
 
 .g-soccer-goal-banner { position: absolute; top: 43%; left: 50%; display: grid; grid-template-columns: auto 1fr; align-items: center; gap: .25em .8em; width: min(27em, 82vw); padding: .8em 1em; border: 1px solid #ffffff45; border-left: .28em solid var(--g-soccer-goal); border-radius: .3em; color: #fff; background: linear-gradient(100deg, color-mix(in srgb, var(--g-soccer-goal) 54%, #081620), #071620ef 75%); box-shadow: 0 .8em 2.5em #0008; transform: translate(-50%, -50%); animation: g-soccer-goal-in .7s cubic-bezier(.2,.8,.2,1) both; }
 .g-soccer-goal-banner::after { content: ""; position: absolute; inset: 0; background: linear-gradient(105deg, transparent 38%, #ffffff37 49%, transparent 60%); transform: translateX(-110%); animation: g-soccer-goal-sheen .9s .1s ease-out both; pointer-events: none; }
