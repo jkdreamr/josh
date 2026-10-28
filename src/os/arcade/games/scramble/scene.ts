@@ -44,6 +44,8 @@ const BUS_SCALE = 1.35;
 const OVERVIEW = 150;
 /** Loot is drawn while the camera is this close (from higher up it's specks). */
 const LOOT_VIEW = 40;
+/** The most pieces of loot first drawn in one frame. */
+const LOOT_MADE = 8;
 const TILT = (58 * Math.PI) / 180;
 const FOV = 42;
 const HALF_FOV = ((FOV / 2) * Math.PI) / 180;
@@ -1049,6 +1051,10 @@ type EggView = {
   vest: T.Group | null;
   vestLv: number;
   walk: number;
+  /** How much of a stride shows (eased in and out as it starts and stops), and how far it's down on its front or bent over a teammate. */
+  stride: number;
+  down: number;
+  bend: number;
   swing: number;
   recoil: number;
   lean: number;
@@ -1101,12 +1107,25 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   };
   const mats: T.Material[] = [];
   const mat = <X extends T.Material>(x: X) => {
+    // see-through and two-sided: drawn in one pass, not back faces then front (twice the draws, and a shader lookup each)
+    if (x.transparent && x.side === THREE.DoubleSide) x.forceSinglePass = true;
     mats.push(x);
     return x;
   };
   const instanced: T.InstancedMesh[] = [];
   const lambert = (color: number, extra: Partial<T.MeshLambertMaterialParameters> = {}) => mat(new THREE.MeshLambertMaterial({ color, ...extra }));
   const basic = (color: number, extra: Partial<T.MeshBasicMaterialParameters> = {}) => mat(new THREE.MeshBasicMaterial({ color, ...extra }));
+  /**
+   * A group whose matrices aren't worked out while it's hidden: an egg out of sight, or loot far off, costs nothing a
+   * frame (three.js would otherwise walk every one of them, shown or not).
+   */
+  const skipHidden = <X extends T.Object3D>(o: X) => {
+    const update = o.updateMatrixWorld;
+    o.updateMatrixWorld = function (force?: boolean) {
+      if (this.visible) update.call(this, force);
+    };
+    return o;
+  };
   const many = (g: T.BufferGeometry, material: T.Material, count: number) => {
     const im = new THREE.InstancedMesh(g, material, Math.max(1, count));
     if (count === 0) im.visible = false;
@@ -2272,6 +2291,17 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const barrelList = map.containers.filter((c) => c.kind === 'barrel');
   const crates = many(G.box, lambert(0xffffff, { map: keep(crateTexture(THREE)) }), crateList.length);
   const crateShake = new Map<number, number>();
+  /**
+   * How each thing that breaks (crates, barrels, toilets, hay) was last drawn, two numbers a thing in its list: its
+   * health (-1 broken) and its jiggle. Only one that changed is put again, not the whole island's every frame.
+   */
+  const seenFor = (list: unknown[]) => new Float64Array(list.length * 2).fill(NaN);
+  const changed = (seen: Float64Array, i: number, hp: number, jiggle: number) => {
+    if (seen[i * 2] === hp && seen[i * 2 + 1] === jiggle) return false;
+    seen[i * 2] = hp;
+    seen[i * 2 + 1] = jiggle;
+    return true;
+  };
   const chestBase = many(G.box, lambert(0xffffff), chestList.length);
   const chestLid = many(G.box, lambert(0xffffff), chestList.length);
   const chestGlowMat = basic(0xffd75e, { transparent: true, opacity: 0.5, depthWrite: false, side: THREE.DoubleSide });
@@ -2313,46 +2343,55 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     if (chestLid.instanceColor) chestLid.instanceColor.needsUpdate = true;
   };
   placeChests(true);
+  const crateSeen = seenFor(crateList);
+  const barrelSeen = seenFor(barrelList);
   const placeCrates = (clock: number) => {
+    let moved = false;
     crateList.forEach((c, i) => {
       const gone = m.opened[c.id];
       const shake = crateShake.get(c.id) ?? -9;
       const jiggle = clock - shake < 0.18 ? Math.sin((clock - shake) * 80) * 0.06 : 0;
+      const hp = Math.max(0, m.crateHp[c.id] / CRATE_HP);
+      if (!changed(crateSeen, i, gone ? -1 : hp, jiggle)) return;
+      moved = true;
       dummy.rotation.set(0, jiggle, 0);
       dummy.position.set(c.x, CRATE_HALF, c.z);
       dummy.scale.setScalar(gone ? 0 : CRATE_HALF * 2);
       dummy.updateMatrix();
       crates.setMatrixAt(i, dummy.matrix);
-      const hp = Math.max(0, m.crateHp[c.id] / CRATE_HP);
       crates.setColorAt(i, color.setRGB(0.55 + hp * 0.45, 0.5 + hp * 0.5, 0.45 + hp * 0.55));
     });
-    crates.instanceMatrix.needsUpdate = true;
-    if (crates.instanceColor) crates.instanceColor.needsUpdate = true;
+    if (moved) {
+      crates.instanceMatrix.needsUpdate = true;
+      if (crates.instanceColor) crates.instanceColor.needsUpdate = true;
+    }
+    moved = false;
     barrelList.forEach((c, i) => {
       const gone = m.opened[c.id];
       const shake = crateShake.get(c.id) ?? -9;
       const jiggle = clock - shake < 0.18 ? Math.sin((clock - shake) * 80) * 0.05 : 0;
+      // redder as it takes damage, so a hurt barrel looks ready to go
+      const hp = Math.max(0, m.crateHp[c.id] / BARREL.hp);
+      if (!changed(barrelSeen, i, gone ? -1 : hp, jiggle)) return;
+      moved = true;
       dummy.rotation.set(0, 0, jiggle);
       dummy.position.set(c.x, 0.6, c.z);
       dummy.scale.set(gone ? 0 : BARREL_R, gone ? 0 : 1.2, gone ? 0 : BARREL_R);
       dummy.updateMatrix();
       barrels.setMatrixAt(i, dummy.matrix);
-      // redder as it takes damage, so a hurt barrel looks ready to go
-      const hp = Math.max(0, m.crateHp[c.id] / BARREL.hp);
       barrels.setColorAt(i, color.setRGB(0.85, 0.2 + hp * 0.12, 0.15 + hp * 0.04));
-      for (const [k, y] of [
-        [0, 0.3],
-        [1, 0.9],
-      ] as const) {
-        dummy.position.set(c.x, y, c.z);
+      for (let k = 0; k < 2; k++) {
+        dummy.position.set(c.x, k ? 0.9 : 0.3, c.z);
         dummy.scale.set(gone ? 0 : BARREL_R + 0.03, gone ? 0 : 0.1, gone ? 0 : BARREL_R + 0.03);
         dummy.updateMatrix();
         barrelBands.setMatrixAt(i * 2 + k, dummy.matrix);
       }
     });
-    barrels.instanceMatrix.needsUpdate = true;
-    barrelBands.instanceMatrix.needsUpdate = true;
-    if (barrels.instanceColor) barrels.instanceColor.needsUpdate = true;
+    if (moved) {
+      barrels.instanceMatrix.needsUpdate = true;
+      barrelBands.instanceMatrix.needsUpdate = true;
+      if (barrels.instanceColor) barrels.instanceColor.needsUpdate = true;
+    }
   };
   placeCrates(0);
 
@@ -2775,7 +2814,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const carBodies = many(G.box, lambert(0xffffff), map.cars.length);
   const carCabins = many(G.box, lambert(0xffffff), map.cars.length);
   const carTops = many(G.box, lambert(0xffffff), map.cars.length);
-  const wheels = many(G.cyl, M.dark, map.cars.length * 4);
+  // (their own material: one shared with plain meshes would switch shaders between them every frame)
+  const wheels = many(G.cyl, lambert(0x2b2d33), map.cars.length * 4);
   map.cars.forEach((c, i) => {
     const ry = c.alongX ? Math.PI / 2 : 0;
     const len = c.alongX ? c.hw * 2 : c.hd * 2;
@@ -2912,11 +2952,17 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     fridgeInside.instanceMatrix.needsUpdate = true;
   };
   placeFridges(true);
+  const toiletSeen = seenFor(toiletList);
+  const haySeen = seenFor(hayList);
   const placeKitchen = (clock: number) => {
+    let moved = false;
     toiletList.forEach((c, i) => {
       const gone = m.opened[c.id];
       const shake = crateShake.get(c.id) ?? -9;
       const jiggle = clock - shake < 0.18 ? Math.sin((clock - shake) * 80) * 0.05 : 0;
+      const hp = Math.max(0, m.crateHp[c.id] / TOILET_HP);
+      if (!changed(toiletSeen, i, gone ? -1 : hp, jiggle)) return;
+      moved = true;
       const s = gone ? 0 : 1;
       put(bowls, i, c.x, 0.22, c.z, TOILET_R * 0.95 * s, 0.44 * s, TOILET_R * 0.95 * s, jiggle);
       put(tanks, i, c.x, 0.62, c.z - c.face * (TOILET_R - 0.1), (TOILET_R * 2 - 0.1) * s, 0.7 * s, 0.26 * s, jiggle);
@@ -2925,24 +2971,30 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       dummy.scale.set(TOILET_R * 0.85 * s, TOILET_R * 0.85 * s, s);
       dummy.updateMatrix();
       seats.setMatrixAt(i, dummy.matrix);
-      const hp = Math.max(0, m.crateHp[c.id] / TOILET_HP);
       bowls.setColorAt(i, color.setRGB(1, 0.85 + hp * 0.15, 0.85 + hp * 0.15));
     });
-    bowls.instanceMatrix.needsUpdate = true;
-    tanks.instanceMatrix.needsUpdate = true;
-    seats.instanceMatrix.needsUpdate = true;
-    if (bowls.instanceColor) bowls.instanceColor.needsUpdate = true;
+    if (moved) {
+      bowls.instanceMatrix.needsUpdate = true;
+      tanks.instanceMatrix.needsUpdate = true;
+      seats.instanceMatrix.needsUpdate = true;
+      if (bowls.instanceColor) bowls.instanceColor.needsUpdate = true;
+    }
+    moved = false;
     hayList.forEach((c, i) => {
       const gone = m.opened[c.id];
       const shake = crateShake.get(c.id) ?? -9;
       const jiggle = clock - shake < 0.18 ? Math.sin((clock - shake) * 80) * 0.05 : 0;
+      const hp = Math.max(0, m.crateHp[c.id] / HAY_HP);
+      if (!changed(haySeen, i, gone ? -1 : hp, jiggle)) return;
+      moved = true;
       const s = gone ? 0 : 1;
       put(hay, i, c.x, 0.6, c.z, HAY_HW * 2 * s, 1.2 * s, HAY_HD * 2 * s, jiggle);
-      const hp = Math.max(0, m.crateHp[c.id] / HAY_HP);
       hay.setColorAt(i, color.setRGB(0.6 + hp * 0.4, 0.55 + hp * 0.45, 0.5 + hp * 0.5));
     });
-    hay.instanceMatrix.needsUpdate = true;
-    if (hay.instanceColor) hay.instanceColor.needsUpdate = true;
+    if (moved) {
+      hay.instanceMatrix.needsUpdate = true;
+      if (hay.instanceColor) hay.instanceColor.needsUpdate = true;
+    }
   };
   placeKitchen(0);
 
@@ -3189,6 +3241,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   );
   stormWall.position.y = 44;
   stormWall.renderOrder = 3;
+  // (it keeps both passes: its far side shows through its near one)
+  (stormWall.material as T.Material).forceSinglePass = false;
   scene.add(stormWall);
   // a bright seam along the ground where the storm begins
   const seam = freeRing(THREE, 160);
@@ -3675,7 +3729,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     crackHeavy: many(G.egg, lambert(0x5a3a1e, { map: crackTex, alphaTest: 0.3 }), N),
     shadow: many(G.disc, M.shadow, N),
     canopy: many(canopyGeo, gliderMat, N),
-    panels: many(panelGeo, gliderMat, N),
+    // (a material of their own, as the canopy's colors per egg make its shader a different one)
+    panels: many(panelGeo, lambert(0xffffff, { side: THREE.DoubleSide }), N),
   };
   for (const im of Object.values(eggBits)) {
     // they move every frame, so there's no box round them to cull by
@@ -3735,7 +3790,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   };
 
   const eggs: EggView[] = m.fighters.map(() => {
-    const root = new THREE.Group();
+    const root = skipHidden(new THREE.Group());
     const body = new THREE.Group();
     root.add(body);
     // a little glider for the drop
@@ -3779,7 +3834,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     ghost.renderOrder = 20;
     body.add(ghost);
     scene.add(root);
-    return { root, body, slots, hand, guns: new Map(), shadow, glider, heal, cross, ring, ghost, backPan, helmet: null, helmetLv: 0, vest: null, vestLv: 0, walk: 0, swing: 0, recoil: 0, lean: 0, cracked: 0, bubble, bubbleMat, shimmer: 0, sq: 0, sqV: 0, step: 0, ripple: 0, seen: { on: true, t: 0, since: 0 } };
+    return { root, body, slots, hand, guns: new Map(), shadow, glider, heal, cross, ring, ghost, backPan, helmet: null, helmetLv: 0, vest: null, vestLv: 0, walk: 0, stride: 0, down: 0, bend: 0, swing: 0, recoil: 0, lean: 0, cracked: 0, bubble, bubbleMat, shimmer: 0, sq: 0, sqV: 0, step: 0, ripple: 0, seen: { on: true, t: 0, since: 0 } };
   });
 
   /**
@@ -4017,7 +4072,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     }
   }
   function lootView(l: LootItem): LootView {
-    const group = new THREE.Group();
+    const group = skipHidden(new THREE.Group());
     group.position.set(l.x, 0, l.z);
     const glow = new THREE.Mesh(G.ring, glowFor(l.def));
     glow.rotation.x = -Math.PI / 2;
@@ -4053,7 +4108,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const editMark = many(G.box, basic(0xffd75e, { transparent: true, opacity: 0.55, depthWrite: false }), 4);
   const builtShade = many(G.plane, basic(0x10182a, { map: keep(softSquareTexture(THREE)), transparent: true, opacity: 0.4, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -2 }), BUILT_MAX / 2);
   builtShade.renderOrder = 1;
-  for (const im of [...Object.values(builtBoxes), ...Object.values(builtRoofs), printBoxes, printRoofs, planBoxes, planBad, planRoofs, editMark, builtShade]) {
+  const builtMeshes = [...Object.values(builtBoxes), ...Object.values(builtRoofs), printBoxes, printRoofs, planBoxes, planBad, planRoofs, editMark, builtShade];
+  for (const im of builtMeshes) {
     im.setColorAt(0, color.setHex(0xffffff));
     im.count = 0;
     im.frustumCulled = false;
@@ -4386,7 +4442,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   let gloom = 0;
   let shownGloom = 0;
   const fog = scene.fog as T.Fog;
-  const cam = { x: 0, z: 0, view: OVERVIEW, ready: false };
+  const cam = { x: 0, z: 0, view: OVERVIEW, ready: false, phase: null as Fighter['phase'] | null, glide: 0 };
   const vec = new THREE.Vector3();
   const vec2 = new THREE.Vector3();
 
@@ -4399,34 +4455,45 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     v.root.position.set(f.x, f.y - (f.wet && f.phase === 'ground' ? 0.45 : 0), f.z);
     v.body.rotation.y = f.aim;
     const speed = Math.hypot(f.vx, f.vz);
-    if (f.phase === 'ground' && speed > 0.4) v.walk += dt * speed * 2.2;
-    const bob = f.phase === 'ground' ? Math.abs(Math.sin(v.walk)) * 0.08 : 0;
+    const walking = f.phase === 'ground' && speed > 0.4;
+    if (walking) v.walk += dt * speed * 2.2;
+    // the bob and the give of a stride ease in and out as it starts and stops (no hanging in the air mid step)
+    v.stride = damp(v.stride, walking ? 1 : 0, 10, dt);
+    const bob = Math.abs(Math.sin(v.walk)) * 0.08 * v.stride;
     v.lean = damp(v.lean, f.phase === 'ground' ? Math.min(0.18, speed * 0.025) : 0, 8, dt);
-    v.body.position.y = bob;
     // lean the way it walks, whichever way it faces
     const mx = speed > 0.1 ? f.vx / speed : 0;
     const mz = speed > 0.1 ? f.vz / speed : 0;
     const fx = Math.sin(f.aim);
     const fz = Math.cos(f.aim);
-    v.body.rotation.x = (mx * fx + mz * fz) * v.lean;
-    v.body.rotation.z = -(mx * fz - mz * fx) * v.lean;
-    // knocked down: flat on its front, wriggling along; reviving a teammate: bent low over it
+    let rx = (mx * fx + mz * fz) * v.lean;
+    let rz = -(mx * fz - mz * fx) * v.lean;
+    let y = bob;
+    // knocked down: flat on its front, wriggling along; reviving a teammate: bent low over it (going over and back
+    // up in a blink, not from one frame to the next)
     const reviving = f.kind === 'remote' ? (f.show.flags & F_REVIVE) !== 0 : f.reviving >= 0;
-    if (f.down && f.phase === 'ground') {
-      v.body.rotation.x = 1.3;
-      v.body.rotation.z = Math.sin(v.walk * 1.5) * 0.2;
-      v.body.position.y = 0.34 + Math.abs(Math.sin(v.walk * 1.5)) * 0.05;
-    } else if (reviving && f.phase === 'ground') {
-      v.body.rotation.x = 0.5;
-      v.body.position.y = -0.1;
+    const down = f.down && f.phase === 'ground';
+    v.down = damp(v.down, down ? 1 : 0, 14, dt);
+    v.bend = damp(v.bend, reviving && !down && f.phase === 'ground' ? 1 : 0, 14, dt);
+    if (v.bend > 0.001) {
+      rx += (0.5 - rx) * v.bend;
+      y += (-0.1 - y) * v.bend;
     }
+    if (v.down > 0.001) {
+      rx += (1.3 - rx) * v.down;
+      rz += (Math.sin(v.walk * 1.5) * 0.2 - rz) * v.down;
+      y += (0.34 + Math.abs(Math.sin(v.walk * 1.5)) * 0.05 - y) * v.down;
+    }
+    v.body.rotation.x = rx;
+    v.body.rotation.z = rz;
+    v.body.position.y = y;
     // squash on landing and stretch on a bounce, sprung back (in small steps, so a slow frame can't fling it), and a
     // little give in every step
     for (let k = 0, step = Math.min(dt, 0.05) / 2; k < 2; k++) {
       v.sqV += (-260 * v.sq - 16 * v.sqV) * step;
       v.sq = Math.max(-0.35, Math.min(0.35, v.sq + v.sqV * step));
     }
-    const give = f.phase === 'ground' && speed > 0.4 ? Math.sin(v.walk * 2) * 0.035 : 0;
+    const give = Math.sin(v.walk * 2) * 0.035 * v.stride;
     const sq = v.sq + give;
     v.body.scale.set(1 - sq * 0.5, 1 + sq, 1 - sq * 0.5);
     const close = Math.abs(f.x - cam.x) < cam.view * 1.6 && Math.abs(f.z - cam.z) < cam.view * 1.6;
@@ -4675,6 +4742,29 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     }
   }
 
+  // every shader the match needs, built now rather than the first time something shows mid-match (a hitch of up to a
+  // second on a phone): all that's in the scene, shown or not, and each material that is only swapped in or made later
+  // on a stand-in (a zone's materials are made one a zone, so one of each kind)
+  {
+    const warm = new THREE.Group();
+    for (const x of [...mats, flourMat(), sauceMat(), jamMat(), grownMat()]) if (!(x as T.LineBasicMaterial).isLineBasicMaterial) warm.add(new THREE.Mesh(G.box, x));
+    scene.add(warm);
+    gl.renderer.compile(scene, camera);
+    scene.remove(warm);
+    // and each one's first use, where the browser is asked how the build went and what's in it (a wait on the GPU,
+    // which mid-match is a long frame however long ago the shader was built)
+    for (const p of gl.renderer.info.programs ?? []) p.getUniforms();
+    // and every texture up to the GPU now, not the first time what wears it comes into view
+    for (const t of textures) gl.renderer.initTexture(t);
+  }
+  // the scene and the instanced meshes never move (what's in them does): where they are is worked out once, not
+  // every frame
+  scene.matrixAutoUpdate = false;
+  for (const im of instanced) {
+    im.updateMatrix();
+    im.matrixAutoUpdate = false;
+  }
+
   const view: View = {
     gl,
     camera,
@@ -4716,17 +4806,29 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         cam.view = cam.ready ? cam.view : want;
         cam.ready = true;
       }
-      cam.x = damp(cam.x, tx, 9, dt);
-      cam.z = damp(cam.z, tz, 9, dt);
+      // off the bus, the view eases over to the glider (framed a little differently) rather than lurching
+      const phase = focus && !opts.overview ? focus.phase : null;
+      if (phase !== cam.phase) {
+        if (cam.phase === 'bus') cam.glide = 1;
+        cam.phase = phase;
+      }
+      cam.glide = Math.max(0, cam.glide - dt);
+      const follow = 9 - 6 * cam.glide;
+      cam.x = damp(cam.x, tx, follow, dt);
+      cam.z = damp(cam.z, tz, follow, dt);
       cam.view = damp(cam.view, want, 2.2, dt);
       const aspect = width / height;
       const t = Math.tan(((FOV / 2) * Math.PI) / 180);
       const dist = aspect >= 1 ? cam.view / t : cam.view / (aspect * t);
       shake = Math.max(0, shake - dt * 2.5);
-      const jx = (Math.random() - 0.5) * shake;
-      const jz = (Math.random() - 0.5) * shake;
+      // a shake that wobbles rather than jumping about from frame to frame
+      const jx = (Math.sin(clock * 47) + Math.sin(clock * 29.3)) * 0.25 * shake;
+      const jz = (Math.sin(clock * 41.7 + 1) + Math.sin(clock * 23.1 + 2)) * 0.25 * shake;
       camera.position.set(cam.x + jx, Math.sin(TILT) * dist, cam.z + Math.cos(TILT) * dist + jz);
       camera.lookAt(cam.x + jx, 0, cam.z + jz);
+      // now, not when it's drawn: the name tags and numbers put over the eggs this frame use it, and would trail the
+      // view by a frame
+      camera.updateMatrixWorld();
       // haze only far past what's in frame
       fog.near = dist + 80;
       fog.far = dist + 560;
@@ -4977,6 +5079,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           lootViews.delete(id);
         }
       }
+      // (a few new ones a frame: a town's worth coming into view at once would be one long frame)
+      let made = 0;
       for (const l of m.loot.values()) {
         const near = showLoot && Math.abs(l.x - cam.x) < lootW && l.z - cam.z > -lootN && l.z - cam.z < lootS;
         let lv = lootViews.get(l.id);
@@ -4985,6 +5089,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           continue;
         }
         if (!lv) {
+          if (made++ >= LOOT_MADE) continue;
           lv = lootView(l);
           lootViews.set(l.id, lv);
         }
@@ -5025,7 +5130,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
             drawPiece(w, pieceIn(m, s) ? planBad : planBoxes, planRoofs, 0xffffff, 0xffffff, 1, false);
           }
       }
-      for (const im of [...Object.values(builtBoxes), ...Object.values(builtRoofs), printBoxes, printRoofs, planBoxes, planBad, planRoofs, editMark, builtShade]) {
+      for (const im of builtMeshes) {
         im.count = drawnAt.get(im) ?? 0;
         if (!im.count) continue;
         im.instanceMatrix.needsUpdate = true;

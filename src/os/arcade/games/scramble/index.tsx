@@ -38,7 +38,6 @@ import {
   revivedBy,
   scoreOf,
   soloMatch,
-  step,
   teamCount,
   teamOf,
   teamsLeft,
@@ -67,7 +66,7 @@ import {
   type Plan,
 } from './logic';
 import { configOf, parsePacket, teamAsk, type Bots } from './net';
-import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, namesOf, newSession, nextTeam, offscreen, pinTeam, receive, resultCard, share, teamsFor, tick, winnersOf, type Session } from './session';
+import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, frameTime, guestMatch, hostBots, hostMatch, namesOf, newSession, nextTeam, offscreen, pinTeam, receive, resultCard, share, stepIn, teamsFor, tick, winnersOf, type Session } from './session';
 import { ARMOR_NAMES, MATS, MAT_MAX, MELEE, PIECE_COST, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, ammoCap, isMelee, isThrow, isWeapon, legendary, lootName, reloadOf, type Ammo, type LootDef, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { DEEP, HALF, SUPPLY_FALL, basementAt, isDeep, placeAt, topX, type ContainerKind } from './map';
 import { AMMO_FILL, AmmoIcon, ArmorIcon, BasementArt, CrownIcon, DROP_KEY, EDIT_KEY, EMOTE_KEY, EditIcon, EggIcon, EmoteIcon, emoteText, GhillieIcon, HowToPlay, IslandArt, MAT_KEY, MatIcon, PIECE_KEYS, PIECE_NAMES, PING_KEY, PackIcon, PieceIcon, PingIcon, PlaceNames, SCOPE_KEY, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, keyCode } from './hud';
@@ -397,7 +396,7 @@ type Hud = {
   /** Helmet and vest levels (shown for someone else's egg too, as its owner reports them). */
   helmet: number;
   vest: number;
-  /** 0..1 while reloading or using something, else -1. */
+  /** 0 while reloading or using something (its bar is moved every frame, see busyOf), else -1. */
   busy: number;
   busyText: string;
   storm: string;
@@ -446,6 +445,8 @@ type Hud = {
 /** A teammate on the team panel, with its number and how far off it is (to 5 m). */
 type Mate = { id: number; name: string; color: string; n: number; far: number; hp: number; shield: number; down: boolean; out: boolean; revive: number };
 const deep = new Set<keyof Hud>(['slots', 'toss', 'items', 'mats', 'leader', 'mates', 'down', 'me', 'help']);
+/** Where the arrow for an egg goes on a map drawn `k` as big as the whole island. */
+const arrowAt = (f: Fighter, k: number) => `translate(${topX(f.x).toFixed(1)} ${f.z.toFixed(1)}) rotate(${((-f.aim * 180) / Math.PI + 180).toFixed(0)}) scale(${k})`;
 const sameHud = (a: Hud, b: Hud) => (Object.keys(a) as (keyof Hud)[]).every((k) => (deep.has(k) ? JSON.stringify(a[k]) === JSON.stringify(b[k]) : a[k] === b[k]));
 const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, mats: null, mat: 0, piece: 'wall', edit: false, high: 0, items: null, scope: 0, scopes: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, hidden: false, ghillie: false, leader: null, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, watchMate: false, out: null, mine: false, teams: 0, mates: null, me: null, help: null, down: null, marks: '', reviving: false, reviveColor: null, deep: -1, emotes: '' });
 
@@ -621,6 +622,7 @@ function Play({ mode }: { mode: StageMode }) {
   const mateEls = useRef<(HTMLDivElement | null)[]>([]);
   /** The emote bubbles over eggs, by egg. */
   const bubbles = useRef(new Map<number, HTMLDivElement>());
+  const bubbleHalf = useMemo(() => new WeakMap<HTMLDivElement, number>(), []);
   // hit marks where our shots land, the names of loot near us, and the wash of a stun grenade's flash
   const marks = useRef<Pop[]>(Array.from({ length: 6 }, () => ({ el: null, x: 0, y: 0, z: 0, age: 9, live: false })));
   const markAt = useRef(0);
@@ -630,6 +632,9 @@ function Play({ mode }: { mode: StageMode }) {
   const fadeEl = useRef<HTMLDivElement | null>(null);
   const belowRef = useRef(false);
   const dazeEl = useRef<HTMLDivElement | null>(null);
+  /** The arrow for the egg we see on the little map and the big one: moved every frame, not only when the HUD changes. */
+  const arrows = useRef<(SVGGElement | null)[]>([null, null]);
+  const busyBar = useRef<HTMLElement | null>(null);
   /** Meters each egg has walked since its last footstep, and how long until the next one may sound. */
   const strides = useRef(new Map<number, number>());
   const stepGap = useRef(0);
@@ -968,13 +973,16 @@ function Play({ mode }: { mode: StageMode }) {
   // The frame loop.
 
   useGameLoop(
-    (dt) => {
+    (frameDt) => {
       const m = match.current!;
       const v = view.current;
       const n = net.current;
       const o = onlineRef.current;
+      // online a frame longer than the loop allows (a slow phone, a hitch) is made up in steps, not lost (see frameTime)
+      const now = performance.now() / 1000;
+      const dt = live && lastStep.current > 0 ? frameTime(frameDt, now - lastStep.current) : frameDt;
       clock.current += dt;
-      lastStep.current = performance.now() / 1000;
+      lastStep.current = now;
       if (live && !n.synced) {
         v?.frame(m, -1, dt, clock.current, { aimLine: false, overview: true });
         updateHud(m, dt);
@@ -986,7 +994,7 @@ function Play({ mode }: { mode: StageMode }) {
       else watchInput(m);
       if (keys.pressed('KeyM')) setBigMap((b) => !b);
 
-      step(m, dt);
+      stepIn(m, dt);
       const focus = focusOf(m);
       for (const e of m.events.splice(0)) {
         react(m, e, focus);
@@ -1718,8 +1726,9 @@ function Play({ mode }: { mode: StageMode }) {
       el.style.visibility = '';
       const age = m.clock - f.emoteAt;
       el.style.opacity = calm ? '1' : Math.max(0, Math.min(1, age / 0.18, (EMOTE_T - age) / 0.5)).toFixed(2);
-      // (kept on the screen, sideways)
-      const half = el.offsetWidth / 2 + 4;
+      // (kept on the screen, sideways; its width read once, not every frame between the moves)
+      let half = bubbleHalf.get(el);
+      if (half === undefined) bubbleHalf.set(el, (half = el.offsetWidth / 2 + 4));
       const x = Math.max(half, Math.min(w - half, at.x));
       el.style.transform = `translate(${x.toFixed(1)}px, ${(at.y - (shown.has(id) && !mark ? TAG_H + 12 : 4)).toFixed(1)}px) translate(-50%, -100%)`;
     }
@@ -1804,6 +1813,19 @@ function Play({ mode }: { mode: StageMode }) {
         sl.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -100%)`;
       }
     }
+    // the bar of what the egg we see is busy with, filling smoothly (the HUD only says what it is)
+    const bar = busyBar.current;
+    if (bar && eye) {
+      const width = `${(Math.max(0, Math.min(1, busyOf(m, eye).busy)) * 100).toFixed(1)}%`;
+      if (bar.style.width !== width) bar.style.width = width;
+    }
+    // the arrow on the maps
+    if (eye)
+      for (const el of arrows.current) {
+        if (!el) continue;
+        const t = arrowAt(eye, Number(el.dataset.k));
+        if (el.getAttribute('transform') !== t) el.setAttribute('transform', t);
+      }
     // dazed by a stun grenade: the screen washes out white and blurs, clearing as it wears off
     const daze = !eye || eye.phase !== 'ground' ? 0 : eye.kind === 'remote' ? ((eye.show.flags & F_STUN) !== 0 ? 0.8 : 0) : Math.min(0.9, eye.stunT / 2);
     if (dazeEl.current) dazeEl.current.style.opacity = daze.toFixed(2);
@@ -1831,6 +1853,22 @@ function Play({ mode }: { mode: StageMode }) {
       p.el.style.opacity = String(Math.min(1, (0.9 - p.age) * 4));
       p.el.style.transform = `translate(${at.x.toFixed(1)}px, ${at.y.toFixed(1)}px) translate(-50%, -50%) scale(${scale.toFixed(2)})`;
     }
+  }
+
+  /** What an egg is busy with, and how far along (0 to 1, or -1 when nothing). */
+  function busyOf(m: Match, focus: Fighter) {
+    const own = owned(focus);
+    const g = own && focus.slot < 2 ? focus.guns[focus.slot] : null;
+    if (focus.reviving >= 0 && m.fighters[focus.reviving]) return { busy: reviveShare(m, focus), text: `reviving ${m.fighters[focus.reviving].id === m.me ? 'you' : m.fighters[focus.reviving].name}` };
+    if (own && focus.reloadT > 0 && g) return { busy: 1 - focus.reloadT / reloadOf(g.w, g.r), text: 'reloading' };
+    if (own && focus.using) return { busy: 1 - focus.useT / USES[focus.using].time, text: BUSY_TEXT[focus.using] };
+    if (own && g && WEAPONS[g.w].spin && focus.spin > 0 && focus.spin < 1) return { busy: focus.spin, text: 'spinning up' };
+    if (focus.phase === 'ground') {
+      // a bank vault grinding open nearby
+      const vault = m.vaults.find((i) => m.doors[i] === DOOR_OPENING && Math.hypot(m.map.slabs[i].x - focus.x, m.map.slabs[i].z - focus.z) < 14);
+      if (vault !== undefined) return { busy: Math.min(1, (m.clock - m.doorAt[vault]) / VAULT_TIME), text: 'the vault is opening' };
+    }
+    return { busy: -1, text: '' };
   }
 
   function updateHud(m: Match, dt: number) {
@@ -1869,29 +1907,8 @@ function Play({ mode }: { mode: StageMode }) {
     else if (m.time < 0) banner = String(Math.ceil(-m.time));
     else if (clock.current < bannerRef.current.until) banner = bannerRef.current.text;
     else if (focus.phase === 'drop' && focus === me) banner = 'steer to where you want to land';
-    let busy = -1;
-    let busyText = '';
+    const { busy, text: busyText } = busyOf(m, focus);
     const teamsOn = m.mode !== 'solo';
-    if (focus.reviving >= 0 && m.fighters[focus.reviving]) {
-      busy = reviveShare(m, focus);
-      busyText = `reviving ${m.fighters[focus.reviving].id === m.me ? 'you' : m.fighters[focus.reviving].name}`;
-    } else if (own && focus.reloadT > 0 && g) {
-      busy = 1 - focus.reloadT / reloadOf(g.w, g.r);
-      busyText = 'reloading';
-    } else if (own && focus.using) {
-      busy = 1 - focus.useT / USES[focus.using].time;
-      busyText = BUSY_TEXT[focus.using];
-    } else if (own && g && WEAPONS[g.w].spin && focus.spin > 0 && focus.spin < 1) {
-      busy = focus.spin;
-      busyText = 'spinning up';
-    } else if (focus.phase === 'ground') {
-      // a bank vault grinding open nearby
-      const vault = m.vaults.find((i) => m.doors[i] === DOOR_OPENING && Math.hypot(m.map.slabs[i].x - focus.x, m.map.slabs[i].z - focus.z) < 14);
-      if (vault !== undefined) {
-        busy = Math.min(1, (m.clock - m.doorAt[vault]) / VAULT_TIME);
-        busyText = 'the vault is opening';
-      }
-    }
     let promptText: string | null = null;
     let reviving = false;
     let reviveColor: string | null = null;
@@ -1970,7 +1987,7 @@ function Play({ mode }: { mode: StageMode }) {
       pack: own ? focus.pack : 0,
       helmet: focus.helmet,
       vest: focus.vest,
-      busy: Math.round(busy * 30) / 30,
+      busy: busy >= 0 ? 0 : -1,
       busyText,
       storm,
       shrinking: s.shrinking,
@@ -2194,6 +2211,85 @@ function Play({ mode }: { mode: StageMode }) {
   const playing = shell.status === 'playing';
   const map = m.map;
   const islandArt = useMemo(() => <IslandArt map={map} />, [map]);
+  // the name tags, teammate markers, hit marks, loot names and damage numbers, moved straight on the DOM every frame
+  // (see placeOverlays): made once a match, not gone over again each time the HUD changes
+  const tagEls = useMemo(
+    () => (
+      <>
+        {m.fighters.map((f) =>
+          f.id === m.me ? null : (
+            <div
+              key={f.id}
+              ref={(el) => {
+                if (el) tags.current.set(f.id, el);
+                else tags.current.delete(f.id);
+              }}
+              className="g-scramble-tag"
+              style={{ ['--tag' as string]: f.color, opacity: 0 }}
+            >
+              <span>{f.name}</span>
+            </div>
+          ),
+        )}
+        <div className="g-scramble-mates" aria-hidden="true">
+          {Array.from({ length: MATE_MARKS }, (_, i) => (
+            <div
+              key={i}
+              ref={(el) => {
+                mateEls.current[i] = el;
+              }}
+              className="g-scramble-matemark"
+              style={{ opacity: 0 }}
+            >
+              <i />
+              <b />
+              <small />
+            </div>
+          ))}
+        </div>
+      </>
+    ),
+    [m],
+  );
+  const popEls = useMemo(
+    () => (
+      <div className="g-scramble-pops" aria-hidden="true">
+        <div ref={dazeEl} className="g-scramble-daze" style={{ opacity: 0 }} />
+        {marks.current.map((p, i) => (
+          <div
+            key={`m${i}`}
+            ref={(el) => {
+              p.el = el;
+            }}
+            className="g-scramble-hitmark"
+            style={{ opacity: 0 }}
+          />
+        ))}
+        <div ref={stairEl} className="g-scramble-loot is-stairs" style={{ opacity: 0 }} />
+        {Array.from({ length: LABELS }, (_, i) => (
+          <div
+            key={`l${i}`}
+            ref={(el) => {
+              labels.current[i] = el;
+            }}
+            className="g-scramble-loot"
+            style={{ opacity: 0 }}
+          />
+        ))}
+        {pops.current.map((p, i) => (
+          <div
+            key={i}
+            ref={(el) => {
+              p.el = el;
+            }}
+            className="g-scramble-pop"
+            style={{ opacity: 0 }}
+          />
+        ))}
+      </div>
+    ),
+    [],
+  );
   const focusFighter = m.fighters[focusOf(m)];
   const s = m.storm;
   const stormPath = `M${-HALF - 40} ${-HALF - 40}H${HALF + 40}V${HALF + 40}H${-HALF - 40}Z M${(s.x - s.r).toFixed(1)} ${s.z.toFixed(1)}a${s.r.toFixed(1)} ${s.r.toFixed(1)} 0 1 0 ${(2 * s.r).toFixed(1)} 0a${s.r.toFixed(1)} ${s.r.toFixed(1)} 0 1 0 ${(-2 * s.r).toFixed(1)} 0Z`;
@@ -2248,7 +2344,7 @@ function Play({ mode }: { mode: StageMode }) {
         ),
       )}
       {focusFighter && focusFighter.phase !== 'out' && (
-        <g transform={`translate(${topX(focusFighter.x).toFixed(2)} ${focusFighter.z.toFixed(2)}) rotate(${((-focusFighter.aim * 180) / Math.PI + 180).toFixed(0)}) scale(${k})`}>
+        <g ref={(el) => void (arrows.current[big ? 1 : 0] = el)} data-k={k} transform={arrowAt(focusFighter, k)}>
           <path d={big ? 'M0 -7L5 5L0 2.5L-5 5Z' : 'M0 -13L9.5 9.5L0 4.6L-9.5 9.5Z'} fill={team.length ? mateColor(m, focusFighter) : focusFighter.color} stroke="#fff" strokeWidth={big ? 1.2 : 2.2} strokeLinejoin="round" />
         </g>
       )}
@@ -2281,37 +2377,7 @@ function Play({ mode }: { mode: StageMode }) {
         onLostPointerCapture={() => (mouse.current.down = false)}
         onContextMenu={(e) => e.preventDefault()}
       />
-      {m.fighters.map((f) =>
-        f.id === m.me ? null : (
-          <div
-            key={f.id}
-            ref={(el) => {
-              if (el) tags.current.set(f.id, el);
-              else tags.current.delete(f.id);
-            }}
-            className="g-scramble-tag"
-            style={{ ['--tag' as string]: f.color, opacity: 0 }}
-          >
-            <span>{f.name}</span>
-          </div>
-        ),
-      )}
-      <div className="g-scramble-mates" aria-hidden="true">
-        {Array.from({ length: MATE_MARKS }, (_, i) => (
-          <div
-            key={i}
-            ref={(el) => {
-              mateEls.current[i] = el;
-            }}
-            className="g-scramble-matemark"
-            style={{ opacity: 0 }}
-          >
-            <i />
-            <b />
-            <small />
-          </div>
-        ))}
-      </div>
+      {tagEls}
       {hud.emotes &&
         hud.emotes.split(';').map((row) => {
           const [id, k, a, at] = row.split(',');
@@ -2339,40 +2405,7 @@ function Play({ mode }: { mode: StageMode }) {
           );
         })}
       <div ref={fadeEl} className="g-scramble-fade" aria-hidden="true" />
-      <div className="g-scramble-pops" aria-hidden="true">
-        <div ref={dazeEl} className="g-scramble-daze" style={{ opacity: 0 }} />
-        {marks.current.map((p, i) => (
-          <div
-            key={`m${i}`}
-            ref={(el) => {
-              p.el = el;
-            }}
-            className="g-scramble-hitmark"
-            style={{ opacity: 0 }}
-          />
-        ))}
-        <div ref={stairEl} className="g-scramble-loot is-stairs" style={{ opacity: 0 }} />
-        {Array.from({ length: LABELS }, (_, i) => (
-          <div
-            key={`l${i}`}
-            ref={(el) => {
-              labels.current[i] = el;
-            }}
-            className="g-scramble-loot"
-            style={{ opacity: 0 }}
-          />
-        ))}
-        {pops.current.map((p, i) => (
-          <div
-            key={i}
-            ref={(el) => {
-              p.el = el;
-            }}
-            className="g-scramble-pop"
-            style={{ opacity: 0 }}
-          />
-        ))}
-      </div>
+      {popEls}
       {shell.status !== 'ready' && !shell.compact && (
         <div className={`g-scramble-hud${touchMode ? ' is-touch' : ''}${live ? ' is-online' : ''}`}>
           {hud.deep >= 0 && <div className="g-scramble-underfx" aria-hidden="true" />}
@@ -2619,7 +2652,7 @@ function Play({ mode }: { mode: StageMode }) {
           {hud.busy >= 0 && (
             <div className="g-scramble-busy" role="status">
               <span>{hud.busyText}</span>
-              <i style={{ width: `${Math.max(0, Math.min(1, hud.busy)) * 100}%` }} />
+              <i ref={busyBar} style={{ width: '0%' }} />
             </div>
           )}
           {hud.prompt && hud.phase === 'ground' && (
