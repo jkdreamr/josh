@@ -3,7 +3,7 @@ import { FIELD } from './field.ts';
 import { BOARD_METERS, adTexture, grassTextures, skyTexture } from './textures.ts';
 
 type Three = typeof import('three');
-export type Conditions = 'night' | 'golden' | 'overcast' | 'rain';
+export type Conditions = 'day' | 'night' | 'golden' | 'overcast' | 'rain';
 export type PitchPattern = 'stripes' | 'checker';
 export type ClubColors = { shirt: string; trim: string; shorts: string };
 export type StadiumFrame = {
@@ -40,10 +40,11 @@ type Preset = {
   grassA: string; grassB: string; standShadow: number; net: number;
 };
 const PRESETS: Record<Conditions, Preset> = {
+  day: { exposure: 0.92, hemiSky: '#e4edf6', hemiGround: '#46553a', hemi: 1.75, key: '#fff0d8', keyI: 3.1, shadow: 0.62, sunLow: false, fog: '#b3c3d2', fogNear: 140, fogFar: 380, glow: 0.1, boxes: 0.015, crowd: '#bdb6ac', wet: 0, rain: 0, wind: 0.5, grassA: '#3d5a28', grassB: '#354f22', standShadow: 0, net: 1.05 },
   night: { exposure: 1.2, hemiSky: '#bccdf0', hemiGround: '#16241b', hemi: 0.8, key: '#f4f8ff', keyI: 3.5, shadow: 1, sunLow: false, fog: '#0b1626', fogNear: 95, fogFar: 300, glow: 1, boxes: 1, crowd: '#8f9cb0', wet: 0, rain: 0, wind: 0.35, grassA: '#3f9e48', grassB: '#2b7d36', standShadow: 0, net: 0.95 },
-  golden: { exposure: 1.08, hemiSky: '#ffe3c0', hemiGround: '#2c2a1a', hemi: 1.6, key: '#ffb06a', keyI: 3.3, shadow: 1, sunLow: true, fog: '#c98a66', fogNear: 110, fogFar: 320, glow: 0.14, boxes: 0.35, crowd: '#e6c7a6', wet: 0, rain: 0, wind: 0.5, grassA: '#4aa24a', grassB: '#337f37', standShadow: 0.55, net: 1 },
-  overcast: { exposure: 1.06, hemiSky: '#dfe7ee', hemiGround: '#39432f', hemi: 2.3, key: '#e8eef5', keyI: 1.25, shadow: 0.4, sunLow: false, fog: '#8d9aa6', fogNear: 75, fogFar: 270, glow: 0.4, boxes: 0.6, crowd: '#b4bcc6', wet: 0.15, rain: 0, wind: 0.8, grassA: '#3d9445', grassB: '#2b7636', standShadow: 0, net: 0.9 },
-  rain: { exposure: 1.14, hemiSky: '#a6b6c8', hemiGround: '#17221d', hemi: 1.1, key: '#dfe8f5', keyI: 2.7, shadow: 0.75, sunLow: false, fog: '#4d5866', fogNear: 45, fogFar: 210, glow: 0.95, boxes: 0.9, crowd: '#7f8a99', wet: 1, rain: 1, wind: 1.4, grassA: '#358c40', grassB: '#246e31', standShadow: 0, net: 0.8 },
+  golden: { exposure: 1.08, hemiSky: '#ffe3c0', hemiGround: '#2c2a1a', hemi: 1.6, key: '#ffb06a', keyI: 3.3, shadow: 1, sunLow: true, fog: '#c98a66', fogNear: 110, fogFar: 320, glow: 0.14, boxes: 0.58, crowd: '#e6c7a6', wet: 0, rain: 0, wind: 0.5, grassA: '#4aa24a', grassB: '#337f37', standShadow: 0.55, net: 1 },
+  overcast: { exposure: 1.06, hemiSky: '#dfe7ee', hemiGround: '#39432f', hemi: 2.3, key: '#e8eef5', keyI: 1.25, shadow: 0.4, sunLow: false, fog: '#8d9aa6', fogNear: 75, fogFar: 270, glow: 0.4, boxes: 0.74, crowd: '#b4bcc6', wet: 0.15, rain: 0, wind: 0.8, grassA: '#3d9445', grassB: '#2b7636', standShadow: 0, net: 0.9 },
+  rain: { exposure: 1.14, hemiSky: '#a6b6c8', hemiGround: '#17221d', hemi: 1.1, key: '#dfe8f5', keyI: 2.7, shadow: 0.75, sunLow: false, fog: '#4d5866', fogNear: 45, fogFar: 210, glow: 0.95, boxes: 0.94, crowd: '#7f8a99', wet: 1, rain: 1, wind: 1.4, grassA: '#358c40', grassB: '#246e31', standShadow: 0, net: 0.8 },
 };
 
 /** Flat-shaded triangle soup with per-vertex color, optional uv and one extra float. */
@@ -287,10 +288,13 @@ roughnessFactor = mix(roughnessFactor, 0.6, pitchLine * 0.5);`);
   const profile = standProfile();
   const bowl = new Mesher(THREE);
   const emissive = new Mesher(THREE);
+  // The main-stand roof sits between the broadcast gantry and the pitch, so it lives in its own meshes.
+  const nearBowl = new Mesher(THREE);
+  const nearEmissive = new Mesher(THREE);
   const glowPoints: { p: V; size: [number, number]; color: string }[] = [];
   const [home, away] = opts.kits;
   const seatColor = (side: Station['side']) => side === 'e' ? away.shirt : side === 'c' ? '#3a4654' : home.shirt;
-  const colors: Record<Exclude<Kind, 'tread'>, string> = { wall: '#18232d', riser: '#232a31', aisle: '#545d66', glass: '#0b1722', back: '#20272f', roofUnder: '#2c343d', roofFront: '#141a21', roofTop: '#363e47' };
+  const colors: Record<Exclude<Kind, 'tread'>, string> = { wall: '#18232d', riser: '#232a31', aisle: '#3a424a', glass: '#0b1722', back: '#20272f', roofUnder: '#2c343d', roofFront: '#141a21', roofTop: '#363e47' };
   for (let k = 0; k < stations.length; k++) {
     const s0 = stations[k]!, s1 = stations[(k + 1) % stations.length]!;
     const gangway = s0.side !== 'c' && k % 6 === 3;
@@ -298,13 +302,15 @@ roughnessFactor = mix(roughnessFactor, 0.6, pitchLine * 0.5);`);
       const kind = profile.kinds[i]!, a = profile.points[i]!, b = profile.points[i + 1]!;
       if (kind === 'tread') {
         const row = profile.rows.find((r) => Math.abs(r.d - (a.d + 0.42)) < 0.01 && Math.abs(r.y - a.y) < 0.01);
-        if (gangway) bowl.setColor('#5d666f');
+        if (gangway) bowl.setColor('#3a424a');
         else bowl.setColor(seatColor(s0.side), (row?.index ?? 0) % 2 ? 0.78 : 0.95);
       } else bowl.setColor(colors[kind]);
       const dd = b.d - a.d, dy = b.y - a.y;
       const nx = (s0.nx + s1.nx) / 2, nz = (s0.nz + s1.nz) / 2;
       const facing: V = [nx * -dy, dd, nz * -dy];
-      bowl.quad(at(s0, a.d, a.y), at(s1, a.d, a.y), at(s1, b.d, b.y), at(s0, b.d, b.y), facing);
+      const target = s0.side === 's' && (kind === 'roofUnder' || kind === 'roofFront' || kind === 'roofTop') ? nearBowl : bowl;
+      if (target === nearBowl) nearBowl.setColor(colors[kind as 'roofUnder']);
+      target.quad(at(s0, a.d, a.y), at(s1, a.d, a.y), at(s1, b.d, b.y), at(s0, b.d, b.y), facing);
     }
     if (k % 3 !== 2) {
       emissive.setColor('#ffd9a3', s0.side === 'c' ? 0.55 : 1);
@@ -313,9 +319,10 @@ roughnessFactor = mix(roughnessFactor, 0.6, pitchLine * 0.5);`);
     }
     if ((s0.side === 'n' || s0.side === 's') && k % 2 === 0) {
       const p = at(s0, 0.6, 24.6);
-      emissive.setColor('#e9f4ff');
-      emissive.box(p, [1.6, 0.25, 0.5], Math.atan2(s0.nx, s0.nz));
-      glowPoints.push({ p: [p[0] - s0.nx * 0.6, p[1] - 0.4, p[2] - s0.nz * 0.6], size: [3.2, 3.2], color: '#dcefff' });
+      const lamps = s0.side === 's' ? nearEmissive : emissive;
+      lamps.setColor('#e9f4ff');
+      lamps.box(p, [1.6, 0.25, 0.5], Math.atan2(s0.nx, s0.nz));
+      if (s0.side === 'n') glowPoints.push({ p: [p[0] - s0.nx * 0.6, p[1] - 0.4, p[2] - s0.nz * 0.6], size: [3.2, 3.2], color: '#dcefff' });
     }
   }
 
@@ -373,20 +380,57 @@ roughnessFactor = mix(roughnessFactor, 0.6, pitchLine * 0.5);`);
   const boardMesh = new THREE.Mesh(boards.geometry(), boardMaterial);
   root.add(boardMesh);
 
-  // Dugouts on the far touchline: frame and benches in the bowl, perspex canopies in one mesh.
+  // Dugouts sit on the main-stand touchline under the TV gantry, so they stay out of the broadcast shot.
   const glass = new Mesher(THREE);
   glass.setColor('#bcd5e0');
   for (const [x, club] of [[-11, home], [11, away]] as const) {
-    const z = HW + 3.1;
+    const z = -(HW + 3.1);
     bowl.setColor('#1a242e'); bowl.box([x, 0.08, z], [5.4, 0.16, 2]);
-    bowl.box([x, 0.9, z + 0.95], [5.4, 1.8, 0.12]);
-    bowl.setColor(club.shirt); bowl.box([x, 0.45, z + 0.45], [5, 0.12, 0.5]);
-    bowl.box([x, 0.85, z + 0.78], [5, 0.7, 0.08]);
-    const shell = new THREE.CylinderGeometry(1.55, 1.55, 5.4, 10, 1, true, 0, Math.PI * 0.62);
-    glass.add(shell, new THREE.Matrix4().makeRotationZ(Math.PI / 2).premultiply(new THREE.Matrix4().makeRotationX(-0.2)).premultiply(new THREE.Matrix4().makeTranslation(x, 0.25, z + 0.9)));
+    bowl.box([x, 0.6, z - 0.95], [5.4, 1.2, 0.12]);
+    bowl.setColor(club.shirt); bowl.box([x, 0.4, z - 0.45], [5, 0.1, 0.5]);
+    bowl.box([x, 0.7, z - 0.78], [5, 0.5, 0.08]);
+    const shell = new THREE.CylinderGeometry(1.15, 1.15, 5.4, 10, 1, true, 0, Math.PI * 0.62);
+    glass.add(shell, new THREE.Matrix4().makeRotationZ(Math.PI / 2).premultiply(new THREE.Matrix4().makeRotationX(-0.2)).premultiply(new THREE.Matrix4().makeRotationY(Math.PI)).premultiply(new THREE.Matrix4().makeTranslation(x, 0.1, z - 0.9)));
   }
   const glassMesh = new THREE.Mesh(glass.geometry(), new THREE.MeshStandardMaterial({ vertexColors: true, transparent: true, opacity: 0.28, roughness: 0.08, metalness: 0.1, depthWrite: false, side: THREE.DoubleSide }));
   root.add(glassMesh);
+
+  // Pitchside staff: stewards in hi-vis facing the crowd, photographers crouched beside each goal.
+  {
+    let staffSeed = 9127;
+    const rnd = () => { staffSeed = (Math.imul(staffSeed, 1664525) + 1013904223) >>> 0; return staffSeed / 4294967296; };
+    const skins = ['#e2b597', '#c58c68', '#8d5a3c', '#5b3a28', '#f0c9ad'];
+    const skin = () => skins[Math.floor(rnd() * skins.length)]!;
+    const steward = (x: number, z: number, yaw: number) => {
+      const c = Math.cos(yaw), sn = Math.sin(yaw);
+      const off = (f: number, y: number): V => [x + sn * f, y, z + c * f];
+      bowl.setColor('#1c222b'); bowl.box(off(0, 0.44), [0.36, 0.88, 0.24], yaw);
+      bowl.setColor(rnd() < 0.75 ? '#d9f03a' : '#ff8c24'); bowl.box(off(0, 1.18), [0.48, 0.62, 0.3], yaw);
+      bowl.setColor('#e8eef0'); bowl.box(off(0.005, 1.2), [0.5, 0.06, 0.31], yaw);
+      bowl.setColor(skin()); bowl.box(off(0, 1.62), [0.2, 0.25, 0.22], yaw);
+    };
+    const photographer = (x: number, z: number, yaw: number) => {
+      const c = Math.cos(yaw), sn = Math.sin(yaw);
+      const off = (f: number, y: number): V => [x + sn * f, y, z + c * f];
+      bowl.setColor('#262b33'); bowl.box(off(-0.12, 0.2), [0.42, 0.4, 0.5], yaw);
+      bowl.setColor(rnd() < 0.5 ? '#f2f2ee' : '#ff7a2f'); bowl.box(off(0, 0.62), [0.46, 0.5, 0.32], yaw);
+      bowl.setColor(skin()); bowl.box(off(0.02, 1.0), [0.2, 0.24, 0.22], yaw);
+      bowl.setColor('#0e1013'); bowl.box(off(0.22, 0.95), [0.15, 0.15, 0.22], yaw);
+      bowl.setColor('#16191d'); bowl.box(off(0.46, 0.95), [0.11, 0.11, 0.34], yaw);
+      bowl.setColor('#20242a'); bowl.box(off(-0.38, 0.12), [0.34, 0.24, 0.4], yaw);
+    };
+    for (const sz of [-1, 1]) for (let x = -HL + 6 + rnd() * 3; x < HL - 4; x += 11 + rnd() * 4) {
+      if (sz > 0 && Math.abs(Math.abs(x) - 11) < 4) continue;
+      steward(x, sz * (BOARD_Z + 1.1), sz > 0 ? 0 : Math.PI);
+    }
+    for (const sx of [-1, 1]) {
+      for (let z = -HW + 7 + rnd() * 3; z < HW - 6; z += 10 + rnd() * 4) steward(sx * (BOARD_X + 1.1), z, sx > 0 ? Math.PI / 2 : -Math.PI / 2);
+      for (const sz of [-1, 1]) for (let i = 0; i < 6; i++) {
+        const z = sz * (FIELD.goalWidth / 2 + 2.2 + i * 1.25 + rnd() * 0.35);
+        photographer(sx * (HL + 3.1 + rnd() * 0.5), z, (sx > 0 ? -Math.PI / 2 : Math.PI / 2) + (rnd() - 0.5) * 0.5 - sx * sz * 0.25);
+      }
+    }
+  }
 
   const bowlMesh = new THREE.Mesh(bowl.geometry(), new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.84, metalness: 0.04 }));
   bowlMesh.receiveShadow = !lite;
@@ -394,6 +438,9 @@ roughnessFactor = mix(roughnessFactor, 0.6, pitchLine * 0.5);`);
   const emissiveMaterial = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false });
   const emissiveMesh = new THREE.Mesh(emissive.geometry(), emissiveMaterial);
   root.add(emissiveMesh);
+  const nearRoof = new THREE.Group();
+  nearRoof.add(new THREE.Mesh(nearBowl.geometry(), bowlMesh.material), new THREE.Mesh(nearEmissive.geometry(), emissiveMaterial));
+  root.add(nearRoof);
 
   // Floodlight glow: camera-facing quads in one additive draw.
   const glowGeometry = new THREE.BufferGeometry();
@@ -449,7 +496,7 @@ void main() {
     const m = new THREE.Matrix4().compose(a.clone().add(b).multiplyScalar(0.5), new THREE.Quaternion().setFromUnitVectors(up, dir.clone().normalize()), new THREE.Vector3(1, 1, 1));
     white.add(new THREE.CylinderGeometry(radius, radius, dir.length(), lite ? 6 : 10, 1, true), m);
   };
-  const hw = FIELD.goalWidth / 2, gh = FIELD.goalHeight, topDepth = 1.0, bottomDepth = 2.1;
+  const hw = FIELD.goalWidth / 2, gh = FIELD.goalHeight, topDepth = 2.0, bottomDepth = 2.25;
   const net = { pos: [] as number[], nor: [] as number[], grid: [] as number[], pin: [] as number[], index: [] as number[] };
   const grid = (nu: number, nv: number, fn: (u: number, v: number) => [V, [number, number]], normal: V) => {
     const start = net.pos.length / 3;
@@ -542,7 +589,7 @@ void main() {
   vec2 fw = max(fwidth(g), vec2(1e-4));
   vec2 dist = (0.5 - abs(fract(g) - 0.5)) / fw;
   float line = 1.0 - clamp(min(dist.x, dist.y) - 0.35, 0.0, 1.0);
-  float alpha = mix(line * 0.9, 0.26, smoothstep(0.3, 0.85, max(fw.x, fw.y)));
+  float alpha = mix(line * 0.95, 0.4, smoothstep(0.3, 0.85, max(fw.x, fw.y)));
   if (alpha < 0.02) discard;
   gl_FragColor = vec4(mix(vec3(0.9, 0.93, 0.92) * vShade * uLight, uFogColor, vFogF), alpha);
   #include <tonemapping_fragment>
@@ -588,122 +635,110 @@ void main() {
   });
   root.add(new THREE.Mesh(flagGeometry, flagMaterial));
 
-  // Crowd: one instanced draw, animated on the GPU, fans grouped by club.
-  const person = new Mesher(THREE, false, true);
-  person.part = 0;
-  {
-    const b = 0.38, t = 0.98, wb = 0.2, wt = 0.23, db = 0.12, dt2 = 0.12;
-    const c: V[] = [[-wb, b, -db], [wb, b, -db], [wt, t, -dt2], [-wt, t, -dt2], [-wb, b, db], [wb, b, db], [wt, t, dt2], [-wt, t, dt2]];
-    person.quad(c[4]!, c[5]!, c[6]!, c[7]!, [0, 0, 1]);
-    person.quad(c[0]!, c[4]!, c[7]!, c[3]!, [-1, 0, 0]);
-    person.quad(c[1]!, c[5]!, c[6]!, c[2]!, [1, 0, 0]);
-    person.quad(c[3]!, c[2]!, c[6]!, c[7]!, [0, 1, 0]);
-    person.part = 3;
-    const hy = 1.12, r = 0.115;
-    const top: V = [0, hy + r * 1.1, 0];
-    const ring: V[] = [[r, hy, 0], [0, hy, r], [-r, hy, 0], [0, hy, -r]];
-    for (let i = 0; i < 4; i++) {
-      const a = ring[i]!, n = ring[(i + 1) % 4]!;
-      person.tri(a, n, top, [a[0] + n[0], 0.6, a[2] + n[2]]);
-    }
-    for (const side of [-1, 1]) {
-      const x = side * 0.27;
-      person.part = 1;
-      const s0: V = [x - 0.045, 0.94, 0.02], s1: V = [x + 0.045, 0.94, 0.02];
-      person.part = 2;
-      const t0: V = [x - 0.04, 0.48, 0.05], t1: V = [x + 0.04, 0.48, 0.05];
-      // Shoulder vertices keep part 1, the hand end (part 2) lifts when fans cheer.
-      const before = person.extra.length;
-      person.quad(s0, s1, t1, t0, [0, 0, 1]);
-      for (let i = before; i < person.extra.length; i++) person.extra[i] = person.pos[i * 3 + 1]! > 0.7 ? 1 : 2;
-    }
-  }
-  const personGeometry = person.geometry();
-  const seats: { p: V; yaw: number; side: Station['side']; key: number; tier: number }[] = [];
+  // Crowd: a card per seat row in one draw; each fan is drawn procedurally in the fragment shader.
   let seed = 51721;
   const random = () => { seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0; return seed / 4294967296; };
-  const sideWeight: Record<Station['side'], number> = { n: 3, e: 2.2, w: 2.2, s: 1.3, c: 1 };
+  // Share of away fans per stand: home end, away end, mixed sides and corners.
+  const awayShare: Record<Station['side'], number> = { w: 0.1, e: 0.88, n: 0.4, s: 0.35, c: 0.5 };
+  const cards = { pos: [] as number[], uv: [] as number[], seat: [] as number[], index: [] as number[] };
+  let crowdSeats = 0;
   for (const row of profile.rows) {
     if (lite && (row.tier > 0 || row.index > 9)) continue;
+    const h = row.tier ? 1.55 : 1.35;
     for (let k = 0; k < stations.length; k++) {
       const s0 = stations[k]!, s1 = stations[(k + 1) % stations.length]!;
       if (s0.side !== 'c' && k % 6 === 3) continue;
       if (lite && s0.side === 's') continue;
-      const a = at(s0, row.d, row.y), b = at(s1, row.d, row.y);
-      const count = Math.floor(Math.hypot(b[0] - a[0], b[2] - a[2]) / 0.6);
-      const nx = (s0.nx + s1.nx) / 2, nz = (s0.nz + s1.nz) / 2;
-      const weight = sideWeight[s0.side] * (row.tier ? 0.5 : 1.25 - row.index * 0.03);
-      for (let i = 0; i < count; i++) {
-        const t = (i + 0.5 + (random() - 0.5) * 0.2) / count;
-        seats.push({ p: [a[0] + (b[0] - a[0]) * t, row.y, a[2] + (b[2] - a[2]) * t], yaw: Math.atan2(-nx, -nz) + (random() - 0.5) * 0.3, side: s0.side, key: Math.pow(random(), 1 / weight), tier: row.tier });
-      }
+      const d = row.d + 0.1;
+      const a0 = at(s0, d, row.y), b0 = at(s1, d, row.y);
+      const len = Math.hypot(b0[0] - a0[0], b0[2] - a0[2]);
+      const start = cards.pos.length / 3;
+      cards.pos.push(a0[0], row.y, a0[2], b0[0], row.y, b0[2], b0[0], row.y + h, b0[2], a0[0], row.y + h, a0[2]);
+      cards.uv.push(0, 0, len, 0, len, h, 0, h);
+      const key = row.tier * 31 + row.index + k * 0.0137 + random() * 0.5;
+      for (let i = 0; i < 4; i++) cards.seat.push(awayShare[s0.side], key);
+      cards.index.push(start, start + 1, start + 2, start, start + 2, start + 3);
+      crowdSeats += Math.floor(len / 0.56);
     }
   }
-  seats.sort((x, y) => y.key - x.key);
-  const crowdTotal = Math.min(seats.length, lite ? 1200 : 3000);
-  const fanAttr = new Float32Array(crowdTotal * 2);
-  const crowdUniforms = { uTime: time, uRoar: { value: new THREE.Vector2() }, uLight: { value: new THREE.Color('#ffffff') }, ...fogUniforms };
+  const crowdGeometry = new THREE.BufferGeometry();
+  crowdGeometry.setAttribute('position', new THREE.Float32BufferAttribute(cards.pos, 3));
+  crowdGeometry.setAttribute('uv', new THREE.Float32BufferAttribute(cards.uv, 2));
+  crowdGeometry.setAttribute('aSeat', new THREE.Float32BufferAttribute(cards.seat, 2));
+  crowdGeometry.setIndex(cards.index);
+  const kitColor = (c: string) => new THREE.Color(c);
+  const fullDensity = 0.94;
+  const crowdUniforms = {
+    uTime: time, uRoar: { value: new THREE.Vector2() }, uLight: { value: new THREE.Color('#ffffff') }, uDensity: { value: fullDensity },
+    uHome: { value: [kitColor(home.shirt), kitColor(home.trim), kitColor(home.shorts)] },
+    uAway: { value: [kitColor(away.shirt), kitColor(away.trim), kitColor(away.shorts)] },
+    ...fogUniforms,
+  };
   const crowdMaterial = shaderMaterial(THREE, {
     uniforms: crowdUniforms, side: THREE.DoubleSide,
     vertexShader: /* glsl */`
-attribute vec2 aFan; attribute float aPart;
-uniform float uTime; uniform vec2 uRoar; uniform vec3 uLight;
+attribute vec2 aSeat;
 ${vertexFog}
-varying vec3 vColor;
+varying vec2 vUv; varying vec2 vSeat; varying float vHeight;
 void main() {
-  vec3 p = position;
-  float roar = aFan.x < 0.25 ? uRoar.x : aFan.x > 0.75 ? uRoar.y : (uRoar.x + uRoar.y) * 0.3;
-  float cheer = clamp(roar, 0.0, 1.0);
-  float gutted = clamp(-roar, 0.0, 1.0);
-  float ph = aFan.y * 6.2831;
-  float bounce = max(0.0, sin(uTime * (7.5 + aFan.y * 4.0) + ph * 5.0));
-  float raise = aPart > 1.5 && aPart < 2.5 ? cheer * (0.8 + 0.2 * sin(uTime * 9.0 + ph * 3.0)) : 0.0;
-  p.y += raise * 1.0;
-  p.x += sign(p.x) * raise * 0.06;
-  p.y += sin(uTime * 1.6 + ph) * 0.015 + cheer * (0.2 + bounce * 0.26) - gutted * 0.08;
-  vec4 world = modelMatrix * instanceMatrix * vec4(p, 1.0);
-  vec4 mv = viewMatrix * world;
-  gl_Position = projectionMatrix * mv;
-  vec3 skin = mix(vec3(0.33, 0.17, 0.09), vec3(0.85, 0.6, 0.45), fract(aFan.y * 7.31));
-  vec3 base = aPart > 2.5 ? skin : instanceColor * (aPart > 0.5 ? 0.85 : 1.0);
-  vec3 n = normalize(mat3(modelMatrix) * mat3(instanceMatrix) * normal);
-  vColor = base * uLight * (0.62 + 0.38 * clamp(n.y * 0.5 + 0.55, 0.0, 1.0));
+  vUv = uv; vSeat = aSeat; vHeight = position.y;
+  vec4 mv = modelViewMatrix * vec4(position, 1.0);
   vFogF = smoothstep(uFog.x, uFog.y, -mv.z);
+  gl_Position = projectionMatrix * mv;
 }`,
     fragmentShader: /* glsl */`
+uniform float uTime, uDensity; uniform vec2 uRoar; uniform vec3 uLight; uniform vec3 uHome[3]; uniform vec3 uAway[3];
 ${vertexFog}
-varying vec3 vColor;
+varying vec2 vUv; varying vec2 vSeat; varying float vHeight;
+const float CELL = 0.56;
+float hash(vec2 p) { vec3 q = fract(vec3(p.xyx) * 0.1031); q += dot(q, q.yzx + 33.33); return fract((q.x + q.y) * q.z); }
+float rbox(vec2 p, vec2 b, float r) { vec2 d = abs(p) - b + r; return length(max(d, 0.0)) + min(max(d.x, d.y), 0.0) - r; }
+float capsule(vec2 p, vec2 a, vec2 b, float r) { vec2 pa = p - a, ba = b - a; return length(pa - ba * clamp(dot(pa, ba) / dot(ba, ba), 0.0, 1.0)) - r; }
+vec3 pick(vec3 c0, vec3 c1, vec3 c2, float r) { return r < 0.58 ? c0 : r < 0.82 ? c1 : c2; }
 void main() {
-  gl_FragColor = vec4(mix(vColor, uFogColor, vFogF), 1.0);
+  float cell = floor(vUv.x / CELL);
+  vec2 id = vec2(cell, vSeat.y * 53.17);
+  float r0 = hash(id), r1 = hash(id + 17.1), r2 = hash(id + 41.3), r3 = hash(id + 73.9);
+  if (r0 > uDensity) discard;
+  float away = step(r1, vSeat.x);
+  float roar = mix(uRoar.x, uRoar.y, away);
+  float cheer = clamp(roar, 0.0, 1.0), gutted = clamp(-roar, 0.0, 1.0);
+  float hop = cheer * (0.06 + 0.22 * max(0.0, sin(uTime * (7.0 + r2 * 4.0) + r3 * 40.0)));
+  float idle = sin(uTime * (1.1 + r1) + r3 * 30.0) * 0.015;
+  float build = 0.9 + r2 * 0.2;
+  vec2 p = vec2((fract(vUv.x / CELL) - 0.5) * CELL + (r3 - 0.5) * 0.1, vUv.y - hop - idle + gutted * 0.07 - (r1 - 0.5) * 0.14);
+  float torso = rbox(p - vec2(0.0, 0.4), vec2(0.165 * build, 0.38), 0.08);
+  float head = length((p - vec2(0.0, 0.93)) * vec2(1.0, 0.88)) - 0.102;
+  float lift = cheer * step(0.25, r2);
+  float arms = lift > 0.05
+    ? min(capsule(p, vec2(-0.15 * build, 0.72), vec2(-0.25, 0.72 + 0.56 * lift), 0.042), capsule(p, vec2(0.15 * build, 0.72), vec2(0.25, 0.72 + 0.56 * lift), 0.042))
+    : 1e3;
+  float px = max(fwidth(vUv.x), fwidth(vUv.y));
+  float body = min(torso, arms);
+  // Distant fans are only a few pixels wide: grow them into a dense mass instead of aliased speckle.
+  float far = smoothstep(0.045, 0.12, px);
+  if (min(body, head) > px * 0.5 + far * 0.12) discard;
+  vec3 shirt = away > 0.5 ? pick(uAway[0], uAway[1], uAway[2], r2) : pick(uHome[0], uHome[1], uHome[2], r2);
+  float neutral = step(0.55, fract(r3 * 7.13));
+  vec3 plain = r1 < 0.3 ? vec3(0.12, 0.13, 0.15) : r1 < 0.55 ? vec3(0.86, 0.86, 0.84) : r1 < 0.8 ? vec3(0.22, 0.3, 0.45) : vec3(0.45, 0.42, 0.38);
+  shirt = mix(shirt, plain, neutral) * (0.72 + fract(r0 * 9.7) * 0.3);
+  shirt = mix(vec3(dot(shirt, vec3(0.3, 0.55, 0.15))), shirt, 0.78);
+  vec3 skin = mix(vec3(0.3, 0.17, 0.1), vec3(0.92, 0.7, 0.56), fract(r0 * 13.7 + r1 * 3.1));
+  vec3 hair = mix(vec3(0.06, 0.045, 0.035), vec3(0.42, 0.3, 0.17), step(0.75, fract(r2 * 5.3)));
+  vec3 col = shirt;
+  if (head < body) col = p.y > 0.95 + (r3 - 0.5) * 0.04 ? hair : skin;
+  else if (arms < torso && p.y > 0.86) col = skin;
+  col = mix(col, mix(shirt, skin, 0.22 * step(0.82, p.y)), far * 0.6);
+  float shade = 0.42 + 0.58 * smoothstep(0.0, 0.8, p.y);
+  shade *= 1.0 - 0.18 * smoothstep(0.0, 0.12, abs(p.x) / max(0.1, 0.165 * build) - 0.75);
+  // Upper rows sit in the roof's shade.
+  shade *= mix(1.0, 0.62, smoothstep(5.0, 22.0, vHeight));
+  gl_FragColor = vec4(mix(col * shade * uLight, uFogColor, vFogF), 1.0);
   #include <tonemapping_fragment>
   #include <colorspace_fragment>
 }`,
   });
-  const crowd = new THREE.InstancedMesh(personGeometry, crowdMaterial, Math.max(1, crowdTotal));
-  {
-    const o = new THREE.Object3D(), c = new THREE.Color();
-    const palettes = [home, away].map((k) => [k.shirt, k.shirt, k.shirt, k.trim, k.shorts, k.shirt].map((s) => new THREE.Color(s)));
-    const neutral = ['#2a2f3a', '#4d5563', '#c9ccd1', '#3d5a80', '#6b4f3a', '#1f3b2d', '#8a8f96'].map((s) => new THREE.Color(s));
-    for (let i = 0; i < crowdTotal; i++) {
-      const seat = seats[i]!;
-      const r = random();
-      const team = seat.side === 'w' ? (r < 0.85 ? 0 : 0.5) : seat.side === 'e' ? (r < 0.82 ? 1 : 0.5) : seat.side === 'c' ? (r < 0.3 ? 0 : r < 0.5 ? 1 : 0.5) : seat.side === 's' ? (r < 0.65 ? 0 : r < 0.8 ? 1 : 0.5) : (r < 0.55 ? 0 : r < 0.8 ? 1 : 0.5);
-      const palette = team === 0.5 ? neutral : palettes[team]!;
-      c.copy(palette[Math.floor(random() * palette.length)]!).multiplyScalar(0.85 + random() * 0.3);
-      o.position.set(...seat.p);
-      o.rotation.set(0, seat.yaw, 0);
-      const scale = 0.9 + random() * 0.2;
-      o.scale.set(scale, 0.9 + random() * 0.2, scale);
-      o.updateMatrix();
-      crowd.setMatrixAt(i, o.matrix);
-      crowd.setColorAt(i, c);
-      fanAttr[i * 2] = team; fanAttr[i * 2 + 1] = random();
-    }
-  }
-  personGeometry.setAttribute('aFan', new THREE.InstancedBufferAttribute(fanAttr, 2));
-  crowd.instanceMatrix.needsUpdate = true;
-  if (crowd.instanceColor) crowd.instanceColor.needsUpdate = true;
-  crowd.count = crowdTotal;
+  const crowd = new THREE.Mesh(crowdGeometry, crowdMaterial);
   crowd.frustumCulled = false;
   root.add(crowd);
 
@@ -763,7 +798,7 @@ void main() {
     pitchUniforms.uGrassA.value.set(p.grassA); pitchUniforms.uGrassB.value.set(p.grassB);
     pitchUniforms.uWet.value = p.wet; pitchUniforms.uStandShadow.value = p.standShadow;
     glowUniforms.uIntensity.value = p.glow;
-    emissiveMaterial.color.setScalar(0.35 + p.boxes * 0.65);
+    emissiveMaterial.color.setScalar(p.boxes);
     boardMaterial.color.setScalar(p.sunLow ? 0.85 : 1);
     crowdUniforms.uLight.value.set(p.crowd);
     netUniforms.uWind.value = p.wind; netUniforms.uLight.value = p.net;
@@ -780,6 +815,7 @@ void main() {
       time.value = frame.time % 3600;
       ads.offset.x = (frame.time * 0.06) % 1;
       skyMesh.position.copy(frame.camera.position);
+      nearRoof.visible = frame.camera.position.z > -(HW + STAND);
       frame.camera.getWorldDirection(forward);
       rainUniforms.uCenter.value.copy(frame.camera.position).addScaledVector(forward, 26);
       impact = frame.ballInNet ? Math.min(1, impact + frame.dt * 6) : Math.max(0, impact - frame.dt * 1.5);
@@ -789,8 +825,8 @@ void main() {
       netUniforms.uRipple.value = nearGoal ? impact * impact : 0;
       crowdUniforms.uRoar.value.set(frame.roar[0], frame.roar[1]);
     },
-    reduceCrowd() { crowd.count = Math.ceil(crowdTotal / 2); },
-    crowdCount: () => crowd.count,
+    reduceCrowd() { crowdUniforms.uDensity.value = fullDensity * 0.55; },
+    crowdCount: () => Math.round(crowdSeats * crowdUniforms.uDensity.value),
     dispose() {
       root.removeFromParent();
       root.traverse((object) => {

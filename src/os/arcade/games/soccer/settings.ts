@@ -11,4 +11,4 @@ export const AWAY_CLUB = defineSetting<string>('soccer:away-club', CLUB_IDS, DEF
 export const HALF = defineSetting<'2' | '4' | '6'>('soccer:half', ['2', '4', '6'], '4');
 export const LEVEL = defineSetting<LevelName>('soccer:level', ['easy', 'normal', 'hard'], 'normal');
 export const CAMERA = defineSetting<'broadcast' | 'end'>('soccer:camera', ['broadcast', 'end'], 'broadcast', { live: true });
-export const TIME = defineSetting<TimeMode>('soccer:time', ['night', 'golden', 'overcast', 'rain'], 'night', { live: true });
+export const TIME = defineSetting<TimeMode>('soccer:time', ['day', 'night', 'golden', 'overcast', 'rain'], 'day', { live: true });
