@@ -973,7 +973,7 @@ function prepareDefense(world: World, commands: Map<number, Command>, carrier: P
     if (!current?.human) continue;
     if (carrier?.id === current.id || (current.touchCd ?? 0) > 0) world.dribbleAt[team] = now;
     const ownPass = world.passTarget != null && world.players.some((p) => p.id === world.passTarget && p.team === team);
-    const eligible = !carrier && Math.hypot(world.ball.vx, world.ball.vz) > 3 && !ownPass
+    const eligible = !carrier && Math.hypot(world.ball.vx, world.ball.vz) > 3 && !ownPass && possession !== team
       && now - world.dribbleAt[team] >= 0.3;
     if (!eligible) { world.switchWait[team] = 0; world.switchCandidate[team] = -1; continue; }
     const best = world.players.filter((p) => p.team === team && !p.human && !p.sentOff)

@@ -245,6 +245,36 @@ test('auto switching needs the same better candidate for 15 steps and never flip
   assert.equal(world.controlled[0], b.id);
 });
 
+test('own last touch prevents automatic switches during a loose-ball chase', () => {
+  const { world, defender, carrier, tick } = fixture();
+  carrier.x = 20; carrier.z = 20;
+  defender.x = -12; defender.z = 0;
+  const mate = world.players[2]!;
+  mate.human = false; mate.x = -2; mate.z = 0;
+  world.carrierId = world.lastToucherId = null;
+  world.passTarget = null; world.lastTouch = 0;
+  world.ball.x = world.ball.z = 0;
+  world.ball.vx = 6; world.ball.vz = 0;
+  for (let frame = 0; frame < 60; frame++) tick();
+  assert.equal(world.controlled[0], defender.id);
+});
+
+test('opponent last touch still permits automatic switching after 0.25 seconds', () => {
+  const { world, defender, carrier, tick } = fixture();
+  carrier.x = 20; carrier.z = 20;
+  defender.x = -12; defender.z = 0;
+  const mate = world.players[2]!;
+  mate.human = false; mate.x = -2; mate.z = 0;
+  world.carrierId = world.lastToucherId = null;
+  world.passTarget = null; world.lastTouch = 1;
+  world.ball.x = world.ball.z = 0;
+  world.ball.vx = 6; world.ball.vz = 0;
+  for (let frame = 0; frame < 14; frame++) tick();
+  assert.equal(world.controlled[0], defender.id);
+  tick();
+  assert.equal(world.controlled[0], mate.id);
+});
+
 test('manual switches start the auto-switch cooldown and candidate state is validated in snapshots', () => {
   const { world, defender, carrier, tick } = fixture();
   const mate = world.players[2]!; mate.human = false; mate.x = -2; mate.z = 0;

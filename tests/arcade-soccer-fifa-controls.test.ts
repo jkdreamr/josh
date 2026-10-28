@@ -340,6 +340,7 @@ test('control-seat ownership stays exact through kickoff, AI play, passes, resta
     world.passTarget = null;
     world.carrierId = null;
     world.lastToucherId = null;
+    world.lastTouch = current.team === 0 ? 1 : 0;
     world.dribbleAt[0] = world.halfLength * world.half - world.clock - 1;
     world.switchAt[0] = world.halfLength * world.half - world.clock - 1;
     world.switchWait[0] = 0;
