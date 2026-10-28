@@ -4,9 +4,9 @@ import { cpuMayTackle, offsidePosition, onsideProgress, stepUpLine } from './rul
 export const LEVEL_NAMES = ['easy', 'normal', 'hard'] as const;
 export type Level = (typeof LEVEL_NAMES)[number];
 const reaction = { easy: 0.6, normal: 0.3, hard: 0.18 } as const;
-const keeperReaction = { easy: 0.5, normal: 0.42, hard: 0.9 } as const;
+const keeperReaction = { easy: 0.5, normal: 0.42, hard: 0.42 } as const;
 const keeperReadDelay = { easy: 0.5, normal: 0.3, hard: 0.16 } as const;
-const keeperReadNoise = { easy: 0.28, normal: 0.16, hard: 0.45 } as const;
+const keeperReadNoise = { easy: 0.28, normal: 0.16, hard: 0.08 } as const;
 const decisionInterval = { easy: 0.7, normal: 0.3, hard: 0.24 } as const;
 export const KEEPER_MAX_HOLD = 4;
 export const DEAD_BALL_UNSTICK = 2;
@@ -239,10 +239,10 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
   const qualityNoise = Math.sin((tick + rosterIndex(world, player) * 31) * 0.37) * noise[level];
   const shotLane = laneClearance(world, player, { x: goalX, z: -Math.sign(player.z) * FIELD.goalWidth * 0.32 }, player.team, true);
   const goodAngle = Math.abs(player.z) < lateral(level === 'easy' ? 0.21 : 0.18) && Math.abs(player.z) / Math.max(3, Math.abs(goalX - player.x)) < 0.8;
-  const shootRange = level === 'hard' ? 16 : 18;
-  if (goalDistance < shootRange && goodAngle && pressure > 1.5 + qualityNoise && shotLane > 0.18 + Math.abs(qualityNoise) * 0.3) {
+  const shootRange = 18;
+  if (goalDistance < shootRange && goodAngle && pressure > (level === 'hard' ? 1.1 : 1.5) + qualityNoise && shotLane > 0.18 + Math.abs(qualityNoise) * 0.3) {
     const choice = cpuShotChoice(world, player, level, tick, dt);
-    return { move: { x: 0, z: 0 }, action: 'shoot', pressed: true,
+    if (level !== 'hard' || choice.probability >= 0.65 || goalDistance < 11) return { move: { x: 0, z: 0 }, action: 'shoot', pressed: true,
       power: choice.power, aim: shotAim(choice.targetZ, dir) };
   }
   const lastDefender = Math.max(...opponents.filter(outfield).map((p) => p.x * dir));
@@ -268,6 +268,7 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
       !!world.rules?.offside && level !== 'easy', action === 'pass' ? groundPassPower(distance(player, receiver)) : 0.45, 'ai')?.id !== receiver.id) continue;
     const score = forward * 0.16 + Math.min(space, 6) * 0.12 + Math.min(lane, 4) * 0.08
       - gap * 0.025 + (action === 'through' ? 0.5 : 0) + optionNoise
+      + (level === 'hard' && Math.hypot(goalX - receiver.x, receiver.z) < 14 && Math.abs(receiver.z) < lateral(0.18) ? 0.6 : 0)
       + (receiver.slot === 'GK' ? -0.8 : 0);
     if (!best || score > best.score) best = { receiver, action, score };
   }
