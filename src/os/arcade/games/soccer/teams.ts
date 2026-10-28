@@ -245,6 +245,16 @@ export const CLUBS: readonly Club[] = rawClubs.map((club, index) => ({
 }));
 export const CLUB_IDS: readonly string[] = CLUBS.map((club) => club.id);
 
+export function nextClubId(id: string, direction: number, other: string) {
+  const wrap = (index: number) => (index + CLUBS.length) % CLUBS.length;
+  let index = wrap(CLUBS.findIndex((club) => club.id === id));
+  for (let step = 0; step < CLUBS.length; step++) {
+    index = wrap(index + direction);
+    if (CLUBS[index]!.id !== other) return CLUBS[index]!.id;
+  }
+  return id;
+}
+
 export function clubById(id?: string | null): Club {
   return CLUBS.find((club) => club.id === id) ?? CLUBS[0]!;
 }

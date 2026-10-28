@@ -319,10 +319,13 @@ export function sendOff(world: World, player: Player) {
   player.human = false;
   player.controlled = false;
   const team = player.team;
-  const replacement = world.players.filter((p) => p.team === team && active(p))
+  const replacement = world.players.filter((p) => p.team === team && active(p) && (!wasHuman || !p.human))
     .sort((a, b) => distance(a, player) - distance(b, player))[0];
-  if (replacement && wasHuman) transferControl(world, team, replacement.id);
-  else if (replacement && wasSelected) world.controlled[team] = replacement.id;
+  if (replacement && wasHuman) transferControl(world, team, replacement.id, player.id);
+  else if (replacement && wasSelected) {
+    if (world.controlledSeats?.includes(player.id)) transferControl(world, team, replacement.id, player.id);
+    else world.controlled[team] = replacement.id;
+  }
   swapOutfieldFormation(world, player);
   const count = world.players.filter((p) => p.team === team && p.sentOff).length - 1;
   player.x = (team === 0 ? -1 : 1) * (4 + 1.2 * Math.max(0, count));

@@ -1,4 +1,4 @@
-import { FIELD, PLAYER_COUNT, teamOf, type World } from './logic.ts';
+import { FIELD, PLAYER_COUNT, teamOf, type Point, type World } from './logic.ts';
 import type { ControlCommand } from './input.ts';
 import { CLUB_IDS } from './teams.ts';
 import { COMPETITIONS, COMPETITION_IDS, type CompetitionId, type Mode } from './modes.ts';
@@ -12,7 +12,7 @@ export type ConfigPacket = { t: 'soccer'; k: 'cfg'; r: number; seq: number; half
 export type LobbyMember = { seat: number; role: 'host' | 'phone' | 'mac'; side: 0 | 1 };
 export type LobbyPacket = { t: 'soccer'; k: 'lobby'; r: number; seq: number; comp: CompetitionId; mode: Mode; clubs: [string, string]; focus: [number, number]; ready: [boolean, boolean]; countdown: number | null; members: LobbyMember[]; cup?: CupSummary };
 export type HiPacket = { t: 'soccer'; k: 'hi'; r: number; seq: number; seat: number; role: 'phone' | 'mac'; side: 0 | 1 };
-export type NavPacket = { t: 'soccer'; k: 'nav'; r: number; seq: number; seat: number; dx: -1 | 0 | 1; dy: -1 | 0 | 1; a: boolean; b: boolean };
+export type NavPacket = { t: 'soccer'; k: 'nav'; r: number; seq: number; seat: number; dx: -1 | 0 | 1; dy: -1 | 0 | 1; a: boolean; b: boolean; club?: boolean };
 export type PracticePickPacket = { t: 'soccer'; k: 'pd'; r: number; seq: number; seat: number; pick: string };
 export type PracticeStatusPacket = { t: 'soccer'; k: 'pp'; r: number; seq: number; drill: string; prompt: string; hint: string; score: string; best: string; done: boolean; tutorial: string };
 export type SoccerPacket = MovePacket | PingPacket | SnapshotPacket | ConfigPacket | LobbyPacket | HiPacket | NavPacket | PracticePickPacket | PracticeStatusPacket;
@@ -216,8 +216,13 @@ export function parsePacket(value: unknown): SoccerPacket | null {
   if (p.k === 'nav') {
     if (!Number.isInteger(p.seat) || (p.seat as number) < 1 || (p.seat as number) > 3
       || ![-1, 0, 1].includes(p.dx as number) || ![-1, 0, 1].includes(p.dy as number)
-      || typeof p.a !== 'boolean' || typeof p.b !== 'boolean') return null;
-    return { t: 'soccer', k: 'nav', r: p.r as number, seq: p.seq as number, seat: p.seat as number, dx: p.dx as -1 | 0 | 1, dy: p.dy as -1 | 0 | 1, a: p.a, b: p.b };
+      || typeof p.a !== 'boolean' || typeof p.b !== 'boolean'
+      || (p.club !== undefined && typeof p.club !== 'boolean')) return null;
+    return {
+      t: 'soccer', k: 'nav', r: p.r as number, seq: p.seq as number, seat: p.seat as number,
+      dx: p.dx as -1 | 0 | 1, dy: p.dy as -1 | 0 | 1, a: p.a, b: p.b,
+      ...(p.club === undefined ? {} : { club: p.club as boolean }),
+    };
   }
   if (p.k === 'mv') {
     if (!Number.isInteger(p.seat) || (p.seat as number) < 0 || (p.seat as number) > 3 || !quantized(p.x) || !quantized(p.z)
@@ -266,8 +271,20 @@ export function mergeRemoteCommand(previous: ControlCommand | undefined, current
   };
 }
 
-export function acceptMovePacket(seat: RemoteSeat, previous: ControlCommand | undefined, packet: MovePacket, defending: boolean): { seat: RemoteSeat; command: ControlCommand | null } {
+export function acceptMovePacket(
+  seat: RemoteSeat,
+  previous: ControlCommand | undefined,
+  packet: MovePacket,
+  defending: boolean,
+  toWorld?: (point: Point) => Point,
+): { seat: RemoteSeat; command: ControlCommand | null } {
   const incoming = commandFromPacket(packet);
+  if (toWorld) {
+    incoming.move = toWorld(incoming.move);
+    const aim = toWorld(incoming.aim ?? { x: 0, z: 0 });
+    incoming.aim = Math.hypot(aim.x, aim.z) > 0.05 ? aim : { x: 0, z: 0 };
+    if (incoming.switchDir) incoming.switchDir = toWorld(incoming.switchDir);
+  }
   const hasEdge = packet.e !== undefined;
   const freshSequence = packet.seq > seat.seq;
   const freshEdge = hasEdge && packet.e! > seat.edge;

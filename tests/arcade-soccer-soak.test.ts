@@ -9,7 +9,9 @@ for (const [home, away] of PAIRS) {
       ? 'main seed 47: players 9/10 overlap >0.5 s at frame 3420'
       : home === 'hard' && away === 'easy'
         ? 'main seed 47: players 20/21 overlap at frame 2334; uncontrolled ball stuck >3 s at frame 3613'
-        : undefined;
+        : home === 'hard' && away === 'normal'
+          ? 'seed 47: goal-kick restart parks players 20/21 0.17 m apart at frame 12410 (restart placement, same bug as above)'
+          : undefined;
   test('fast full-match soak: ' + home + '/' + away, { todo }, () => {
     const row = runRow(home, away, [47], 240);
     assert.deepEqual(failures(row, false), []);

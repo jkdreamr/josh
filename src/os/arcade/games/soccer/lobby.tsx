@@ -2,11 +2,12 @@ import { useEffect, useRef, useState, useSyncExternalStore, type PointerEvent as
 import { Segmented, levelOptions, useOnline, useSetting, useShell } from '../../kit';
 import QRCode from 'qrcode';
 import { COMPETITIONS, competitionById, type CompetitionId } from './modes.ts';
-import { CLUBS, clubById, DEFAULT_CLUBS } from './teams.ts';
+import { clubById, DEFAULT_CLUBS, nextClubId } from './teams.ts';
 import { MODE, COMPETITION, HOME_CLUB, AWAY_CLUB, HALF, LEVEL, CAMERA, TIME } from './settings.ts';
 import type { Mode } from './modes.ts';
 import { clearCup, createCup, cupSummary, loadCup, saveCup, userFixture, type Cup } from './cup.ts';
 import { parsePacket, type LobbyMember, type LobbyPacket } from './net.ts';
+import { applyClubNavigation } from './seats.ts';
 import { Crest } from './crest.tsx';
 import { preloadSoccer } from './load.ts';
 import { LoadProgress } from './loading.tsx';
@@ -38,16 +39,6 @@ const competitionOptions = COMPETITIONS.map(({ id, label }) => [id, label] as co
 const halfOptions = [['2', '2 min'], ['4', '4 min'], ['6', '6 min']] as const;
 const cameraOptions = [['broadcast', 'Broadcast'], ['end', 'End to end']] as const;
 const timeOptions = [['day', 'Day'], ['night', 'Night'], ['golden', 'Golden hour'], ['overcast', 'Overcast'], ['rain', 'Rain']] as const;
-const clampIndex = (index: number) => (index + CLUBS.length) % CLUBS.length;
-const nextClubId = (id: string, direction: number, other: string) => {
-  let index = clampIndex(CLUBS.findIndex((club) => club.id === id));
-  for (let step = 0; step < CLUBS.length; step++) {
-    index = clampIndex(index + direction);
-    if (CLUBS[index]!.id !== other) return CLUBS[index]!.id;
-  }
-  return id;
-};
-
 function ClubPickerCard({ label, id, other, locked, onChange }: {
   label: string;
   id: string;
@@ -198,7 +189,7 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
         received.current.set(from, packet.seq);
         const now = performance.now();
         const previous = navState.current.get(from) ?? { x: 0, y: 0, time: 0 };
-        const moved = packet.dx !== previous.x || packet.dy !== previous.y;
+        const moved = packet.club || packet.dx !== previous.x || packet.dy !== previous.y;
         if (packet.dx || packet.dy) {
           if (!moved && now - previous.time < 280) return;
           navState.current.set(from, { x: packet.dx, y: packet.dy, time: now });
@@ -208,20 +199,31 @@ function HostLobby({ online }: { online: NonNullable<ReturnType<typeof useOnline
         const side = member.side;
         if (packet.a) setReady((previous) => previous.map((value, index) => index === side ? true : value) as [boolean, boolean]);
         if (packet.b) setReady((previous) => previous.map((value, index) => index === side ? false : value) as [boolean, boolean]);
-        if (packet.dx || packet.dy) {
+        if (packet.dx || packet.dy || packet.club) {
           setReady([false, false]);
           setCountdown(null);
         }
-        if (packet.dy) setFocus((previous) => previous.map((value, index) => index === side ? 1 - value : value) as [number, number]);
-        if (packet.dx && focus[side] === 0 && side === 0) {
-          const arrangements = competitionById(compRef.current).arrangements;
-          const current = arrangements.indexOf(modeRef.current);
-          setMode(arrangements[(current + packet.dx + arrangements.length) % arrangements.length]!);
-        } else if (packet.dx && focus[side] === 1) {
-          const selected = side === 0 ? settingsRef.current.homeId : settingsRef.current.awayId;
-          const other = side === 0 ? settingsRef.current.awayId : settingsRef.current.homeId;
-          const next = nextClubId(selected, packet.dx, other);
-          if (side === 0) setHomeId(next); else setAwayId(next);
+        if (packet.club) {
+          const next = applyClubNavigation({
+            mode: modeRef.current,
+            clubs: [settingsRef.current.homeId, settingsRef.current.awayId],
+            focus,
+          }, side, packet.dx);
+          setFocus(next.focus);
+          if (next.clubs[0] !== settingsRef.current.homeId) setHomeId(next.clubs[0]);
+          if (next.clubs[1] !== settingsRef.current.awayId) setAwayId(next.clubs[1]);
+        } else {
+          if (packet.dy) setFocus((previous) => previous.map((value, index) => index === side ? 1 - value : value) as [number, number]);
+          if (packet.dx && focus[side] === 0 && side === 0) {
+            const arrangements = competitionById(compRef.current).arrangements;
+            const current = arrangements.indexOf(modeRef.current);
+            setMode(arrangements[(current + packet.dx + arrangements.length) % arrangements.length]!);
+          } else if (packet.dx && focus[side] === 1) {
+            const selected = side === 0 ? settingsRef.current.homeId : settingsRef.current.awayId;
+            const other = side === 0 ? settingsRef.current.awayId : settingsRef.current.homeId;
+            const next = nextClubId(selected, packet.dx, other);
+            if (side === 0) setHomeId(next); else setAwayId(next);
+          }
         }
       }
     });
@@ -348,8 +350,9 @@ function GuestMacLobby({ online }: { online: NonNullable<ReturnType<typeof useOn
   const lobby = useLobbyState();
   const [qr, setQr] = useState('');
   const sequence = useRef(0);
-  const sendNav = (dx: -1 | 0 | 1, a = false, b = false) => online.send({
+  const sendNav = (dx: -1 | 0 | 1, a = false, b = false, club = false) => online.send({
     t: 'soccer', k: 'nav', r: online.round || 1, seq: sequence.current++, seat: online.seat, dx, dy: 0, a, b,
+    ...(club ? { club: true } : {}),
   }, { fast: true });
   const currentClub = lobby?.clubs[1] ?? DEFAULT_CLUBS[1];
   const member = lobby?.members.find((entry) => entry.seat === online.seat);
@@ -386,8 +389,8 @@ function GuestMacLobby({ online }: { online: NonNullable<ReturnType<typeof useOn
           <strong>{club.name}</strong>
         </div>
         <div className="g-soccer-guest-club-actions">
-          <button type="button" aria-label="previous club" onClick={() => sendNav(-1)}>◀</button>
-          <button type="button" aria-label="next club" onClick={() => sendNav(1)}>▶</button>
+          <button type="button" aria-label="previous club" onClick={() => sendNav(-1, false, false, true)}>◀</button>
+          <button type="button" aria-label="next club" onClick={() => sendNav(1, false, false, true)}>▶</button>
         </div>
         {online.round === 0 && <button type="button" className="arcade-btn arcade-btn-primary g-soccer-guest-kickoff" onClick={() => sendNav(0, true)}>kick off</button>}
         </div>
@@ -441,6 +444,7 @@ export function PhoneTeamPicker({ online }: { online: NonNullable<ReturnType<typ
   const pendingB = useRef(false);
   const pendingDx = useRef<-1 | 0 | 1>(0);
   const pendingDy = useRef<-1 | 0 | 1>(0);
+  const pendingClub = useRef(false);
   const received = useRef(-1);
   const side = sideForRoom(online.code);
   const selfReady = lobby?.ready[side] ?? false;
@@ -476,11 +480,13 @@ export function PhoneTeamPicker({ online }: { online: NonNullable<ReturnType<typ
       online.send({
         t: 'soccer', k: 'nav', r: online.round || 1, seq: sequence.current++, seat: online.seat, dx: x, dy: y,
         a: pendingA.current, b: pendingB.current,
+        ...(pendingClub.current ? { club: true } : {}),
       }, { fast: true });
       pendingA.current = false;
       pendingB.current = false;
       pendingDx.current = 0;
       pendingDy.current = 0;
+      pendingClub.current = false;
     }, 1000 / 30);
     return () => { off(); window.clearInterval(timer); };
   }, [online, online.round]);
@@ -495,13 +501,13 @@ export function PhoneTeamPicker({ online }: { online: NonNullable<ReturnType<typ
             <strong>{modeLabels[lobby.mode]}</strong>
           </div>
           <div className="g-soccer-picker-club">
-            <button type="button" className="g-soccer-picker-arrow" aria-label="previous club" onClick={() => { pendingDx.current = -1; }}>◀</button>
+            <button type="button" className="g-soccer-picker-arrow" aria-label="previous club" onClick={() => { pendingDx.current = -1; pendingClub.current = true; }}>◀</button>
             <div className="g-soccer-picker-identity">
               <Crest club={selected} size={112} />
               <h2>{selected.name}</h2>
               <span>{selected.ratings.attack} attack · {selected.ratings.midfield} midfield · {selected.ratings.defense} defense</span>
             </div>
-            <button type="button" className="g-soccer-picker-arrow" aria-label="next club" onClick={() => { pendingDx.current = 1; }}>▶</button>
+            <button type="button" className="g-soccer-picker-arrow" aria-label="next club" onClick={() => { pendingDx.current = 1; pendingClub.current = true; }}>▶</button>
           </div>
           <div className="g-soccer-picker-controls">
             <PickStick movement={movement} />
