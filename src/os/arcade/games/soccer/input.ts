@@ -4,6 +4,16 @@ import type { Command, Point, World } from './logic.ts';
 export type ViewBasis = { right: Point; forward: Point };
 export const IDENTITY_BASIS: ViewBasis = { right: { x: 1, z: 0 }, forward: { x: 0, z: -1 } };
 
+export function slewViewBasis(current: ViewBasis, desired: ViewBasis, dt: number): ViewBasis {
+  const from = Math.atan2(current.forward.x, current.forward.z);
+  const to = Math.atan2(desired.forward.x, desired.forward.z);
+  const delta = Math.atan2(Math.sin(to - from), Math.cos(to - from));
+  const cap = Math.PI / 2 * Math.max(0, Math.min(0.1, dt));
+  const angle = from + Math.max(-cap, Math.min(cap, delta));
+  const forward = { x: Math.sin(angle), z: Math.cos(angle) };
+  return { forward, right: { x: -forward.z, z: forward.x } };
+}
+
 export function screenToWorld(move: Point, basis: ViewBasis): Point {
   const x = basis.right.x * move.x - basis.forward.x * move.z;
   const z = basis.right.z * move.x - basis.forward.z * move.z;
@@ -87,9 +97,14 @@ export function gamepadInput(pad: Pad, previous: GamepadHistory = {}, defending 
   const buttons = pad.buttons.map((b) => b.pressed || b.value > 0.3);
   const down = (i: number) => !!buttons[i];
   const edge = (i: number) => down(i) && !previous.buttons?.[i];
-  const axis = (i: number) => Math.abs(pad.axes[i] ?? 0) > 0.14 ? Math.max(-1, Math.min(1, pad.axes[i]!)) : 0;
+  const axis = (i: number) => {
+    const value = Math.max(-1, Math.min(1, pad.axes[i] ?? 0));
+    if (i >= 2) return Math.abs(value) > 0.14 ? value : 0;
+    const t = Math.max(0, Math.min(1, (Math.abs(value) - 0.14) / 0.16));
+    return value * t * t * (3 - 2 * t) || 0;
+  };
   const move = { x: axis(0), z: axis(1) };
-  const flick = Math.hypot(axis(2), axis(3)) > 0.8;
+  const flick = Math.hypot(axis(2), axis(3)) > (previous.flick ? 0.65 : 0.8);
   const flickEdge = flick && !previous.flick;
   const action = edge(0) ? 'pass' : edge(1) ? 'shoot' : edge(2) ? 'lob' : edge(3) ? 'through' : null;
   const state: InputState = {

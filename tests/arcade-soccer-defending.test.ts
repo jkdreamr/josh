@@ -218,6 +218,47 @@ test('human dribble and recent knock-on prevent auto switching, own reception tr
   tick(); assert.equal(world.controlled[0], mate.id);
 });
 
+test('auto switching needs the same better candidate for 15 steps and never flips back within 36 steps', () => {
+  const { world, defender, carrier, tick } = fixture();
+  const a = world.players[2]!, b = world.players[3]!;
+  a.human = b.human = false;
+  const reset = (nearA: boolean) => {
+    carrier.x = 25; carrier.z = 20; defender.x = -18; defender.z = 0;
+    a.x = nearA ? -3 : -7; a.z = 0; b.x = nearA ? -7 : -3; b.z = 0;
+    world.ball.x = world.ball.z = 0; world.ball.vx = 8; world.ball.vz = 0;
+    world.carrierId = null;
+  };
+  for (let frame = 0; frame < 120; frame++) {
+    reset(frame % 12 < 6); tick();
+    assert.equal(world.controlled[0], defender.id, 'changing candidates must reset the dwell');
+  }
+  for (let frame = 0; frame < 15; frame++) { reset(true); tick(); }
+  assert.equal(world.controlled[0], a.id);
+  for (let frame = 1; frame < 36; frame++) {
+    reset(false); a.x = -18;
+    tick(); assert.equal(world.controlled[0], a.id, `no flip at step ${frame}`);
+  }
+  for (let frame = 0; frame < 3; frame++) { reset(false); a.x = -18; tick(); }
+  assert.equal(world.controlled[0], b.id);
+});
+
+test('manual switches start the auto-switch cooldown and candidate state is validated in snapshots', () => {
+  const { world, defender, carrier, tick } = fixture();
+  const mate = world.players[2]!; mate.human = false; mate.x = -2; mate.z = 0;
+  defender.x = -15; carrier.x = 25;
+  switchPlayer(world, 0);
+  assert.equal(world.controlled[0], mate.id);
+  for (let frame = 0; frame < 35; frame++) {
+    defender.x = -2; mate.x = -15; world.ball.x = world.ball.z = 0; world.ball.vx = 8;
+    tick(); assert.equal(world.controlled[0], mate.id);
+  }
+  const packet = () => ({ t: 'soccer', k: 's', r: 1, seq: 1, state: cloneSnapshot(world) });
+  assert.ok(parsePacket(packet()));
+  world.switchCandidate = [-1, 11]; assert.ok(parsePacket(packet()));
+  world.switchCandidate = [11, -1]; assert.equal(parsePacket(packet()), null);
+  delete world.switchCandidate; assert.ok(parsePacket(packet()));
+});
+
 test('opponent passes permit delayed auto switching but our pass target suppresses it', () => {
   for (const ownPass of [false, true]) {
     const { world, defender, carrier, tick } = fixture();

@@ -1031,7 +1031,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
 
     let renderWorld: World;
     if (isOnlineGuest) renderWorld = onlineRenderState(guestSnapshots.current, performance.now() / 1000, current);
-    else if (current.phase === 'live' && previousRenderSnapshot.current && interpolatedWorld.current) {
+    else if (previousRenderSnapshot.current && interpolatedWorld.current) {
       const interpolationStart = soccerPerfEnabled ? performance.now() : 0;
       renderWorld = interpolateInto(interpolatedWorld.current, previousRenderSnapshot.current, current, accumulator.current / STEP);
       if (soccerPerfEnabled) recordSoccerPerf('interpolationMs', performance.now() - interpolationStart);
@@ -1075,7 +1075,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     const remote = remoteCommands.current.get(selectedPlayerId);
     const indicatorPower = aiming?.holding ? chargePower(aiming.seconds) : power.current ?? (remote?.heldAction ? remote.power ?? null : null);
     const sceneStart = soccerPerfEnabled ? performance.now() : 0;
-    viewRef.current?.update(renderWorld, dt * fxDirector.animScale, performance.now() / 1000, localTeam, camera, target, indicatorPower);
+    viewRef.current?.update(renderWorld, dt * fxDirector.animScale, performance.now() / 1000, localTeam, camera, target, indicatorPower, dt);
     if (soccerPerfEnabled) recordSoccerPerf('sceneUpdateMs', performance.now() - sceneStart);
     viewRef.current?.setMarkers(practiceRef.current?.markers ?? []);
     hudTimer.current += dt;

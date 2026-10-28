@@ -82,6 +82,8 @@ function validWorld(value: unknown): value is World {
   for (const times of [w.switchAt, w.switchWait, w.dribbleAt]) {
     if (times !== undefined && (!Array.isArray(times) || times.length !== 2 || !times.every((n) => finite(n, 10000)))) return false;
   }
+  if (w.switchCandidate !== undefined && (!Array.isArray(w.switchCandidate) || w.switchCandidate.length !== 2
+    || !w.switchCandidate.every((id, team) => Number.isInteger(id) && (id === -1 || id >= 0 && id < PLAYER_COUNT && teamOf(id) === team)))) return false;
   if (w.players.some((p) => p.slide != null && (!finite(p.slide.x, 1) || !finite(p.slide.z, 1)
     || !inRange(p.slide.t, 0, 1) || typeof p.slide.won !== 'boolean'))) return false;
   if (w.players.some((p) => p.buffer != null && (!['pass', 'through', 'lob', 'shoot', 'finesse'].includes(p.buffer.action)

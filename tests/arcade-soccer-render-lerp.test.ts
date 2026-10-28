@@ -49,3 +49,20 @@ test('teleports snap players and balls rather than interpolating across the fiel
   assert.equal(out.players[0]!.vx, 4);
   assert.equal(out.ball.x, 5);
 });
+
+test('the selected player used by rings and name tags stays interpolated on live, goal and restart frames', () => {
+  const previous = createWorld(), snapshot = captureSnapshot(previous, createSnapshot(previous));
+  const current = structuredClone(previous), out = structuredClone(previous);
+  current.controlled[0] = 8;
+  for (const p of current.players) { p.x += 1; p.z += 0.5; p.controlled = p.id === 8; }
+  for (const phase of ['live', 'goal', 'restart'] as const) {
+    current.phase = phase;
+    interpolateInto(out, snapshot, current, 0.5);
+    const selected = out.players.find((p) => p.id === out.controlled[0])!;
+    assert.equal(selected.controlled, true);
+    assert.equal(selected.x, previous.players[8]!.x + 0.5);
+    assert.equal(selected.z, previous.players[8]!.z + 0.25);
+    assert.equal(out.phase, phase);
+    assert.equal(current.players[8]!.x, previous.players[8]!.x + 1, 'rendering never changes simulation state');
+  }
+});
