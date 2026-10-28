@@ -4,6 +4,7 @@ import { createCup, recordUserResult, userFixture } from '../src/os/arcade/games
 import { nextCupFixtureText, hostLobbyStatus, lobbySetupOptions, phoneRoute, phoneStatusLine, postMatchPrimaryLabel, requiredPhones, sideForLobbyMember } from '../src/os/arcade/games/soccer/phone-flow.ts';
 import { DEFAULT_CLUBS } from '../src/os/arcade/games/soccer/teams.ts';
 import { reconnectedSeats } from '../src/os/arcade/games/soccer/net.ts';
+import { postMatchNavPacket, repeatPostMatchNav } from '../src/os/arcade/games/soccer/post-match-nav.ts';
 
 test('quick phone lobby includes practice after the player modes', () => {
   assert.deepEqual(lobbySetupOptions('quick'), ['cpu', 'versus', 'coop', 'practice']);
@@ -27,12 +28,33 @@ test('host lobby assigns versus phone sides by seat while other modes stay home'
 
 test('phone lobby lists connected phones and only routes to the picker in the lobby', () => {
   assert.equal(phoneStatusLine([{ seat: 2, role: 'phone' }, { seat: 1, role: 'phone' }]), 'Phone 1 ✓ · Phone 2 ✓');
+  assert.equal(phoneStatusLine([{ seat: 6, role: 'phone', side: 1 }, { seat: 2, role: 'phone', side: 0 }], [true, false]), 'Phone 1 ready · Phone 2 ✓');
   assert.equal(phoneRoute(0, false, 'lobby'), 'picker');
   assert.equal(phoneRoute(0, true), 'controller');
   assert.equal(phoneRoute(0, false, 'match'), 'controller');
   assert.equal(phoneRoute(2, false, 'lobby'), 'picker');
   assert.deepEqual(reconnectedSeats([1, 2], [2, 1]), []);
   assert.deepEqual(reconnectedSeats([1], [1, 2]), [2]);
+});
+
+test('post-match phone stick navigation respects direction, repeat timing, and packet sequence', () => {
+  const initial = { seq: -1, edge: -1, direction: 0 as const, changedAt: 0 };
+  const up = postMatchNavPacket(initial, { seq: 1, z: -0.8, buttons: 0 }, 1000);
+  assert.equal(up.move, -1);
+  assert.equal(up.state.direction, -1);
+  assert.equal(postMatchNavPacket(up.state, { seq: 2, z: -0.2, buttons: 0 }, 1200).move, 0);
+  const repeat = repeatPostMatchNav(up.state, 1320);
+  assert.equal(repeat.move, -1);
+  assert.equal(repeatPostMatchNav(repeat.state, 1420).move, 0);
+  assert.equal(postMatchNavPacket(repeat.state, { seq: 3, z: 0.8, buttons: 0 }, 1500).move, 1);
+  assert.equal(postMatchNavPacket(up.state, { seq: 1, z: 0.8, buttons: 0 }, 1600).move, 0);
+});
+
+test('post-match phone A chooses once per fresh button edge', () => {
+  const first = postMatchNavPacket({ seq: -1, edge: -1, direction: 0, changedAt: 0 }, { seq: 1, z: 0, e: 1, buttons: 1 }, 1000);
+  assert.equal(first.choose, true);
+  const repeated = postMatchNavPacket(first.state, { seq: 2, z: 0, e: 1, buttons: 1 }, 1100);
+  assert.equal(repeated.choose, false);
 });
 
 test('post-match primary follows the competition and cup result', () => {

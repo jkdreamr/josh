@@ -1634,3 +1634,55 @@
 .g-soccer-scoreboard { min-width: 0; }
 .g-soccer-player-crest.is-svg { width: auto; height: auto; border: 0; clip-path: none; background: none; }
 .g-soccer-player-crest.is-svg > svg { display: block; width: 1.65em; height: 1.65em; }
+
+.g-soccer-phone-lobby-shell { width: min(820px, 100%); max-width: calc(100vw - 32px); container-type: inline-size; }
+.g-soccer-phone-lobby { display: grid; width: 100%; max-width: none; max-height: none; grid-template-columns: minmax(152px, 190px) minmax(0, 1fr); align-items: start; gap: 14px; overflow: visible; }
+.g-soccer-phone-lobby.is-connected { grid-template-columns: 96px minmax(0, 1fr); gap: 12px; }
+.g-soccer-phone-lobby.needs-second-phone { grid-template-columns: minmax(150px, 185px) minmax(0, 1fr); }
+.g-soccer-phone-lobby .g-soccer-phone-qr { display: grid; align-content: start; justify-items: center; gap: 8px; width: auto; height: auto; padding: 0; }
+.g-soccer-phone-lobby .g-soccer-phone-qr img { display: block; width: 100%; height: auto; max-width: 190px; aspect-ratio: 1; }
+.g-soccer-phone-lobby.is-connected .g-soccer-phone-qr img { width: 96px; height: 96px; }
+.g-soccer-phone-lobby.needs-second-phone .g-soccer-phone-qr img { width: 175px; height: 175px; }
+.g-soccer-phone-lobby .g-soccer-phone-qr strong { max-width: 12em; color: #f5f8f6; font-size: 11px; line-height: 1.2; text-align: center; }
+.g-soccer-lobby-instructions { display: grid; gap: 6px; }
+.g-soccer-lobby-instructions h2 { margin: 0; color: #f5f8f6; font-size: clamp(24px, 2vw, 29px); line-height: 1.1; }
+.g-soccer-lobby-instructions p { margin: 0; color: #c2d0c6; font-size: 13px; line-height: 1.35; }
+.g-soccer-invite-url { max-width: 100%; overflow-x: auto; color: #c6d6d2; font-size: 11px !important; line-height: 1.35; text-align: left; white-space: nowrap; user-select: text; -webkit-user-select: text; }
+.g-soccer-phone-lobby-content { display: grid; align-content: start; gap: 7px; min-width: 0; }
+.g-soccer-phone-lobby .g-soccer-lobby-status { margin: 0; color: #f3f6f1; font-size: 15px; font-weight: 850; line-height: 1.25; }
+.g-soccer-phone-lobby .g-soccer-phone-connections { display: flex; flex-wrap: wrap; gap: 5px; font-size: 11px; }
+.g-soccer-phone-lobby .g-soccer-phone-connections span { padding: 4px 7px; }
+.g-soccer-phone-lobby .g-soccer-phone-connections .is-waiting { color: #e0e8ec; }
+.g-soccer-phone-lobby .arcade-segmented { min-width: 0; flex-wrap: wrap; gap: 4px; }
+.g-soccer-phone-lobby .arcade-segmented button { min-height: 28px; padding: 4px 7px; font-size: 10px; }
+.g-soccer-phone-lobby .g-soccer-lobby-clubs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.g-soccer-phone-lobby .g-soccer-lobby-ready { justify-content: flex-end; margin-top: 2px; }
+.g-soccer-phone-lobby .g-soccer-lobby-ready button { margin-left: auto; }
+.g-soccer-phone-lobby .g-soccer-phone-settings { grid-column: 1 / -1; }
+.g-soccer-disconnect-card .g-soccer-invite-url { max-width: 100%; }
+.g-soccer-stats-panel { padding: .45em .7em .4em; }
+.g-soccer-stat-rows { gap: 0; }
+.g-soccer-stat-row { min-height: 1em; line-height: 1; }
+.g-soccer-stats-panel > footer { margin-top: .25em; line-height: 1.15; }
+
+@container (max-width: 620px) {
+  .g-soccer-phone-lobby { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .g-soccer-phone-lobby.is-connected { grid-template-columns: minmax(0, 1fr); }
+  .g-soccer-phone-lobby.needs-second-phone { grid-template-columns: minmax(0, 1fr); }
+  .g-soccer-phone-lobby .g-soccer-phone-qr { grid-template-columns: 1fr; justify-items: center; justify-self: center; width: min(100%, 300px); }
+  .g-soccer-phone-lobby.is-connected .g-soccer-phone-qr { grid-template-columns: 96px minmax(0, 1fr); justify-items: start; }
+  .g-soccer-phone-lobby .g-soccer-phone-qr img { width: 148px; max-width: 148px; }
+  .g-soccer-phone-lobby.is-connected .g-soccer-phone-qr img { width: 96px; height: 96px; }
+  .g-soccer-phone-lobby.needs-second-phone .g-soccer-phone-qr img { width: 148px; height: 148px; }
+  .g-soccer-phone-lobby .g-soccer-phone-qr strong { text-align: left; }
+  .g-soccer-lobby-instructions h2 { font-size: 24px; }
+  .g-soccer-phone-lobby .g-soccer-phone-settings { grid-column: auto; }
+}
+
+@media (max-width: 560px) {
+  .g-soccer-phone-picker > header { padding-top: 48px; }
+}
+@media (max-width: 900px) and (orientation: landscape) and (max-height: 560px) {
+  .g-soccer-phone-picker > header { padding-top: 46px; }
+  .g-soccer-phone-picker .g-soccer-picker-mode { margin-top: 10px; }
+}

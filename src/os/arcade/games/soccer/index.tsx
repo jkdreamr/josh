@@ -17,6 +17,7 @@ import { IntroCard, MatchContext, PausePanel, StatsScreen, type MatchData, type 
 import { captureSnapshot, createSnapshot, interpolateInto, type Snapshot } from './render-lerp.ts';
 import { publishSoccerPerf, recordSoccerPerf, recordSoccerRendererStats, soccerPerfEnabled } from './perf.ts';
 import { clampOrigin, followOrigin, haptic as padHaptic, hitButton, STICK, stickVector, type PadPoint } from './pad.ts';
+import { postMatchNavPacket, repeatPostMatchNav, type PostMatchNavState } from './post-match-nav.ts';
 import { assignControllers, missingPhoneSeats, playerForSeat, type ControllerMember, type Mode } from './seats.ts';
 import type { PitchPattern } from './stadium.ts';
 import { createPracticeState, createTutorial, markTutorialSeen, selectDrill, setupDrill, stepPractice, stepTutorial, tutorialSeen, TUTORIAL_SECONDS, DRILLS, type DrillId, type PracticeState, type TutorialState } from './practice.ts';
@@ -52,7 +53,7 @@ const volumeOptions = [['off', 'Off'], ['low', 'Low'], ['mid', 'Mid'], ['full', 
 const commentaryOptions = [['voice', 'Voice'], ['captions', 'Captions'], ['off', 'Off']] as const;
 const volumeLevels: Record<Volume, number> = { off: 0, low: 0.35, mid: 0.7, full: 1 };
 const offsideOptions = [['on', 'On'], ['off', 'Off']] as const;
-const commandKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyJ', 'KeyK', 'KeyL', 'KeyI', 'KeyU', 'KeyQ', 'KeyE', 'Space', 'Period', 'Slash', 'Semicolon', 'Quote', 'Comma', 'ShiftLeft', 'ShiftRight'];
+const commandKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyJ', 'KeyK', 'KeyL', 'KeyI', 'KeyQ', 'KeyE', 'Enter', 'Space', 'Period', 'Slash', 'Semicolon', 'Quote', 'Comma', 'ShiftLeft', 'ShiftRight'];
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 const shallowHudEqual = (left: HudState, right: HudState) =>
   (Object.keys(left) as (keyof HudState)[]).every((key) => left[key] === right[key]);
@@ -244,7 +245,8 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const [postMatchPrimary, setPostMatchPrimary] = useState('Rematch');
   const postMatchOpenRef = useRef(false);
   const postMatchSelectionRef = useRef(0);
-  const postMatchInput = useRef(new Map<number, { seq: number; edge: number; direction: number; changedAt: number }>());
+  const postMatchInput = useRef(new Map<number, PostMatchNavState>());
+  const skipKeyLatch = useRef(new Set<string>());
   const localPausedRef = useRef(false);
   localPausedRef.current = localPaused;
   postMatchOpenRef.current = postMatchOpen;
@@ -401,6 +403,19 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     }, 1000);
     return () => window.clearTimeout(timer);
   }, [postMatchCountdown]);
+  useEffect(() => {
+    if (!postMatchOpen) return;
+    const interval = window.setInterval(() => {
+      const now = performance.now();
+      for (const [seat, state] of postMatchInput.current) {
+        const decision = repeatPostMatchNav(state, now);
+        if (!decision.move) continue;
+        postMatchInput.current.set(seat, decision.state);
+        setPostMatchSelection((value) => (value + (decision.move < 0 ? 2 : 1)) % 3);
+      }
+    }, 50);
+    return () => window.clearInterval(interval);
+  }, [postMatchOpen]);
   useEffect(() => {
     if (!postMatchOpen) return;
     const onKey = (event: KeyboardEvent) => {
@@ -727,20 +742,10 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         if (packet.seat !== from || packet.seat < 0 || packet.seat > 3) return;
         if (postMatchOpenRef.current) {
           const previous = postMatchInput.current.get(from) ?? { seq: -1, edge: -1, direction: 0, changedAt: 0 };
-          if (packet.seq <= previous.seq) return;
-          const direction = packet.z < -0.55 ? -1 : packet.z > 0.55 ? 1 : 0;
-          const now = performance.now();
-          if (direction && (direction !== previous.direction || now - previous.changedAt > 320)) {
-            setPostMatchSelection((value) => (value + (direction < 0 ? 2 : 1)) % 3);
-          }
-          const choose = !!(packet.buttons & 1) && packet.e !== undefined && packet.e > previous.edge;
-          postMatchInput.current.set(from, {
-            seq: packet.seq,
-            edge: packet.e ?? previous.edge,
-            direction,
-            changedAt: direction === previous.direction ? previous.changedAt : now,
-          });
-          if (choose) choosePostMatchRef.current(postMatchSelectionRef.current);
+          const decision = postMatchNavPacket(previous, packet, performance.now());
+          if (decision.move) setPostMatchSelection((value) => (value + (decision.move < 0 ? 2 : 1)) % 3);
+          postMatchInput.current.set(from, decision.state);
+          if (decision.choose) choosePostMatchRef.current(postMatchSelectionRef.current);
           return;
         }
         const current = worldRef.current;
@@ -842,6 +847,15 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
 
   const makeCommand = (id: number, p2: boolean, dt: number): ControlCommand => {
     const state = keyboardInput(keys, p2, !p2 && !online && (currentMode === 'cpu' || practicing));
+    let skipKeyHeld = false;
+    for (const code of skipKeyLatch.current) {
+      if (keys.down(code)) skipKeyHeld = true;
+      else skipKeyLatch.current.delete(code);
+    }
+    if (skipKeyHeld) Object.assign(state, {
+      move: { x: 0, z: 0 }, sprint: false, action: null, heldAction: null, pressed: false,
+      jockey: false, finesseHeld: false, press: false, switchNearest: false, contain: false,
+    });
     const current = worldRef.current!;
     const player = current.players[id]!;
     const defending = nearestCarrier(current)?.team !== player.team;
@@ -988,6 +1002,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     if (room?.isHost) {
       for (const seat of reconnectedSeats(presentPhoneSeatsRef.current, presentPhoneSeats)) {
         remoteSeats.current.delete(seat);
+        postMatchInput.current.delete(seat);
         const playerId = controllerPlayers.current.get(seat);
         if (playerId !== undefined) remoteCommands.current.delete(playerId);
       }
@@ -1015,6 +1030,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     matchContext && (matchContext.current = { world: current, stats: statsObserver.current.stats });
     if (current.phase === 'full-time') finishMatch(current);
     const presentationKind = presentation.current;
+    let presentationInputConsumed = false;
     if (presentationKind === 'intro' || presentationKind === 'half-time' || presentationKind === 'full-time') {
       const elapsed = (now - presentationAt.current) / 1000;
       const minimum = presentationKind === 'intro' ? 0.6 : presentationKind === 'half-time' ? 1.5 : 2;
@@ -1024,13 +1040,15 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         Array.from(navigator.getGamepads()).forEach((pad, index) => {
           if (!pad) return;
           const buttons = Array.from(pad.buttons, (button) => button.pressed || button.value > 0.3);
-          if (!localPauseEnabled && buttons.some((down, button) => down && !gamepadPrevious.current[index]?.buttons?.[button])) gamepadPressed = true;
+          if (buttons.some((down, button) => down && !gamepadPrevious.current[index]?.buttons?.[button])) gamepadPressed = true;
           gamepadPrevious.current[index] = { ...gamepadPrevious.current[index], buttons };
         });
       }
-      const keyPressed = !localPauseEnabled && elapsed >= minimum && keys.pressed(...commandKeys);
+      const keyPressed = elapsed >= minimum && keys.pressed(...commandKeys);
+      if (keyPressed) for (const code of commandKeys) if (keys.down(code)) skipKeyLatch.current.add(code);
       const remotePressed = room?.isHost && [...remoteCommands.current.values()].some((command) => command.pressed);
-      const skipped = elapsed >= minimum && (keyPressed || gamepadPressed || remotePressed);
+      const skipped = elapsed >= minimum && !!(keyPressed || gamepadPressed || remotePressed);
+      presentationInputConsumed = skipped && !!(keyPressed || gamepadPressed || remotePressed);
       if (elapsed >= duration || skipped) {
         if (presentationKind === 'full-time') {
           if (!fullTimeShown.current && fullTimeResult.current) {
@@ -1088,7 +1106,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     if (current.phase === 'goal' && replaySkipped.current && fxDirector.goalPending) fxDirector.goalImpact();
     const commandsForUsers = userCommands.current;
     commandsForUsers.clear();
-    const presentationGated = !isOnlineGuest && (presentation.current === 'intro' || presentation.current === 'half-time' || presentation.current === 'full-time');
+    const presentationGated = presentationInputConsumed || !isOnlineGuest && (presentation.current === 'intro' || presentation.current === 'half-time' || presentation.current === 'full-time');
     if (!presentationGated && current.phase !== 'goal' && room && !room.watching) {
       const id = controllerPlayers.current.get(room.seat) ?? localPlayerIds[0];
       if (id !== undefined) commandsForUsers.set(id, makeCommand(id, false, dt));
@@ -1368,7 +1386,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
             <h2>Your phone disconnected</h2>
             <p>Scan the QR with your iPhone camera to reconnect</p>
             {reconnectQr && <img src={reconnectQr} alt="Reconnect your phone" />}
-            {reconnectUrl && <a href={reconnectUrl}>{reconnectUrl}</a>}
+            {reconnectUrl && <p className="g-soccer-invite-url">{reconnectUrl}</p>}
           </section>
         </div>
       ) : localPaused && localPauseEnabled ? (

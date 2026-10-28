@@ -167,7 +167,8 @@ function HostLobby({ online, postMatch = false }: { online: NonNullable<ReturnTy
     side: sideForLobbyMember(competition, mode, member.role, member.seat, member.side),
   }));
   const phoneCount = memberList.filter((member) => member.role === 'phone').length;
-  const phoneStatus = phoneStatusLine(memberList);
+  const phoneStatus = phoneStatusLine(memberList, ready);
+  const showSecondPhoneCaption = competition === 'quick' && (mode === 'versus' || mode === 'coop');
   const guestMac = memberList.some((member) => member.role === 'mac' && member.side === 1);
   const sideOnePhones = memberList.filter((member) => member.role === 'phone' && member.side === 1).length;
   const phonesNeeded = requiredPhones(competition, mode);
@@ -313,17 +314,23 @@ function HostLobby({ online, postMatch = false }: { online: NonNullable<ReturnTy
   };
 
   return (
-    <div className={`g-soccer-phone-lobby${connected.length ? ' is-connected' : ''}${phonesNeeded === 2 && phoneCount === 1 ? ' needs-second-phone' : ''}`}>
-      <div className="g-soccer-phone-qr">
-        {qr && <img src={qr} alt="Connect phone QR code" />}
-        <strong>{phoneCount ? 'Scan to add a second phone' : 'Scan with your iPhone camera'}</strong>
-        {!phoneCount && <p>Your phone becomes the controller. No app needed.</p>}
-        {inviteUrl && <a href={inviteUrl}>{inviteUrl}</a>}
-      </div>
-      <div className="g-soccer-phone-lobby-content">
-        <p className="g-soccer-lobby-status" role="status">{statusLine}</p>
+    <div className="g-soccer-phone-lobby-shell">
+      <div className={`g-soccer-phone-lobby${connected.length ? ' is-connected' : ''}${phonesNeeded === 2 && phoneCount === 1 ? ' needs-second-phone' : ''}`}>
+        <div className="g-soccer-phone-qr">
+          {qr && <img src={qr} alt="Connect phone QR code" />}
+          {phoneCount > 0 && showSecondPhoneCaption && <strong>Scan to add a second phone</strong>}
+        </div>
+        <div className="g-soccer-phone-lobby-content">
+        {!phoneCount && (
+          <div className="g-soccer-lobby-instructions">
+            <h2>Scan with your iPhone camera</h2>
+            <p>Your phone becomes the controller. No app needed.</p>
+            {inviteUrl && <p className="g-soccer-invite-url">{inviteUrl}</p>}
+          </div>
+        )}
+        {(phoneCount > 0 || countdown !== null) && <p className="g-soccer-lobby-status" role="status">{statusLine}</p>}
         <div className="g-soccer-phone-connections" role="status">
-          {phoneStatus ? <span>{phoneStatus}</span> : phonesNeeded > 0 && <span className="is-waiting">Phone 1 waiting</span>}
+          {phoneStatus ? <span>{phoneStatus}</span> : phonesNeeded > 0 && <span className="is-waiting">Waiting for your phone…</span>}
           {competition === 'online' && <span className={guestMac ? '' : 'is-waiting'}>{guestMac ? 'Other Mac connected' : 'Waiting for the other Mac'}</span>}
           {competition === 'online' && <span className={sideOnePhones ? '' : 'is-waiting'}>{sideOnePhones ? 'Other phone connected' : 'Other phone optional'}</span>}
           {competition !== 'online' && phonesNeeded === 2 && phoneCount === 1 && <span className="is-waiting">Waiting for a second phone</span>}
@@ -332,6 +339,9 @@ function HostLobby({ online, postMatch = false }: { online: NonNullable<ReturnTy
           <>
             <Segmented label="competition" value={competition} options={competitionOptions} onChange={changeCompetition} />
             {competition === 'online' && online.code && <p className="g-soccer-friend-link">friend's mac: <a href={`/?game=soccer&room=${online.code}`}>{location.host}/?game=soccer&amp;room={online.code}</a></p>}
+            {competition !== 'cup' && (
+              <Segmented label="setup" value={mode} options={lobbySetupOptions(competition).map((arrangement) => [arrangement, modeLabels[arrangement]] as const)} onChange={(value) => { setReady([false, false]); setCountdown(null); setMode(value); }} />
+            )}
             <div className={`g-soccer-lobby-clubs${def.opponentPick ? '' : ' is-single'}`}>
               <ClubPickerCard label="your club" id={homeId} other={awayId} locked={isRunningCup} onChange={(value) => setClub(0, value)} />
               {def.opponentPick && (
@@ -339,11 +349,7 @@ function HostLobby({ online, postMatch = false }: { online: NonNullable<ReturnTy
               )}
             </div>
             {competition === 'cup' && <CupLobbyCard cup={cup} homeId={homeId} setHomeId={setHomeId} setCup={setCup} />}
-            {competition !== 'cup' && (
-              <Segmented label="setup" value={mode} options={lobbySetupOptions(competition).map((arrangement) => [arrangement, modeLabels[arrangement]] as const)} onChange={(value) => { setReady([false, false]); setCountdown(null); setMode(value); }} />
-            )}
             <div className="g-soccer-lobby-ready">
-              <span>{memberList.filter((member) => member.role === 'phone').map((member, index) => `Phone ${index + 1} ${ready[member.side] ? 'ready' : 'connected'}`).join(' · ')}</span>
               <button type="button" className="arcade-btn arcade-btn-primary" disabled={!enoughPlayers || countdown !== null} onClick={start}>
                 Start match
               </button>
@@ -360,6 +366,7 @@ function HostLobby({ online, postMatch = false }: { online: NonNullable<ReturnTy
           </div>
         </details>
         <LoadProgress />
+        </div>
       </div>
     </div>
   );

@@ -25,11 +25,14 @@ export function sideForLobbyMember(
   return seat === 2 ? 1 : 0;
 }
 
-export function phoneStatusLine(members: readonly { seat: number; role: 'phone' | 'mac' | 'host' }[]): string {
+export function phoneStatusLine(
+  members: readonly { seat: number; role: 'phone' | 'mac' | 'host'; side?: number }[],
+  ready?: readonly boolean[],
+): string {
   return members
     .filter((member) => member.role === 'phone')
     .sort((a, b) => a.seat - b.seat)
-    .map((member) => `Phone ${member.seat} ✓`)
+    .map((member, index) => `Phone ${index + 1}${ready?.[member.side ?? 0] ? ' ready' : ' ✓'}`)
     .join(' · ');
 }
 
