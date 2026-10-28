@@ -108,13 +108,14 @@
 
 @media (pointer: coarse) {
   .g-2048 .g-2048-undo.arcade-btn {
-    min-height: max(40px, calc(40px * var(--g-2048-u)));
+    min-height: max(44px, calc(44px * var(--g-2048-u)));
     min-width: max(80px, calc(80px * var(--g-2048-u)));
   }
 }
 
 .g-2048 .g-2048-toast,
-.g-2048 .g-2048-wait {
+.g-2048 .g-2048-wait,
+.g-2048 .g-2048-left {
   position: absolute;
   z-index: 3;
   transform: translate(-50%, -50%);
@@ -135,6 +136,23 @@
   background: rgba(20, 14, 10, 0.78);
   color: #f6ede2;
 }
+.g-2048 .g-2048-left {
+  transform: translate(-50%, 0);
+  max-width: 90%;
+  padding: calc(8px * var(--g-2048-u)) calc(14px * var(--g-2048-u));
+  font-size: calc(13px * var(--g-2048-u));
+  white-space: normal;
+  text-align: center;
+  background: rgba(20, 14, 10, 0.86);
+  color: #f6ede2;
+  box-shadow: inset 0 0 0 1px rgba(255, 240, 220, 0.12);
+  animation: g-2048-left 4s ease forwards;
+}
+@keyframes g-2048-left {
+  0% { opacity: 0; }
+  8%, 85% { opacity: 1; }
+  100% { opacity: 0; }
+}
 @keyframes g-2048-toast {
   0% { opacity: 0; transform: translate(-50%, -50%) scale(0.8); }
   12% { opacity: 1; transform: translate(-50%, -50%) scale(1.04); }
@@ -145,4 +163,46 @@
 
 @media (prefers-reduced-motion: reduce) {
   .g-2048 .g-2048-gain, .g-2048 .g-2048-toast { animation-duration: 0.01s; }
+  .g-2048 .g-2048-left { animation: none; }
+}
+
+/* The kit drops card text on short overlays while the name field is up; keep the Best tile line. */
+@container arcade-ov (220px < height <= 380px) {
+  .g-2048 .arcade-card:has(.arcade-lb-form) > .arcade-detail {
+    display: block;
+    margin: 0;
+  }
+}
+
+/*
+ * Touch: the shell's toolbar and card buttons stay at least 44px on screen. --g-2048-u is 1 / the phone or iPad frame
+ * scale (set on the shell root), so the toolbar grows by it and the cards zoom by it, which keeps their text at its size.
+ */
+@media (pointer: coarse) {
+  .g-2048.arcade-shell .arcade-ctrl button {
+    width: calc(44px * var(--g-2048-u, 1));
+    height: calc(44px * var(--g-2048-u, 1));
+  }
+  .g-2048.arcade-shell .arcade-ctrl button.is-armed {
+    width: auto;
+    padding: 0 calc(12px * var(--g-2048-u, 1));
+    font-size: calc(13px * var(--g-2048-u, 1));
+  }
+  .g-2048.arcade-shell .arcade-ctrl svg {
+    width: calc(18px * var(--g-2048-u, 1));
+    height: calc(18px * var(--g-2048-u, 1));
+  }
+  .g-2048.arcade-shell .arcade-ov .arcade-card {
+    zoom: var(--g-2048-u, 1);
+  }
+  .g-2048.arcade-shell .arcade-ov :is(.arcade-btn, .arcade-btn-lg, .arcade-seg > button, .arcade-stepper > button, .arcade-input) {
+    height: auto;
+    min-height: 44px;
+  }
+}
+/* Narrow touch screens: the bigger toolbar spans the top, so the online badge drops below it (the board follows the badge). */
+@media (pointer: coarse) and (max-width: 560px) {
+  .g-2048.arcade-shell .arcade-online-status {
+    top: calc(18px + 44px * var(--g-2048-u, 1));
+  }
 }

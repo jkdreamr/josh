@@ -185,3 +185,13 @@ export function frameUnit(screenWidth: number, layoutWidth: number): number {
   const k = screenWidth / layoutWidth;
   return k > 0.3 && k < 0.99 ? Math.min(1.8, Math.ceil(100 / k) / 100) : 1;
 }
+
+/** Online: who left the round since the last roster, by name, and the notice that says so. */
+export function departed(before: readonly { seat: number; name: string }[], now: readonly { seat: number }[]): string[] {
+  return before.filter((p) => !now.some((q) => q.seat === p.seat)).map((p) => p.name);
+}
+export function leftNotice(names: readonly string[]): string {
+  if (!names.length) return '';
+  const who = names.length === 1 ? names[0] : names.length === 2 ? `${names[0]} and ${names[1]}` : `${names.length} Players`;
+  return `${who} Left. Keep Racing to the End.`;
+}

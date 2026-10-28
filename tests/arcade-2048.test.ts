@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { canMove, createGame, emptyGrid, frameUnit, layout, mergePitch, move, parseSave, parseSeed, seeded, spawn, undo } from '../src/os/arcade/games/2048/logic.ts';
+import { canMove, createGame, departed, emptyGrid, frameUnit, layout, leftNotice, mergePitch, move, parseSave, parseSeed, seeded, spawn, undo } from '../src/os/arcade/games/2048/logic.ts';
 
 const grid = (rows: number[][]) => rows.map((row) => [...row]);
 
@@ -106,4 +106,14 @@ test('merge pitch rises with the tile and frame scale rounds up', () => {
   assert.ok(mergePitch(4) < mergePitch(8) && mergePitch(8) < mergePitch(2048));
   assert.equal(frameUnit(820, 820), 1);
   assert.equal(frameUnit(670.3, 820), 1.23);
+});
+
+test('online leavers are found by seat and named in the notice', () => {
+  const before = [{ seat: 1, name: 'Ana' }, { seat: 2, name: 'Bo' }, { seat: 3, name: 'Cy' }];
+  assert.deepEqual(departed(before, [{ seat: 0 }, { seat: 1 }, { seat: 2 }, { seat: 3 }]), []);
+  assert.deepEqual(departed(before, [{ seat: 0 }, { seat: 2 }]), ['Ana', 'Cy']);
+  assert.equal(leftNotice([]), '');
+  assert.equal(leftNotice(['Ana']), 'Ana Left. Keep Racing to the End.');
+  assert.equal(leftNotice(['Ana', 'Cy']), 'Ana and Cy Left. Keep Racing to the End.');
+  assert.equal(leftNotice(['Ana', 'Bo', 'Cy']), '3 Players Left. Keep Racing to the End.');
 });

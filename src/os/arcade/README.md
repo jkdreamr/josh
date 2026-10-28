@@ -58,6 +58,7 @@ function GameShell(props: {
   hostSetup?: ReactNode;          // settings for online rooms, in the lobby and on the online Game Over card
   botNames?: readonly string[];   // names for online bots in seat order (default Bot 1, Bot 2...)
   defaultBots?: number;           // bots a host's room starts with until they pick their own number
+  handlesLeavers?: boolean;       // the game hands a departed player's seat to a bot, so the shell never ends a round for a leave
   className?: string; style?: CSSProperties;
 }): JSX.Element;
 

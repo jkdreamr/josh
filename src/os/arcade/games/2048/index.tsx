@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from
 import { GameShell, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import {
-  bestTile, canMove, createGame, emptyGrid, frameUnit, isSeedRequest, layout, mergePitch, move, ONLINE_SECONDS, parseSave, parseSeed,
+  bestTile, canMove, createGame, departed, emptyGrid, frameUnit, isSeedRequest, layout, leftNotice, mergePitch, move, ONLINE_SECONDS, parseSave, parseSeed,
   randomSeed, seeded, spawn, undo, type Direction, type Grid, type Layout, type Position, type Rect, type TileMove,
 } from './logic';
 import { meta } from './meta';
@@ -63,7 +63,7 @@ const tiles: Record<number, [string, string, string]> = {
 const tileStyle = (v: number) => tiles[v] ?? ['#5b6cff', '#3c45d6', '#fff'];
 
 export default function Game({ compact, onExit }: GameProps) {
-  return <GameShell meta={meta} compact={compact} onExit={onExit}><Play /></GameShell>;
+  return <GameShell meta={meta} compact={compact} onExit={onExit} handlesLeavers><Play /></GameShell>;
 }
 
 function Play() {
@@ -87,6 +87,7 @@ function Play() {
   const [status, setStatus] = useState<Rect | null>(null);
   const [gain, setGain] = useState<{ id: number; n: number } | null>(null);
   const [toast, setToast] = useState(0);
+  const [left, setLeft] = useState<{ id: number; text: string } | null>(null);
   const lastNow = useRef<number | null>(null);
   const s0 = state.current;
   const view = layout(size.w, size.h, ctrl, online ? status ?? { x: size.w / 2 - 40, y: 10, w: 80, h: 28 * unit } : null, unit);
@@ -116,14 +117,17 @@ function Play() {
     const measure = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(() => {
+        const u = shell.touch ? frameUnit(el.getBoundingClientRect().width, el.offsetWidth) : 1;
+        setUnit((c) => (Math.abs(c - u) < 0.005 ? c : u));
+        // the shell's toolbar and cards sit outside the game's root, so they read the scale from the shell (set first, so
+        // the toolbar is measured at its scaled size)
+        el.style.setProperty('--g-2048-u', u.toFixed(3));
         const box = el.querySelector<HTMLElement>('.arcade-ctrl');
         const next = box ? { x: box.offsetLeft, y: box.offsetTop, w: box.offsetWidth, h: box.offsetHeight } : null;
         setCtrl((c) => (c && next && c.x === next.x && c.y === next.y && c.w === next.w && c.h === next.h ? c : next));
         const badge = el.querySelector<HTMLElement>('.arcade-online-status');
         const nb = badge ? { x: badge.offsetLeft - badge.offsetWidth / 2, y: badge.offsetTop, w: badge.offsetWidth, h: badge.offsetHeight } : null;
         setStatus((c) => (c && nb && c.y === nb.y && c.h === nb.h ? c : nb));
-        const u = shell.touch ? frameUnit(el.getBoundingClientRect().width, el.offsetWidth) : 1;
-        setUnit((c) => (Math.abs(c - u) < 0.005 ? c : u));
       });
     };
     measure();
@@ -135,6 +139,7 @@ function Play() {
       cancelAnimationFrame(raf);
       timers.forEach((t) => window.clearTimeout(t));
       ro.disconnect();
+      el.style.removeProperty('--g-2048-u');
     };
   }, [root, shell.status, shell.touch, online]);
 
@@ -189,6 +194,25 @@ function Play() {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isOnline, isHost, online?.round]);
+
+
+  // Online: someone leaving mid-race only gets a notice; everyone left keeps racing to the end and is scored.
+  const roster = useRef<{ seat: number; name: string }[]>([]);
+  const players = online?.players;
+  useEffect(() => {
+    if (!players || !online) return;
+    const before = roster.current;
+    roster.current = players.filter((p) => p.seat !== online.seat).map((p) => ({ seat: p.seat, name: p.name }));
+    if (shell.status !== 'playing') return;
+    const names = departed(before, players);
+    if (names.length) setLeft({ id: performance.now(), text: leftNotice(names) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [players]);
+  useEffect(() => {
+    if (!left) return;
+    const t = window.setTimeout(() => setLeft(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [left]);
 
   useEffect(() => {
     lastNow.current = null;
@@ -457,6 +481,7 @@ function Play() {
     {ready && toast > 0 && <div key={toast} className="g-2048-toast" style={{ left: board.x + board.w / 2, top: board.y + board.w / 2 }} onAnimationEnd={() => setToast(0)}>
       You made 2048. Keep going.
     </div>}
+    {ready && left && shell.status === 'playing' && <div key={left.id} className="g-2048-left" role="status" style={{ left: board.x + board.w / 2, top: board.y + Math.min(28, board.w * 0.08) }}>{left.text}</div>}
     {ready && online && s.seed === -1 && shell.status === 'playing' && <div className="g-2048-wait" style={{ left: board.x + board.w / 2, top: board.y + board.w / 2 }}>Getting the board</div>}
   </div>;
 }
