@@ -10,12 +10,7 @@ export type Club = {
   roster: readonly string[];
 };
 
-const DEFAULT_ROSTERS = [
-  ['A. MORGAN', 'T. BENNETT', 'D. PARK', 'L. WILLIAMS', 'R. CHEN', 'S. PATEL', 'J. KIM', 'E. BROOKS', 'C. REYES', 'M. RIVERA', 'N. FOSTER'],
-  ['I. CARTER', 'O. FOSTER', 'D. SINGH', 'T. WALKER', 'B. NGUYEN', 'H. PRICE', 'M. JONES', 'P. CLARKE', 'R. DIAZ', 'K. ALVAREZ', 'S. WARD'],
-] as const;
-
-const broadcastClub = (id: string, roster: readonly string[]): Club => {
+const broadcastClub = (id?: string | null): Club => {
   const club = clubById(id);
   return {
     name: club.name,
@@ -23,14 +18,20 @@ const broadcastClub = (id: string, roster: readonly string[]): Club => {
     abbr: club.short,
     primary: club.home.shirt,
     secondary: club.home.shorts,
-    roster,
+    roster: club.players.map((player) => player.name),
   };
 };
 
 export const CLUBS = [
-  broadcastClub(DEFAULT_CLUBS[0], DEFAULT_ROSTERS[0]),
-  broadcastClub(DEFAULT_CLUBS[1], DEFAULT_ROSTERS[1]),
+  broadcastClub(DEFAULT_CLUBS[0]),
+  broadcastClub(DEFAULT_CLUBS[1]),
 ] as const satisfies readonly [Club, Club];
+
+/** The two clubs actually playing in `world` (defaults when it has none). */
+export const matchClubs = (world?: Pick<World, 'clubs'> | null): readonly [Club, Club] =>
+  !world?.clubs || world.clubs[0] === DEFAULT_CLUBS[0] && world.clubs[1] === DEFAULT_CLUBS[1]
+    ? CLUBS
+    : [broadcastClub(world.clubs[0]), broadcastClub(world.clubs[1])];
 
 export type TeamStats = {
   goals: number;
@@ -53,9 +54,9 @@ export type MatchStats = { teams: [TeamStats, TeamStats]; ticker: TickerItem[]; 
 export const REGULAR = 45 / 48;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
-export function playerName(id: number, world?: Pick<World, 'clubs'>): string {
+/** Single source of truth for player names: HUD, on-pitch tag, intro lineups, ticker and goal cards. */
+export function playerName(id: number, world?: Pick<World, 'clubs'> | null): string {
   const team = teamOf(id);
-  if (!world?.clubs || world.clubs[team] === DEFAULT_CLUBS[team]) return CLUBS[team].roster[id % TEAM_SIZE]!;
   return rosterName(clubById(world?.clubs?.[team] ?? DEFAULT_CLUBS[team]), id % TEAM_SIZE);
 }
 
@@ -106,7 +107,8 @@ export function broadcastClock(world: World, stats: MatchStats): { label: string
     totalSeconds = (base + 45) * 60 + extra;
     minute = `${base + 45}+${Math.min(added, Math.floor(extra / 60) + 1)}'`;
   }
-  const wholeSeconds = Math.floor(totalSeconds);
+  // Like a TV clock, the running time stops at 45:00 / 90:00; added time shows only as the +N tab and the minute.
+  const wholeSeconds = Math.floor(Math.min(totalSeconds, (base + 45) * 60));
   const minutes = Math.floor(wholeSeconds / 60);
   const seconds = wholeSeconds % 60;
   return {

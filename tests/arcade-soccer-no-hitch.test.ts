@@ -46,6 +46,26 @@ function command(action: Command['action'], overrides: Partial<Command> = {}): C
   };
 }
 
+function assertSingleControl(world: World, team: 0 | 1, expectedHumans: number) {
+  const players = world.players.filter((player) => player.team === team);
+  assert.equal(players.filter((player) => player.human).length, expectedHumans);
+  assert.ok(players.every((player) => !player.human || player.controlled));
+  assert.ok(world.players.every((player) => !player.controlled || player.human));
+  assert.equal(world.players[world.controlled[team]]?.human, true);
+}
+
+function stepUntilPassArrives(world: World, receiverId: number, expectedHumans: number) {
+  let steps = 0;
+  while (world.passTarget === receiverId && steps < 240) {
+    stepWorld(world, STEP);
+    steps++;
+    assertSingleControl(world, 0, expectedHumans);
+  }
+  assert.ok(steps < 240, 'the pass should reach its receiver within 240 steps');
+  assert.equal(world.passTarget, null);
+  assert.equal(world.carrierId, receiverId);
+}
+
 function freshFxWorld(): World {
   const world = createWorld(9142, 120, 2);
   world.phase = 'live';
@@ -93,6 +113,90 @@ test('pass control transfers on the strike while preserving single-player and co
   assert.equal(coopHumanPass.world.controlled[1], 17);
   assert.equal(coopHumanPass.receiver.human, true);
   assert.equal(coopHumanPass.passer.human, true);
+});
+
+test('a single-player switchNearest during a pass flight remains in control at arrival', () => {
+  const { world, passer, receiver } = setupPassWorld(1, 6, 7);
+  stepWorld(world, STEP, new Map([[passer.id, command('pass')]]));
+  assertSingleControl(world, 0, 1);
+  assert.equal(world.passTarget, receiver.id);
+  assert.equal(world.carrierId, null);
+
+  stepWorld(world, STEP, new Map([[receiver.id, command(null, { pressed: false, switchNearest: true })]]));
+  assertSingleControl(world, 0, 1);
+  assert.equal(world.passTarget, receiver.id);
+  assert.equal(world.carrierId, null);
+  const switchedTo = world.controlled[0];
+  assert.notEqual(switchedTo, receiver.id);
+
+  stepUntilPassArrives(world, receiver.id, 1);
+
+  assert.equal(world.controlled[0], switchedTo);
+  assert.equal(world.players[switchedTo]!.human, true);
+  assert.equal(receiver.human, false);
+});
+
+test('a single-player direct switch during a pass flight remains in control at arrival', () => {
+  const { world, passer, receiver } = setupPassWorld(1, 6, 7);
+  stepWorld(world, STEP, new Map([[passer.id, command('pass')]]));
+  assertSingleControl(world, 0, 1);
+  assert.equal(world.passTarget, receiver.id);
+  assert.equal(world.carrierId, null);
+
+  stepWorld(world, STEP, new Map([[receiver.id, command(null, {
+    pressed: false,
+    switchDir: { x: -1, z: 0 },
+  })]]));
+  assertSingleControl(world, 0, 1);
+  assert.equal(world.passTarget, receiver.id);
+  assert.equal(world.carrierId, null);
+  const switchedTo = world.controlled[0];
+  assert.notEqual(switchedTo, receiver.id);
+
+  stepUntilPassArrives(world, receiver.id, 1);
+
+  assert.equal(world.controlled[0], switchedTo);
+  assert.equal(world.players[switchedTo]!.human, true);
+  assert.equal(receiver.human, false);
+});
+
+test('a co-op first-player switch during the second player pass flight preserves both humans', () => {
+  const { world, passer, receiver } = setupPassWorld(2, 9, 7);
+  const firstHuman = world.players[world.controlled[0]]!;
+  assert.notEqual(passer.id, firstHuman.id);
+  assertSingleControl(world, 0, 2);
+
+  stepWorld(world, STEP, new Map([[passer.id, command('pass')]]));
+  assertSingleControl(world, 0, 2);
+  assert.equal(world.passTarget, receiver.id);
+  assert.equal(world.carrierId, null);
+
+  stepWorld(world, STEP, new Map([[firstHuman.id, command(null, { pressed: false, switchNearest: true })]]));
+  assertSingleControl(world, 0, 2);
+  assert.equal(world.passTarget, receiver.id);
+  assert.equal(world.carrierId, null);
+  const switchedTo = world.controlled[0];
+  assert.notEqual(switchedTo, firstHuman.id);
+  assert.notEqual(switchedTo, receiver.id);
+
+  stepUntilPassArrives(world, receiver.id, 2);
+
+  assert.equal(world.controlled[0], switchedTo);
+  assert.equal(world.players[switchedTo]!.human, true);
+});
+
+test('without a switch, the pass receiver remains the single controlled human at arrival', () => {
+  const { world, passer, receiver } = setupPassWorld(1, 6, 7);
+  stepWorld(world, STEP, new Map([[passer.id, command('pass')]]));
+  assertSingleControl(world, 0, 1);
+  assert.equal(world.controlled[0], receiver.id);
+  assert.equal(world.passTarget, receiver.id);
+  assert.equal(world.carrierId, null);
+
+  stepUntilPassArrives(world, receiver.id, 1);
+
+  assert.equal(world.controlled[0], receiver.id);
+  assert.equal(receiver.human, true);
 });
 
 test('a receiver tap-pass buffers a first-time pass without switching away', () => {
