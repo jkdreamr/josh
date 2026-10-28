@@ -7,6 +7,27 @@ export const STICK = { deadZone: 0.14, outerZone: 0.92, curve: 1.45, travel: 0.3
 export const FACE_SLOP = 1.3;
 export type FaceLabels = { a: string; b: string; x: string; y: string };
 
+export const STICK_SPRINT = { on: 0.97, off: 0.85 };
+
+export function stickSprint(magnitude: number, wasOn: boolean): boolean {
+  return magnitude >= (wasOn ? STICK_SPRINT.off : STICK_SPRINT.on);
+}
+
+export const LT_TAP_MS = 180;
+
+export function ltTapSkill(attackingAtPress: boolean, downAt: number, upAt: number): boolean {
+  return attackingAtPress && upAt - downAt <= LT_TAP_MS;
+}
+
+export function shoulderLabels(attacking: boolean, overrides?: { lb?: string; rb?: string } | null) {
+  return {
+    lt: attacking ? 'Protect' : 'Jockey',
+    lb: overrides?.lb ?? (attacking ? 'Run' : 'Switch'),
+    rb: overrides?.rb ?? (attacking ? 'Finesse' : 'Press'),
+    rt: 'Sprint',
+  };
+}
+
 export function faceLabels(attacking: boolean, overrides?: Partial<FaceLabels> | null, cross = false): FaceLabels {
   const labels = {
     ...(attacking

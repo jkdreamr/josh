@@ -196,7 +196,7 @@ export function takeSetPiece(w: World, action: Action = 'lob', power = 0.65) {
     const seconds = shot ? distance(w.ball,target)/(speed*0.88) : distance(w.ball,target)/(action === 'shoot' ? 25 : 17+power*8);
     const spin = s.curl*d*35;
     Object.assign(w.ball,deliveryVelocity(w,target,Math.max(0.2,seconds),spin),{spin,grounded:false});
-    w.passTarget = null; w.passPoint = null;
+    w.passTarget = null; w.passStrikeAt = null; w.passAim = null; w.passPoint = null;
     if (!shot) {
       const runners = w.players.filter(p => p.team === w.restartTeam && p.id !== taker.id && p.slot !== 'GK').sort((a,b)=>distance(a,target)-distance(b,target));
       const receiver = runners[0]!;
@@ -320,7 +320,7 @@ export function stepSetPieceRun(w: World,t: number,previousX: number) {
       const gap=distance(b,target), speed=13+rng(w)*4;
       b.vx=(target.x-b.x)/gap*speed; b.vz=(target.z-b.z)/gap*speed; b.vy=attacking?0.5:6; b.spin=0;
       p.action='header'; p.touchCd=0.5; w.lastTouch=p.team; w.lastToucherId=p.id; w.kickEvent={playerId:p.id,action:'shoot',power:0.7,time:w.halfLength-w.clock};
-      w.event=attacking?'header!':'headed clear'; w.eventTime=1; w.passTarget=null; w.passPoint=null;
+      w.event=attacking?'header!':'headed clear'; w.eventTime=1; w.passTarget=null; w.passStrikeAt=null; w.passAim=null; w.passPoint=null;
       run.runs={}; run.marks={}; run.wall=[]; run.t=0.8;
       return;
     }
@@ -366,16 +366,23 @@ export function stepShootout(w: World,t: number) {
   if(w.phase==='live') { s.flight=(s.flight??0)+t; if(s.flight>=3.5) {resolveShootoutKick(w,false); return true;} }
   return false;
 }
+export function kickoffPrompt(w: World, playerId?: number): string | null {
+  if (w.phase !== 'restart' || w.restart !== 'kickoff') return null;
+  const taker = restartTaker(w);
+  if (!taker.human) return null;
+  if (playerId !== undefined && playerId !== taker.id) return 'Kick off · waiting for the taker';
+  return playerId === undefined
+    ? 'Kick off · Press A to kick off'
+    : 'Kick off · aim with stick · Press A to kick off';
+}
 export function phoneStoppagePrompt(w: World, playerId: number): string | null {
   const player = w.players.find((p) => p.id === playerId);
   if (!player) return null;
   const labels = setPieceLabels(w, player.team, playerId);
   if (labels) return `${labels.title} · ${labels.hint}`;
+  const kickoff = kickoffPrompt(w, playerId);
+  if (kickoff) return kickoff;
   if (w.phase === 'restart') {
-    const taker = w.restart === 'kickoff' ? restartTaker(w) : null;
-    if (taker?.human) return playerId === taker.id
-      ? 'Kick off · aim with stick, press A to pass'
-      : 'Kick off · waiting for the taker';
     return `${w.event || 'Kick off'} · move the stick or press to take`;
   }
   if (w.phase !== 'live') return w.event || w.phase;

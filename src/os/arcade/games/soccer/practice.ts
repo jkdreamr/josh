@@ -157,7 +157,7 @@ function clearBall(world: World, at: Point, carrier?: Player) {
   const x = carrier ? carrier.x + Math.sin(facing) * 0.45 : at.x;
   const z = carrier ? carrier.z + Math.cos(facing) * 0.45 : at.z;
   world.ball = { x, y: 0.11, z, vx: 0, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false };
-  world.phase = 'live'; world.restart = null; world.passTarget = null; world.passControl = false; world.passPoint = null;
+  world.phase = 'live'; world.restart = null; world.passTarget = null; world.passStrikeAt = null; world.passAim = null; world.passControl = false; world.passPoint = null;
   world.carrierId = null; world.lastToucherId = carrier?.id ?? null; world.lastTouch = carrier?.team ?? 0; world.kickEvent = null;
 }
 
@@ -608,7 +608,7 @@ function updatePrompt(state: PracticeState) {
     state.prompt = kind === 'power' ? 'hold {B} to charge, let go before the red' : kind === 'placed' ? 'aim {stick} at a corner while you hold {B}' : 'hold {RB} while you shoot {B} to curl a finesse shot';
     state.hint = `shot ${Math.min(state.attempts, step + 1)} of ${state.attempts} · goals score 1, +1 with the move asked`;
   } else if (state.drill === 'slalom') {
-    state.prompt = ['weave: pass each cone on its lit side', 'hold {sprint} on the straight to the finish', 'tap {LB} beside a cone for a skill move, -0.5s each'][step % 3]!;
+    state.prompt = ['weave: pass each cone on its lit side', 'sprint on the straight to the finish with {sprint}', 'tap {skill} beside a cone for a skill move, -0.5s each'][step % 3]!;
     state.hint = `run ${Math.min(state.attempts, step + 1)} of ${state.attempts} · missed cones add 2s`;
   } else {
     state.prompt = ['hold {A} to contain: you stay goal side', 'walk him wide: steer without {sprint} to jockey', 'tap {B} to tackle when the ball leaves his foot', 'tackles from behind are fouls: stay in front', 'stop him before the red line'][step % 5]!;

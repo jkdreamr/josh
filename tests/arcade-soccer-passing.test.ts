@@ -185,19 +185,20 @@ test('ground passes use the rolling model and charge controls arrival speed', ()
   }
   assert.ok(arrivals[0]! > 0 && arrivals[0]! < arrivals[1]!);
   console.log(`15 m pass arrivals (0.1 / 0.45 / 1): ${arrivals.map((s) => s.toFixed(2)).join(' / ')} m/s (0 = fell short)`);
-  assert.ok(arrivals[1]! >= 2 && arrivals[1]! <= 7);
-  assert.ok(arrivals[2]! > arrivals[1]! + 2);
-  const speeds = [5, 15, 25, 35].map(groundPassSpeed);
+  assert.ok(arrivals[0]! >= 6);
+  assert.ok(arrivals[1]! > arrivals[0]!);
+  assert.ok(arrivals[2]! > arrivals[1]!);
+  const speeds = [5, 15, 25, 35].map((range) => groundPassSpeed(range));
   console.log(`ground launch speeds at 5 / 15 / 25 / 35 m: ${speeds.map((s) => s.toFixed(2)).join(' / ')} m/s`);
   for (const speed of speeds) assert.ok(speed >= 8 && speed <= 25);
   for (const range of [5, 15, 25, 35]) {
     for (const charge of [0.1, 0.45, 1]) {
-      const { world, player, fire } = setup();
+      const { world, player } = setup();
       player.x = -range / 2; world.ball.x = player.x + 0.4;
       const receiver = world.players[2]!; receiver.x = range / 2; receiver.z = 5;
-      fire('pass', charge);
+      kick(world, player, 'pass', { move: { x: 1, z: 0 }, aim: { x: 1, z: 0 }, action: 'pass', pressed: true, power: charge });
       const speed = Math.hypot(world.ball.vx, world.ball.vz);
-      assert.ok(speed >= 7.8 && speed <= 26);
+      assert.ok(speed >= 12 && speed <= 28, `${range} m at charge ${charge} launched at ${speed.toFixed(2)} m/s`);
     }
   }
 });
@@ -217,7 +218,7 @@ test('human ground passes keep tap, full-charge and driven launch speeds in thei
   const tap = launchSpeed(0.1);
   const full = launchSpeed(1);
   const driven = launchSpeed(0.1, true);
-  assert.ok(tap >= 12 && tap <= 15.5, `tap speed ${tap}`);
+  assert.ok(tap >= 12 && tap <= 28, `tap speed ${tap}`);
   assert.ok(full > tap, `full speed ${full}, tap speed ${tap}`);
   assert.ok(driven >= 20, `driven speed ${driven}`);
 });

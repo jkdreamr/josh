@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ROOM_MESSAGE_MAX_BYTES } from '../worker/src/room-core.ts';
 import { computeAI } from '../src/os/arcade/games/soccer/ai.ts';
-import { createWorld, STEP, stepWorld, type Command, type World } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, restartTaker, STEP, stepWorld, type Command, type World } from '../src/os/arcade/games/soccer/logic.ts';
 import { acceptMovePacket, commandFromPacket, consumeCommand, InputFreshness, mergeRemoteCommand, movePacket, parsePacket, sameStick, stickSendDelay, trimSnapshot, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
 import { chargePower, screenToWorld } from '../src/os/arcade/games/soccer/input.ts';
 import { desiredCameraBasis } from '../src/os/arcade/games/soccer/camera.ts';
@@ -78,7 +78,7 @@ test('malformed, non-finite, and out-of-range packet fields are rejected', () =>
   const packet = movePacket(1, 1, 0, { move: { x: 0, z: 0 } });
   for (const bad of [
     { ...packet, x: Number.NaN }, { ...packet, z: 1.1 }, { ...packet, seq: -1 }, { ...packet, seat: 4 },
-    { ...packet, buttons: 32768 }, { ...packet, buttons: 2 ** 32 }, { ...packet, held: 1024 },
+    { ...packet, buttons: 65536 }, { ...packet, buttons: 2 ** 32 }, { ...packet, held: 1024 },
     { ...packet, e: -1 }, { ...packet, e: 1.5 }, { ...packet, e: Number.MAX_SAFE_INTEGER + 1 },
     { ...packet, sx: 0.2 }, { ...packet, sx: 0.123, sz: 0 }, { ...packet, sx: 0, sz: Infinity },
     { ...packet, t: 'other' }, { ...packet, k: 'admin' },
@@ -86,7 +86,7 @@ test('malformed, non-finite, and out-of-range packet fields are rejected', () =>
 });
 
 test('all held control flags and directional switch round-trip, with legacy flick fields optional', () => {
-  for (const flag of ['jockey', 'autoJockey', 'contain', 'switchNearest', 'finesse', 'finesseHeld', 'press'] as const) {
+  for (const flag of ['jockey', 'autoJockey', 'contain', 'switchNearest', 'finesse', 'finesseHeld', 'press', 'callRun'] as const) {
     const packet = movePacket(1, 1, 0, { move: { x: 0, z: 0 }, [flag]: true });
     assert.deepEqual(parsePacket(packet), packet);
     assert.equal(commandFromPacket(packet)[flag], true);
@@ -100,18 +100,20 @@ test('all held control flags and directional switch round-trip, with legacy flic
 });
 
 test('remote updates retain pending one-shots but refresh held flags, then consume only once', () => {
-  const initial = { move: { x: 0, z: 0 }, action: 'shoot' as const, pressed: true, power: 0.7, switchNearest: true, switchDir: { x: 1, z: 0 } };
+  const initial = { move: { x: 0, z: 0 }, action: 'shoot' as const, pressed: true, power: 0.7, switchNearest: true, switchDir: { x: 1, z: 0 }, callRun: true };
   const held = { move: { x: 0.5, z: 0 }, heldAction: 'pass' as const, jockey: true, autoJockey: true, contain: true, press: true, finesseHeld: true, sprint: true };
   const merged = mergeRemoteCommand(initial, held);
   assert.equal(merged.action, 'shoot'); assert.equal(merged.power, 0.7);
   assert.equal(merged.switchNearest, true); assert.deepEqual(merged.switchDir, { x: 1, z: 0 });
+  assert.equal(merged.callRun, true);
   const consumed = consumeCommand(merged);
   assert.equal(consumed.action, null); assert.equal(consumed.pressed, false);
   assert.equal(consumed.switchNearest, false); assert.equal(consumed.switchDir, null);
+  assert.equal(consumed.callRun, false);
   for (const flag of ['jockey', 'autoJockey', 'contain', 'press', 'finesseHeld', 'sprint'] as const) assert.equal(consumed[flag], true);
   assert.equal(consumed.heldAction, 'pass');
   const next = mergeRemoteCommand(consumed, { move: { x: 0, z: 0 } });
-  assert.ok(!next.action && !next.switchNearest && !next.switchDir && !next.press);
+  assert.ok(!next.action && !next.switchNearest && !next.switchDir && !next.callRun && !next.press);
   assert.equal(initial.pressed, true, 'helpers must not mutate their inputs');
 });
 
@@ -351,6 +353,12 @@ test('trimmed full-match and worst-case snapshots fit the worker relay', () => {
     commands.clear();
     for (const [id, command] of homeCommands) commands.set(id, command);
     for (const [id, command] of awayCommands) commands.set(id, command);
+    if (world.phase === 'restart' && world.restart === 'kickoff') {
+      const taker = restartTaker(world);
+      if (taker.human) commands.set(taker.id, {
+        move: { x: 0, z: 0 }, aim: { x: 1, z: 0 }, action: 'pass', pressed: true, power: 0.5,
+      });
+    }
     stepWorld(world, STEP, commands);
     if (tick % 3 !== 0) continue;
 

@@ -198,7 +198,7 @@ import { ASK_T, EMOTE_GAP, EMOTE_IDS, EMOTE_SPAN, EMOTE_T, FACE_EMOTES, TEAM_EMO
 import { actorOf, parseTeams, teamAsk } from '../src/os/arcade/games/scramble/net.ts';
 import { nextTeam, pinTeam, teamsFor, winnersOf } from '../src/os/arcade/games/scramble/session.ts';
 import { MAX_KICK, applyNet, configOf, endOf, guestState, hitCap, hostState, packDoors, packEvents, packGlass, packPiece, parsePacket, pieceEv, placesOf, stateOf, toNet, unpackDoors, unpackGlass, unpackPiece, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
-import { END_PAUSE, FAR_EVERY, FIRST_GRACE, FLUSH, NEAR, OUT_EVERY, QUICK_LEVEL, STALE, TICK_MS, catchUp, ending, flush, guestMatch, hostBots, hostMatch, newSession, offscreen, receive, resultCard, share, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
+import { END_PAUSE, FAR_EVERY, FIRST_GRACE, FLUSH, LATE_MAX, NEAR, OUT_EVERY, QUICK_LEVEL, STALE, TICK_MS, catchUp, ending, flush, frameTime, guestMatch, hostBots, hostMatch, newSession, offscreen, receive, resultCard, share, stepIn, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
 import { meta } from '../src/os/arcade/games/scramble/meta.ts';
 
 const DT = 1 / 60;
@@ -1174,6 +1174,60 @@ test('eggs from another client glide between the reports that arrive for them', 
   assert.equal(r.show.w, 'smg');
   run(m, 1);
   assert.ok(r.x <= 1 + 6 * 0.25 + 1e-9, 'carries on a moment, then waits');
+});
+
+test('an egg from another client that stood still a while sets off at its own pace, drawn no further back than usual', () => {
+  // standing still it's only reported every FAR_EVERY ticks (nothing changes); walking, every tick
+  const m = createMatch({ seed: 1, role: 'guest', level: 'normal', entrants: [{ name: 'a', color: '#fff', kind: 'player', seat: 1 }, { name: 'b', color: '#fff', kind: 'remote', seat: 0 }], me: 0, countdown: 0 });
+  const r = m.fighters[1];
+  const at = (x: number, vx: number) => ({ x, z: 0, y: 0, aim: 0, vx, vz: 0, phase: 'ground' as const, hp: 100, shield: 0, w: null, r: 0, flags: 0 });
+  const tick = TICK_MS / 1000;
+  for (let t = 0; t < 3; t += tick * FAR_EVERY) {
+    applyState(m, r, at(0, 0));
+    run(m, tick * FAR_EVERY);
+  }
+  let x = 0;
+  let last = r.x;
+  let most = 0;
+  for (let t = 0; t < 2; t += tick) {
+    x += 6 * tick;
+    applyState(m, r, at(x, 6));
+    for (let k = 0; k < 4; k++) {
+      step(m, tick / 4);
+      most = Math.max(most, Math.abs(r.x - last));
+      last = r.x;
+    }
+    // a moment in, it trails where it is by about the usual delay, not more and more
+    if (t > 0.5) assert.ok(Math.abs(x - 6 * INTERP - r.x) < 0.6, `${t.toFixed(2)} s in: drawn at ${r.x.toFixed(2)}, reported at ${x.toFixed(2)}`);
+  }
+  assert.ok(r.lag < INTERP + 0.05, `drawn ${r.lag.toFixed(2)} s back`);
+  assert.ok(most < 0.3, `no jump: ${most.toFixed(2)} m in a step`);
+});
+
+test('online a slow frame is made up in steps, so a guest on a slow phone keeps the room\'s time', () => {
+  // a frame the loop didn't cut short is what it is; one it did counts all the time since the last, up to a point
+  assert.equal(frameTime(1 / 60, 1 / 60), 1 / 60);
+  assert.equal(frameTime(0, 5), 0, 'the first frame after a pause');
+  assert.ok(Math.abs(frameTime(1 / 20, 0.125) - 0.125) < 1e-12);
+  assert.equal(frameTime(1 / 20, 3), LATE_MAX, 'a stall is let go');
+  assert.equal(frameTime(1 / 20, 0.01), 1 / 20);
+  // our egg walks as far, and the match clock goes as far, at 8 frames a second as at 60
+  const walk = (fps: number) => {
+    const m = createMatch({ seed: 1, role: 'guest', level: 'normal', entrants: [{ name: 'a', color: '#fff', kind: 'player', seat: 1 }, { name: 'b', color: '#fff', kind: 'remote', seat: 0 }], me: 0, countdown: 0 });
+    const f = m.fighters[0];
+    land(f, 0, 0);
+    const clock = m.clock;
+    for (let t = 0; t < 1 - 1e-9; t += 1 / fps) {
+      f.input.mx = 1;
+      stepIn(m, frameTime(Math.min(1 / 20, 1 / fps), 1 / fps));
+    }
+    return { x: f.x, clock: m.clock - clock };
+  };
+  const fast = walk(60);
+  const slow = walk(8);
+  assert.ok(fast.x > 3, `it walked: ${fast.x}`);
+  assert.ok(Math.abs(slow.clock - fast.clock) < 1e-6, `the same time: ${slow.clock} and ${fast.clock}`);
+  assert.ok(Math.abs(slow.x - fast.x) < 0.25, `as far: ${slow.x} and ${fast.x}`);
 });
 
 // ---------------------------------------------------------------------------------------------------------------------
@@ -7547,4 +7601,382 @@ test('a knocked egg of another team still bleeding when the host calls the match
   assert.equal(g.fighters[3].phase, 'out');
   assert.equal(g.fighters[2].phase, 'out', 'as the host has it');
   assert.equal(g.fighters[2].place, 2);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Eggs never blink out (or in) for a moment.
+
+import { SEEN_HOLD, seenStep, shut, viewAt, type Seen } from '../src/os/arcade/games/scramble/logic.ts';
+import { reachOf } from '../src/os/arcade/games/scramble/session.ts';
+
+test('the screen holds an egg a moment past a line that would hide it, and keeps a hidden one gone a while', () => {
+  const s: Seen = { on: true, t: 0, since: 0 };
+  // flickering either side of the line every other frame: never hidden
+  for (let i = 0; i < 600; i++) assert.ok(seenStep(s, i % 2 === 0, DT));
+  // hidden a moment, as long as it takes to run through a bush: still shown
+  for (let t = 0; t < SEEN_HOLD.hide - 0.05; t += DT) assert.ok(seenStep(s, true, DT));
+  assert.ok(seenStep(s, false, DT));
+  // hidden for good: gone once the hold is up
+  let at = 0;
+  while (seenStep(s, true, DT)) at += DT;
+  assert.ok(Math.abs(at - SEEN_HOLD.hide) < 2 * DT, `${at}`);
+  // out of hiding at once: back, but only once it has been gone a while
+  let back = 0;
+  while (!seenStep(s, false, DT)) back += DT;
+  assert.ok(back >= SEEN_HOLD.gone - 2 * DT, `${back}`);
+  // a moment out of hiding and back in never shows it
+  for (let t = 0; t < SEEN_HOLD.hide + 0.1; t += DT) seenStep(s, true, DT);
+  assert.ok(!s.on);
+  for (let i = 0; i < 600; i++) assert.ok(!seenStep(s, i % 3 === 0, DT));
+  // firing (or coming into view) shows it at once
+  assert.ok(seenStep(s, false, DT, true));
+});
+
+test('in busy matches, the egg the camera follows never sees another egg blink out or in (bushes, flour, ghillie suits, roofs, doorways)', () => {
+  let raw = 0;
+  let held = 0;
+  let hidden = 0;
+  for (const seed of [2, 10]) {
+    const names = botNames(seed);
+    const entrants: Entrant[] = names.slice(0, MAX_FIGHTERS).map((name) => ({ name, color: '#fff', kind: 'bot', seat: -1 }));
+    const m = createMatch({ seed, role: 'solo', level: 'hard', entrants, me: -1, countdown: 0, mode: 'duos' });
+    // per egg: drawn now, for how long, and how long before that (unheld and held), plus the hold itself
+    const track = () => m.fighters.map(() => ({ on: false, run: 0, prev: 0 }));
+    const rawSt = track();
+    const heldSt = track();
+    const seen: Seen[] = m.fighters.map(() => ({ on: true, t: 0, since: 0 }));
+    // a drop-out or pop-in: a run under 0.3 s between two of the other (one shown again by firing aside)
+    const blink = (s: { on: boolean; run: number; prev: number }, on: boolean, f: Fighter) => {
+      let n = 0;
+      if (on === s.on) s.run++;
+      else {
+        if (s.run > 0 && s.prev > 0 && s.run * DT < 0.3 && !(on && m.clock - f.firedAt < 0.2)) n = 1;
+        s.prev = s.run;
+        s.run = 1;
+        s.on = on;
+      }
+      return n;
+    };
+    let eye = -1;
+    for (let t = 0; t < 600 && !m.ended; t += DT) {
+      step(m, DT);
+      m.events.length = 0;
+      if (eye < 0 || m.fighters[eye].phase === 'out') {
+        eye = m.fighters.findIndex((f) => f.phase === 'ground');
+        for (const s of [...rawSt, ...heldSt]) s.run = s.prev = 0;
+        for (const s of seen) Object.assign(s, { t: 0, since: 0 });
+        if (eye < 0) continue;
+      }
+      const focus = m.fighters[eye];
+      if (focus.phase !== 'ground') continue;
+      const peek = focus.inside < 0 ? peekAt(m.map, focus.x, focus.z, (i) => shut(m, i)) : -1;
+      for (const f of m.fighters) {
+        if (f === focus || f.team === focus.team) continue;
+        // as the scene has it: hidden by cover, flour, a roof or a ghillie suit, or the walls of a doorway we peek in at
+        const inView = Math.abs(f.x - focus.x) < 24 && f.z - focus.z > -16 && f.z - focus.z < 12;
+        const walled = inView && peek >= 0 && f.inside === peek && !clearLine(m, focus.x, focus.z, f.x, f.z);
+        const hide = f.phase !== 'out' && (walled || concealed(m, f, focus));
+        const shown = seenStep(seen[f.id], hide, DT, !inView || f.phase === 'bus' || (!hide && m.clock - f.firedAt < SEEN_HOLD.show));
+        // counted well inside the frame, on its feet
+        if (f.phase !== 'ground' || Math.abs(f.x - focus.x) > 20 || Math.abs(f.z - focus.z) > 10) {
+          rawSt[f.id].run = rawSt[f.id].prev = heldSt[f.id].run = heldSt[f.id].prev = 0;
+          continue;
+        }
+        if (hide) hidden++;
+        raw += blink(rawSt[f.id], !hide, f);
+        held += blink(heldSt[f.id], shown, f);
+      }
+    }
+  }
+  assert.ok(hidden > 300, `eggs did hide (${hidden} frames)`);
+  assert.ok(raw > 3, `the lines are crossed and crossed back (${raw})`);
+  assert.equal(held, 0, 'but nothing blinks on screen');
+});
+
+test('reports overtaken on the fast channel are let go: no egg goes back up in the air, back on the bus or back up the stairs', () => {
+  const { h, g, gs, gMe } = pair();
+  const host = h.fighters[0];
+  const S = (time: number, st: ReturnType<typeof stateOf>, doors?: number[]) => JSON.parse(JSON.stringify(hostState(1, 4, time, 'normal', doors ? [0, 1] : null, [[0, st]], [], doors ?? [])));
+  const ground = stateOf(host);
+  const air = { ...ground, phase: 'drop' as const, y: 30 };
+  receive(gs, g, gMe, 0, S(10, air), () => g, 0);
+  receive(gs, g, gMe, 0, S(10.1, ground), () => g, 0);
+  const egg = g.fighters[0];
+  assert.equal(egg.phase, 'ground');
+  // the one from before it landed, late
+  receive(gs, g, gMe, 0, S(10.03, air), () => g, 0);
+  assert.equal(egg.phase, 'ground', 'not back up in the air');
+  assert.equal(egg.snaps.length, 1);
+  receive(gs, g, gMe, 0, S(9, { ...ground, phase: 'bus', y: BUS_Y }), () => g, 0);
+  assert.equal(egg.phase, 'ground', 'nor back on the bus');
+  // down a stairway: a report from up top that comes in after one from below is let go (no trip back up)
+  const below = { ...ground, x: ground.x + DEEP };
+  receive(gs, g, gMe, 0, S(11, below), () => g, 0);
+  g.events.length = 0;
+  receive(gs, g, gMe, 0, S(10.95, ground), () => g, 0);
+  assert.ok(isDeep(egg.snaps[egg.snaps.length - 1].x), 'still below');
+  assert.ok(!g.events.some((e) => e.t === 'stairs'), 'and no trip up the stairs');
+  // and an overtaken report's clock is let go too
+  receive(gs, g, gMe, 0, S(12, below), () => g, 0);
+  const time = g.time;
+  receive(gs, g, gMe, 0, S(11.9, below), () => g, 0);
+  assert.equal(g.time, time, 'the clock never goes back');
+  // a newer one still lands
+  receive(gs, g, gMe, 0, S(12.1, { ...below, x: below.x + 1 }), () => g, 0);
+  assert.ok(Math.abs(egg.snaps[egg.snaps.length - 1].x - (below.x + 1)) < 0.1);
+  // a host that started over (a new match on the same session) is heard from at once
+  receive(gs, g, gMe, 0, S(2, ground), () => g, 0);
+  assert.ok(!isDeep(egg.snaps[egg.snaps.length - 1].x));
+});
+
+test('the host lets go of a guest report overtaken by a newer one, and hears a guest that started counting again', () => {
+  const { h, g, hs, hMe } = pair();
+  const mine = g.fighters[1];
+  const egg = h.fighters[1];
+  const report = (n: number, x: number) => receive(hs, h, hMe, 1, JSON.parse(JSON.stringify(guestState(1, { ...stateOf(mine), x }, -1, n))), () => h, 0.1);
+  report(5, 1);
+  report(6, 2);
+  report(4, 0);
+  assert.equal(hs.states.get(1)?.x, 2, 'the late one is let go');
+  assert.equal(egg.snaps.length, 2);
+  report(6, 3);
+  assert.equal(hs.states.get(1)?.x, 2, 'and one heard twice');
+  report(7, 4);
+  assert.equal(hs.states.get(1)?.x, 4);
+  report(200, 6);
+  report(1, 5);
+  assert.equal(hs.states.get(1)?.x, 5, 'a guest counting from the start again (a reload) is heard');
+  // the count goes out with each report, and only a whole number from 0 up is taken
+  const p = parsePacket(JSON.parse(JSON.stringify(guestState(1, stateOf(mine), -1, 9))));
+  assert.ok(p && p.k === 's' && p.seq === 9);
+  for (const n of [-1, 1.5, 'x', null, 2 ** 60]) assert.equal(parsePacket({ ...guestState(1, stateOf(mine)), n }), null, String(n));
+  // a guest's tick numbers its reports
+  const gs2 = newSession(true, [0, 1]);
+  const sent = [1, 2, 3].map(() => (tick(gs2, g, { seat: 1, isHost: false, round: 1 }, [0, 1], 0)[0].d as { n: number }).n);
+  assert.deepEqual(sent, [1, 2, 3]);
+});
+
+test('a guest looking through a big scope on a wide screen hears of every egg it can see whenever it changes', () => {
+  const players = Array.from({ length: 2 }, (_, seat) => ({ seat, name: `P${seat}` }));
+  const hm = hostMatch(players, 0, 4, 'normal', MAX_FIGHTERS, 0);
+  const m = hm.match;
+  m.time = 30;
+  const s = newSession(true, hm.roster);
+  const me: Me = { seat: 0, isHost: true, round: 1 };
+  for (const f of m.fighters) {
+    land(f, -900 + f.id * 3, -900);
+    f.ai = null;
+  }
+  const g = m.fighters[1];
+  land(g, 0, 0);
+  // an egg running 125 m off to the side: on a wide screen (2.2 to 1) through a 15x scope it's in sight
+  const far = m.fighters[10];
+  land(far, 125, 0);
+  assert.ok(reachOf(g) === NEAR && NEAR < 125, 'without a scope it is too far to see');
+  g.scopes = 15;
+  g.scope = 4;
+  assert.ok(viewAt(g) * 2.9 > 120 && reachOf(g) > 130, `through the scope it isn't (${reachOf(g)})`);
+  let heard = 0;
+  for (let t = 0; t < 12; t++) {
+    far.z += 0.4;
+    for (const f of m.fighters) s.heard.set(f.id, 0);
+    for (const out of tick(s, m, me, [0, 1], 1 + t * 0.066)) {
+      const p = parsePacket(JSON.parse(JSON.stringify(out.d)));
+      if (p?.k === 'S' && out.to === 1 && p.states.some(([fid]) => fid === 10)) heard++;
+    }
+  }
+  assert.equal(heard, 12, 'every tick it moves');
+});
+
+test('computer eggs never pop down a stairway and straight back up (gone for a blink)', () => {
+  let trips = 0;
+  const quick: string[] = [];
+  for (const seed of [2, 6, 9]) {
+    const names = botNames(seed);
+    const entrants: Entrant[] = names.slice(0, MAX_FIGHTERS).map((name) => ({ name, color: '#fff', kind: 'bot', seat: -1 }));
+    const m = createMatch({ seed, role: 'solo', level: 'hard', entrants, me: -1, countdown: 0 });
+    const last = m.fighters.map(() => -99);
+    for (let t = 0; t < 900 && !m.ended; t += DT) {
+      step(m, DT);
+      for (const e of m.events.splice(0)) {
+        if (e.t !== 'stairs') continue;
+        trips++;
+        // (but straight back to a teammate to revive, as it should)
+        if (m.time - last[e.f] < 1.5 && m.fighters[e.f].ai?.goal !== 'revive') quick.push(`seed ${seed} egg ${e.f} at ${m.time.toFixed(1)}`);
+        last[e.f] = m.time;
+      }
+    }
+  }
+  assert.ok(trips > 10, `they take the stairs (${trips})`);
+  assert.deepEqual(quick, []);
+});
+
+test('the scene draws each ghillie suit and each pair of dizzy stars once a frame, counted afresh every frame', () => {
+  const src = readFileSync(join(import.meta.dirname, '..', 'src', 'os', 'arcade', 'games', 'scramble', 'scene.ts'), 'utf8');
+  const keys = [...src.match(/const drawn = \{([^}]*)\}/)![1].matchAll(/(\w+):/g)].map((k) => k[1]);
+  const reset = src.match(/(drawn\.\w+ = )+0;/)![0];
+  assert.ok(keys.includes('ghillies') && keys.includes('dazed'));
+  for (const k of keys) assert.ok(reset.includes(`drawn.${k} =`), `drawn.${k} is reset each frame`);
+});
+
+import { damp } from '../src/os/arcade/games/scramble/gl.ts';
+
+test('an egg back in sight is drawn in its pose as it is now, not easing over from when it went out of sight', () => {
+  // (a hidden egg's pose isn't worked out: one knocked down in a bush, or off screen, would get up and fall over again)
+  const src = readFileSync(join(import.meta.dirname, '..', 'src', 'os', 'arcade', 'games', 'scramble', 'scene.ts'), 'utf8');
+  const body = src.slice(src.indexOf('function syncEgg('), src.indexOf('\n  }\n', src.indexOf('function syncEgg(')));
+  assert.ok(body.indexOf('const back = shown && !v.root.visible;') >= 0 && body.indexOf('const back') < body.indexOf('v.root.visible = shown;'));
+  assert.match(body, /const ease = back \? Infinity : dt;/);
+  const eased = [...body.matchAll(/v\.(\w+) = damp\(v\.\w+, [^;]*, (\w+)\);/g)].map((x) => [x[1], x[2]]);
+  assert.deepEqual(eased.map((x) => x[0]).sort(), ['bend', 'down', 'lean', 'stride']);
+  for (const [k, by] of eased) assert.equal(by, 'ease', `v.${k} snaps when back in sight`);
+  assert.equal(damp(0, 1, 14, Infinity), 1);
+});
+
+import * as THREE from 'three';
+
+test("the scene's box for eggs in view takes in every egg the camera sees, up high or on the ground, on any screen", () => {
+  // the scene's own lines: the frame's reach per meter back, and the box
+  const src = readFileSync(join(import.meta.dirname, '..', 'src', 'os', 'arcade', 'games', 'scramble', 'scene.ts'), 'utf8');
+  const line = (re: RegExp) => re.exec(src)![1];
+  const consts = ['TILT', 'FOV', 'HALF_FOV', 'FRAME_N', 'FRAME_S', 'FRAME_W'].map((k) => `const ${k} = ${line(new RegExp(`\\nconst ${k} = ([^;]+);`))};`).join('\n');
+  const box = ['eggN', 'eggS', 'eggW'].map((k) => `const ${k} = ${line(new RegExp(`const ${k} = ([^;]+);`))};`).join('\n');
+  const rule = line(/const inView = ([^;]+);/);
+  const inView = new Function('f', 'cam', 'dist', 'aspect', `${consts}\n${box}\nreturn ${rule};`) as (f: { x: number; y: number; z: number }, cam: { x: number; z: number }, dist: number, aspect: number) => boolean;
+  const FOV = 42;
+  const rng = rng32(17);
+  let seen = 0;
+  for (const aspect of [0.46, 0.75, 1, 1.78, 2.2]) {
+    for (const view of [14, 22, 34, 54]) {
+      // as the scene sets its camera up
+      const t = Math.tan(((FOV / 2) * Math.PI) / 180);
+      const dist = aspect >= 1 ? view / t : view / (aspect * t);
+      const tilt = (58 * Math.PI) / 180;
+      const cam = new THREE.PerspectiveCamera(FOV, aspect, 0.5, 2000);
+      cam.position.set(0, Math.sin(tilt) * dist, Math.cos(tilt) * dist);
+      cam.lookAt(0, 0, 0);
+      cam.updateMatrixWorld();
+      const v = new THREE.Vector3();
+      for (let i = 0; i < 6000; i++) {
+        const f = { x: (rng() - 0.5) * 6 * view * Math.max(1, aspect), z: (rng() - 0.5) * 8 * view, y: rng() < 0.5 ? rng() * 10 : rng() * BUS_Y };
+        // its feet, its middle, the top of its hat, its glider's canopy
+        const on = [0, 1, 2.2, 2.6].some((h) => {
+          v.set(f.x, f.y + h, f.z).project(cam);
+          return Math.abs(v.x) < 1 && Math.abs(v.y) < 1 && v.z < 1;
+        });
+        if (!on) continue;
+        seen++;
+        assert.ok(inView(f, { x: 0, z: 0 }, dist, aspect), `aspect ${aspect}, view ${view}: an egg ${f.y.toFixed(1)} m up at ${f.x.toFixed(1)}, ${f.z.toFixed(1)} is on screen`);
+      }
+    }
+  }
+  assert.ok(seen > 10000, `${seen}`);
+});
+
+test('online over a lossy link that reorders fast packets, no screen sees an egg blink out or in, go back up in the air or onto the bus, or jump', () => {
+  const players: Player[] = Array.from({ length: 4 }, (_, seat) => ({ seat, name: `P${seat + 1}` }));
+  const rng = rng32(25 * 7 + 1);
+  const host = hostMatch(players, 0, 25, 'hard', MAX_FIGHTERS, COUNTDOWN + 1.2);
+  type C = { me: Me; s: Session; m: Match | null; inbox: { at: number; from: number; d: unknown }[]; lastRel: number };
+  const clients: C[] = players.map((p) => ({ me: { seat: p.seat, isHost: p.seat === 0, round: 1 }, s: newSession(p.seat === 0, p.seat === 0 ? host.roster : []), m: p.seat === 0 ? host.match : null, inbox: [], lastRel: 0 }));
+  autopilot(host.match, host.match.fighters[host.match.me]);
+  let now = 0;
+  let passed = 0;
+  const post = (from: C, d: object, fast: boolean, only?: number) => {
+    const to = from.me.isHost ? clients.filter((c) => c !== from && (only === undefined || c.me.seat === only)) : [clients[0]];
+    for (const c of to) {
+      if (fast && rng() < 0.15) continue;
+      // each fast packet takes its own time, so they pass each other; the rest keep their order
+      let at = now + 0.04 + rng() * 0.1;
+      if (!fast) at = c.lastRel = Math.max(c.lastRel, at);
+      if (c.inbox.length && at < c.inbox[c.inbox.length - 1].at) passed++;
+      c.inbox.push({ at, from: from.me.seat, d: JSON.parse(JSON.stringify(d)) });
+      c.inbox.sort((a, b) => a.at - b.at);
+    }
+  };
+  const join = (seat: number) => (seed: number, level: Level, time: number, roster: number[], mode: Mode, teams: number[] | null) => {
+    const m = guestMatch(players, seat, seed, level, time, roster, mode, teams);
+    autopilot(m, m.fighters[m.me]);
+    return m;
+  };
+  // the host's screen and two guests', each following its own egg (or, once out, the egg it watches), drawing what the
+  // scene would: in view, and seen through bushes, flour, ghillie suits, roofs and doorways as held by seenStep
+  type Egg = { on: boolean; run: number; prev: number; seen: Seen; x: number; z: number; phase: string; deep: boolean; flips: number[] };
+  const screens = clients.slice(0, 3).map(() => ({ eye: -1, eggs: new Map<number, Egg>() }));
+  const bad: string[] = [];
+  let frames = 0;
+  let hidden = 0;
+  const limit = stormEnd(host.match.map.storm) + 40;
+  let tickAt = 0;
+  while (now < limit && !host.match.ended) {
+    now += DT;
+    for (const c of clients) {
+      while (c.inbox.length && c.inbox[0].at <= now) {
+        const msg = c.inbox.shift()!;
+        c.m = receive(c.s, c.m ?? createMatch({ seed: 1, role: 'guest', level: 'normal', entrants: [], me: -1 }), c.me, msg.from, msg.d, join(c.me.seat), now);
+      }
+      if (!c.s.synced || !c.m) continue;
+      step(c.m, DT);
+      for (const e of c.m.events.splice(0)) share(c.s, e, c.me.seat);
+      for (const p of flush(c.s, 1, DT)) post(c, p, false);
+    }
+    if (now >= tickAt) {
+      tickAt += TICK_MS / 1000;
+      for (const c of clients) {
+        if (!c.m) continue;
+        const mine = c.m.fighters[c.m.me];
+        if (mine?.phase === 'out') c.s.watch = c.m.fighters[mine.by]?.phase === 'ground' ? mine.by : (c.m.fighters.find((f) => f.phase !== 'out')?.id ?? c.m.me);
+        for (const o of tick(c.s, c.m, c.me, players.map((p) => p.seat), now)) post(c, o.d, o.fast, o.to);
+      }
+    }
+    screens.forEach((sc, k) => {
+      const c = clients[k];
+      const m = c.m;
+      if (!m || !c.s.synced) return;
+      const eye = m.fighters[m.me].phase !== 'out' ? m.me : c.s.watch;
+      const focus = m.fighters[eye];
+      const fresh = eye !== sc.eye;
+      sc.eye = eye;
+      for (const f of m.fighters) {
+        if (f.kind !== 'remote') continue;
+        let e = sc.eggs.get(f.id);
+        if (!e) sc.eggs.set(f.id, (e = { on: false, run: 0, prev: 0, seen: { on: true, t: 0, since: 0 }, x: f.x, z: f.z, phase: f.phase, deep: isDeep(f.x), flips: [] }));
+        // anywhere: back up in the air (not off a bounce pad) or onto the bus once off it, or down a stairway and straight back up
+        const pad = m.map.pads.some((p) => Math.hypot(p.x - e.x, p.z - e.z) < 5);
+        if (e.phase === 'ground' && f.phase === 'drop' && f.y > 3 && !pad) bad.push(`${k}: egg ${f.id} back up in the air at ${m.time.toFixed(1)}`);
+        if (e.phase !== 'bus' && f.phase === 'bus') bad.push(`${k}: egg ${f.id} back on the bus at ${m.time.toFixed(1)}`);
+        if (e.phase === 'ground' && f.phase === 'ground' && e.deep !== isDeep(f.x)) {
+          e.flips = e.flips.filter((t) => now - t < 1).concat(now);
+          if (e.flips.length > 1) bad.push(`${k}: egg ${f.id} down the stairs and straight back at ${m.time.toFixed(1)}`);
+        }
+        const near = !!focus && focus.phase === 'ground' && f.phase === 'ground' && Math.abs(f.x - focus.x) < 20 && Math.abs(f.z - focus.z) < 10;
+        // a jump on screen
+        if (near && e.phase === 'ground' && e.deep === isDeep(f.x) && Math.hypot(f.x - e.x, f.z - e.z) > 2) bad.push(`${k}: egg ${f.id} jumped ${Math.hypot(f.x - e.x, f.z - e.z).toFixed(1)} m at ${m.time.toFixed(1)}`);
+        Object.assign(e, { x: f.x, z: f.z, phase: f.phase, deep: isDeep(f.x) });
+        if (!focus || focus.phase !== 'ground') continue;
+        const peek = focus.inside < 0 ? peekAt(m.map, focus.x, focus.z, (i) => shut(m, i)) : -1;
+        const inView = Math.abs(f.x - focus.x) < 24 && f.z - focus.z > -16 - f.y && f.z - focus.z < 12 + f.y;
+        const walled = inView && peek >= 0 && f.inside === peek && !clearLine(m, focus.x, focus.z, f.x, f.z);
+        const hide = f.phase !== 'out' && (walled || concealed(m, f, focus));
+        const shown = seenStep(e.seen, hide, DT, fresh || !inView || f.phase === 'bus' || (!hide && m.clock - f.firedAt < SEEN_HOLD.show));
+        if (!near || fresh) {
+          e.run = e.prev = 0;
+          continue;
+        }
+        frames++;
+        if (hide) hidden++;
+        if (shown === e.on) e.run++;
+        else {
+          // a run under 0.3 s between two of the other (one shown again by firing aside)
+          if (e.run > 0 && e.prev > 0 && e.run * DT < 0.3 && !(shown && m.clock - f.firedAt < 0.2)) bad.push(`${k}: egg ${f.id} ${e.on ? 'blinked in' : 'blinked out'} for ${e.run} frames at ${m.time.toFixed(1)}`);
+          e.prev = e.run;
+          e.run = 1;
+          e.on = shown;
+        }
+      }
+    });
+  }
+  assert.ok(passed > 1000, `fast packets passed each other (${passed})`);
+  assert.ok(frames > 5000 && hidden > 50, `eggs were on screen (${frames} frames) and hid (${hidden})`);
+  assert.deepEqual(bad, []);
 });

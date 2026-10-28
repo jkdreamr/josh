@@ -10,6 +10,7 @@ export const meta: GameMeta = {
   howTo: [
     'Scan the QR code on your Mac with your iPhone camera. Your phone becomes the controller.',
     'Move with the left stick. Press A to pass, B to shoot, X to cross, and Y for a through ball.',
+    'On attack, LB calls a teammate run. Hold LT to protect, tap LT for a skill move, or push the stick to its edge to sprint.',
     'Hold a button to charge your pass or shot. Choose Practice to learn the controls.',
     'In two-player matches, scan with a second phone to control the other club.',
     'Offside and cards are in play: time your runs and keep tackles clean.',

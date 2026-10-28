@@ -1,7 +1,7 @@
 // One client's side of an online Scramble match: what it does with each message from the room, what it sends on its
 // regular tick, the events it queues and flushes, and when the match is over. Pure, so a whole room can be simulated
 // in a test; index.tsx connects it to the real room.
-import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, MAX_TEAMS, TEAM_SIZE, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, ordinal, owned, step, teamCount, teamsLeft, type Entrant, type Ev, type Fighter, type Level, type Match, type Mode } from './logic.ts';
+import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, MAX_TEAMS, TEAM_SIZE, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, ordinal, owned, step, teamCount, teamsLeft, viewAt, type Entrant, type Ev, type Fighter, type Level, type Match, type Mode } from './logic.ts';
 import { BUS_Y, stormEnd } from './map.ts';
 import { actorOf, applyNet, endOf, guestState, hostState, packEvents, parsePacket, pieceEv, placesOf, stateKey, stateOf, toNet, type NetEv, type State } from './net.ts';
 
@@ -25,12 +25,18 @@ const DOWN_BY = 4 + BUS_Y / FALL + 4;
 
 /**
  * How far (along x and along z) from the egg a guest watches (its own, or the one it watches once its own is out) the
- * host reports each egg whenever it has changed: farther than anyone sees on the ground, and gliding down. Everything
- * else, and eggs still on the bus, goes every FAR_EVERY ticks; eggs that are out every OUT_EVERY (a guest takes one out
- * on its own a moment after the news of how never comes).
+ * host reports each egg whenever it has changed: farther than anyone sees on the ground without a scope, and gliding
+ * down, and at least as far as its screen may reach (see reachOf). Everything else, and eggs still on the bus, goes
+ * every FAR_EVERY ticks; eggs that are out every OUT_EVERY (a guest takes one out on its own a moment after the news
+ * of how never comes).
  */
 export const NEAR = 100;
 export const NEAR_GLIDE = 130;
+/**
+ * How far to the side a guest's screen may reach from the egg it follows: about three times what it shows up and down
+ * on the widest screen (2.2 to 1), with room to spare, so no egg it can see moves in jerks of FAR_EVERY ticks.
+ */
+export const reachOf = (f: Fighter) => Math.max(f.phase === 'ground' ? NEAR : NEAR_GLIDE, viewAt(f) * 3 + 10);
 export const FAR_EVERY = 6;
 export const OUT_EVERY = 15;
 
@@ -177,10 +183,23 @@ export type Session = {
   sent: Map<number, (string | undefined)[]>;
   /** Seats the host has just heard from for the first time: they hear what has been built so far. */
   fresh: Set<number>;
+  /**
+   * When each egg's last report was made, by egg: on the host a guest's count of its ticks, on a guest the host's
+   * match time. Reports go on a channel that keeps no order, so one older than this has been overtaken and is let go
+   * (it would put the egg back where it was, back up in the air or back on the other level for a moment). `newest` is
+   * the host's time in the newest report a guest has had.
+   */
+  stamps: Map<number, number>;
+  newest: number;
 };
 
+/** How far back (ticks on the host, seconds on a guest) a report counts as overtaken; anything older is a fresh start. */
+const OVERTAKEN = { ticks: 60, time: 4 };
+/** Whether a report stamped `at` is older than the last one (`last`) from the same place. */
+const overtaken = (at: number, last: number | undefined, window: number) => last !== undefined && at < last && last - at < window;
+
 export function newSession(synced: boolean, roster: number[] = []): Session {
-  return { synced, roster, states: new Map(), queue: [], flushT: 0, ticks: 0, end: null, endAt: -1, endSends: 0, reported: false, over: false, early: false, left: new Set(), heard: new Map(), firstTick: -1, lastTick: -1, watch: -1, watching: new Map(), sent: new Map(), fresh: new Set() };
+  return { synced, roster, states: new Map(), queue: [], flushT: 0, ticks: 0, end: null, endAt: -1, endSends: 0, reported: false, over: false, early: false, left: new Set(), heard: new Map(), firstTick: -1, lastTick: -1, watch: -1, watching: new Map(), sent: new Map(), fresh: new Set(), stamps: new Map(), newest: -Infinity };
 }
 
 /** Builds a guest's match from the host's first state. */
@@ -198,6 +217,10 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
     const fid = s.roster.indexOf(from);
     const f = m.fighters[fid];
     if (!f || f.seat !== from || f.kind !== 'remote') return m;
+    if (p.seq !== undefined) {
+      if (p.seq === s.stamps.get(fid) || overtaken(p.seq, s.stamps.get(fid), OVERTAKEN.ticks)) return m;
+      s.stamps.set(fid, p.seq);
+    }
     if (!s.heard.has(fid)) s.fresh.add(from);
     s.states.set(fid, p.state);
     s.heard.set(fid, clock);
@@ -211,19 +234,25 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
       s.roster = p.roster;
       s.synced = true;
     }
-    // keep our clock on the host's: the storm and the bus run on it
-    const diff = p.time - m.time;
-    if (Math.abs(diff) > 1) m.time = p.time;
-    else m.time += diff * 0.1;
+    // keep our clock on the host's: the storm and the bus run on it (by the newest report, not one overtaken)
+    const late = overtaken(p.time, s.newest, OVERTAKEN.time);
+    if (!late) {
+      s.newest = p.time;
+      const diff = p.time - m.time;
+      if (Math.abs(diff) > 1) m.time = p.time;
+      else m.time += diff * 0.1;
+    }
     for (const [fid, st] of p.states) {
       const f = m.fighters[fid];
-      if (f && f.kind === 'remote') applyState(m, f, st);
+      if (!f || f.kind !== 'remote' || overtaken(p.time, s.stamps.get(fid), OVERTAKEN.time)) continue;
+      s.stamps.set(fid, p.time);
+      applyState(m, f, st);
     }
     // the windows the host has broken: quietly, since any news of them has come and gone
     for (const i of p.glass ?? []) if (i < m.broken.length) m.broken[i] = true;
     // and its doors, all of them (shut past the end of the list), but not one whose news came in just now: this
     // report may have set out before it
-    if (p.doors)
+    if (p.doors && !late)
       for (let i = 0; i < m.doors.length; i++) {
         const st = p.doors[i] ?? 0;
         if (m.doors[i] !== st && m.clock - m.doorAt[i] > 1) m.doors[i] = st;
@@ -269,7 +298,7 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
   const fast = s.ticks % 5 !== 0;
   if (!me.isHost) {
     const f = m.fighters[m.me];
-    return f ? [{ d: guestState(me.round, stateOf(f), f.phase === 'out' ? s.watch : -1), fast }] : [];
+    return f ? [{ d: guestState(me.round, stateOf(f), f.phase === 'out' ? s.watch : -1, s.ticks), fast }] : [];
   }
   if (s.firstTick < 0) s.firstTick = clock;
   // the host itself was frozen a while: what it hadn't read of the guests' reports while it was counts as heard
@@ -320,7 +349,7 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
 export function statesFor(m: Match, g: Fighter, states: (State | undefined)[], keys: (string | undefined)[], sent: (string | undefined)[], tick: number, watch: number): [number, State][] {
   // whoever its own egg is out, the egg it watches (or, until it says, everyone)
   const at = g.phase === 'out' ? m.fighters[watch] : g;
-  const near = at?.phase === 'ground' ? NEAR : NEAR_GLIDE;
+  const near = at ? reachOf(at) : NEAR;
   const list: [number, State][] = [];
   for (const f of m.fighters) {
     const st = states[f.id];
@@ -365,6 +394,25 @@ export function ending(s: Session, m: Match, me: Me, clock: number): 'report' | 
 
 /** The longest step the match takes without frames, the same as a frame's. */
 const STEP_MAX = 1 / 20;
+/** The most of a slow frame made up online (a longer stall is let go, as any frame longer than a step is solo). */
+export const LATE_MAX = 0.2;
+
+/**
+ * How far a frame moves an online match on: the loop's `dt`, or, when the loop cut the frame short (it took longer
+ * than a step may), all the time `since` the last one, up to LATE_MAX. The match keeps the room's time on a slow
+ * phone, rather than our egg and the ones we see falling behind everyone else's.
+ */
+export const frameTime = (dt: number, since: number) => (dt >= STEP_MAX - 1e-6 ? Math.max(dt, Math.min(LATE_MAX, since)) : dt);
+
+/** Moves the match on by `seconds` in steps no longer than a frame's. */
+export function stepIn(m: Match, seconds: number) {
+  let left = seconds;
+  do {
+    const d = Math.min(STEP_MAX, left);
+    step(m, d);
+    left -= d;
+  } while (left > 1e-4);
+}
 
 /**
  * Whether the timer moves the match on instead of the frame loop: a hidden tab gets no frames, and a host who is done

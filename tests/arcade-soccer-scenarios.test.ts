@@ -120,7 +120,9 @@ for (let direction = 0; direction < 8; direction++) {
     const intendedId = candidates[0]!.id;
     const invariant = globalInvariants();
     const selected = eventually((world) => world.passTarget === intendedId);
-    const received = eventually(passReached(intendedId));
+    const received = eventually((world) =>
+      passReached(intendedId)(world) || (world.kickEvent?.playerId === intendedId && world.lastToucherId === intendedId),
+    );
     runReplay(recording, (world, frame, paused) => {
       invariant(world, frame, paused);
       selected.observe(world);

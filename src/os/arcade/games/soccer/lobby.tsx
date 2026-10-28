@@ -353,7 +353,7 @@ function HostLobby({ online, postMatch = false }: { online: NonNullable<ReturnTy
             {competition !== 'cup' && (
               <>
                 <Segmented label="setup" value={mode} options={lobbySetupOptions(competition).map((arrangement) => [arrangement, modeLabels[arrangement]] as const)} onChange={(value) => { setReady([false, false]); setCountdown(null); setMode(value); }} />
-                {mode === 'practice' && <p className="g-soccer-practice-note">Learn the controls with one phone.</p>}
+                {mode === 'practice' && <p className="g-soccer-practice-note">Learn the controls with one phone: LB calls a run, LT protects (tap for skill), and pushing the stick to its edge sprints.</p>}
               </>
             )}
             <div className={`g-soccer-lobby-clubs${def.opponentPick ? '' : ' is-single'}`}>

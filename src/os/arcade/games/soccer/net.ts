@@ -51,7 +51,7 @@ export class InputFreshness {
 export function neutralCommand(): ControlCommand {
   return { move: { x: 0, z: 0 }, aim: { x: 0, z: 0 }, action: null, pressed: false,
     heldAction: null, sprint: false, contain: false, jockey: false, autoJockey: false,
-    press: false, finesseHeld: false, switchNearest: false, switchDir: null };
+    press: false, finesseHeld: false, switchNearest: false, switchDir: null, callRun: false };
 }
 
 const shortText = (value: unknown, max = 160) => typeof value === 'string' && value.length <= max;
@@ -115,6 +115,12 @@ function validWorld(value: unknown): value is World {
     || (w.stealWinnerId !== undefined && w.stealWinnerId !== null
       && (!Number.isInteger(w.stealWinnerId) || w.stealWinnerId < 0 || w.stealWinnerId >= PLAYER_COUNT))
     || !validRules(w.rules)) return false;
+  if (w.runCall !== undefined && w.runCall !== null) {
+    const runCall = w.runCall as { playerId?: unknown; until?: unknown; target?: { x?: unknown; z?: unknown } | null; struck?: unknown };
+    if (!Number.isInteger(runCall.playerId) || (runCall.playerId as number) < 0 || (runCall.playerId as number) >= PLAYER_COUNT
+      || !inRange(runCall.until, 0, 10) || !runCall.target || !Number.isFinite(runCall.target.x)
+      || !Number.isFinite(runCall.target.z) || typeof runCall.struck !== 'boolean') return false;
+  }
   const kickEvent = w.kickEvent;
   if (w.carrierId !== undefined && w.carrierId !== null && !w.players.some((p) => p.id === w.carrierId)) return false;
   if (w.lastToucherId !== undefined && w.lastToucherId !== null && !w.players.some((p) => p.id === w.lastToucherId)) return false;
@@ -148,7 +154,8 @@ export function movePacket(round: number, seq: number, seat: number, command: Co
     | (command.action === 'finesse' ? 256 : 0)
     | (command.action === 'skill' ? 512 : 0)
     | (command.jockey ? 1024 : 0) | (command.autoJockey ? 2048 : 0) | (command.contain ? 4096 : 0)
-    | (command.switchNearest ? 8192 : 0) | (command.finesse || command.finesseHeld ? 16384 : 0);
+    | (command.switchNearest ? 8192 : 0) | (command.finesse || command.finesseHeld ? 16384 : 0)
+    | (command.callRun ? 32768 : 0);
   return {
     t: 'soccer', k: 'mv', r: round, seq, seat,
     x: Math.round(command.move.x * 100) / 100, z: Math.round(command.move.z * 100) / 100,
@@ -230,7 +237,7 @@ export function parsePacket(value: unknown): SoccerPacket | null {
     if (!Number.isInteger(p.seat) || (p.seat as number) < 0 || (p.seat as number) > 3 || !quantized(p.x) || !quantized(p.z)
       || !quantized(p.ax) || !quantized(p.az) || !inRange(p.power, 0, 1)
       || (p.e !== undefined && (!Number.isSafeInteger(p.e) || (p.e as number) < 0))
-      || !Number.isInteger(p.buttons) || (p.buttons as number) < 0 || (p.buttons as number) > 32767 || ((p.buttons as number) & ~32767) !== 0
+      || !Number.isInteger(p.buttons) || (p.buttons as number) < 0 || (p.buttons as number) > 65535 || ((p.buttons as number) & ~65535) !== 0
       || ((p.sx !== undefined || p.sz !== undefined) && (!quantized(p.sx) || !quantized(p.sz)))
       || !Number.isInteger(p.held) || (p.held as number) < 0 || (p.held as number) > 527 || ((p.held as number) & ~527) !== 0) return null;
     return { t: 'soccer', k: 'mv', r: p.r as number, seq: p.seq as number, seat: p.seat as number, x: p.x as number, z: p.z as number, ax: p.ax as number, az: p.az as number, power: p.power as number, buttons: p.buttons as number, held: p.held as number, ...(p.e === undefined ? {} : { e: p.e as number }), ...(p.sx === undefined ? {} : { sx: p.sx as number, sz: p.sz as number }) };
@@ -261,7 +268,7 @@ export function commandFromPacket(packet: MovePacket): ControlCommand {
   const held = packet.held;
   const heldAction = held & 2 ? 'shoot' : held & 1 ? 'pass' : held & 4 ? 'through' : held & 8 ? 'lob' : held & 512 ? 'skill' : null;
   return { move: { x: packet.x, z: packet.z }, sprint: !!(buttons & 64), action, heldAction, press: !!(buttons & 128), pressed: !!action, power: packet.power, aim: { x: packet.ax, z: packet.az },
-    jockey: !!(buttons & 1024), autoJockey: !!(buttons & 2048), contain: !!(buttons & 4096), switchNearest: !!(buttons & 8192), finesse: !!(buttons & 16384), finesseHeld: !!(buttons & 16384),
+    jockey: !!(buttons & 1024), autoJockey: !!(buttons & 2048), contain: !!(buttons & 4096), switchNearest: !!(buttons & 8192), finesse: !!(buttons & 16384), finesseHeld: !!(buttons & 16384), callRun: !!(buttons & 32768),
     switchDir: packet.sx === undefined ? null : { x: packet.sx, z: packet.sz! } };
 }
 
@@ -269,6 +276,7 @@ export function mergeRemoteCommand(previous: ControlCommand | undefined, current
   return { ...current,
     ...(previous?.pressed && !current.pressed ? { action: previous.action, pressed: true, power: previous.power, aim: previous.aim } : {}),
     switchNearest: current.switchNearest || previous?.switchNearest,
+    callRun: current.callRun || previous?.callRun,
     switchDir: current.switchDir ?? previous?.switchDir,
   };
 }
@@ -293,7 +301,10 @@ export function acceptMovePacket(
   if (!freshSequence && !freshEdge) return { seat, command: null };
   if (!hasEdge) {
     const nextSeat = { ...seat, seq: packet.seq, held: incoming.heldAction ?? null, pressUsed: incoming.heldAction == null ? false : seat.pressUsed };
-    return { seat: nextSeat, command: mergeRemoteCommand(previous, incoming) };
+    incoming.callRun = false;
+    const command = mergeRemoteCommand(previous, incoming);
+    command.callRun = false;
+    return { seat: nextSeat, command };
   }
 
   const held = incoming.heldAction ?? null;
@@ -309,6 +320,7 @@ export function acceptMovePacket(
     power: incoming.power,
     aim: incoming.aim,
     switchNearest: incoming.switchNearest,
+    callRun: incoming.callRun,
     switchDir: incoming.switchDir,
     ...(freshEdge ? { heldAction: incoming.heldAction } : {}),
   };
@@ -316,6 +328,7 @@ export function acceptMovePacket(
     current.action = null;
     current.pressed = false;
     current.switchNearest = false;
+    current.callRun = false;
     current.switchDir = null;
   }
   if (defensiveRise && !droppedRelease) {
@@ -330,17 +343,20 @@ export function acceptMovePacket(
     held: freshSequence || freshEdge ? held : seat.held,
     pressUsed: held === null ? false : defensiveRise || seat.pressUsed,
   };
-  const hasAction = current.action != null || current.pressed || current.switchNearest || current.switchDir != null
+  const hasAction = current.action != null || current.pressed || current.switchNearest || current.switchDir != null || current.callRun
     || freshSequence || freshEdge && (defensiveRise || incoming.heldAction !== undefined);
-  return { seat: nextSeat, command: hasAction ? mergeRemoteCommand(previous, current) : null };
+  const command = hasAction ? mergeRemoteCommand(previous, current) : null;
+  if (command) command.callRun = freshEdge && incoming.callRun && !droppedRelease;
+  return { seat: nextSeat, command };
 }
 
 export function consumeCommand(command: ControlCommand): ControlCommand {
-  return { ...command, action: null, pressed: false, switchNearest: false, switchDir: null };
+  return { ...command, action: null, pressed: false, switchNearest: false, switchDir: null, callRun: false };
 }
 
 export function cloneSnapshot(world: World) {
-  return JSON.parse(JSON.stringify(world)) as Omit<World, 'seed'> & { seed: number };
+  return JSON.parse(JSON.stringify(world, (key, value) =>
+    key === 'passStrikeAt' || key === 'passAim' ? undefined : value)) as Omit<World, 'seed'> & { seed: number };
 }
 
 export const SNAPSHOT_MAX_BYTES = 8 * 1024 - 256;
@@ -348,6 +364,7 @@ const snapshotEncoder = new TextEncoder();
 
 export function trimSnapshot(world: World): World {
   const serialize = (decimals: number, dropHostFields = false) => JSON.stringify(world, (key, value) => {
+    if (key === 'passStrikeAt' || key === 'passAim') return undefined;
     if (dropHostFields && key === 'buffer') return null;
     if (dropHostFields && key === 'touchCd') return undefined;
     return typeof value === 'number' && Number.isFinite(value) && !Number.isInteger(value)

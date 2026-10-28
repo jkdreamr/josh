@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createWorld, distance, setRestart, stepWorld, STEP, type Restart, type World } from '../src/os/arcade/games/soccer/logic.ts';
-import { deliveryVelocity, resolveShootoutKick, setPieceLabels, shootoutScore, shootoutWinner, startShootout, stepSetPieceRun, takeSetPiece } from '../src/os/arcade/games/soccer/setpieces.ts';
+import { createWorld, distance, restartTaker, setRestart, stepWorld, STEP, type Restart, type World } from '../src/os/arcade/games/soccer/logic.ts';
+import { deliveryVelocity, kickoffPrompt, phoneStoppagePrompt, resolveShootoutKick, setPieceLabels, shootoutScore, shootoutWinner, startShootout, stepSetPieceRun, takeSetPiece } from '../src/os/arcade/games/soccer/setpieces.ts';
 import { stepBall } from '../src/os/arcade/games/soccer/physics.ts';
 import { computeAI } from '../src/os/arcade/games/soccer/ai.ts';
 import { cloneSnapshot, parsePacket } from '../src/os/arcade/games/soccer/net.ts';
@@ -31,6 +31,18 @@ test('phone snapshots preserve pending deliveries, open play and shootouts',()=>
   const pens=snapshot();
   assert.equal(pens?.k,'s');
   if(pens?.k==='s')assert.deepEqual(pens.state.shootout,w.shootout);
+});
+test('human kickoff instructions stay explicit for the phone and Mac banner', () => {
+  const world = createWorld();
+  const taker = restartTaker(world);
+  taker.human = true;
+  const teammate = world.players.find((player) => player.team === taker.team && player.id !== taker.id)!;
+
+  assert.equal(kickoffPrompt(world), 'Kick off · Press A to kick off');
+  assert.equal(phoneStoppagePrompt(world, taker.id), 'Kick off · aim with stick · Press A to kick off');
+  assert.equal(phoneStoppagePrompt(world, teammate.id), 'Kick off · waiting for the taker');
+  taker.human = false;
+  assert.equal(kickoffPrompt(world), null);
 });
 function ticks(w: World, n: number) { for(let i=0;i<n;i++) stepWorld(w,STEP); }
 function goalKickWithAttackers(zs: [number, number], seed = 1234) {

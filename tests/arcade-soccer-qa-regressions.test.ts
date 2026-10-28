@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import { join } from 'node:path';
 import { isPhoneControllerInvite } from '../src/os/arcade/apps.ts';
 import { BALL_RADIUS, countsAsGoal, createBall, stepBall } from '../src/os/arcade/games/soccer/physics.ts';
-import { createWorld, FIELD, STEP, stepWorld, type World } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, distance, FIELD, restartTaker, STEP, stepWorld, type World } from '../src/os/arcade/games/soccer/logic.ts';
 import { reconcileControllers } from '../src/os/arcade/games/soccer/input.ts';
 import { cloneSnapshot, parsePacket } from '../src/os/arcade/games/soccer/net.ts';
 import { missingPhoneSeats } from '../src/os/arcade/games/soccer/seats.ts';
@@ -123,6 +123,14 @@ test('kickoff after a goal fully resets the ball', () => {
   assert.deepEqual(world.ball, {
     x: 0, y: 0.11, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false,
   });
+  assert.equal(world.restart, 'kickoff');
+  assert.equal(world.restartTeam, 1);
+  const taker = restartTaker(world);
+  assert.equal(taker.team, 1);
+  assert.ok(distance(taker, { x: 0, z: 0 }) <= 2.01);
+  assert.ok(world.players.every((player) => player.vx === 0 && player.vz === 0));
+  assert.ok(world.players.filter((player) => player.team === 0)
+    .every((player) => distance(player, { x: 0, z: 0 }) >= FIELD.centerRadius));
 });
 
 test('goal-kick and corner pushes keep every player in bounds and snapshots valid', () => {
