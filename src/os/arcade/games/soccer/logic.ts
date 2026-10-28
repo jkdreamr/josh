@@ -1091,6 +1091,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
     if (world.restart === 'kickoff' && !taker.human
       && world.players.some((player) => player.team === world.restartTeam && player.human && !player.sentOff)) {
       transferControl(world, world.restartTeam, taker.id);
+      return;
     }
     for (const p of world.players) {
       if (p.team === world.restartTeam && p.controlled) {

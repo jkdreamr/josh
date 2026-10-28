@@ -6,6 +6,7 @@
     "northshore"
   ],
   "mode": "cpu",
+  "cpuRestarts": true,
   "halfLength": 120,
   "humans": 1,
   "level": "normal",

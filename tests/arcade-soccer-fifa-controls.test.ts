@@ -96,6 +96,18 @@ function aiCommands(world: ReturnType<typeof createWorld>, tick: number) {
   return commands;
 }
 
+function matchAICommands(world: ReturnType<typeof createWorld>, tick: number) {
+  const byTeam = [
+    computeAI(world, 'normal', STEP, tick, 0, new Map<number, Command>()),
+    computeAI(world, 'normal', STEP, tick, 1, new Map<number, Command>()),
+  ] as const;
+  const commands = new Map<number, Command>();
+  for (const teamCommands of byTeam) {
+    for (const [id, command] of teamCommands) commands.set(id, command);
+  }
+  return { commands, byTeam };
+}
+
 function preparePhonePass(world: ReturnType<typeof createWorld>, seat: number, commands: Map<number, Command>) {
   const originalSentOff = world.players.map((player) => player.sentOff);
   const id = world.controlledSeats?.[seat];
@@ -370,6 +382,62 @@ test('active human teams take kickoff at the start, after goals, and in the seco
     assert.equal(world.controlledSeats?.[seat], taker.id);
     assertSeatInvariant(world);
   }
+});
+
+test('kickoff skips stale AI commands until the human acts or the timeout expires', () => {
+  const world = worldWithSeats(537, [null, 6, null, null]);
+  const taker = world.players.find((player) => player.team === 0 && player.slot === 'ST')!;
+  const runFrame = (frame: number) => {
+    const { commands, byTeam } = matchAICommands(world, frame);
+    if (frame === 0) assert.equal(byTeam[0].get(taker.id)?.action, 'pass');
+    else assert.equal(byTeam[0].has(taker.id), false, 'computeAI must skip the human taker');
+    const humanId = world.controlledSeats?.[1];
+    assert.notEqual(humanId, null);
+    assert.notEqual(humanId, undefined);
+    commands.set(humanId!, { move: { x: 0, z: 0 } });
+    stepWorld(world, STEP, commands);
+    assert.equal(world.kickEvent, null, `no AI kick on frame ${frame}`);
+    assert.equal(world.players.filter((player) => player.team === 0 && player.human).length, 1);
+    assert.equal(taker.human, true);
+    assert.equal(world.controlledSeats?.[1], taker.id);
+    assertSeatInvariant(world);
+  };
+
+  for (let frame = 0; frame < 400; frame++) runFrame(frame);
+  assert.equal(world.restart, 'kickoff');
+  assert.ok(world.restartClock < 10);
+  for (let frame = 400; world.restart !== null && frame < 700; frame++) runFrame(frame);
+  assert.equal(world.restart, null);
+  assert.equal(world.phase, 'live');
+  assert.ok(world.restartClock >= 10);
+  assert.equal(world.kickEvent, null);
+});
+
+test('the human kickoff taker can pass with the requested aim and release once', () => {
+  const world = worldWithSeats(538, [null, 6, null, null]);
+  const taker = world.players.find((player) => player.team === 0 && player.slot === 'ST')!;
+  const first = matchAICommands(world, 0);
+  assert.equal(first.byTeam[0].get(taker.id)?.action, 'pass');
+  first.commands.set(world.controlledSeats![1]!, { move: { x: 0, z: 0 } });
+  stepWorld(world, STEP, first.commands);
+  assert.equal(world.kickEvent, null);
+  assert.equal(world.controlledSeats?.[1], taker.id);
+
+  for (const player of world.players) player.sentOff = player.id !== taker.id;
+  const next = matchAICommands(world, 1);
+  assert.equal(next.byTeam[0].has(taker.id), false);
+  const aim = { x: 1, z: 0 };
+  next.commands.set(taker.id, { move: { x: 0, z: 0 }, action: 'pass', pressed: true, aim, power: 0.45 });
+  stepWorld(world, STEP, next.commands);
+  assert.equal(world.kickEvent?.playerId, taker.id);
+  assert.equal(world.kickEvent?.action, 'pass');
+  assert.ok(world.ball.vx > 0);
+  assert.ok(Math.abs(world.ball.vz) < world.ball.vx * 0.1, 'pass travels along the +x aim');
+
+  const release = matchAICommands(world, 2);
+  release.commands.set(taker.id, { move: { x: 0, z: 0 }, action: null, pressed: false });
+  stepWorld(world, STEP, release.commands);
+  assert.equal(world.kickEvent, null);
 });
 
 test('a teammate who collects a loose ball receives the single human seat', () => {
