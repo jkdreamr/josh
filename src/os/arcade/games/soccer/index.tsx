@@ -1290,7 +1290,7 @@ function PadStick({ movement, onChange }: { movement: { current: { x: number; z:
       base.current.style.left = `${origin.current.x}px`;
       base.current.style.top = `${origin.current.y}px`;
     }
-    if (knob.current) knob.current.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+    if (knob.current) knob.current.style.transform = `translate(calc(-50% + ${offset.x}px), calc(-50% + ${offset.y}px))`;
   };
   const release = (event: PointerEvent<HTMLDivElement>) => {
     if (pointer.current !== event.pointerId) return;
