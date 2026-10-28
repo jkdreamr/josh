@@ -218,6 +218,7 @@ function emitPerformance(reporter: Reporter, now: number): void {
       ...(reporter.role === 'display' ? {
         fps50: frame.fps50, fps5: frame.fps5, longMs: frame.longMs,
         tier: reporter.tier, dpr: reporter.dpr,
+        ...(rx ? { loss: missing / (rx + missing), rx } : {}),
       } : {
         ...(latency.inN && latency.in50 !== undefined && latency.in95 !== undefined
           ? { in50: latency.in50, in95: latency.in95, inN: latency.inN }
