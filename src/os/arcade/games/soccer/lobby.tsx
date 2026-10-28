@@ -325,7 +325,7 @@ function HostLobby({ online, postMatch = false }: { online: NonNullable<ReturnTy
           <div className="g-soccer-phone-lobby-status">
             <p className="g-soccer-lobby-status" role="status">{statusLine}</p>
             <div className="g-soccer-phone-connections" role="status">
-              {phoneStatus && <span>{phoneStatus}</span>}
+              {phoneStatus && phoneStatus.split(' · ').map((status, index) => <span key={index}>{status}</span>)}
               {competition === 'online' && <span className={guestMac ? '' : 'is-waiting'}>{guestMac ? 'Other Mac connected' : 'Waiting for the other Mac'}</span>}
               {competition === 'online' && <span className={sideOnePhones ? '' : 'is-waiting'}>{sideOnePhones ? 'Other phone connected' : 'Other phone optional'}</span>}
               {competition !== 'online' && phonesNeeded === 2 && phoneCount === 1 && <span className="is-waiting">Waiting for a second phone</span>}

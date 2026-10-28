@@ -106,13 +106,10 @@ export function PhonePracticeStrip({ status, onPick }: { status: PhonePracticeSt
           <button type="button" onClick={() => onPick('skip')}>Skip</button>
         </div>
       ) : drill && (
-        <>
-          <div className="g-soccer-phone-practice-row">
-            <p>{controlText(status.done ? 'done! tap {A} to go again' : status.prompt, 'phone')}</p>
-            <strong>{status.score}{status.best ? <small> best {status.best}</small> : null}</strong>
-          </div>
-          <DrillPicker drill={drill.id} onPick={onPick} />
-        </>
+        <div className="g-soccer-phone-practice-row">
+          <p>{controlText(status.done ? 'done! tap {A} to go again' : status.prompt, 'phone')}</p>
+          <strong>{status.score}</strong>
+        </div>
       )}
     </div>
   );

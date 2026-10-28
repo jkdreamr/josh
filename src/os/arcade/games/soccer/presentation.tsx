@@ -1,34 +1,15 @@
-import { createContext, memo, useContext, useEffect, useRef, useState, type CSSProperties } from 'react';
-import { CLUBS, broadcastClock, passAccuracy, playerName, possessionShare, type Club as BroadcastClub, type MatchStats, type TickerItem, type TeamStats } from './broadcast.ts';
+import { createContext, memo, useContext, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { CLUBS, broadcastClock, matchClubs, passAccuracy, playerName, possessionShare, type MatchStats, type TickerItem, type TeamStats } from './broadcast.ts';
 import { FORMATION, jerseyNumber, teamOf, type World } from './logic.ts';
 import { Crest } from './crest.tsx';
-import { clubById, DEFAULT_CLUBS, type Club, type Kit } from './teams.ts';
+import type { Club, Kit } from './teams.ts';
 
 export type Presentation = 'intro' | 'live' | 'half-time' | 'full-time';
 export type MatchData = { world: World | null; stats: MatchStats | null };
 type MatchRef = { current: MatchData | null };
 export const MatchContext = createContext<MatchRef | null>(null);
 
-function matchClubs(world: World | null | undefined): [BroadcastClub, BroadcastClub] {
-  const ids = world?.clubs;
-  const club = (id: string): BroadcastClub => {
-    const selected = clubById(id);
-    return {
-      name: selected.name,
-      short: selected.short,
-      abbr: selected.short,
-      primary: selected.home.shirt,
-      secondary: selected.home.shorts,
-      roster: selected.players.map((player) => player.name.toUpperCase()),
-    };
-  };
-  return [
-    club(ids?.[0] ?? DEFAULT_CLUBS[0]),
-    club(ids?.[1] ?? DEFAULT_CLUBS[1]),
-  ];
-}
-
-export const Scoreboard = memo(function Scoreboard({ score0, score1, clock, added, half, clubs, kits }: {
+export const Scoreboard = memo(function Scoreboard({ score0, score1, clock, added, half, clubs, kits, children }: {
   score0: number;
   score1: number;
   clock: string;
@@ -36,6 +17,7 @@ export const Scoreboard = memo(function Scoreboard({ score0, score1, clock, adde
   half: 1 | 2;
   clubs?: readonly [Club, Club];
   kits?: { home: Kit; away: Kit };
+  children?: ReactNode;
 }) {
   const home = clubs?.[0];
   const away = clubs?.[1];
@@ -48,6 +30,7 @@ export const Scoreboard = memo(function Scoreboard({ score0, score1, clock, adde
       <div className="g-soccer-club g-soccer-away"><b>{away?.short ?? CLUBS[1].abbr}</b><i style={kits ? { backgroundColor: kits.away.shirt } : undefined} />{away && <Crest club={away} size={17} />}</div>
       <div className="g-soccer-clock"><b>{clock}</b>{added !== null && <em>+{added}</em>}</div>
       <small className="g-soccer-half">{half === 1 ? '1st half' : '2nd half'}</small>
+      {children}
     </div>
   );
 });
@@ -87,17 +70,18 @@ export const GoalBanner = memo(function GoalBanner({ statsVersion }: { statsVers
     return () => window.clearTimeout(timer);
   }, [goal?.id]);
   if (!goal) return null;
-  const clubs = matchClubs(match?.current?.world);
-  const club = clubs[goal.team === 1 ? 1 : 0];
-  const score = match?.current?.world?.score ?? [0, 0];
-  const scorer = goal.scorer === undefined ? 'unknown player' : playerName(goal.scorer);
+  const world = match?.current?.world;
+  const clubs = matchClubs(world);
+  const club = goal.team === 1 ? clubs[1] : clubs[0];
+  const score = world?.score ?? [0, 0];
+  const scorer = goal.scorer === undefined ? 'unknown player' : playerName(goal.scorer, world);
   return (
     <div key={goal.id} className={`g-soccer-goal-banner${goal.kind === 'own-goal' ? ' is-own-goal' : ''}`} style={{ '--g-soccer-goal': club.primary, '--g-soccer-goal-ink': club.secondary } as CSSProperties}>
       <div className="g-soccer-goal-word">{goal.kind === 'own-goal' ? 'own goal' : 'goal'}</div>
       <div className="g-soccer-goal-copy">
         <span>{goal.minute} · {club.short}</span>
         <b>{scorer}</b>
-        {goal.assist != null && <small>assist {playerName(goal.assist)}</small>}
+        {goal.assist != null && <small>assist {playerName(goal.assist, world)}</small>}
       </div>
       <strong>{clubs[0].abbr} {score[0]} - {score[1]} {clubs[1].abbr}</strong>
     </div>
@@ -134,18 +118,20 @@ export function PowerMeter({ power }: { power: number }) {
   );
 }
 
-export const PlayerTag = memo(function PlayerTag({ selectedId, stamina, state, power, playerName: selectedName, club }: {
+export const PlayerTag = memo(function PlayerTag({ selectedId, stamina, state, power, playerName: selectedName, club, slot }: {
   selectedId: number;
   stamina: number;
   state: string | null;
   power: number | null;
   playerName?: string;
   club?: Club;
+  /** Screen corner; defaults to the player's side (home left, away right). */
+  slot?: 'left' | 'right';
 }) {
   const team = teamOf(selectedId);
   const level = stamina > 0.6 ? 'high' : stamina > 0.3 ? 'mid' : 'low';
   return (
-    <div className={`g-soccer-player-tag ${team === 1 ? 'is-away' : 'is-home'}`}>
+    <div className={`g-soccer-player-tag ${(slot ?? (team === 1 ? 'right' : 'left')) === 'right' ? 'is-away' : 'is-home'} is-team-${team}`}>
       {club ? <span className="g-soccer-player-crest is-svg"><Crest club={club} size={26} /></span> : <i className={`g-soccer-player-crest is-team-${team}`} />}
       <b className={`g-soccer-player-number is-team-${team}`}>{jerseyNumber(selectedId)}</b>
       <div className="g-soccer-player-name">
@@ -199,10 +185,11 @@ const emptyStats: TeamStats = {
 export function StatsScreen({ presentation, statsVersion }: { presentation: 'half-time' | 'full-time'; statsVersion: number }) {
   const match = useContext(MatchContext);
   const stats = match?.current?.stats;
-  const clubs = matchClubs(match?.current?.world);
   const home = stats?.teams[0] ?? emptyStats;
   const away = stats?.teams[1] ?? emptyStats;
-  const score = match?.current?.world?.score ?? [0, 0];
+  const world = match?.current?.world;
+  const clubs = matchClubs(world);
+  const score = world?.score ?? [0, 0];
   const [seconds, setSeconds] = useState(10);
   useEffect(() => {
     if (presentation !== 'half-time') return;
@@ -236,7 +223,7 @@ export function StatsScreen({ presentation, statsVersion }: { presentation: 'hal
           {[0, 1].map((team) => (
             <div key={team}>
               {stats?.goals.filter((goal) => goal.team === team).map((goal) => (
-                <span key={goal.id}>{goal.scorer === undefined ? 'unknown player' : playerName(goal.scorer)} <small>{goal.minute}{goal.kind === 'own-goal' ? ' · og' : ''}</small></span>
+                <span key={goal.id}>{goal.scorer === undefined ? 'unknown player' : playerName(goal.scorer, world)} <small>{goal.minute}{goal.kind === 'own-goal' ? ' · og' : ''}</small></span>
               ))}
             </div>
           ))}
@@ -261,8 +248,8 @@ export function StatsScreen({ presentation, statsVersion }: { presentation: 'hal
 export function PausePanel({ match }: { match: MatchData }) {
   if (!match.world || !match.stats) return null;
   const { world, stats } = match;
-  const clubs = matchClubs(world);
   const clock = broadcastClock(world, stats);
+  const clubs = matchClubs(world);
   const [homePossession, awayPossession] = possessionShare(stats);
   const home = stats.teams[0];
   const away = stats.teams[1];
