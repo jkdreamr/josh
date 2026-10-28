@@ -109,8 +109,14 @@ export function cameraGoal(world: World, humanTeam: Team, aspect: number, mode: 
   return goal;
 }
 
-export function stepCameraBasis(current: ViewBasis, world: World, humanTeam: Team, aspect: number, mode: CameraMode, dt: number): ViewBasis {
-  if (mode === 'replay' || mode === 'setpiece') return current;
+export function desiredCameraBasis(world: World, humanTeam: Team, aspect: number, mode: CameraMode): ViewBasis {
   const forward = mode === 'end' || aspect < 0.72 ? { x: teamDir(humanTeam, world.endsSwapped), z: 0 } : { x: 0, z: 1 };
-  return slewViewBasis(current, { forward, right: { x: -forward.z, z: forward.x } }, dt);
+  return { forward, right: { x: -forward.z, z: forward.x } };
+}
+
+export function stepCameraBasis(current: ViewBasis | null, world: World, humanTeam: Team, aspect: number, mode: CameraMode, dt: number): ViewBasis {
+  const desired = desiredCameraBasis(world, humanTeam, aspect, mode);
+  if (!current) return desired;
+  if (mode === 'replay' || mode === 'setpiece') return current;
+  return slewViewBasis(current, desired, dt);
 }

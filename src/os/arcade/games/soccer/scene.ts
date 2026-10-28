@@ -6,8 +6,8 @@ import { disposeTree, damp } from './gl.ts';
 import { loadSoccerModel, MODEL_URLS } from './load.ts';
 import { ballNumberTexture, ballTexture } from './textures.ts';
 import { buildStadium, type PitchPattern } from './stadium.ts';
-import { IDENTITY_BASIS, type ViewBasis } from './input.ts';
-import { cameraGoal, createCameraRig, stepCameraBasis, stepCameraRig, type CameraMode } from './camera.ts';
+import type { ViewBasis } from './input.ts';
+import { cameraGoal, createCameraRig, desiredCameraBasis, stepCameraBasis, stepCameraRig, type CameraMode } from './camera.ts';
 export type { CameraMode } from './camera.ts';
 import { createPracticeMarkers } from './practice-markers.ts';
 import type { PracticeMarker } from './practice.ts';
@@ -243,7 +243,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   scene.fog = new THREE.Fog(night ? '#142438' : '#d99a71', 150, 270);
   const camera = new THREE.PerspectiveCamera(34, 1, 0.1, 180);
   const cameraDirection = new THREE.Vector3();
-  let lastViewBasis: ViewBasis = IDENTITY_BASIS;
+  let lastViewBasis: ViewBasis | null = null;
+  let desiredBroadcastBasis: ViewBasis | null = null;
   const hemi = new THREE.HemisphereLight('#d0e0e8', '#162b22', 0.85);
   scene.add(hemi);
   const key = new THREE.DirectionalLight('#f0f6ff', 3.2);
@@ -488,6 +489,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   }
 
   function update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId: number | null = null, power: number | null = null, cameraDt = dt) {
+    desiredBroadcastBasis = desiredCameraBasis(world, humanTeam, camera.aspect, 'broadcast');
     const clubs = world.clubs ?? DEFAULT_CLUBS;
     setKits([clubs[0], clubs[1]]);
     elapsed += Math.min(0.05, dt);
@@ -795,10 +797,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   return {
     resize,
     viewBasis() {
-      return {
-        right: { ...lastViewBasis.right },
-        forward: { ...lastViewBasis.forward },
-      };
+      const basis = lastViewBasis ?? desiredBroadcastBasis ?? { forward: { x: 0, z: 1 }, right: { x: -1, z: 0 } };
+      return { right: { ...basis.right }, forward: { ...basis.forward } };
     },
     getCameraNdc() {
       return cameraNdc;
