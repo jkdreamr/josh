@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { computeAI, DEAD_BALL_UNSTICK, KEEPER_MAX_HOLD } from '../src/os/arcade/games/soccer/ai.ts';
-import { createWorld, distance, FIELD, nearestCarrier, resolveKeeperContact, setRestart, stepWorld, switchPlayer, TEAM_SIZE, teamDir, type Command, type World } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, distance, FIELD, nearestCarrier, resolveKeeperContact, setRestart, stepWorld, switchPlayer, TEAM_SIZE, teamDir, type Command, type World, separatePlayers } from '../src/os/arcade/games/soccer/logic.ts';
 
 function liveWorld() {
   const world = createWorld(4242);
@@ -164,6 +164,18 @@ test('a restart marker pushed back to 9.15 m marks from the side instead of stan
   assert.ok(frames > 60, `restart only lasted ${frames} frames`);
   assert.ok(closest >= 0.6, `marker within ${closest.toFixed(2)} m of his man`);
   assert.ok(distance(marker, world.ball) >= 9.15 - 1e-6);
+});
+
+test('the dead-ball claimant holds his line in separation so a symmetric press cannot freeze both players', () => {
+  const world = liveWorld();
+  const a = world.players[9]!, b = world.players[20]!;
+  a.x = -21.73; a.z = -3.15; b.x = -21.13; b.z = -3.15;
+  const before = { x: b.x, z: b.z };
+  separatePlayers([a, b], 1 / 60, undefined, false, b);
+  assert.deepEqual({ x: b.x, z: b.z }, before);
+  assert.ok(a.x < -21.73);
+  a.x = -21.73; separatePlayers([a, b], 1 / 60);
+  assert.ok(b.x > before.x, 'without a claimant both players still share the push');
 });
 
 test('switching never hands the human the goalkeeper outside penalties', () => {

@@ -4,7 +4,7 @@ import { cpuMayTackle, offsidePosition, onsideProgress, stepUpLine } from './rul
 export const LEVEL_NAMES = ['easy', 'normal', 'hard'] as const;
 export type Level = (typeof LEVEL_NAMES)[number];
 const reaction = { easy: 0.6, normal: 0.3, hard: 0.18 } as const;
-const keeperReaction = { easy: 0.6, normal: 0.42, hard: 0.42 } as const;
+const keeperReaction = { easy: 0.5, normal: 0.42, hard: 0.9 } as const;
 const keeperReadDelay = { easy: 0.5, normal: 0.3, hard: 0.16 } as const;
 const keeperReadNoise = { easy: 0.28, normal: 0.16, hard: 0.45 } as const;
 const decisionInterval = { easy: 0.7, normal: 0.3, hard: 0.24 } as const;
@@ -239,7 +239,7 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
   const qualityNoise = Math.sin((tick + rosterIndex(world, player) * 31) * 0.37) * noise[level];
   const shotLane = laneClearance(world, player, { x: goalX, z: -Math.sign(player.z) * FIELD.goalWidth * 0.32 }, player.team, true);
   const goodAngle = Math.abs(player.z) < lateral(level === 'easy' ? 0.21 : 0.18) && Math.abs(player.z) / Math.max(3, Math.abs(goalX - player.x)) < 0.8;
-  const shootRange = 18;
+  const shootRange = level === 'hard' ? 16 : 18;
   if (goalDistance < shootRange && goodAngle && pressure > 1.5 + qualityNoise && shotLane > 0.18 + Math.abs(qualityNoise) * 0.3) {
     const choice = cpuShotChoice(world, player, level, tick, dt);
     return { move: { x: 0, z: 0 }, action: 'shoot', pressed: true,
@@ -256,7 +256,7 @@ function carrierCommand(world: World, player: Player, level: Level, tick: number
     const space = Math.min(...opponents.map((p) => distance(p, receiver)));
     const lane = laneClearance(world, player, receiver, player.team);
     const optionNoise = Math.sin((tick + rosterIndex(world, receiver) * 17) * 0.19) * noise[level];
-    const margin = level === 'hard' ? 0.55 : 0;
+    const margin = level === 'hard' ? 0.7 : 0;
     if (lane < 0.8 + margin - optionNoise * 0.5 || space < 1.2 + margin - optionNoise * 0.5) continue;
     let action: 'pass' | 'through' | 'lob' = 'pass';
     if (facingForward && pressure > 3 && forward > longitudinal(0.12) && gap < longitudinal(0.31)

@@ -431,7 +431,7 @@ export function shotError(world: World, player: Player, target: Point, power: nu
   return finesse ? error * 0.6 : error;
 }
 
-export function separatePlayers(players: Player[], dt: number, carrier?: Player, endsSwapped = false) {
+export function separatePlayers(players: Player[], dt: number, carrier?: Player, endsSwapped = false, claimant?: Player) {
   const strength = clamp(dt * 30, 0, 1);
   if (!strength) return;
   const ordered = [...players].sort((a, b) => a.id - b.id);
@@ -465,9 +465,9 @@ export function separatePlayers(players: Player[], dt: number, carrier?: Player,
             dx = -mz / radius * sign; dz = mx / radius * sign;
           }
         }
-        const push = (0.7 - gap) * strength / 2;
-        pushes[i * 2] -= dx * push; pushes[i * 2 + 1] -= dz * push;
-        pushes[j * 2] += dx * push; pushes[j * 2 + 1] += dz * push;
+        const push = (0.7 - gap) * strength / 2, wa = a === claimant ? 0 : b === claimant ? 2 : 1, wb = 2 - wa;
+        pushes[i * 2] -= dx * push * wa; pushes[i * 2 + 1] -= dz * push * wa;
+        pushes[j * 2] += dx * push * wb; pushes[j * 2 + 1] += dz * push * wb;
       }
     }
     for (let i = 0; i < ordered.length; i++) {
@@ -1174,7 +1174,13 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
       kick(world, p, p.buffer.action, { move: command?.move ?? { x: 0, z: 0 }, ...p.buffer });
     }
   }
-  if (!world.practice) separatePlayers(world.players, t, carrier, world.endsSwapped);
+  // On a dead loose ball the nearest player holds his line so a symmetric press cannot freeze both just outside control range.
+  const deadLoose = !carrier && world.phase === 'live' && world.ball.y < 0.75 && Math.hypot(world.ball.vx, world.ball.vz) < 0.5;
+  const nearest = deadLoose ? world.players.filter((p) => !p.sentOff && distance(p, world.ball) < 1.2)
+    .sort((a, b) => distance(a, world.ball) - distance(b, world.ball) || a.id - b.id)[0] : undefined;
+  const claimant = nearest && distance(nearest, world.ball) >= 0.64 && Math.hypot(nearest.vx, nearest.vz) < 1.5
+    && world.players.some((p) => p !== nearest && !p.sentOff && distance(p, nearest) < 0.75) ? nearest : undefined;
+  if (!world.practice) separatePlayers(world.players, t, carrier, world.endsSwapped, claimant);
   const nowCarrier = nearestCarrier(world);
   checkOffside(world, nowCarrier);
   if (world.phase !== 'live') return;
