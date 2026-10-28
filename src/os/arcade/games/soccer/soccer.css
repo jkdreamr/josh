@@ -879,624 +879,6 @@
   .g-soccer-phone-qr img { width: min(180px, 100%); height: auto; aspect-ratio: 1; }
 }
 
-/* Phone gamepad: floating stick on the left, ABXY on the right, bumpers and triggers on the top edges, score strip in the middle. */
-.g-soccer-pad {
-  --sa-t: max(8px, env(safe-area-inset-top, 0px));
-  --sa-r: max(12px, env(safe-area-inset-right, 0px));
-  --sa-b: max(8px, env(safe-area-inset-bottom, 0px));
-  --sa-l: max(12px, env(safe-area-inset-left, 0px));
-  --shoulder-h: clamp(40px, 15dvh, 58px);
-  --trigger-w: clamp(66px, 11vw, 100px);
-  --bumper-w: clamp(84px, 13.5vw, 124px);
-  --shoulder-w: calc(var(--trigger-w) + var(--bumper-w) + 6px);
-  --stick: clamp(112px, 50dvh, 172px);
-  --diamond: clamp(140px, 56dvh, 204px);
-  --stick-x: calc(var(--sa-l) + var(--stick) / 2 + 14px);
-  --stick-y: calc(var(--sa-b) + var(--stick) / 2 + 6px);
-  padding: 0;
-  background: radial-gradient(120% 90% at 50% 0%, #2a3442 0%, #151b24 55%, #0b0f15 100%);
-  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-}
-@media (orientation: landscape) {
-  .g-soccer-phone-controller header {
-    top: max(10px, env(safe-area-inset-top, 0px));
-    left: max(24px, env(safe-area-inset-left, 0px));
-    right: max(24px, env(safe-area-inset-right, 0px));
-  }
-  .g-soccer-phone-charge { top: calc(max(10px, env(safe-area-inset-top, 0px)) + 44px); width: min(360px, 44vw); }
-  .g-soccer-phone-controller .g-soccer-stick {
-    left: max(24px, env(safe-area-inset-left, 0px));
-    bottom: max(20px, env(safe-area-inset-bottom, 0px));
-    width: clamp(144px, 36vh, 168px);
-    height: clamp(144px, 36vh, 168px);
-  }
-  .g-soccer-phone-buttons {
-    right: max(24px, env(safe-area-inset-right, 0px));
-    bottom: max(20px, env(safe-area-inset-bottom, 0px));
-    width: var(--g-soccer-diamond);
-  }
-  .g-soccer-phone-action { min-height: 38px; }
-}
-@media (orientation: landscape) {
-  .g-soccer-phone-controller header {
-    top: max(10px, env(safe-area-inset-top, 0px));
-    left: max(24px, env(safe-area-inset-left, 0px));
-    right: max(24px, env(safe-area-inset-right, 0px));
-  }
-  .g-soccer-phone-charge { top: calc(max(10px, env(safe-area-inset-top, 0px)) + 44px); width: min(360px, 44vw); }
-  .g-soccer-phone-controller .g-soccer-stick {
-    left: max(24px, env(safe-area-inset-left, 0px));
-    bottom: max(20px, env(safe-area-inset-bottom, 0px));
-    width: clamp(144px, 36vh, 168px);
-    height: clamp(144px, 36vh, 168px);
-  }
-  .g-soccer-phone-buttons {
-    right: max(24px, env(safe-area-inset-right, 0px));
-    bottom: max(20px, env(safe-area-inset-bottom, 0px));
-    width: var(--g-soccer-diamond);
-  }
-.g-soccer-phone-action { min-height: 38px; }
-}
-.g-soccer-phone-lobby {
-  width: 100%;
-  max-width: 720px;
-  max-height: 100%;
-  min-width: 0;
-  min-height: 0;
-  box-sizing: border-box;
-  grid-template-columns: minmax(104px, 150px) minmax(0, 1fr);
-  align-items: start;
-  gap: 12px;
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-.g-soccer-phone-lobby.is-connected {
-  grid-template-columns: 96px minmax(0, 1fr);
-  gap: 10px;
-}
-.g-soccer-phone-lobby.is-connected .g-soccer-phone-qr {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 96px;
-  height: 96px;
-  box-sizing: border-box;
-  padding: 4px;
-  gap: 0;
-}
-.g-soccer-phone-lobby.is-connected .g-soccer-phone-qr img {
-  width: 88px;
-  height: 88px;
-}
-.g-soccer-phone-lobby.is-connected .g-soccer-phone-qr strong { display: none; }
-.g-soccer-phone-lobby-content {
-  align-content: start;
-  gap: 6px;
-}
-.g-soccer-phone-lobby .g-soccer-phone-connections {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  font-size: 11px;
-}
-.g-soccer-phone-lobby .g-soccer-phone-connections span { padding: 4px 6px; }
-.g-soccer-phone-lobby .arcade-segmented { min-width: 0; flex-wrap: wrap; gap: 4px; }
-.g-soccer-phone-lobby .arcade-segmented button { min-height: 26px; padding: 4px 7px; font-size: 10px; }
-.g-soccer-lobby-clubs {
-  grid-template-columns: 1fr;
-  gap: 5px;
-}
-.g-soccer-lobby-club {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
-}
-.g-soccer-lobby-club-label {
-  color: #aebdb8;
-  font-size: 9px;
-  letter-spacing: .08em;
-  text-transform: uppercase;
-}
-.g-soccer-club-picker-card {
-  display: grid;
-  grid-template-columns: 40px 34px minmax(0, 1fr) 40px;
-  align-items: center;
-  gap: 5px;
-  min-width: 0;
-  padding: 4px 6px;
-  border: 1px solid #31463a;
-  border-radius: 9px;
-  background: #121a16;
-}
-.g-soccer-club-picker-card.is-locked { grid-template-columns: 34px minmax(0, 1fr); }
-.g-soccer-club-picker-card > button {
-  min-width: 40px;
-  min-height: 40px;
-  border: 1px solid #415648;
-  border-radius: 9px;
-  color: #f0f5ee;
-  background: #1c2921;
-  font: inherit;
-  font-size: 14px;
-}
-.g-soccer-club-picker-card > svg { width: 34px; height: 34px; }
-.g-soccer-club-picker-copy { display: grid; gap: 2px; min-width: 0; }
-.g-soccer-club-picker-copy strong {
-  color: #f2f7ee;
-  font-size: 11px;
-  line-height: 1.15;
-}
-.g-soccer-club-picker-copy span {
-  color: #b9c9bb;
-  font-size: 8px;
-  line-height: 1.2;
-}
-.g-soccer-cup-card { padding: 6px; overflow: hidden; }
-.g-soccer-cup-bracket { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; font-size: 8px; }
-.g-soccer-cup-bracket section { gap: 3px; min-width: 0; }
-.g-soccer-cup-bracket section > b { font-size: 7px; }
-.g-soccer-cup-bracket section > div { padding: 3px; font-size: 8px; }
-.g-soccer-cup-bracket section > div > span { white-space: nowrap; }
-.g-soccer-cup-bracket small { font-size: 7px; }
-.g-soccer-cup-next { margin-top: 5px; font-size: 10px; }
-.g-soccer-cup-next button { padding: 4px 6px; font-size: 9px; }
-.g-soccer-lobby-ready { gap: 6px; font-size: 10px; }
-.g-soccer-lobby-ready .arcade-btn { min-height: 34px; padding: 6px 12px; }
-.g-soccer-phone-settings { padding-top: 4px; }
-.g-soccer-phone-settings summary { font-size: 10px; }
-
-.g-soccer-guest-lobby {
-  width: 100%;
-  max-width: 520px;
-  max-height: 100%;
-  min-width: 0;
-  min-height: 0;
-  box-sizing: border-box;
-  overflow: auto;
-}
-.g-soccer-guest-card {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 96px;
-  align-items: center;
-  gap: 10px;
-  padding: 10px;
-  text-align: left;
-}
-.g-soccer-guest-main { display: grid; gap: 6px; min-width: 0; }
-.g-soccer-guest-card h2 { font-size: 15px; }
-.g-soccer-guest-club { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.g-soccer-guest-club strong { font-size: 12px; }
-.g-soccer-guest-club-actions { gap: 6px; }
-.g-soccer-guest-club-actions button { min-width: 40px; min-height: 40px; }
-.g-soccer-guest-qr {
-  grid-column: 2;
-  grid-row: 1;
-  display: grid;
-  justify-items: center;
-  gap: 4px;
-  color: #aebbb0;
-  font-size: 9px;
-  text-align: center;
-}
-.g-soccer-guest-qr img { width: 92px; max-width: 100%; border-radius: 7px; }
-.g-soccer-guest-kickoff { min-height: 38px; grid-column: 1 / -1; }
-
-.g-soccer-phone-picker {
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  box-sizing: border-box;
-  overflow: hidden;
-  padding: max(12px, env(safe-area-inset-top)) 16px max(12px, env(safe-area-inset-bottom));
-}
-.g-soccer-picker-mode { margin-top: 12px; }
-.g-soccer-picker-club { flex: 1 1 auto; min-height: 0; margin: 8px auto; }
-.g-soccer-picker-identity { min-width: 0; gap: 7px; }
-.g-soccer-picker-identity > svg {
-  width: clamp(72px, 16vh, 112px);
-  height: clamp(72px, 16vh, 112px);
-}
-.g-soccer-picker-controls {
-  display: grid;
-  grid-template-columns: 114px minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
-  flex: 0 0 auto;
-  width: min(420px, 100%);
-  margin: 0 auto 8px;
-}
-.g-soccer-picker-controls > div {
-  display: grid;
-  grid-template-columns: minmax(74px, .8fr) minmax(112px, 1.2fr);
-  gap: 8px;
-  min-width: 0;
-}
-.g-soccer-picker-controls button {
-  min-width: 0;
-  min-height: 56px;
-  padding: 8px;
-}
-.g-soccer-picker-controls .is-ready { min-height: 64px; font-size: 16px; font-weight: 850; }
-.g-soccer-picker-help { margin: 0 auto; line-height: 1.3; }
-
-@media (orientation: landscape) and (max-height: 600px) {
-  .g-soccer-phone-picker { padding: max(8px, env(safe-area-inset-top)) 14px max(8px, env(safe-area-inset-bottom)); }
-  .g-soccer-picker-mode { margin-top: 6px; }
-  .g-soccer-picker-club { margin: 4px auto; }
-  .g-soccer-picker-identity { gap: 4px; }
-  .g-soccer-picker-identity > svg { width: clamp(52px, 17vh, 76px); height: clamp(52px, 17vh, 76px); }
-  .g-soccer-picker-identity h2 { font-size: clamp(18px, 4vw, 25px); }
-  .g-soccer-picker-controls { margin-bottom: 4px; }
-}
-
-/* lobby sizing: fits the small arcade window (about 550x265) up to full screen */
-.g-soccer .arcade-phone-first-card:not(.is-phone-join) { padding: clamp(10px, 2.4vh, 26px); gap: 8px; overflow-y: auto; }
-.g-soccer-phone-lobby { grid-template-columns: clamp(96px, 30%, 240px) minmax(0, 1fr); align-items: start; gap: clamp(10px, 2vw, 24px); overflow: visible; max-height: none; }
-.g-soccer-phone-lobby .g-soccer-phone-qr { display: grid; justify-items: center; gap: 6px; width: auto; height: auto; padding: 0; }
-.g-soccer-phone-lobby .g-soccer-phone-qr img { width: 100%; height: auto; aspect-ratio: 1; max-width: 240px; }
-.g-soccer-phone-lobby.is-connected { grid-template-columns: clamp(72px, 18%, 132px) minmax(0, 1fr); }
-.g-soccer-phone-lobby.is-connected .g-soccer-phone-qr { width: auto; height: auto; padding: 0; }
-.g-soccer-phone-lobby.is-connected .g-soccer-phone-qr img { width: 100%; height: auto; }
-.g-soccer-phone-lobby .g-soccer-phone-qr strong { font-size: 11px; }
-.g-soccer-phone-lobby-content { gap: 8px; }
-.g-soccer-phone-lobby .g-soccer-phone-connections { font-size: 11px; }
-.g-soccer-phone-lobby .arcade-segmented button { font-size: 11px; min-height: 30px; }
-.g-soccer-lobby-clubs { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 6px; }
-.g-soccer-lobby-clubs.is-single { grid-template-columns: 1fr; }
-.g-soccer-lobby-club-label { font-size: 10px; }
-.g-soccer-club-picker-copy strong { font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.g-soccer-club-picker-copy span { font-size: 10px; }
-.g-soccer-cup-bracket, .g-soccer-cup-bracket section > div { font-size: 10px; }
-.g-soccer-cup-bracket section > b, .g-soccer-cup-bracket small { font-size: 9px; }
-.g-soccer-cup-next { font-size: 11px; }
-.g-soccer-lobby-ready { font-size: 11px; }
-@media (min-height: 600px) {
-  .g-soccer-club-picker-copy strong { font-size: 15px; }
-  .g-soccer-club-picker-copy span, .g-soccer-phone-lobby .g-soccer-phone-connections { font-size: 13px; }
-  .g-soccer-phone-lobby .arcade-segmented button { font-size: 13px; min-height: 36px; }
-  .g-soccer-cup-bracket, .g-soccer-cup-bracket section > div { font-size: 12px; }
-}
-
-.g-soccer-lobby-ready {
-  position: sticky;
-  bottom: 0;
-  z-index: 5;
-  padding: 8px;
-  background: #0b1a26;
-  box-shadow: 0 -6px 12px #0b1a26cc;
-}
-
-.g-soccer-guest-kickoff {
-  position: sticky;
-  bottom: 0;
-  z-index: 5;
-  padding: 8px;
-  background: #0b1a26;
-  box-shadow: 0 -6px 12px #0b1a26cc;
-}
-
-@media (max-width: 540px) {
-  .g-soccer-phone-picker { height: 100%; padding: max(8px, env(safe-area-inset-top)) 10px max(8px, env(safe-area-inset-bottom)); }
-  .g-soccer-picker-mode { margin-top: 4px; }
-  .g-soccer-picker-club { margin: 0 auto; }
-  .g-soccer-picker-identity { gap: 4px; }
-  .g-soccer-picker-identity > svg { width: clamp(52px, 11vh, 86px); height: clamp(52px, 11vh, 86px); }
-  .g-soccer-picker-identity h2 { font-size: clamp(18px, 5vw, 25px); }
-  .g-soccer-picker-controls { grid-template-columns: 84px minmax(0, 1fr); gap: 8px; margin-bottom: 0; }
-  .g-soccer-phone-picker .g-soccer-stick { width: 84px; height: 84px; }
-  .g-soccer-picker-controls > div { grid-template-columns: minmax(68px, .8fr) minmax(104px, 1.2fr); gap: 6px; }
-  .g-soccer-picker-controls button { min-height: 44px; padding: 6px; font-size: 11px; }
-  .g-soccer-picker-controls .is-ready { min-height: 52px; font-size: 14px; }
-  .g-soccer-picker-help { font-size: 9px; }
-}
-
-.g-soccer .arcade-phone-first-overlay:has(.arcade-phone-first-card.is-phone-join) {
-  place-items: start center;
-  padding: 6px;
-  background: transparent;
-  backdrop-filter: none;
-  -webkit-backdrop-filter: none;
-}
-.g-soccer .arcade-phone-first-card.is-phone-join { gap: 4px; padding: 6px 10px; }
-
-@media (max-width: 540px) {
-  .g-soccer-phone-picker { position: relative; }
-  .g-soccer-picker-controls {
-    position: absolute;
-    left: 16px;
-    right: auto;
-    bottom: 20px;
-    width: auto;
-    margin: 0;
-    grid-template-columns: 84px auto;
-    gap: 8px;
-  }
-  .g-soccer-picker-controls > div:not(.g-soccer-stick) { grid-column: 2; }
-}
-
-@media (orientation: landscape) and (max-height: 600px) {
-  .g-soccer-phone-picker { position: relative; }
-  .g-soccer-picker-controls {
-    position: absolute;
-    left: 18px;
-    right: auto;
-    bottom: 26px;
-    width: auto;
-    margin: 0;
-    grid-template-columns: 114px auto;
-    gap: 12px;
-  }
-  .g-soccer-picker-controls > div:not(.g-soccer-stick) { grid-column: 2; }
-}
-.g-soccer-pad-body { position: absolute; inset: 0; pointer-events: none; }
-.g-soccer-pad-body > i {
-  position: absolute;
-  border-radius: 50%;
-  background: radial-gradient(circle at 50% 32%, #2c3542, #171d26 62%, #10151c);
-  box-shadow: inset 0 2px 0 #ffffff14, inset 0 -24px 44px #0007, 0 10px 40px #0009;
-}
-.g-soccer-pad-body > .is-left {
-  --grip: calc(var(--stick) * 1.75);
-  left: calc(var(--stick-x) - var(--grip) / 2);
-  bottom: calc(var(--stick-y) - var(--grip) / 2);
-  width: var(--grip);
-  height: var(--grip);
-}
-.g-soccer-pad-body > .is-right {
-  --grip: calc(var(--diamond) * 1.5);
-  right: calc(var(--sa-r) + var(--diamond) / 2 - var(--grip) / 2);
-  bottom: calc(var(--sa-b) + var(--diamond) / 2 - var(--grip) / 2);
-  width: var(--grip);
-  height: var(--grip);
-}
-
-.g-soccer-pad-stickzone {
-  position: absolute;
-  z-index: 1;
-  top: calc(var(--sa-t) + var(--shoulder-h) + 6px);
-  bottom: 0;
-  left: 0;
-  width: 50%;
-}
-.g-soccer-pad-stick {
-  position: absolute;
-  left: var(--stick-x);
-  top: calc(100% - var(--stick-y));
-  width: var(--stick);
-  height: var(--stick);
-  translate: -50% -50%;
-  border-radius: 50%;
-  background: radial-gradient(circle at 50% 42%, #090c11 0%, #121820 56%, #242d39 71%, #19202a 100%);
-  box-shadow: inset 0 8px 18px #000c, inset 0 -2px 0 #ffffff1a, 0 0 0 2px #2f3a48, 0 0 0 6px #0d1117, 0 6px 16px #0008;
-  opacity: .8;
-  pointer-events: none;
-  transition: opacity 120ms ease;
-}
-.g-soccer-pad-stick::before { content: ""; position: absolute; inset: 9%; border: 1px solid #ffffff12; border-radius: 50%; }
-.g-soccer-pad-stick[data-active] { opacity: 1; box-shadow: inset 0 8px 18px #000c, inset 0 -2px 0 #ffffff1a, 0 0 0 2px #4b8fc0, 0 0 0 6px #0d1117, 0 0 22px #4fb8ff40; }
-.g-soccer-pad-stick > i {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 48%;
-  height: 48%;
-  translate: -50% -50%;
-  border-radius: 50%;
-  background: radial-gradient(circle at 50% 30%, #56627250, transparent 60%), radial-gradient(circle at 50% 50%, #343d4a 0 62%, #1d232c 100%);
-  box-shadow: 0 7px 12px #000b, 0 2px 0 #0009, inset 0 2px 1px #ffffff35, inset 0 -3px 5px #0009;
-}
-.g-soccer-pad-stick > i::after {
-  content: "";
-  position: absolute;
-  inset: 17%;
-  border-radius: 50%;
-  background: radial-gradient(circle at 50% 62%, #1b2129, #323b47);
-  box-shadow: inset 0 3px 6px #000b, 0 1px 0 #ffffff1c;
-}
-.g-soccer-pad-stick:not([data-active]) > i { transition: transform 110ms ease-out; }
-.g-soccer-pad-stick[data-active] > i { scale: .95; }
-
-.g-soccer-pad-face {
-  position: absolute;
-  z-index: 2;
-  top: calc(var(--sa-t) + var(--shoulder-h) + 6px);
-  right: 0;
-  bottom: 0;
-  width: 50%;
-}
-.g-soccer-pad-diamond {
-  position: absolute;
-  right: var(--sa-r);
-  bottom: var(--sa-b);
-  width: var(--diamond);
-  height: var(--diamond);
-  pointer-events: none;
-}
-.g-soccer-pad-diamond::before {
-  content: "";
-  position: absolute;
-  inset: 4%;
-  border-radius: 50%;
-  background: radial-gradient(circle, #0b0f15 0 58%, #151b23 100%);
-  box-shadow: inset 0 6px 16px #000b, 0 1px 0 #ffffff14;
-}
-.g-soccer-pad .g-soccer-pad-btn {
-  position: absolute;
-  display: flex;
-  width: 38%;
-  height: 38%;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  color: #0a1420;
-  background:
-    radial-gradient(circle at 34% 26%, #ffffffb0 0 7%, #ffffff00 34%),
-    radial-gradient(circle at 50% 45%, var(--c) 0 58%, var(--c-dk) 100%);
-  box-shadow: 0 5px 0 var(--c-edge), 0 9px 14px #000a, inset 0 -4px 8px #0004, inset 0 2px 2px #ffffff70;
-  pointer-events: none;
-  transition: transform 45ms ease-out, box-shadow 45ms ease-out, filter 45ms ease-out;
-}
-.g-soccer-pad .g-soccer-pad-btn.is-y { top: 0; left: 31%; --c: #ecd65e; --c-dk: #b99e2a; --c-edge: #7f6c1c; }
-.g-soccer-pad .g-soccer-pad-btn.is-x { top: 31%; left: 0; --c: #63b6ea; --c-dk: #3478b4; --c-edge: #22527c; }
-.g-soccer-pad .g-soccer-pad-btn.is-b { top: 31%; right: 0; --c: #ea6470; --c-dk: #b03944; --c-edge: #7d2730; }
-.g-soccer-pad .g-soccer-pad-btn.is-a { bottom: 0; left: 31%; --c: #74d483; --c-dk: #3e9d50; --c-edge: #2c6f39; }
-.g-soccer-pad .g-soccer-pad-btn > b { font-size: calc(var(--diamond) * .13); font-weight: 900; line-height: 1; text-shadow: 0 1px 0 #ffffff66; }
-.g-soccer-pad .g-soccer-pad-btn > small { max-width: 90%; font-size: clamp(8px, calc(var(--diamond) * .052), 10.5px); font-weight: 800; line-height: 1.05; text-align: center; }
-.g-soccer-pad .g-soccer-pad-btn > em { font-size: clamp(7px, calc(var(--diamond) * .042), 8.5px); font-style: normal; font-weight: 700; line-height: 1; opacity: .8; }
-.g-soccer-pad .g-soccer-pad-btn[data-pressed] {
-  transform: translateY(4px);
-  box-shadow: 0 1px 0 var(--c-edge), 0 3px 6px #000a, inset 0 3px 8px #0005, inset 0 1px 1px #ffffff40;
-  filter: brightness(1.14);
-}
-.g-soccer-pad .g-soccer-pad-btn.is-charging::before {
-  content: "";
-  position: absolute;
-  inset: -8px;
-  border-radius: 50%;
-  background: conic-gradient(#e9f37a calc(var(--charge, 0) * 360deg), #ffffff1c 0);
-  -webkit-mask: radial-gradient(farthest-side, #0000 calc(100% - 5px), #000 calc(100% - 4px));
-  mask: radial-gradient(farthest-side, #0000 calc(100% - 5px), #000 calc(100% - 4px));
-}
-.g-soccer-pad .g-soccer-pad-btn.is-over::before { background: conic-gradient(#ff5a6e calc(var(--charge, 0) * 360deg), #ffffff1c 0); }
-.g-soccer-pad [data-fired]::after {
-  content: "";
-  position: absolute;
-  inset: -3px;
-  border: 2px solid #ffffffd0;
-  border-radius: inherit;
-  pointer-events: none;
-  animation: g-soccer-pad-fire 260ms ease-out forwards;
-}
-@keyframes g-soccer-pad-fire {
-  from { opacity: .95; scale: .92; }
-  to { opacity: 0; scale: 1.4; }
-}
-
-.g-soccer-pad-shoulders {
-  position: absolute;
-  z-index: 3;
-  top: var(--sa-t);
-  display: flex;
-  align-items: flex-start;
-  gap: 6px;
-  height: var(--shoulder-h);
-}
-.g-soccer-pad-shoulders.is-left { left: var(--sa-l); }
-.g-soccer-pad-shoulders.is-right { right: var(--sa-r); }
-.g-soccer-pad .g-soccer-pad-shoulders > button {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  padding: 0 6px;
-  border: 0;
-  color: #e8eef5;
-  background: linear-gradient(180deg, #3d4859, #242c37 62%, #1a2029);
-  box-shadow: inset 0 1px 0 #ffffff2e, inset 0 -3px 0 #0006, 0 4px 0 #0a0d12, 0 6px 12px #0008;
-  transition: transform 45ms ease-out, box-shadow 45ms ease-out, background 45ms ease-out;
-}
-.g-soccer-pad .g-soccer-pad-shoulders > button > b { font-size: 13px; font-weight: 900; letter-spacing: .05em; line-height: 1; }
-.g-soccer-pad .g-soccer-pad-shoulders > button > small { color: #aab7c4; font-size: 9.5px; font-weight: 700; line-height: 1; white-space: nowrap; }
-.g-soccer-pad .g-soccer-pad-trigger { width: var(--trigger-w); height: 100%; }
-.g-soccer-pad .g-soccer-pad-bumper { width: var(--bumper-w); height: 76%; border-radius: 10px 10px 16px 16px / 8px 8px 16px 16px; }
-.g-soccer-pad .is-left > .g-soccer-pad-trigger { border-radius: 28px 12px 10px 14px / 22px 12px 10px 14px; }
-.g-soccer-pad .is-right > .g-soccer-pad-trigger { border-radius: 12px 28px 14px 10px / 12px 22px 14px 10px; }
-.g-soccer-pad .g-soccer-pad-shoulders > button[data-pressed] {
-  transform: translateY(3px);
-  background: linear-gradient(180deg, #4d88b5, #2b5677);
-  box-shadow: inset 0 2px 6px #000a, 0 1px 0 #0a0d12, 0 2px 6px #0008;
-}
-.g-soccer-pad .g-soccer-pad-shoulders > button[data-pressed] > small { color: #e9f37a; }
-
-.g-soccer-pad-strip {
-  position: absolute;
-  z-index: 3;
-  top: var(--sa-t);
-  left: 50%;
-  display: grid;
-  justify-items: center;
-  gap: 5px;
-  width: min(300px, calc(100vw - var(--sa-l) - var(--sa-r) - 2 * var(--shoulder-w) - 24px));
-  box-sizing: border-box;
-  padding: 6px 10px 7px;
-  translate: -50% 0;
-  border: 1px solid #ffffff12;
-  border-radius: 14px;
-  background: linear-gradient(180deg, #0c1118, #121821);
-  box-shadow: inset 0 2px 6px #0009, 0 1px 0 #ffffff0d;
-}
-.g-soccer-pad-score { display: flex; align-items: center; justify-content: center; gap: 8px; min-width: 0; max-width: 100%; }
-.g-soccer-pad-score > span { overflow: hidden; color: #7d8a98; font-size: 9px; font-weight: 800; letter-spacing: .08em; text-overflow: ellipsis; white-space: nowrap; }
-.g-soccer-pad-score > span.is-mine { color: #fff; }
-.g-soccer-pad-score > strong { color: #e9f37a; font-size: 20px; font-variant-numeric: tabular-nums; line-height: 1; white-space: nowrap; }
-.g-soccer-pad-score > strong > i { margin: 0 4px; color: #6e7b88; font-style: normal; }
-.g-soccer-pad-meter {
-  position: relative;
-  width: 100%;
-  height: 14px;
-  overflow: hidden;
-  border: 1px solid #ffffff24;
-  border-radius: 7px;
-  background: linear-gradient(90deg, #070a0f 85%, #3a1820 85%);
-}
-.g-soccer-pad-meter::after { content: ""; position: absolute; top: 0; bottom: 0; left: 85%; border-left: 1px solid #ff6b7f; }
-.g-soccer-pad-meter > i { position: absolute; inset: 0 auto 0 0; background: linear-gradient(90deg, #5fd07a, #e9f37a); }
-.g-soccer-pad-meter.is-over > i { background: #f04c64; }
-.g-soccer-pad-meter > span { position: relative; display: block; color: #dfe7ee; font-size: 8px; font-weight: 800; letter-spacing: .08em; line-height: 12px; text-align: center; text-shadow: 0 1px 1px #000; text-transform: uppercase; white-space: nowrap; }
-.g-soccer-pad-center { display: flex; align-items: center; gap: 8px; }
-.g-soccer-pad-mode { padding: 3px 8px; border-radius: 999px; font-size: 9px; font-style: normal; font-weight: 900; letter-spacing: .12em; text-transform: uppercase; }
-.g-soccer-pad.is-attack .g-soccer-pad-mode { background: #1f4d2b; color: #9ff0b2; }
-.g-soccer-pad.is-defend .g-soccer-pad-mode { background: #4d1f27; color: #ffb0bb; }
-.g-soccer-pad .g-soccer-pad-menu {
-  min-height: 28px;
-  padding: 0 11px;
-  border: 1px solid #ffffff30;
-  border-radius: 999px;
-  background: #1b222c;
-  color: #dfe7ee;
-  font-size: 10px;
-  font-weight: 700;
-  white-space: nowrap;
-}
-.g-soccer-pad .g-soccer-pad-menu:active { background: #2b3644; }
-.g-soccer-pad-rotate { display: none; }
-.g-soccer-pad .g-soccer-phone-connected { top: auto; bottom: calc(var(--sa-b) + 10px); z-index: 4; }
-
-@media (orientation: portrait) {
-  .g-soccer-pad {
-    --strip-h: 92px;
-    --shoulder-h: 50px;
-    --trigger-w: min(20vw, 92px);
-    --bumper-w: min(22vw, 104px);
-    --stick: clamp(116px, 36vw, 160px);
-    --diamond: clamp(148px, 42vw, 196px);
-    --sa-b: max(16px, calc(env(safe-area-inset-bottom, 0px) + 10px));
-  }
-  .g-soccer-pad-strip { width: min(360px, calc(100vw - var(--sa-l) - var(--sa-r))); min-height: var(--strip-h); align-content: center; }
-  .g-soccer-pad-shoulders { top: calc(var(--sa-t) + var(--strip-h) + 10px); }
-  .g-soccer-pad-stickzone, .g-soccer-pad-face { top: calc(var(--sa-t) + var(--strip-h) + var(--shoulder-h) + 18px); }
-  .g-soccer-pad-rotate {
-    position: absolute;
-    z-index: 0;
-    top: calc(var(--sa-t) + var(--strip-h) + var(--shoulder-h) + 34px);
-    left: 0;
-    right: 0;
-    display: block;
-    margin: 0;
-    color: #8b98a6;
-    font-size: 12px;
-    font-weight: 700;
-    text-align: center;
-    pointer-events: none;
-  }
-}
-
 .g-soccer-stage.is-practice .g-soccer-scoreboard { display: none; }
 .g-soccer-practice {
   position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 4;
@@ -1544,22 +926,6 @@
 .g-soccer-tutorial-bar span { display: block; height: 100%; background: #ffd23f; transition: width .1s linear; }
 .g-soccer-tutorial button { margin-top: 10px; padding: 5px 14px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, .3); background: transparent; color: #fff; font: 600 12px/1.2 inherit; cursor: pointer; }
 @keyframes g-soccer-tutorial-in { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
-.g-soccer-phone-practice {
-  position: absolute; z-index: 2;
-  top: calc(max(12px, env(safe-area-inset-top, 0px)) + 76px);
-  left: max(12px, env(safe-area-inset-left, 0px)); right: max(12px, env(safe-area-inset-right, 0px));
-  display: grid; gap: 6px; padding: 6px 10px; border-radius: 12px; background: rgba(10, 22, 40, .85); color: #fff;
-}
-@media (orientation: landscape) {
-  .g-soccer-phone-practice { top: calc(max(10px, env(safe-area-inset-top, 0px)) + 68px); left: max(24px, env(safe-area-inset-left, 0px)); right: calc(max(24px, env(safe-area-inset-right, 0px)) + 208px); max-width: 520px; }
-}
-.g-soccer-phone-practice-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.g-soccer-phone-practice-row p { margin: 0; font-size: 14px; font-weight: 700; line-height: 1.25; }
-.g-soccer-phone-practice-row strong { font-size: 18px; white-space: nowrap; }
-.g-soccer-phone-practice-row small { font-size: 11px; opacity: .7; }
-.g-soccer-phone-practice-row button { padding: 6px 12px; border-radius: 999px; border: 1px solid rgba(255, 255, 255, .3); background: transparent; color: #fff; font: 600 12px/1 inherit; }
-.g-soccer-phone-practice .g-soccer-drills { flex-wrap: nowrap; overflow-x: auto; justify-content: flex-start; }
-.g-soccer-phone-practice .g-soccer-drills button { flex: none; padding: 6px 10px; font-size: 12px; }
 .g-soccer-phone-flash {
   position: absolute;
   inset: 0;
@@ -1603,11 +969,16 @@
   --sa-r: env(safe-area-inset-right, 0px);
   --sa-b: env(safe-area-inset-bottom, 0px);
   --sa-l: env(safe-area-inset-left, 0px);
+  --btn: clamp(64px, 17vh, 76px);
+  --diamond-size: calc(var(--btn) * 2.56);
+  --label-gap: 6px;
   position: fixed;
   inset: 0;
   z-index: 2147483001;
   width: 100vw;
   height: 100dvh;
+  box-sizing: border-box;
+  padding: 0;
   overflow: hidden;
   color: #f5f5f7;
   background: radial-gradient(ellipse at center, #1a1d22 0%, #0e1013 72%);
@@ -1616,6 +987,7 @@
 }
 .g-soccer-phone-controller.g-soccer-pad *,
 .g-soccer-phone-controller.g-soccer-pad button { box-sizing: border-box; }
+
 .g-soccer-pad-strip {
   position: absolute;
   top: calc(var(--sa-t) + 10px);
@@ -1626,148 +998,209 @@
   max-width: 44vw;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   transform: translateX(-50%);
+  pointer-events: none;
 }
 .g-soccer-pad-score {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
+  align-items: baseline;
+  justify-content: center;
+  gap: 6px;
   color: #f5f5f7;
+  white-space: nowrap;
 }
 .g-soccer-pad-score > strong {
+  color: #f5f5f7;
   font-size: 15px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  line-height: 1.15;
+  line-height: 1.1;
+  white-space: nowrap;
 }
-.g-soccer-pad-score > strong > i { margin: 0 7px; color: #aeb3bc; font-style: normal; }
-.g-soccer-pad-score > span { color: #f5f5f7; font-size: 12px; opacity: .6; }
+.g-soccer-pad-score > strong > i { margin: 0 3px; color: inherit; font-style: normal; }
+.g-soccer-pad-score > span { color: #f5f5f7; font-size: 12px; opacity: .6; white-space: nowrap; }
+.g-soccer-pad .g-soccer-phone-practice {
+  position: static;
+  z-index: auto;
+  display: block;
+  width: 100%;
+  max-width: 44vw;
+  min-width: 0;
+  box-sizing: border-box;
+  padding: 3px 7px;
+  border: 1px solid #ffffff1c;
+  border-radius: 8px;
+  background: #181b20cc;
+  color: #f5f5f7;
+  pointer-events: auto;
+}
+.g-soccer-pad .g-soccer-phone-practice-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+  white-space: nowrap;
+}
+.g-soccer-pad .g-soccer-phone-practice-row p {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.g-soccer-pad .g-soccer-phone-practice-row strong { flex: none; font-size: 11px; white-space: nowrap; }
+.g-soccer-pad .g-soccer-phone-practice-row button {
+  flex: none;
+  padding: 2px 3px;
+  border: 0;
+  background: transparent;
+  color: #d1d4d9;
+  font: 500 10px/1 inherit;
+  white-space: nowrap;
+}
+
 .g-soccer-pad-shoulders {
   position: absolute;
   top: calc(var(--sa-t) + 10px);
   z-index: 4;
   display: flex;
-  height: 32px;
+  align-items: center;
   gap: 8px;
+  height: 32px;
 }
 .g-soccer-pad-shoulders.is-left { left: calc(var(--sa-l) + 12px); }
 .g-soccer-pad-shoulders.is-right { right: calc(var(--sa-r) + 12px); }
 .g-soccer-pad .g-soccer-pad-shoulders > button {
-  display: flex;
-  min-width: 84px;
+  display: inline-flex;
+  min-width: 0;
   height: 32px;
   align-items: center;
   justify-content: center;
   gap: 6px;
-  padding: 0 10px;
+  padding: 0 9px;
   border: 1px solid #ffffff20;
   border-radius: 16px;
   background: #22262d;
   color: #f5f5f7;
   box-shadow: none;
+  white-space: nowrap;
 }
-.g-soccer-pad .g-soccer-pad-shoulders > button > b { font-size: 11px; font-weight: 700; letter-spacing: 0; }
-.g-soccer-pad .g-soccer-pad-shoulders > button > small { color: #d1d4d9; font-size: 10px; font-weight: 500; }
+.g-soccer-pad .g-soccer-pad-shoulders > button > b { font-size: 12px; font-weight: 700; letter-spacing: 0; line-height: 1; }
+.g-soccer-pad .g-soccer-pad-shoulders > button > small { color: #f5f5f7; font-size: 11px; font-weight: 500; line-height: 1; opacity: .6; white-space: nowrap; }
 .g-soccer-pad .g-soccer-pad-shoulders > button[data-pressed] { background: #454b55; filter: brightness(1.2); transform: scale(.97); }
+
 .g-soccer-pad-stickzone {
-  top: auto;
-  bottom: calc(var(--sa-b) + 14px);
-  left: calc(var(--sa-l) + 22px);
-  width: min(43vw, 360px);
-  height: min(65vh, 300px);
+  position: absolute;
+  z-index: 1;
+  inset: 0 auto 0 0;
+  width: 50%;
+  pointer-events: auto;
 }
 .g-soccer-pad-stick {
+  position: absolute;
+  left: 30%;
+  top: 62%;
   width: 120px;
   height: 120px;
+  translate: -50% -50%;
   border: 1px solid #ffffff1c;
   border-radius: 50%;
   background: #ffffff08;
   box-shadow: none;
   opacity: .56;
 }
-.g-soccer-pad-stick::before { inset: 8px; border: 1px solid #ffffff14; }
+.g-soccer-pad-stick::before { content: ""; position: absolute; inset: 8px; border: 1px solid #ffffff14; border-radius: 50%; }
 .g-soccer-pad-stick[data-active] { width: 136px; height: 136px; opacity: .95; box-shadow: 0 0 0 1px #ffffff30; }
 .g-soccer-pad-stick > i { width: 48%; height: 48%; border: 1px solid #ffffff2c; background: #30353d; box-shadow: inset 0 2px 8px #0008; }
 .g-soccer-pad-stick > i::after { width: 24px; height: 24px; background: #565d67; }
+
 .g-soccer-pad-face {
-  top: auto;
-  right: calc(var(--sa-r) + 12px);
-  bottom: calc(var(--sa-b) + 22px);
-  left: auto;
-  width: clamp(212px, 31vw, 264px);
-  height: clamp(212px, 31vw, 264px);
+  position: absolute;
+  z-index: 2;
+  inset: 0 0 0 50%;
+  pointer-events: auto;
 }
-.g-soccer-pad-diamond { width: 100%; height: 100%; }
-.g-soccer-pad-diamond::before { display: none; }
+.g-soccer-pad-diamond {
+  position: absolute;
+  right: calc(var(--sa-r) + 8px);
+  bottom: calc(var(--sa-b) + 24px);
+  width: var(--diamond-size);
+  height: var(--diamond-size);
+  pointer-events: none;
+}
 .g-soccer-pad .g-soccer-pad-btn {
   position: absolute;
-  width: clamp(64px, 17vh, 80px);
-  height: clamp(64px, 17vh, 80px);
+  display: flex;
+  width: var(--btn);
+  height: var(--btn);
+  align-items: center;
+  justify-content: center;
   padding: 0;
   border: 0;
   border-radius: 50%;
   background: var(--c);
   color: #fff;
   box-shadow: 0 4px 12px #0008;
+  pointer-events: none;
   transform: none;
 }
-.g-soccer-pad .g-soccer-pad-btn.is-y { top: 0; left: 50%; --c: #ffd60a; transform: translateX(-50%); }
+.g-soccer-pad .g-soccer-pad-btn.is-y { top: 0; left: 50%; --c: #ffd60a; color: #1c1c1e; transform: translateX(-50%); }
 .g-soccer-pad .g-soccer-pad-btn.is-x { top: 50%; left: 0; --c: #0a84ff; transform: translateY(-50%); }
 .g-soccer-pad .g-soccer-pad-btn.is-b { top: 50%; right: 0; --c: #ff453a; transform: translateY(-50%); }
 .g-soccer-pad .g-soccer-pad-btn.is-a { bottom: 0; left: 50%; --c: #34c759; transform: translateX(-50%); }
-.g-soccer-pad .g-soccer-pad-btn.is-y { color: #1c1c1e; }
-.g-soccer-pad .g-soccer-pad-btn > b { font-size: 22px; font-weight: 700; text-shadow: none; }
+.g-soccer-pad .g-soccer-pad-btn > b { font-size: 22px; font-weight: 700; line-height: 1; text-shadow: none; }
 .g-soccer-pad .g-soccer-pad-btn > small {
   position: absolute;
+  top: calc(100% + var(--label-gap));
+  left: 50%;
   z-index: 2;
   width: max-content;
-  max-width: 130px;
+  max-width: calc(var(--btn) * 1.4);
   color: #f5f5f7;
   font-size: 11px;
   font-weight: 500;
-  line-height: 1;
+  line-height: 1.1;
+  text-align: center;
+  transform: translateX(-50%);
   white-space: nowrap;
 }
-.g-soccer-pad .g-soccer-pad-btn.is-y > small { bottom: calc(100% + 4px); left: 50%; transform: translateX(-50%); }
-.g-soccer-pad .g-soccer-pad-btn.is-a > small { top: calc(100% + 4px); left: 50%; transform: translateX(-50%); }
-.g-soccer-pad .g-soccer-pad-btn.is-x > small { top: 50%; right: calc(100% + 8px); transform: translateY(-50%); }
-.g-soccer-pad .g-soccer-pad-btn.is-b > small { top: 50%; left: calc(100% + 8px); transform: translateY(-50%); }
 .g-soccer-pad .g-soccer-pad-btn[data-pressed] { filter: brightness(1.22); scale: .95; }
 .g-soccer-pad .g-soccer-pad-btn.is-charging::before {
+  content: "";
+  position: absolute;
   inset: -6px;
   border: 2px solid transparent;
   border-radius: 50%;
   background: conic-gradient(#fff calc(var(--charge, 0) * 306deg), #ffd60a 0) border-box;
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
   mask: radial-gradient(farthest-side, transparent calc(100% - 3px), #000 calc(100% - 2px));
 }
 .g-soccer-pad .g-soccer-pad-btn.is-over.is-b.is-charging::before { background: conic-gradient(#ff453a calc(var(--charge, 0) * 360deg), #ffffff20 0) border-box; }
 .g-soccer-pad .g-soccer-pad-btn.is-over:not(.is-b).is-charging::before { background: conic-gradient(#ffd60a calc(var(--charge, 0) * 360deg), #ffffff20 0) border-box; }
-.g-soccer-pad-rotate { display: none; }
-.g-soccer-pad-practice,
-.g-soccer-pad-strip .g-soccer-phone-practice { width: 100%; max-width: 44vw; min-width: 0; padding: 4px 8px; border: 1px solid #ffffff1c; border-radius: 8px; background: #181b20; }
-.g-soccer-pad .g-soccer-phone-practice-row { display: flex; min-width: 0; align-items: center; flex-wrap: nowrap; gap: 8px; }
-.g-soccer-pad .g-soccer-phone-practice-row p { flex: 1 1 auto; min-width: 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.g-soccer-pad .g-soccer-phone-practice-row strong { flex: none; font-size: 11px; white-space: nowrap; }
-.g-soccer-pad .g-soccer-phone-practice-row button { flex: none; padding: 2px 4px; border: 0; background: transparent; color: #d1d4d9; font-size: 10px; white-space: nowrap; }
+
 @media (orientation: portrait) {
   .g-soccer-pad-stickzone,
   .g-soccer-pad-face,
   .g-soccer-pad-shoulders,
   .g-soccer-pad-strip,
-  .g-soccer-pad-menu,
-  .g-soccer-phone-connected,
   .g-soccer-phone-flash { display: none !important; }
   .g-soccer-pad-rotate {
     position: absolute;
     inset: 0;
+    z-index: 1;
     display: flex !important;
     align-items: center;
     justify-content: center;
     flex-direction: column;
     gap: 8px;
     padding: 24px;
+    color: #f5f5f7;
     text-align: center;
   }
   .g-soccer-pad-rotate svg { width: 48px; height: 48px; fill: none; stroke: #f5f5f7; stroke-width: 2; }
