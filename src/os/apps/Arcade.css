@@ -11,3 +11,15 @@
   inset: 0;
   background: #0c0c10;
 }
+/* A zoomed window runs under the floating dock; keep the game above it. */
+.win.is-max .arcade-app-game {
+  padding-bottom: 52px;
+}
+.is-mobile .win.is-max .arcade-app-game,
+.is-tablet .win.is-max .arcade-app-game {
+  padding-bottom: 0;
+}
+/* Soccer's broadcast frame fills the zoomed window, which already ends above the dock. */
+.win.is-max .arcade-app-game:has(.g-soccer) {
+  padding-bottom: 0;
+}
