@@ -1176,6 +1176,34 @@ test('eggs from another client glide between the reports that arrive for them', 
   assert.ok(r.x <= 1 + 6 * 0.25 + 1e-9, 'carries on a moment, then waits');
 });
 
+test('an egg from another client that stood still a while sets off at its own pace, drawn no further back than usual', () => {
+  // standing still it's only reported every FAR_EVERY ticks (nothing changes); walking, every tick
+  const m = createMatch({ seed: 1, role: 'guest', level: 'normal', entrants: [{ name: 'a', color: '#fff', kind: 'player', seat: 1 }, { name: 'b', color: '#fff', kind: 'remote', seat: 0 }], me: 0, countdown: 0 });
+  const r = m.fighters[1];
+  const at = (x: number, vx: number) => ({ x, z: 0, y: 0, aim: 0, vx, vz: 0, phase: 'ground' as const, hp: 100, shield: 0, w: null, r: 0, flags: 0 });
+  const tick = TICK_MS / 1000;
+  for (let t = 0; t < 3; t += tick * FAR_EVERY) {
+    applyState(m, r, at(0, 0));
+    run(m, tick * FAR_EVERY);
+  }
+  let x = 0;
+  let last = r.x;
+  let most = 0;
+  for (let t = 0; t < 2; t += tick) {
+    x += 6 * tick;
+    applyState(m, r, at(x, 6));
+    for (let k = 0; k < 4; k++) {
+      step(m, tick / 4);
+      most = Math.max(most, Math.abs(r.x - last));
+      last = r.x;
+    }
+    // a moment in, it trails where it is by about the usual delay, not more and more
+    if (t > 0.5) assert.ok(Math.abs(x - 6 * INTERP - r.x) < 0.6, `${t.toFixed(2)} s in: drawn at ${r.x.toFixed(2)}, reported at ${x.toFixed(2)}`);
+  }
+  assert.ok(r.lag < INTERP + 0.05, `drawn ${r.lag.toFixed(2)} s back`);
+  assert.ok(most < 0.3, `no jump: ${most.toFixed(2)} m in a step`);
+});
+
 test('online a slow frame is made up in steps, so a guest on a slow phone keeps the room\'s time', () => {
   // a frame the loop didn't cut short is what it is; one it did counts all the time since the last, up to a point
   assert.equal(frameTime(1 / 60, 1 / 60), 1 / 60);

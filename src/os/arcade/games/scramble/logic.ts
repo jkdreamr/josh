@@ -4140,9 +4140,16 @@ export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: n
   let when = m.clock;
   if (prev) {
     const wait = m.clock - f.heard;
-    f.gap += (wait - f.gap) * 0.1;
-    when = Math.max(m.clock, prev.at + f.gap * 0.6);
-    f.need = Math.max(when - prev.at, f.need - wait * NEED_EASE);
+    if (Math.abs(prev.vx) + Math.abs(prev.vz) < STILL_V) {
+      // it stood still, and one standing still is only reported now and then (nothing changes): that wait says nothing
+      // of the link, and it stood there until about a usual wait before this report (not setting off slowly long ago)
+      f.need = Math.max(0, f.need - wait * NEED_EASE);
+      if (m.clock - prev.at > f.gap * 1.5) snaps.push({ ...prev, at: m.clock - f.gap });
+    } else {
+      f.gap += (wait - f.gap) * 0.1;
+      when = Math.max(m.clock, prev.at + f.gap * 0.6);
+      f.need = Math.max(when - prev.at, f.need - wait * NEED_EASE);
+    }
   }
   f.heard = m.clock;
   snaps.push({ at: when, x: s.x, z: s.z, y: s.y, aim: s.aim, vx: s.vx, vz: s.vz });
@@ -4168,6 +4175,8 @@ export function applyState(m: Match, f: Fighter, s: { x: number; z: number; y: n
 
 /** How fast the longest wait for a report eases off (seconds a second). */
 const NEED_EASE = 0.05;
+/** Slower than this (meters a second, along x and z together), a remote egg is standing still. */
+const STILL_V = 0.3;
 /** How fast a remote egg is drawn further back when its reports come further apart, and nearer again (seconds a second). */
 const LAG_UP = 0.2;
 const LAG_DOWN = 0.05;
