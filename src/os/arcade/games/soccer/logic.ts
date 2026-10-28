@@ -89,6 +89,7 @@ export type World = {
   stealWinnerId?: number | null;
   switchAt?: [number, number];
   switchWait?: [number, number];
+  switchCandidate?: [number, number];
   dribbleAt?: [number, number];
   rules?: RulesState;
 };
@@ -149,7 +150,7 @@ export function createWorld(seed = 71423, halfLength = 120, humans: 1 | 2 = 1, c
     score: [0, 0], clock: halfLength, halfLength, half: 1, endsSwapped: false,
     phase: 'restart', restart: 'kickoff', restartTeam: 0, restartAt: { x: 0, z: 0 },
     lastTouch: 0, seed: seed >>> 0 || 1, event: 'kick off', eventTime: 1.35, restartClock: 0, controlled: [6, TEAM_SIZE + 6], kickEvent: null, passTarget: null, passFrom: null, passControl: false, carrierId: null, lastToucherId: null, passPoint: null,
-    switchAt: [-1, -1], switchWait: [0, 0], dribbleAt: [-1, -1], stealProtect: 0, stealWinnerId: null,
+    switchAt: [-1, -1], switchWait: [0, 0], switchCandidate: [-1, -1], dribbleAt: [-1, -1], stealProtect: 0, stealWinnerId: null,
     rules: createRules(),
   };
   placeKickoffPositions(world, 0);
@@ -200,7 +201,8 @@ function switchScore(world: World, p: Player) {
 }
 
 export function transferControl(world: World, team: Team, id: number, fromId = world.controlled[team]) {
-  if (world.players.find((p) => p.id === id)?.sentOff) return world.controlled[team];
+  const next = world.players.find((p) => p.id === id && p.team === team && !p.sentOff);
+  if (!next || id === fromId) return world.controlled[team];
   for (const p of world.players) {
     if (p.team !== team) continue;
     if (p.id === fromId) {
@@ -213,6 +215,9 @@ export function transferControl(world: World, team: Team, id: number, fromId = w
     }
   }
   if (fromId === world.controlled[team]) world.controlled[team] = id;
+  (world.switchAt ??= [-1, -1])[team] = world.halfLength * world.half - world.clock;
+  (world.switchWait ??= [0, 0])[team] = 0;
+  (world.switchCandidate ??= [-1, -1])[team] = -1;
 }
 
 export function movePlayer(player: Player, input: Point, sprint: boolean, carrying: boolean, dt: number, jockey = false, speedMultiplier = 1, staminaMultiplier = 1, dribbleMultiplier = 1) {
@@ -220,7 +225,7 @@ export function movePlayer(player: Player, input: Point, sprint: boolean, carryi
   const top = (jockey ? (sprint ? 5 : 3.2) : (sprint ? 9 * (0.75 + 0.25 * Math.min(1, player.stamina / 0.35)) : 7) * (carrying ? 0.9 : 1)) * speedMultiplier;
   let speed = Math.hypot(player.vx, player.vz);
   let angle = speed > 0 ? Math.atan2(player.vx, player.vz) : player.facing;
-  if (magnitude < 0.08) {
+  if (magnitude < (player.human ? 0.001 : 0.08)) {
     player.planting = false;
     speed = Math.max(0, speed - 31.5 * dt);
   } else {
@@ -235,7 +240,7 @@ export function movePlayer(player: Player, input: Point, sprint: boolean, carryi
       const turn = (16 + (3 - 16) * clamp((speed - slow) / (9 - slow), 0, 1)) * (carrying ? 0.85 * dribbleMultiplier : 1) * dt;
       angle += jockey || speed <= slow ? delta : clamp(delta, -turn, turn);
       const target = top * Math.min(1, magnitude) * (jockey ? 1 : Math.max(0.25, Math.cos(targetAngle - angle)));
-      speed += clamp(target - speed, -31.5 * dt, (speed < 7 * speedMultiplier ? 40 * 7 / 6 : 9 * speedMultiplier) * dt);
+      speed += clamp(target - speed, -31.5 * dt, (speed < 7 * speedMultiplier ? player.human ? 56 * speedMultiplier : 40 * 7 / 6 : 9 * speedMultiplier) * dt);
     }
   }
   if (jockey) speed = Math.min(speed, top);
@@ -746,6 +751,7 @@ export function setRestart(world: World, team: Team, restart: Exclude<Restart, n
   world.passFrom = null;
   for (const p of world.players) { p.buffer = null; p.slide = null; }
   world.switchWait = [0, 0];
+  world.switchCandidate = [-1, -1];
   world.setPieceRun = null;
   world.setPiece = null;
   clearOffside(world);
@@ -765,6 +771,7 @@ function goalSide(world: World, carrier: Player, team: Team, gap: number): Point
 function prepareDefense(world: World, commands: Map<number, Command>, carrier: Player | undefined, dt: number) {
   const now = world.halfLength * world.half - world.clock;
   world.switchAt ??= [-1, -1]; world.switchWait ??= [0, 0]; world.dribbleAt ??= [-1, -1];
+  world.switchCandidate ??= [-1, -1];
   for (const p of world.players) {
     if (p.sentOff) continue;
     const original = commands.get(p.id);
@@ -802,14 +809,20 @@ function prepareDefense(world: World, commands: Map<number, Command>, carrier: P
     const ownPass = world.passTarget != null && world.players.some((p) => p.id === world.passTarget && p.team === team);
     const eligible = !carrier && Math.hypot(world.ball.vx, world.ball.vz) > 3 && !ownPass
       && now - world.dribbleAt[team] >= 0.3;
-    if (!eligible) { world.switchWait[team] = 0; continue; }
-    world.switchWait[team] += dt;
-    if (world.switchWait[team] + 1e-9 < 0.25 || now - world.switchAt[team] < 0.6) continue;
+    if (!eligible) { world.switchWait[team] = 0; world.switchCandidate[team] = -1; continue; }
     const best = world.players.filter((p) => p.team === team && !p.human && !p.sentOff)
       .sort((a, b) => distance(a, world.ball) - distance(b, world.ball))[0];
-    if (best && distance(best, world.ball) + 2.5 <= distance(current, world.ball)) {
-      transferControl(world, team, best.id); world.switchAt[team] = now; world.switchWait[team] = 0;
+    if (!best || distance(best, world.ball) + 2.5 > distance(current, world.ball)) {
+      world.switchWait[team] = 0; world.switchCandidate[team] = -1;
+      continue;
     }
+    if (world.switchCandidate[team] !== best.id) {
+      world.switchCandidate[team] = best.id;
+      world.switchWait[team] = 0;
+    }
+    world.switchWait[team] += dt;
+    if (world.switchWait[team] + 1e-9 < 0.25 || now - world.switchAt[team] < 0.6) continue;
+    transferControl(world, team, best.id);
   }
 }
 

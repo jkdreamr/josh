@@ -28,6 +28,29 @@ test('standard gamepad face buttons map A pass, B shoot, X lob and Y through wit
   }
 });
 
+test('gamepad dead-zone output approaches zero continuously and flick noise cannot retrigger a switch', () => {
+  const input = pad();
+  input.axes[0] = 0.14;
+  assert.equal(gamepadInput(input).state.move.x, 0);
+  input.axes[0] = 0.14001;
+  assert.ok(gamepadInput(input).state.move.x < 1e-7);
+  let last = 0;
+  for (let axis = 0.14; axis <= 1; axis += 0.001) {
+    input.axes[0] = axis;
+    const move = gamepadInput(input).state.move.x;
+    assert.ok(move >= last && move - last < 0.01);
+    last = move;
+  }
+  input.axes[2] = 0.81;
+  let history = gamepadInput(input, {}, true).previous;
+  for (const noise of [0.79, 0.81, 0.78, 0.83, 0.7, 0.81]) {
+    input.axes[2] = noise;
+    const sample = gamepadInput(input, history, true);
+    assert.equal(sample.state.switchDir, null);
+    history = sample.previous;
+  }
+});
+
 test('analog-only triggers use 0.3 threshold, LB is edged and RB holds finesse/press', () => {
   for (const [index, flag] of [[6, 'jockey'], [7, 'sprint']] as const) {
     const input = pad(index, 0.31); input.buttons[index]!.pressed = false;
