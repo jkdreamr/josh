@@ -2,7 +2,7 @@ import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore,
 import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useOnline, useSetting, useMuted, getSetting, Segmented, defineSetting, levelOptions, levelIndex, TouchControls, sfx } from '../../kit';
 import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
-import { chargePower, IDENTITY_BASIS, screenToWorld, gamepadInput, keyboardInput, reconcileControllers, type ControlCommand, type GamepadHistory } from './input.ts';
+import { carryEdge, chargePower, IDENTITY_BASIS, screenToWorld, gamepadInput, keyboardInput, reconcileControllers, type ControlCommand, type GamepadHistory } from './input.ts';
 import { acceptMovePacket, cloneSnapshot, consumeCommand, movePacket, parsePacket, type RemoteSeat, type LobbyMember } from './net.ts';
 import { createWorld, distance, teamOf, findReceiver, matchClock, nearestCarrier, setRestart, stepWorld, STEP, teamDir, type Command, type Team, type World } from './logic.ts';
 import { setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
@@ -53,6 +53,16 @@ const commandKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'Ar
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 const shallowHudEqual = (left: HudState, right: HudState) =>
   (Object.keys(left) as (keyof HudState)[]).every((key) => left[key] === right[key]);
+const hasCommandEdge = (command: Partial<Command>) =>
+  !!(command.action && command.pressed || command.switchNearest || command.switchDir);
+const commandEdge = (command: Command): Partial<Command> => ({
+  action: command.action,
+  pressed: command.pressed,
+  power: command.power,
+  aim: command.aim,
+  switchNearest: command.switchNearest,
+  switchDir: command.switchDir,
+});
 function Settings({ online = false }: { online?: boolean }) {
   const shell = useShell();
   const match = useContext(MatchContext);
@@ -301,6 +311,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const configSequence = useRef(0);
   const remoteCommands = useRef(new Map<number, Command>());
   const userCommands = useRef(new Map<number, Command>());
+  const pendingLocalEdges = useRef(new Map<number, Partial<Command>>());
   const simulationCommands = useRef(new Map<number, Command>());
   const aiCommands = useRef<[Map<number, Command>, Map<number, Command>]>([new Map(), new Map()]);
   const remoteSeats = useRef(new Map<number, RemoteSeat>());
@@ -311,6 +322,8 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const reported = useRef(false);
   const soundTime = useRef(0);
   const renderDirty = useRef(true);
+  const framePerfStart = useRef<number | null>(null);
+  const framePerfEvents = useRef({ kick: false, switch: false });
   const guestRenderTimer = useRef(0);
   const gamepadPrevious = useRef<Record<number, GamepadHistory>>({});
   const controllerPlayers = useRef(new Map<number, number>());
@@ -776,6 +789,10 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   };
 
   const update = (loopDt: number) => {
+    if (soccerPerfEnabled) {
+      framePerfStart.current = performance.now();
+      framePerfEvents.current = { kick: false, switch: false };
+    }
     const now = performance.now();
     const previousFrame = lastFrameTime.current;
     const dt = loopDt <= 0 ? 0 : Math.min(0.1, Math.max(0, previousFrame === null ? loopDt : (now - previousFrame) / 1000));
@@ -783,6 +800,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     const current = worldRef.current;
     const room = onlineRef.current;
     if (!current || shellRef.current.status !== 'playing') return;
+    const initialControlled = soccerPerfEnabled ? [...current.controlled] as [number, number] : null;
     const presentPhoneSeats = room?.players.filter((player) => player.seat > 0).map((player) => player.seat) ?? [];
     let phoneDisconnected = false;
     if (room?.isHost) {
@@ -874,19 +892,50 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     if (current.phase === 'goal' && replaySkipped.current && fxDirector.goalPending) fxDirector.goalImpact();
     const commandsForUsers = userCommands.current;
     commandsForUsers.clear();
+    const localSeatIds = new Map<number, number>();
+    if (online) {
+      if (online.seat >= 0) {
+        const id = controllerPlayers.current.get(online.seat) ?? localOnlineId;
+        if (id !== undefined) localSeatIds.set(online.seat, id);
+      }
+    } else if (currentMode === 'versus') {
+      localSeatIds.set(0, current.controlled[0]);
+      localSeatIds.set(1, current.controlled[1]);
+    } else if (currentMode === 'coop') {
+      localSeatIds.set(0, controllerPlayers.current.get(0) ?? 6);
+      localSeatIds.set(1, controllerPlayers.current.get(1) ?? 9);
+    } else {
+      localSeatIds.set(0, current.controlled[0]);
+    }
+    const frameLocalPlayerIds = [...localSeatIds.values()];
+    const localSeatCommands = new Map<number, Command>();
+    const edgeCommands = new Map<number, Partial<Command>>();
     const presentationGated = !isOnlineGuest && (presentation.current === 'intro' || presentation.current === 'half-time' || presentation.current === 'full-time');
+    if (presentationGated || current.phase === 'goal') pendingLocalEdges.current.clear();
     if (!presentationGated && current.phase !== 'goal' && room && !room.watching) {
-      const id = controllerPlayers.current.get(room.seat) ?? localPlayerIds[0];
-      if (id !== undefined) commandsForUsers.set(id, makeCommand(id, false, dt));
+      const seat = room.seat;
+      const id = localSeatIds.get(seat) ?? frameLocalPlayerIds[0];
+      if (id !== undefined) {
+        const next = makeCommand(id, false, dt);
+        const command = carryEdge(pendingLocalEdges.current.get(seat), next);
+        commandsForUsers.set(id, command);
+        localSeatCommands.set(seat, command);
+        if (hasCommandEdge(command)) edgeCommands.set(seat, commandEdge(command));
+        if (hasCommandEdge(next)) pendingLocalEdges.current.delete(seat);
+      }
     } else if (!presentationGated && current.phase !== 'goal' && !room) {
-      for (let i = 0; i < localPlayerIds.length; i++) {
-        const id = controllerPlayers.current.get(i) ?? localPlayerIds[i]!;
-        commandsForUsers.set(id, makeCommand(id, i === 1, dt));
+      for (const [seat, id] of localSeatIds) {
+        const next = makeCommand(id, seat === 1, dt);
+        const command = carryEdge(pendingLocalEdges.current.get(seat), next);
+        commandsForUsers.set(id, command);
+        localSeatCommands.set(seat, command);
+        if (hasCommandEdge(command)) edgeCommands.set(seat, commandEdge(command));
+        if (hasCommandEdge(next)) pendingLocalEdges.current.delete(seat);
       }
     }
 
-    if (isOnlineGuest && room && localPlayerIds.length) {
-      const command = commandsForUsers.get(localPlayerIds[0]!)!;
+    if (isOnlineGuest && room && frameLocalPlayerIds.length) {
+      const command = commandsForUsers.get(frameLocalPlayerIds[0]!)!;
       if (command.action && command.pressed || command.switchNearest || command.switchDir) pendingNetworkAction.current = command;
       inputTimer.current += dt;
       if (inputTimer.current >= 1 / 30) {
@@ -904,6 +953,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       const steps = Math.min(6, Math.floor(accumulator.current / STEP));
       let stepped = false;
       let stepIndex = 0;
+      let appliedLocalEdges = false;
       while (stepIndex < steps && presentation.current === 'live') {
         stepped = true;
         simulationTime.current += STEP;
@@ -923,6 +973,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         const previousPhase = current.phase;
         if (stepIndex === steps - 1 && previousRenderSnapshot.current) captureSnapshot(current, previousRenderSnapshot.current);
         const practice = practiceRef.current;
+        const controlledBeforeStep = soccerPerfEnabled ? [...current.controlled] as [number, number] : null;
         if (practice) {
           const command = [...commands.values()].find((entry) => entry.pressed && (entry.action === 'pass' || entry.action === 'shoot'));
           if (practice.phase === 'done' && command && simulationTime.current - practiceDoneAt.current > 1) setupDrill(practice, current);
@@ -934,6 +985,11 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
           }
           practice.events.length = 0;
         } else stepWorld(current, STEP, commands, debugConfig.clockScale);
+        if (soccerPerfEnabled && controlledBeforeStep) {
+          if (current.kickEvent) framePerfEvents.current.kick = true;
+          if (current.controlled[0] !== controlledBeforeStep[0] || current.controlled[1] !== controlledBeforeStep[1]) framePerfEvents.current.switch = true;
+        }
+        if (edgeCommands.size) appliedLocalEdges = true;
         if (current.kickEvent) pendingSnapshotKick.current = { ...current.kickEvent };
         fxDirector.observe(current, simulationTime.current);
         statsObserver.current.observe(current, STEP);
@@ -954,6 +1010,15 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
           if (heldCommand) remoteCommands.current.set(id, heldCommand);
         }
         controllerPlayers.current = assignments;
+        const previousLocalIds = [...localSeatIds.values()];
+        const localAssignments = reconcileControllers(current, localSeatIds);
+        for (const id of previousLocalIds) commandsForUsers.delete(id);
+        localSeatIds.clear();
+        for (const [seat, id] of localAssignments) {
+          localSeatIds.set(seat, id);
+          const command = localSeatCommands.get(seat);
+          if (command) commandsForUsers.set(id, command);
+        }
         accumulator.current -= STEP;
         if (audioEnabled) sound.observe(current, simulationTime.current);
         soundForWorld(current);
@@ -976,6 +1041,11 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
           accumulator.current = 0;
           break;
         }
+      }
+      if (appliedLocalEdges) {
+        for (const seat of edgeCommands.keys()) pendingLocalEdges.current.delete(seat);
+      } else {
+        for (const [seat, edge] of edgeCommands) pendingLocalEdges.current.set(seat, edge);
       }
       if (stepped) renderDirty.current = true;
       if (soccerPerfEnabled) recordSoccerPerf('simulationMs', performance.now() - simulationStart);
@@ -1007,6 +1077,11 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     }
 
     if (audioEnabled) sound.frame(current, isOnlineGuest ? now / 1000 : simulationTime.current);
+    if (soccerPerfEnabled) {
+      if (initialControlled && (current.controlled[0] !== initialControlled[0] || current.controlled[1] !== initialControlled[1])) framePerfEvents.current.switch = true;
+      if (framePerfEvents.current.kick) performance.mark('soccer:kick');
+      if (framePerfEvents.current.switch) performance.mark('soccer:switch');
+    }
 
     if (debugConfig.enabled) {
       (window as Window & { __soccerWorld?: World }).__soccerWorld = current;
@@ -1114,11 +1189,27 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const scheme: ControlScheme = online?.isHost ? 'phone' : shell.touch ? 'touch' : 'keys';
 
   useGameLoop(update, () => {
-    if (!renderDirty.current) return;
+    if (!renderDirty.current) {
+      if (soccerPerfEnabled && framePerfStart.current !== null) {
+        const frameMs = performance.now() - framePerfStart.current;
+        recordSoccerPerf('frameMs', frameMs);
+        if (framePerfEvents.current.kick) recordSoccerPerf('kickFrameMs', frameMs);
+        if (framePerfEvents.current.switch) recordSoccerPerf('switchFrameMs', frameMs);
+        framePerfStart.current = null;
+      }
+      return;
+    }
     const renderStart = soccerPerfEnabled ? performance.now() : 0;
     viewRef.current?.render();
     if (soccerPerfEnabled) {
       recordSoccerPerf('renderMs', performance.now() - renderStart);
+      if (framePerfStart.current !== null) {
+        const frameMs = performance.now() - framePerfStart.current;
+        recordSoccerPerf('frameMs', frameMs);
+        if (framePerfEvents.current.kick) recordSoccerPerf('kickFrameMs', frameMs);
+        if (framePerfEvents.current.switch) recordSoccerPerf('switchFrameMs', frameMs);
+        framePerfStart.current = null;
+      }
       const stats = viewRef.current?.perfStats();
       if (stats) recordSoccerRendererStats(stats);
       publishSoccerPerf();

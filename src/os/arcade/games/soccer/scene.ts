@@ -206,6 +206,12 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const indicatorPower = document.createElement('b');
   indicator.append(indicatorArrow, indicatorName, indicatorPower);
   host.appendChild(indicator);
+  let indicatorDisplay = '';
+  let indicatorNameText = '';
+  let indicatorColor = '';
+  let indicatorPowerWidth = '';
+  let indicatorPowerVisibility = '';
+  let indicatorPowerColor = '';
   const projected = new THREE.Vector3();
 
   const scene = new THREE.Scene();
@@ -676,18 +682,45 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     if (controlled && cameraMode !== 'setpiece') {
       projected.set(controlled.x, 2.75, controlled.z).project(camera);
       const visible = projected.z >= -1 && projected.z <= 1 && Math.abs(projected.x) < 1.05 && Math.abs(projected.y) < 1.05;
-      indicator.style.display = visible ? 'grid' : 'none';
+      const display = visible ? 'grid' : 'none';
+      if (indicatorDisplay !== display) {
+        indicator.style.display = display;
+        indicatorDisplay = display;
+      }
       if (visible) {
         indicator.style.left = `${(projected.x * 0.5 + 0.5) * width}px`;
         indicator.style.top = `${(0.5 - projected.y * 0.5) * height}px`;
-        indicator.style.setProperty('--player-color', activeKits[controlled.team].shirt);
+        const color = activeKits[controlled.team].shirt;
+        if (indicatorColor !== color) {
+          indicator.style.setProperty('--player-color', color);
+          indicatorColor = color;
+        }
         const name = rosterName(clubById(world.clubs?.[controlled.team]), controlled.id % 11).toUpperCase();
-        indicatorName.textContent = `NO. ${jerseyNumber(controlled.id)}  ${name}`;
-        indicatorPower.style.width = power === null ? '0%' : `${Math.round(Math.max(0.04, power) * 100)}%`;
-        indicatorPower.style.visibility = power === null ? 'hidden' : 'visible';
-        indicatorPower.style.backgroundColor = (power ?? 0) > 0.85 ? '#ff755f' : '#e6f36d';
+        const nameText = `NO. ${jerseyNumber(controlled.id)}  ${name}`;
+        if (indicatorNameText !== nameText) {
+          indicatorName.textContent = nameText;
+          indicatorNameText = nameText;
+        }
+        const powerWidth = power === null ? '0%' : `${Math.round(Math.max(0.04, power) * 100)}%`;
+        if (indicatorPowerWidth !== powerWidth) {
+          indicatorPower.style.width = powerWidth;
+          indicatorPowerWidth = powerWidth;
+        }
+        const powerVisibility = power === null ? 'hidden' : 'visible';
+        if (indicatorPowerVisibility !== powerVisibility) {
+          indicatorPower.style.visibility = powerVisibility;
+          indicatorPowerVisibility = powerVisibility;
+        }
+        const powerColor = (power ?? 0) > 0.85 ? '#ff755f' : '#e6f36d';
+        if (indicatorPowerColor !== powerColor) {
+          indicatorPower.style.backgroundColor = powerColor;
+          indicatorPowerColor = powerColor;
+        }
       }
-    } else indicator.style.display = 'none';
+    } else if (indicatorDisplay !== 'none') {
+      indicator.style.display = 'none';
+      indicatorDisplay = 'none';
+    }
     const sunLow = stadium.sunLow();
     key.position.set(cameraRig.target.value.x - FIELD.length * 0.17, sunLow ? 18 : 30, cameraRig.target.value.z + (sunLow ? FIELD.width * 0.3 : -FIELD.width * 0.28));
     key.target.position.set(cameraRig.target.value.x, 0, cameraRig.target.value.z);
@@ -730,12 +763,24 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   /** Compiles every shader the match needs (players included) without blocking, before the first frame draws. */
   async function precompile() {
     warming = true;
+    const warmedActors: { object: T.Object3D; visible: boolean }[] = [];
     try {
       await Promise.allSettled(attachments);
-      if (!disposed) await renderer.compileAsync(scene, camera);
+      if (!disposed) {
+        fxLayer.warm(true);
+        for (const actor of actors.values()) {
+          for (const object of [actor.marker, actor.arrow, actor.carrierRing, actor.powerBar]) {
+            warmedActors.push({ object, visible: object.visible });
+            object.visible = true;
+          }
+        }
+        await renderer.compileAsync(scene, camera);
+      }
     } catch {
       // The first frame compiles whatever is left.
     } finally {
+      fxLayer.warm(false);
+      for (const { object, visible } of warmedActors) object.visible = visible;
       warming = false;
     }
   }

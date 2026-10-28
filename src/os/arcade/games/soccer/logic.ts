@@ -527,6 +527,7 @@ export function kick(world: World, player: Player, action: Action, command: Comm
     world.passTarget = receiver?.id ?? null;
     world.passFrom = receiver ? player.id : null;
     world.passControl = !!receiver && player.human;
+    if (world.passControl && receiver && !receiver.human) transferControl(world, player.team, receiver.id, player.id);
   } else {
     world.passTarget = null;
     world.passFrom = null;
@@ -779,7 +780,7 @@ function prepareDefense(world: World, commands: Map<number, Command>, carrier: P
     const command = { ...original };
     commands.set(p.id, command);
     if (carrier?.id !== p.id) {
-      if (command.switchNearest || command.switchDir || command.action === 'pass' && command.pressed && (command.power ?? 0.1) < 0.3) {
+      if (command.switchNearest || command.switchDir || command.action === 'pass' && command.pressed && (command.power ?? 0.1) < 0.3 && world.passTarget !== p.id) {
         if (p.human && p.controlled) {
           const id = switchPlayer(world, p.team, command.switchDir ?? undefined);
           world.switchAt[p.team] = now;

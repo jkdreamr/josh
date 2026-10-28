@@ -118,6 +118,20 @@ export function gamepadInput(pad: Pad, previous: GamepadHistory = {}, defending 
   return { state, previous: { buttons, flick } };
 }
 
+export function carryEdge(pending: Partial<Command> | null | undefined, next: Command): Command {
+  if (!pending || next.action && next.pressed || next.switchNearest || next.switchDir) return next;
+  if (!(pending.action && pending.pressed || pending.switchNearest || pending.switchDir)) return next;
+  return {
+    ...next,
+    action: pending.action,
+    pressed: pending.pressed,
+    power: pending.power,
+    aim: pending.aim,
+    switchNearest: pending.switchNearest,
+    switchDir: pending.switchDir,
+  };
+}
+
 export function reconcileControllers(world: World, assignments: Map<number, number>) {
   const next = new Map(assignments);
   for (const [seat, id] of assignments) {
