@@ -76,6 +76,8 @@ function validWorld(value: unknown): value is World {
     || (w.lastTouch !== 0 && w.lastTouch !== 1) || !Number.isSafeInteger(w.seed) || !inRange(w.eventTime, 0, 30)
     || !inRange(w.restartClock, 0, 360) || typeof w.event !== 'string' || w.event.length > 80
     || !Array.isArray(w.controlled) || w.controlled.length !== 2 || !w.controlled.every((id) => Number.isInteger(id) && id >= 0 && id < PLAYER_COUNT)
+    || (w.controlledSeats !== undefined && (!Array.isArray(w.controlledSeats) || w.controlledSeats.length !== 4
+      || !w.controlledSeats.every((id) => id === null || Number.isInteger(id) && id >= 0 && id < PLAYER_COUNT)))
     || (w.passTarget !== null && w.passTarget !== undefined && (!Number.isInteger(w.passTarget) || w.passTarget < 0 || w.passTarget >= PLAYER_COUNT))
     || (w.passFrom !== null && w.passFrom !== undefined && (!Number.isInteger(w.passFrom) || w.passFrom < 0 || w.passFrom >= PLAYER_COUNT))
     || typeof w.passControl !== 'boolean'
@@ -103,7 +105,9 @@ function validWorld(value: unknown): value is World {
 }
 
 export function movePacket(round: number, seq: number, seat: number, command: ControlCommand, edge?: number): MovePacket {
-  const aimLength = Math.hypot(command.aim?.x ?? 1, command.aim?.z ?? 0) || 1;
+  const aim = command.aim ?? { x: 1, z: 0 };
+  const aimLength = Math.hypot(aim.x, aim.z);
+  const aimScale = aimLength > 0 ? 1 / aimLength : 0;
   const buttons = (command.action === 'pass' ? 1 : 0)
     | (command.action === 'shoot' ? 2 : 0)
     | (command.action === 'through' ? 4 : 0)
@@ -114,12 +118,12 @@ export function movePacket(round: number, seq: number, seat: number, command: Co
     | (command.action === 'finesse' ? 256 : 0)
     | (command.action === 'skill' ? 512 : 0)
     | (command.jockey ? 1024 : 0) | (command.autoJockey ? 2048 : 0) | (command.contain ? 4096 : 0)
-    | (command.switchNearest ? 8192 : 0) | (command.finesseHeld ? 16384 : 0);
+    | (command.switchNearest ? 8192 : 0) | (command.finesse || command.finesseHeld ? 16384 : 0);
   return {
     t: 'soccer', k: 'mv', r: round, seq, seat,
     x: Math.round(command.move.x * 100) / 100, z: Math.round(command.move.z * 100) / 100,
-    ax: Math.round((command.aim?.x ?? 1) / aimLength * 100) / 100,
-    az: Math.round((command.aim?.z ?? 0) / aimLength * 100) / 100,
+    ax: Math.round(aim.x * aimScale * 100) / 100,
+    az: Math.round(aim.z * aimScale * 100) / 100,
     power: Math.round(Math.max(0, Math.min(1, command.power ?? 0.72)) * 100) / 100,
     buttons: buttons | (command.sprint ? 64 : 0),
     ...(edge === undefined ? {} : { e: edge }),
@@ -220,7 +224,7 @@ export function commandFromPacket(packet: MovePacket): ControlCommand {
   const held = packet.held;
   const heldAction = held & 2 ? 'shoot' : held & 1 ? 'pass' : held & 4 ? 'through' : held & 8 ? 'lob' : held & 512 ? 'skill' : null;
   return { move: { x: packet.x, z: packet.z }, sprint: !!(buttons & 64), action, heldAction, press: !!(buttons & 128), pressed: !!action, power: packet.power, aim: { x: packet.ax, z: packet.az },
-    jockey: !!(buttons & 1024), autoJockey: !!(buttons & 2048), contain: !!(buttons & 4096), switchNearest: !!(buttons & 8192), finesseHeld: !!(buttons & 16384),
+    jockey: !!(buttons & 1024), autoJockey: !!(buttons & 2048), contain: !!(buttons & 4096), switchNearest: !!(buttons & 8192), finesse: !!(buttons & 16384), finesseHeld: !!(buttons & 16384),
     switchDir: packet.sx === undefined ? null : { x: packet.sx, z: packet.sz! } };
 }
 
