@@ -11,7 +11,7 @@ import { cameraGoal, createCameraRig, stepCameraBasis, stepCameraRig, type Camer
 export type { CameraMode } from './camera.ts';
 import { createPracticeMarkers } from './practice-markers.ts';
 import type { PracticeMarker } from './practice.ts';
-import { approachAngle, bindSoccerRig, bodyFrameVelocity, createSoccerAnimationInput, createSoccerAnimator, kickingFoot, playSoccerClip, preferredFoot, soccerClipActive, soccerDribbleOffset, updateSoccerAnimator, type SoccerAnimator, type SoccerClip } from './player.ts';
+import { approachAngle, bindSoccerRig, bodyFrameVelocity, createSoccerAnimationInput, createSoccerAnimator, kickingFoot, kickClipStartTime, playSoccerClip, preferredFoot, soccerClipActive, soccerDribbleOffset, updateSoccerAnimator, type SoccerAnimator, type SoccerClip } from './player.ts';
 import type { SoccerRenderStats } from './perf.ts';
 import { createFxLayer, type FxDirector } from './fx.ts';
 
@@ -467,6 +467,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const debug = typeof location !== 'undefined' && new URLSearchParams(location.search).has('soccerdebug');
   const quality = {
     dpr: Math.min(window.devicePixelRatio || 1, lite ? 1.5 : 2),
+    tier: 0,
     slow: 0,
     stable: 0,
     lastRender: 0,
@@ -550,14 +551,18 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       const speed = Math.hypot(player.vx, player.vz);
       const kickEvent = world.kickEvent;
       const eventForPlayer = kickEvent?.playerId === player.id;
+      const carrying = currentCarrier?.id === player.id;
+      const forwardBallSpeed = (world.ball.vx - player.vx) * Math.sin(player.facing) + (world.ball.vz - player.vz) * Math.cos(player.facing);
+      const touchState = actor.root.userData.soccerTouch ??= { cooldown: player.touchCd ?? 0, carrier: carrying, forwardSpeed: forwardBallSpeed, controlled: player.controlled };
       if (eventForPlayer && kickEvent && kickEvent !== actor.lastKick) {
         const clip = kickClip(kickEvent.action);
         if (clip) {
           const foot = kickingFoot(actor.root.rotation.y, world.ball.vx, world.ball.vz, actor.anim.foot);
-          startClip(actor, clip, foot === 'l' ? 1 : -1, kickEvent.power, true);
+          const charged = touchState.controlled && actor.anim.charge > 0.2;
+          playSoccerClip(actor.anim, clip, foot === 'l' ? 1 : -1, kickEvent.power, kickClipStartTime(clip, charged));
         }
       } else if (!eventForPlayer && player.cooldown > actor.prevCooldown + 0.05) {
-        const clip = replayClip(player.action);
+        const clip = replayClip(player.action === 'tackle-miss' ? 'tackle' : player.action);
         if (clip) {
           const side = player.action === 'slide'
             ? bodyFrameVelocity(actor.root.rotation.y, player.vx, player.vz, actor.anim.frame).side >= 0 ? 1 : -1
@@ -565,6 +570,17 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
           startClip(actor, clip, side, 0.5);
         }
       }
+      const knockOn = player.touchCd !== undefined
+        ? player.touchCd - touchState.cooldown > 0.2 && player.touchCd <= 0.45 && forwardBallSpeed > 2 && Math.hypot(world.ball.x - player.x, world.ball.z - player.z) < 1.2
+        : forwardBallSpeed - touchState.forwardSpeed > 3 && Math.hypot(world.ball.x - player.x, world.ball.z - player.z) < 1;
+      if (!eventForPlayer && (touchState.carrier || carrying) && knockOn) {
+        const side = bodyFrameVelocity(actor.root.rotation.y, world.ball.x - player.x, world.ball.z - player.z, actor.anim.frame).side >= 0 ? 1 : -1;
+        playSoccerClip(actor.anim, 'touch', side, 0.5);
+      }
+      touchState.cooldown = player.touchCd ?? 0;
+      touchState.carrier = carrying;
+      touchState.forwardSpeed = forwardBallSpeed;
+      touchState.controlled = player.controlled;
       actor.lastKick = kickEvent;
       if (world.phase !== 'goal') actor.celebrated = false;
       const celebrating = world.phase === 'goal' && cameraMode !== 'replay' && player.team === scoringTeam && !isKeeper(player);
@@ -581,7 +597,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
           const timeToPlane = (keeperPlaneX - world.ball.x) / world.ball.vx;
           const crossingZ = timeToPlane > 0 ? world.ball.z + world.ball.vz * timeToPlane : world.ball.z;
           const side = bodyFrameVelocity(actor.root.rotation.y, keeperPlaneX - player.x, crossingZ - player.z, actor.anim.frame).side >= 0 ? 1 : -1;
-          startClip(actor, player.action === 'dive' ? 'dive' : 'catch', side, 0.5);
+          startClip(actor, player.action === 'dive' || (player.action === 'parry' && Math.abs(crossingZ - player.z) > 0.7) ? 'dive' : 'catch', side, 0.5);
           actor.keeperShot = true;
         }
         if (ballSpeed < 6 || !towardOwnGoal) actor.keeperShot = false;
@@ -604,7 +620,6 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       } else {
         actor.keeperShot = false;
       }
-      const carrying = currentCarrier?.id === player.id;
       const carrierDx = currentCarrier ? currentCarrier.x - player.x : 0;
       const carrierDz = currentCarrier ? currentCarrier.z - player.z : 0;
       const jockey = !isKeeper(player) && speed < 6.5 && currentCarrier !== null
@@ -632,6 +647,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       input.time = time;
       input.carrying = carrying;
       input.jockey = jockey;
+      input.planting = !!player.planting;
       input.keeperSet = isKeeper(player) && Math.abs(world.ball.x - ownGoalX) < 25;
       input.lookX = world.ball.x - player.x;
       input.lookY = world.ball.y;
@@ -712,17 +728,20 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     if (quality.dpr > 1.01) {
       quality.dpr = quality.dpr > 1.75 ? 1.5 : quality.dpr > 1.35 ? 1.25 : 1;
       renderer.setPixelRatio(quality.dpr);
+      quality.tier++;
       return;
     }
     if (quality.shadows) {
       quality.shadows = false;
       key.castShadow = false;
       renderer.shadowMap.enabled = false;
+      quality.tier++;
       return;
     }
     if (!quality.crowdHalf) {
       quality.crowdHalf = true;
       stadium.reduceCrowd();
+      quality.tier++;
     }
   }
 
@@ -786,6 +805,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     },
     perfStats() {
       return {
+        dpr: quality.dpr,
+        qualityTier: quality.tier,
         rendererCalls: renderer.info.render.calls,
         triangles: renderer.info.render.triangles,
         shadowsEnabled: renderer.shadowMap.enabled,

@@ -1,0 +1,32 @@
+{
+  "version": 1,
+  "seed": 254,
+  "clubs": [
+    "bay-city",
+    "northshore"
+  ],
+  "mode": "cpu",
+  "halfLength": 120,
+  "humans": 1,
+  "level": "normal",
+  "seats": {
+    "0": 6
+  },
+  "frames": 181,
+  "commands": [],
+  "setup": {
+    "name": "live",
+    "players": {
+      "1": {
+        "x": 49.5,
+        "z": 31
+      }
+    },
+    "ball": {
+      "x": 52.25,
+      "z": 33.65
+    },
+    "lastTouch": 0,
+    "park": true
+  }
+}

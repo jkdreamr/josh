@@ -1,4 +1,4 @@
-import { useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent } from 'react';
+import { Component, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type PointerEvent, type ReactNode } from 'react';
 import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useOnline, useSetting, useMuted, getSetting, Segmented, defineSetting, levelOptions, levelIndex, TouchControls, sfx } from '../../kit';
 import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
@@ -28,6 +28,7 @@ import { PhoneLobby as SoccerPhoneLobby, PhoneTeamPicker, publishLobby, sideForR
 import { createCup, loadCup, matchOutcome, recordUserResult, saveCup } from './cup.ts';
 import { Referee } from './referee.tsx';
 import { createFxDirector, haptic as fxHaptic, phoneFx, type FxDirector } from './fx.ts';
+import { reportSoccerError, startSoccerTelemetry, type TelemetryHandle } from './telemetry.ts';
 import './soccer.css';
 
 type Minutes = '2' | '4' | '6';
@@ -269,6 +270,10 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   }
   const shellRef = useRef(shell);
   const onlineRef = useRef(online);
+  const telemetryRef = useRef<TelemetryHandle | null>(null);
+  const telemetryFrameAt = useRef<number | null>(null);
+  const telemetryMatchActive = useRef(false);
+  const lastQualitySampleAt = useRef(0);
   const levelRef = useRef<Level>(online?.quick ? 'normal' : levelChoice);
   const cameraRef = useRef<CameraMode>(cameraChoice);
   const timeRef = useRef<TimeMode>(timeChoice);
@@ -330,6 +335,20 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   useEffect(() => {
     sound.configure({ volume: volumeLevels[volumeChoice], crowd: 1, muted, commentary: commentaryChoice });
   }, [sound, volumeChoice, muted, commentaryChoice]);
+
+  useEffect(() => {
+    const telemetry = startSoccerTelemetry('display');
+    telemetryRef.current = telemetry;
+    telemetry?.setPhase('menu');
+    return () => {
+      telemetry?.stop();
+      if (telemetryRef.current === telemetry) telemetryRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (online?.transport) telemetryRef.current?.transport(online.transport);
+  }, [online?.transport]);
 
   useEffect(() => () => sound.dispose(), [sound]);
 
@@ -588,6 +607,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         const accepted = acceptMovePacket(seat, previous, packet, !!carrier && carrier.team !== player.team);
         remoteSeats.current.set(from, accepted.seat);
         if (!accepted.command) return;
+        telemetryRef.current?.seq(packet.seq, packet.seat);
         const command = accepted.command;
         const freshSequence = packet.seq > seat.seq;
         const freshEdge = packet.e !== undefined && packet.e > seat.edge;
@@ -782,7 +802,20 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     lastFrameTime.current = now;
     const current = worldRef.current;
     const room = onlineRef.current;
-    if (!current || shellRef.current.status !== 'playing') return;
+    if (!current || shellRef.current.status !== 'playing') {
+      telemetryMatchActive.current = false;
+      telemetryFrameAt.current = null;
+      telemetryRef.current?.setPhase('menu');
+      telemetryRef.current?.match(false);
+      return;
+    }
+    telemetryRef.current?.setPhase(current.phase);
+    const matchActive = shellRef.current.status === 'playing' && current.phase !== 'full-time';
+    if (telemetryMatchActive.current !== matchActive) {
+      telemetryMatchActive.current = matchActive;
+      telemetryFrameAt.current = null;
+    }
+    telemetryRef.current?.match(matchActive);
     const presentPhoneSeats = room?.players.filter((player) => player.seat > 0).map((player) => player.seat) ?? [];
     let phoneDisconnected = false;
     if (room?.isHost) {
@@ -994,7 +1027,8 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         const state = cloneSnapshot(current);
         if (!state.kickEvent && pendingSnapshotKick.current) state.kickEvent = { ...pendingSnapshotKick.current };
         pendingSnapshotKick.current = null;
-        room.send({ t: 'soccer', k: 's', r: room.round || 1, seq: snapshotSequence.current++, state });
+        const ack = [0, 1, 2, 3].map((seat) => remoteSeats.current.get(seat)?.seq ?? -1);
+        room.send({ t: 'soccer', k: 's', r: room.round || 1, seq: snapshotSequence.current++, state, ack });
       }
       practiceStatusTimer.current += dt;
       const practice = practiceRef.current;
@@ -1117,9 +1151,22 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     if (!renderDirty.current) return;
     const renderStart = soccerPerfEnabled ? performance.now() : 0;
     viewRef.current?.render();
+    const now = performance.now();
+    if (telemetryMatchActive.current) {
+      const lastTelemetryFrame = telemetryFrameAt.current;
+      if (lastTelemetryFrame !== null) telemetryRef.current?.frame(now - lastTelemetryFrame);
+      telemetryFrameAt.current = now;
+    } else {
+      telemetryFrameAt.current = null;
+    }
+    const qualityDue = now - lastQualitySampleAt.current >= 1000;
+    const stats = soccerPerfEnabled || qualityDue ? viewRef.current?.perfStats() : undefined;
+    if (stats && qualityDue) {
+      telemetryRef.current?.quality(stats.qualityTier, stats.dpr);
+      lastQualitySampleAt.current = now;
+    }
     if (soccerPerfEnabled) {
       recordSoccerPerf('renderMs', performance.now() - renderStart);
-      const stats = viewRef.current?.perfStats();
       if (stats) recordSoccerRendererStats(stats);
       publishSoccerPerf();
     }
@@ -1244,6 +1291,7 @@ function PadStick({ movement, onChange }: { movement: { current: { x: number; z:
 export function PhoneController() {
   const online = useOnline();
   const lobbyState = useLobbyState();
+  const telemetryRef = useRef<TelemetryHandle | null>(null);
   const movement = useRef({ x: 0, z: 0 });
   const held = useRef<Command['action']>(null);
   const sprint = useRef(false);
@@ -1271,6 +1319,18 @@ export function PhoneController() {
   const [chargeProgress, setChargeProgress] = useState(0);
   const [chargingAction, setChargingAction] = useState<Command['action']>(null);
   const chargeStartedAt = useRef<number | null>(null);
+  useEffect(() => {
+    const telemetry = startSoccerTelemetry('controller');
+    telemetryRef.current = telemetry;
+    telemetry?.setPhase('menu');
+    return () => {
+      telemetry?.stop();
+      if (telemetryRef.current === telemetry) telemetryRef.current = null;
+    };
+  }, []);
+  useEffect(() => {
+    if (online?.transport) telemetryRef.current?.transport(online.transport);
+  }, [online?.transport]);
   useEffect(() => {
     const html = document.documentElement;
     const body = document.body;
@@ -1434,7 +1494,9 @@ export function PhoneController() {
       aim: repeat.aim,
       switchNearest: repeat.switchNearest,
     });
-    online.send(movePacket(online.round || 1, sequence.current++, online.seat, command, repeat?.id), { fast: true });
+    const seq = sequence.current++;
+    online.send(movePacket(online.round || 1, seq, online.seat, command, repeat?.id), { fast: true });
+    telemetryRef.current?.sent(seq);
     lastPacketSentAt.current = now;
   };
   const sendStickChange = () => {
@@ -1479,6 +1541,11 @@ export function PhoneController() {
       const packet = parsePacket(data);
       if (packet?.k === 'lobby') publishLobby(packet);
       if (packet?.k === 's') {
+        telemetryRef.current?.seq(packet.seq);
+        const ack = packet.ack?.[online.seat];
+        if (ack !== undefined && ack >= 0) telemetryRef.current?.ack(ack);
+        telemetryRef.current?.setPhase(packet.state.phase);
+        telemetryRef.current?.match(packet.state.phase !== 'full-time');
         phoneWorld.current = packet.state;
         const phoneTeam = teamOf(playerForSeat(online.seat, displayOnly, mode));
         const feedback = phoneFx(previousScore.current, previousKickKey.current, packet.state, phoneTeam);
@@ -1499,6 +1566,7 @@ export function PhoneController() {
         if (packet.mode) setMode(packet.mode);
         if (packet.mode !== 'practice') setPracticeStatus((status) => status?.tutorial ? status : null);
       } else if (packet?.k === 'pp') {
+        telemetryRef.current?.seq(packet.seq);
         setPracticeStatus(packet.drill || packet.tutorial ? { drill: packet.drill, prompt: packet.prompt, hint: packet.hint, score: packet.score, best: packet.best, done: packet.done, tutorial: packet.tutorial } : null);
       }
     });
@@ -1675,8 +1743,25 @@ export default function Soccer({ onExit, roomCode }: { onExit?: () => void; room
         quickPool="2v2"
         soloLabel="Play with keyboard"
       >
-        <Stage joining={!!roomCode} />
+        <TelemetryBoundary><Stage joining={!!roomCode} /></TelemetryBoundary>
       </GameShell>
     </MatchContext.Provider>
   );
+}
+
+class TelemetryBoundary extends Component<{ children: ReactNode }, { error: Error | null }> {
+  state = { error: null as Error | null };
+
+  static getDerivedStateFromError(error: Error) {
+    return { error };
+  }
+
+  componentDidCatch(error: Error) {
+    reportSoccerError(error, 'react');
+  }
+
+  render() {
+    if (this.state.error) throw this.state.error;
+    return this.props.children;
+  }
 }
