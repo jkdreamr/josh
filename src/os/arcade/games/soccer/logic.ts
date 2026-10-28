@@ -1141,13 +1141,14 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
       return;
     }
     const taker = restartTaker(world);
+    const humanKickoff = world.restart === 'kickoff' && taker.human;
     if (world.restart === 'kickoff' && !taker.human
       && world.players.some((player) => player.team === world.restartTeam && player.human && !player.sentOff)) {
       transferControl(world, world.restartTeam, taker.id);
       return;
     }
     for (const p of world.players) {
-      if (p.team === world.restartTeam && p.controlled) {
+      if (p.team === world.restartTeam && p.controlled && !(humanKickoff && p.id === taker.id)) {
         const multipliers = worldMultipliers(world, p.id);
         movePlayer(p, commands.get(p.id)?.move ?? { x: 0, z: 0 }, !!commands.get(p.id)?.sprint, false, t, false, multipliers.speed, multipliers.stamina, multipliers.dribble);
       }
@@ -1171,7 +1172,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
     }
     const action = commands.get(taker.id);
     world.clock = Math.max(0, world.clock - clockStep);
-    const moved = world.players.some((player) => player.team === world.restartTeam && player.controlled
+    const moved = !humanKickoff && world.players.some((player) => player.team === world.restartTeam && player.controlled
       && !player.sentOff
       && Math.hypot(commands.get(player.id)?.move.x ?? 0, commands.get(player.id)?.move.z ?? 0) > 0.05);
     if ((action?.pressed && action.action) || moved || world.restartClock >= 10) {

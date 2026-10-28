@@ -48,14 +48,39 @@ test('kickoff starts centered and opponents are kept at distance', () => {
   assert.ok(Math.hypot(opponent.x, opponent.z) >= 3.99);
 });
 
-test('kickoff movement starts play immediately and moves the selected player', () => {
+test('CPU kickoff can still start from movement without a kick', () => {
+  const g = createWorld(21, 120);
+  for (const player of g.players.filter((player) => player.team === 0)) player.human = false;
+  stepWorld(g, 1 / 60);
+  const selected = g.players[g.controlled[0]!]!;
+  stepWorld(g, 1 / 60, new Map([[selected.id, { move: { x: 1, z: 0 } }]]));
+  assert.equal(g.phase, 'live');
+  assert.equal(g.kickEvent, null);
+});
+
+test('human kickoff waits for the aimed pass while keeping the taker stationary', () => {
   const g = createWorld(22, 120);
   const player = restartTaker(g);
   stepWorld(g, 1 / 60);
-  const startX = player.x;
-  stepWorld(g, 1 / 60, new Map([[player.id, { move: { x: 1, z: 0 }, sprint: true }]]));
+  assert.equal(player.human, true);
+  const start = { x: player.x, z: player.z };
+  const aim = { x: 1, z: 0 };
+  stepWorld(g, 1 / 60, new Map([[player.id, { move: aim, sprint: true, aim }]]));
+  assert.equal(g.phase, 'restart');
+  assert.equal(player.x, start.x);
+  assert.equal(player.z, start.z);
+  assert.equal(g.kickEvent, null);
+
+  stepWorld(g, 1 / 60, new Map([[player.id, { move: aim, aim, action: null, heldAction: 'pass', pressed: false }]]));
+  assert.equal(g.phase, 'restart');
+  assert.equal(g.kickEvent, null);
+
+  stepWorld(g, 1 / 60, new Map([[player.id, { move: aim, aim, action: 'pass', heldAction: null, pressed: true, power: 0.45 }]]));
   assert.equal(g.phase, 'live');
-  assert.ok(player.x > startX);
+  assert.equal(g.kickEvent?.playerId, player.id);
+  assert.equal(g.kickEvent?.action, 'pass');
+  assert.ok(g.ball.vx > 0);
+  assert.ok(Math.abs(g.ball.vz) < g.ball.vx * 0.1);
 });
 
 test('sprint accelerates quickly and a released player stops promptly', () => {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { computeAI } from '../src/os/arcade/games/soccer/ai.ts';
 import { phoneControlledPlayer, reconcileControllers, syncControllerSeats, type ControlCommand } from '../src/os/arcade/games/soccer/input.ts';
-import { createWorld, nearestCarrier, setRestart, STEP, stepWorld } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, nearestCarrier, restartTaker, setRestart, STEP, stepWorld } from '../src/os/arcade/games/soccer/logic.ts';
 import { acceptMovePacket, consumeCommand, InputFreshness, movePacket, neutralCommand, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
 import { assignControllers } from '../src/os/arcade/games/soccer/seats.ts';
 import { phoneStoppagePrompt } from '../src/os/arcade/games/soccer/setpieces.ts';
@@ -10,7 +10,18 @@ import { onFoul } from '../src/os/arcade/games/soccer/rules.ts';
 
 test('phone stoppage prompts cover phases and slides but not unrestricted live play', () => {
   const world = createWorld();
-  assert.match(phoneStoppagePrompt(world, 6)!, /move the stick/);
+  stepWorld(world, STEP);
+  const taker = restartTaker(world);
+  assert.equal(taker.human, true);
+  assert.equal(phoneStoppagePrompt(world, taker.id), 'Kick off · aim with stick, press A to pass');
+  const teammate = world.players.find((player) => player.team === taker.team && player.id !== taker.id)!;
+  assert.equal(phoneStoppagePrompt(world, teammate.id), 'Kick off · waiting for the taker');
+
+  const cpuWorld = createWorld();
+  for (const player of cpuWorld.players.filter((player) => player.team === cpuWorld.restartTeam)) player.human = false;
+  const cpuPlayer = cpuWorld.players.find((player) => player.team === cpuWorld.restartTeam)!;
+  assert.equal(phoneStoppagePrompt(cpuWorld, cpuPlayer.id), 'kick off · move the stick or press to take');
+
   for (const phase of ['goal', 'half-time', 'full-time'] as const) {
     world.phase = phase;
     world.event = '';

@@ -297,8 +297,15 @@ test('control-seat ownership stays exact through kickoff, AI play, passes, resta
     stepWorld(world, STEP);
     assertSeatInvariant(world);
     const kickoffOwner = world.controlledSeats?.[phoneSeat]!;
-    stepWorld(world, STEP, new Map([[kickoffOwner, { move: { x: 0.2, z: 0 } }]]));
+    const taker = world.players.find((player) => player.team === world.restartTeam && player.slot === 'ST')!;
+    assert.equal(taker.human, true);
+    assert.ok(world.controlledSeats?.includes(taker.id));
+    stepWorld(world, STEP, new Map([[taker.id, {
+      move: { x: 0, z: 0 }, action: 'pass', pressed: true, aim: { x: 1, z: 0 }, power: 0.45,
+    }]]));
     assert.equal(world.phase, 'live');
+    assert.equal(world.kickEvent?.playerId, taker.id);
+    assert.equal(world.kickEvent?.action, 'pass');
     assertSeatInvariant(world);
     assert.equal(world.controlledSeats?.[phoneSeat], kickoffOwner);
 
@@ -440,6 +447,49 @@ test('the human kickoff taker can pass with the requested aim and release once',
   assert.equal(world.kickEvent, null);
 });
 
+test('the kickoff taker stays selected through stick and A holds, then passes once in the stick direction', () => {
+  const world = worldWithSeats(539, [null, 6, null, null]);
+  stepWorld(world, STEP);
+  const taker = world.players.find((player) => player.team === 0 && player.slot === 'ST')!;
+  assert.equal(taker.human, true);
+  assert.equal(world.controlledSeats?.[1], taker.id);
+  const start = { x: taker.x, z: taker.z };
+  const stick = { x: 1, z: 0 };
+  let passes = 0;
+
+  const frame = (tick: number, command: Command) => {
+    const { commands, byTeam } = matchAICommands(world, tick);
+    assert.equal(byTeam[0].has(taker.id), false, 'AI must not command the human taker');
+    commands.set(taker.id, command);
+    stepWorld(world, STEP, commands);
+    passes += Number(world.kickEvent?.playerId === taker.id && world.kickEvent.action === 'pass');
+    assert.equal(world.controlledSeats?.[1], taker.id, 'the phone seat stays on the taker');
+    assert.equal(world.controlled[0], taker.id);
+    assertSeatInvariant(world);
+  };
+
+  for (let tick = 0; tick < 20; tick++) {
+    frame(tick, { move: stick, aim: stick });
+    assert.equal(world.phase, 'restart');
+    assert.equal(world.kickEvent, null);
+    assert.deepEqual({ x: taker.x, z: taker.z }, start);
+  }
+  for (let tick = 20; tick < 30; tick++) {
+    frame(tick, { move: stick, aim: stick, action: null, heldAction: 'pass', pressed: false });
+    assert.equal(world.phase, 'restart');
+    assert.equal(world.kickEvent, null);
+    assert.deepEqual({ x: taker.x, z: taker.z }, start);
+  }
+
+  frame(30, { move: stick, aim: stick, action: 'pass', heldAction: null, pressed: true, power: 0.45 });
+  assert.equal(world.phase, 'live');
+  assert.equal(world.kickEvent?.playerId, taker.id);
+  assert.equal(world.kickEvent?.action, 'pass');
+  assert.ok(world.ball.vx > 0);
+  assert.ok(Math.abs(world.ball.vz) < world.ball.vx * 0.1);
+  assert.equal(passes, 1);
+});
+
 test('a teammate who collects a loose ball receives the single human seat', () => {
   const world = worldWithSeats(533, [null, 6, null, null]);
   const teammate = world.players[7]!;
@@ -525,16 +575,15 @@ test('phone A press and release on the kickoff carrier produces one kick event',
   stepWorld(world, STEP);
   const kickoffOwner = world.controlledSeats![1]!;
   stepWorld(world, STEP, new Map([[kickoffOwner, { move: { x: 0.2, z: 0 } }]]));
-  assert.equal(world.phase, 'live');
-
-  const carrierId = world.controlledSeats![1]!;
-  const carrier = world.players[carrierId]!;
-  Object.assign(carrier, { x: 0, z: 0, vx: 0, vz: 0, cooldown: 0, touchCd: 0 });
-  world.ball = { x: 0.3, y: 0.11, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false };
-  world.carrierId = carrierId;
-  world.lastToucherId = carrierId;
+  assert.equal(world.phase, 'restart');
+  assert.equal(world.players[kickoffOwner]?.slot, 'ST');
+  const carrierId = kickoffOwner;
 
   let kickEvents = 0;
+  stepWorld(world, STEP, new Map([[carrierId, { move: { x: 0, z: 0 }, action: null, heldAction: 'pass', pressed: false }]]));
+  assert.equal(world.phase, 'restart');
+  assert.equal(world.kickEvent, null);
+  assertSeatInvariant(world);
   stepWorld(world, STEP, new Map([[carrierId, { move: { x: 0, z: 0 }, action: 'pass', pressed: true, aim: { x: 1, z: 0 }, power: 0.45 }]]));
   assert.equal(world.kickEvent?.playerId, carrierId);
   assert.equal(world.kickEvent?.action, 'pass');
