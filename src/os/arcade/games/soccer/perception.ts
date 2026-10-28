@@ -2,7 +2,7 @@ import type { Level } from './ai.ts';
 import { FIELD, STEP, tackleWindow, type Player, type World } from './logic.ts';
 
 export const PERCEPTION_DELAY: Record<Level, number> = { easy: 0.35, normal: 0.25, hard: 0.17 };
-const EXTRAPOLATE: Record<Level, number> = { easy: 0, normal: 0.9, hard: 1 };
+const EXTRAPOLATE: Record<Level, number> = { easy: 0, normal: 1, hard: 1 };
 export const LUNGE_COMMIT = 0.3;
 
 type Sample = { tick: number; x: number; y: number; z: number; vx: number; vz: number; facing: number; action: string };
