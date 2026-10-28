@@ -26,6 +26,34 @@ function exclude(w: World, p: Player) {
   if (r < 9.15) { const a = r ? dx / r : -teamDir(w.restartTeam, w.endsSwapped); p.x = w.restartAt.x + a * 9.16; p.z = w.restartAt.z + (r ? dz / r : 0) * 9.16; }
   p.x = clamp(p.x, -52.35, 52.35); p.z = clamp(p.z, -33.85, 33.85);
 }
+function spaceTeammates(w: World, fixed: number, min = 2) {
+  for (const team of [0, 1] as const) {
+    const players = w.players.filter(p => p.team === team && !p.sentOff);
+    for (let pass = 0; pass < 4; pass++) {
+      for (let i = 0; i < players.length; i++) {
+        for (let j = i + 1; j < players.length; j++) {
+          const a = players[i]!, b = players[j]!;
+          if (distance(a, b) >= min) continue;
+          const aFixed = a.id === fixed || a.slot === 'GK';
+          const bFixed = b.id === fixed || b.slot === 'GK';
+          if (aFixed && bFixed) continue;
+          const moverIndex = bFixed ? i : j;
+          const otherIndex = bFixed ? j : i;
+          const mover = players[moverIndex]!, other = players[otherIndex]!;
+          const dx = mover.x - other.x;
+          const offset = Math.sqrt(Math.max(0, min * min - dx * dx));
+          let direction = Math.sign(mover.z - other.z) || Math.sign(moverIndex - otherIndex);
+          let z = other.z + direction * offset;
+          if (z < -33.85 || z > 33.85) {
+            direction *= -1;
+            z = other.z + direction * offset;
+          }
+          snap(mover, mover.x, z);
+        }
+      }
+    }
+  }
+}
 export function arrangeSetPiece(w: World) {
   if (!w.restart || w.restart === 'kickoff') { w.setPiece = null; return; }
   const kind = w.restart === 'kick-in' ? 'throw-in' : w.restart;
@@ -76,6 +104,7 @@ export function arrangeSetPiece(w: World) {
   snap(taker,w.ball.x-(aim.x-w.ball.x)/r*0.5,w.ball.z-(aim.z-w.ball.z)/r*0.5);
   taker.facing = Math.atan2(aim.x-taker.x,aim.z-taker.z);
   if (team.some(p => p.human)) transferControl(w,w.restartTeam,taker.id);
+  if (kind === 'goal-kick') spaceTeammates(w, taker.id);
 }
 
 // Fixed-time shooting solves all three components against the simulation integrator.

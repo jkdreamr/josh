@@ -33,6 +33,47 @@ test('phone snapshots preserve pending deliveries, open play and shootouts',()=>
   if(pens?.k==='s')assert.deepEqual(pens.state.shootout,w.shootout);
 });
 function ticks(w: World, n: number) { for(let i=0;i<n;i++) stepWorld(w,STEP); }
+function goalKickWithAttackers(zs: [number, number], seed = 1234) {
+  const w = createWorld(seed);
+  const st = w.players.find(p => p.team === 1 && p.slot === 'ST')!;
+  const rw = w.players.find(p => p.team === 1 && p.slot === 'RW')!;
+  st.x = rw.x = -40;
+  st.z = zs[0];
+  rw.z = zs[1];
+  setRestart(w, 0, 'goal-kick', { x: -47, z: 0 });
+  return w;
+}
+function assertGoalKickSpacing(w: World) {
+  for (let i = 0; i < w.players.length; i++) {
+    for (let j = i + 1; j < w.players.length; j++) {
+      const a = w.players[i]!, b = w.players[j]!;
+      if (a.sentOff || b.sentOff || a.team !== b.team) continue;
+      assert.ok(distance(a, b) >= 2 - 1e-6, `players ${a.id}/${b.id} are too close`);
+    }
+  }
+}
+test('goal-kick placement separates attackers while keeping them outside the box', () => {
+  const w = goalKickWithAttackers([20.2, 20.6]);
+  const st = w.players.find(p => p.team === 1 && p.slot === 'ST')!;
+  const rw = w.players.find(p => p.team === 1 && p.slot === 'RW')!;
+  assertGoalKickSpacing(w);
+  assert.equal(st.x, -34);
+  assert.equal(rw.x, -34);
+  assert.ok(distance(w.players[w.setPiece!.takerId]!, w.ball) < 0.64);
+});
+test('goal-kick spacing moves attackers inward rather than beyond the touchline', () => {
+  const w = goalKickWithAttackers([33.6, 33.6]);
+  const st = w.players.find(p => p.team === 1 && p.slot === 'ST')!;
+  const rw = w.players.find(p => p.team === 1 && p.slot === 'RW')!;
+  assert.ok(Math.min(st.z, rw.z) < 33.6);
+  assert.ok([st, rw].every(p => p.z >= -33.85 && p.z <= 33.85));
+  assert.ok(distance(st, rw) >= 2 - 1e-6);
+});
+test('goal-kick spacing is deterministic', () => {
+  const a = goalKickWithAttackers([20.2, 20.6]);
+  const b = goalKickWithAttackers([20.2, 20.6]);
+  assert.deepEqual(a.players.map(p => ({ x: p.x, z: p.z })), b.players.map(p => ({ x: p.x, z: p.z })));
+});
 test('corner layout has zones, a nearby taker and legal defenders',()=>{
   const w=setup('corner');
   assert.ok(distance(w.players[w.setPiece!.takerId]!,w.ball)<0.64);
