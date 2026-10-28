@@ -9,6 +9,8 @@ export const CAMERA_LIMITS = { speed: 32, acceleration: 96, zoomSpeed: 12, zoomA
 const vector = (x = 0, y = 0, z = 0): Vec3 => ({ x, y, z });
 const spring = (): Spring => ({ value: vector(), velocity: vector() });
 const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, n));
+// Landscape telecam framing (main-stand gantry, long lens). aimZ/followZ bias the look-at to the far side so the far boards and crowd stay in shot.
+export const BROADCAST = { height: 25, distance: 50, fov: 24, aimZ: 6, followZ: 0.3 } as const;
 
 export function stepSpring(state: Spring, goal: Vec3, dt: number, frequency: number, maxSpeed: number, maxAcceleration: number) {
   let remaining = Math.max(0, Math.min(0.1, dt));
@@ -62,17 +64,18 @@ export function broadcastGoal(world: World, humanTeam: Team, aspect: number): Ca
   const leadSpeed = Math.hypot(world.ball.vx, world.ball.vz);
   const lead = Math.min(0.24, 5 / (leadSpeed || 1));
   const dir = teamDir(humanTeam, world.endsSwapped), portrait = aspect < 0.72;
+  const focusZ = clamp(world.ball.z + world.ball.vz * lead + dz * weight, -FIELD.width / 2 + 3, FIELD.width / 2 - 3);
   const target = vector(
     clamp(world.ball.x + world.ball.vx * lead + dx * weight, -FIELD.length / 2 + 3, FIELD.length / 2 - 3) + dir * FIELD.goalWidth * 0.5,
     0.55,
-    clamp(world.ball.z + world.ball.vz * lead + dz * weight, -FIELD.width / 2 + 3, FIELD.width / 2 - 3) * 0.55,
+    portrait ? focusZ * 0.55 : BROADCAST.aimZ + (focusZ - BROADCAST.aimZ) * BROADCAST.followZ,
   );
   const position = portrait
     ? vector(target.x - dir * FIELD.width * 0.42, target.y + FIELD.width * 0.24, target.z)
-    : vector(target.x, target.y + FIELD.width * 0.30, target.z - FIELD.width * 0.68);
+    : vector(target.x, BROADCAST.height, target.z - BROADCAST.aimZ - BROADCAST.distance);
   // Widen gradually for a long pass rather than teleporting to keep a distant cursor in frame.
   const spread = Math.min(8, Math.max(0, Math.hypot(dx, dz) - 12) * 0.18);
-  return { position, target, fov: (portrait ? 68 : 31) + spread };
+  return { position, target, fov: (portrait ? 68 : BROADCAST.fov) + spread };
 }
 
 export function cameraGoal(world: World, humanTeam: Team, aspect: number, mode: CameraMode, introProgress = 1): CameraGoal {
