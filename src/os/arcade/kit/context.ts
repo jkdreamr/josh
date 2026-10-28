@@ -15,6 +15,8 @@ export type GameOverInfo = {
    * isn't told the round is over, until the game clears it with updateOver once it is over for everyone.
    */
   wait?: string;
+  /** Keep a phone-first game's own result menu in place of the shell result card. */
+  hideShellCard?: boolean;
 };
 
 export type ShellApi = {
@@ -33,6 +35,8 @@ export type ShellApi = {
   pause: () => void;
   resume: () => void;
   restart: () => void;
+  playAgain?: () => void;
+  backToArcade?: () => void;
   /** Ends the round and shows the Game Over overlay. Pass a score to record it against the best. */
   gameOver: (score?: number, info?: GameOverInfo) => void;
   /** While the Game Over card is up, replaces its title, detail and wait (a round still going on for others). */

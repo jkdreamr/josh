@@ -17,6 +17,7 @@ import { broadcastClock, createStatsObserver, possessionShare } from './broadcas
 import { IntroCard, MatchContext, PausePanel, StatsScreen, type MatchData, type Presentation } from './presentation.tsx';
 import { captureSnapshot, createSnapshot, interpolateInto, type Snapshot } from './render-lerp.ts';
 import { publishSoccerPerf, recordSoccerPerf, recordSoccerRendererStats, soccerPerfEnabled } from './perf.ts';
+import { postMatchNavPacket, repeatPostMatchNav, type PostMatchNavState } from './post-match-nav.ts';
 import { clampOrigin, faceLabels, followOrigin, haptic as padHaptic, hitButton, phoneClockLabel, STICK, stickVector, type PadPoint } from './pad.ts';
 import { assignControllers, missingPhoneSeats, playerForSeat, type ControllerMember, type Mode } from './seats.ts';
 import type { PitchPattern } from './stadium.ts';
@@ -26,10 +27,12 @@ import { CAMERA, COMPETITION, HALF, HOME_CLUB, AWAY_CLUB, LEVEL, TIME } from './
 import { COMPETITIONS, type CompetitionId } from './modes.ts';
 import { CLUBS, clubById, DEFAULT_CLUBS } from './teams.ts';
 import { PhoneLobby as SoccerPhoneLobby, PhoneTeamPicker, publishLobby, sideForRoom, useLobbyState } from './lobby.tsx';
-import { createCup, loadCup, matchOutcome, recordUserResult, saveCup } from './cup.ts';
+import { createCup, cupSummary, loadCup, matchOutcome, recordUserResult, saveCup, userFixture } from './cup.ts';
+import { nextCupFixtureText, phoneRoute, postMatchPrimaryLabel } from './phone-flow.ts';
 import { Referee } from './referee.tsx';
 import { createFxDirector, haptic as fxHaptic, phoneFx, type FxDirector } from './fx.ts';
 import { reportSoccerError, startSoccerTelemetry, type TelemetryHandle } from './telemetry.ts';
+import QRCode from 'qrcode';
 import './soccer.css';
 
 type Minutes = '2' | '4' | '6';
@@ -51,7 +54,7 @@ const volumeOptions = [['off', 'Off'], ['low', 'Low'], ['mid', 'Mid'], ['full', 
 const commentaryOptions = [['voice', 'Voice'], ['captions', 'Captions'], ['off', 'Off']] as const;
 const volumeLevels: Record<Volume, number> = { off: 0, low: 0.35, mid: 0.7, full: 1 };
 const offsideOptions = [['on', 'On'], ['off', 'Off']] as const;
-const commandKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyJ', 'KeyK', 'KeyL', 'KeyI', 'KeyU', 'KeyQ', 'KeyE', 'Space', 'Period', 'Slash', 'Semicolon', 'Quote', 'Comma', 'ShiftLeft', 'ShiftRight'];
+const commandKeys = ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'KeyJ', 'KeyK', 'KeyL', 'KeyI', 'KeyQ', 'KeyE', 'Enter', 'Space', 'Period', 'Slash', 'Semicolon', 'Quote', 'Comma', 'ShiftLeft', 'ShiftRight'];
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 const shallowHudEqual = (left: HudState, right: HudState) =>
   (Object.keys(left) as (keyof HudState)[]).every((key) => left[key] === right[key]);
@@ -248,6 +251,21 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const [timeChoice] = useSetting(TIME);
   const [pitchChoice] = useSetting(PITCH);
   const [phoneGone, setPhoneGone] = useState(false);
+  const [localPaused, setLocalPaused] = useState(false);
+  const [postMatchOpen, setPostMatchOpen] = useState(false);
+  const [postMatchSelection, setPostMatchSelection] = useState(0);
+  const [postMatchCountdown, setPostMatchCountdown] = useState<number | null>(null);
+  const [postMatchLobby, setPostMatchLobby] = useState(false);
+  const [postMatchPrimary, setPostMatchPrimary] = useState('Rematch');
+  const postMatchOpenRef = useRef(false);
+  const postMatchSelectionRef = useRef(0);
+  const postMatchInput = useRef(new Map<number, PostMatchNavState>());
+  const skipKeyLatch = useRef(new Set<string>());
+  const localPausedRef = useRef(false);
+  localPausedRef.current = localPaused;
+  postMatchOpenRef.current = postMatchOpen;
+  postMatchSelectionRef.current = postMatchSelection;
+  const [reconnectQr, setReconnectQr] = useState('');
   const [hud, setHud] = useState<HudState>({
     score0: 0, score1: 0, clock: '00:00', added: null, half: 1,
     phase: 'restart', event: 'kick off', eventTime: 1.35, eventKey: 0,
@@ -260,6 +278,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const practiceDoneAt = useRef(0);
   const [practiceHud, setPracticeHud] = useState<PracticeView | null>(null);
   const tutorialRef = useRef<TutorialState | null>(null);
+  const tutorialPending = useRef(false);
   const [tutorialHud, setTutorialHud] = useState<TutorialState | null>(null);
   const practiceStatusTimer = useRef(0);
   const movement = useRef({ x: 0, z: 0 });
@@ -352,6 +371,119 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const currentCompetition = online && lobbyState ? lobbyState.comp : competitionChoice;
   const currentMode: Mode = online && lobbyState ? lobbyState.mode : modeChoice;
   const currentClubs: [string, string] = online && lobbyState ? [...lobbyState.clubs] : [homeClubChoice, awayClubChoice];
+  const localPauseEnabled = !!online?.isHost && currentCompetition !== 'online';
+  const reconnectUrl = online?.code && typeof location !== 'undefined'
+    ? `${location.protocol}//${location.host}/?game=soccer&room=${online.code}`
+    : '';
+  const resumeLocal = () => {
+    localPausedRef.current = false;
+    setLocalPaused(false);
+    accumulator.current = 0;
+    remoteCommands.current.clear();
+    movement.current = { x: 0, z: 0 };
+  };
+  const postMatchChoices = [postMatchPrimary, 'Change clubs', 'Quit'];
+  const choosePostMatch = (index: number) => {
+    if (index === 1) {
+      setPostMatchOpen(false);
+      setPostMatchLobby(true);
+    } else if (index === 2) {
+      shellRef.current.backToArcade?.();
+    } else {
+      if (competitionChoice === 'cup' && postMatchPrimary === 'New cup') {
+        const next = createCup(homeClubChoice, Math.floor(Date.now() % 0xffff_ffff));
+        saveCup(next);
+        const fixture = userFixture(next);
+        if (fixture) {
+          const away = fixture.home === next.user ? fixture.away : fixture.home;
+          setHomeClubChoice(next.user);
+          setAwayClubChoice(away);
+          if (online?.isHost && lobbyState) {
+            const updated = { ...lobbyState, seq: lobbyState.seq + 1, clubs: [next.user, away] as [string, string], cup: cupSummary(next), screen: 'match' as const };
+            publishLobby(updated);
+            online.send(updated);
+          }
+        }
+      }
+      setPostMatchOpen(false);
+      setPostMatchCountdown(3);
+    }
+  };
+  const choosePostMatchRef = useRef(choosePostMatch);
+  choosePostMatchRef.current = choosePostMatch;
+  useEffect(() => {
+    if (postMatchCountdown === null) return;
+    const timer = window.setTimeout(() => {
+      if (postMatchCountdown > 1) setPostMatchCountdown(postMatchCountdown - 1);
+      else {
+        setPostMatchCountdown(null);
+        shellRef.current.playAgain?.();
+      }
+    }, 1000);
+    return () => window.clearTimeout(timer);
+  }, [postMatchCountdown]);
+  useEffect(() => {
+    if (!postMatchOpen) return;
+    const interval = window.setInterval(() => {
+      const now = performance.now();
+      for (const [seat, state] of postMatchInput.current) {
+        const decision = repeatPostMatchNav(state, now);
+        if (!decision.move) continue;
+        postMatchInput.current.set(seat, decision.state);
+        setPostMatchSelection((value) => (value + (decision.move < 0 ? 2 : 1)) % 3);
+      }
+    }, 50);
+    return () => window.clearInterval(interval);
+  }, [postMatchOpen]);
+  useEffect(() => {
+    if (!postMatchOpen) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setPostMatchSelection((value) => (value + (event.key === 'ArrowDown' ? 1 : postMatchChoices.length - 1)) % postMatchChoices.length);
+      } else if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        choosePostMatch(postMatchSelectionRef.current);
+      }
+    };
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
+  }, [postMatchOpen, postMatchPrimary, competitionChoice, homeClubChoice, setAwayClubChoice, choosePostMatch]);
+
+  useEffect(() => {
+    if (!localPauseEnabled) {
+      localPausedRef.current = false;
+      setLocalPaused(false);
+      return;
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.repeat || event.isComposing || event.code !== 'Escape' && event.key.toLowerCase() !== 'p') return;
+      event.preventDefault();
+      event.stopPropagation();
+      const next = !localPausedRef.current;
+      localPausedRef.current = next;
+      setLocalPaused(next);
+      accumulator.current = 0;
+      remoteCommands.current.clear();
+      if (!next) movement.current = { x: 0, z: 0 };
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [localPauseEnabled]);
+
+  useEffect(() => {
+    if (!reconnectUrl) {
+      setReconnectQr('');
+      return;
+    }
+    let active = true;
+    void QRCode.toDataURL(reconnectUrl, { errorCorrectionLevel: 'H', margin: 2, width: 220 })
+      .then((dataUrl) => { if (active) setReconnectQr(dataUrl); })
+      .catch(() => { if (active) setReconnectQr(''); });
+    return () => { active = false; };
+  }, [reconnectUrl]);
   useEffect(() => {
     sound.configure({ volume: volumeLevels[volumeChoice], crowd: 1, muted, commentary: commentaryChoice });
   }, [sound, volumeChoice, muted, commentaryChoice]);
@@ -442,6 +574,8 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
 
   useEffect(() => {
     if (shell.status !== 'ready') return;
+    localPausedRef.current = false;
+    setLocalPaused(false);
     controllerPlayers.current.clear();
     const fresh = freshWorld();
     matchSeats.current = null;
@@ -458,6 +592,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     worldRef.current = fresh;
     practiceDoneAt.current = 0;
     tutorialRef.current = null;
+    tutorialPending.current = false;
     setTutorialHud(null);
     previousRenderSnapshot.current = captureSnapshot(fresh, createSnapshot(fresh));
     interpolatedWorld.current = structuredClone(fresh);
@@ -492,15 +627,19 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   useEffect(() => {
     if (shell.status !== 'playing' || online && !online.isHost || online?.watching || tutorialSeen()) return;
     if (currentMode !== 'cpu' && currentMode !== 'practice') return;
-    tutorialRef.current = createTutorial();
-    setTutorialHud(tutorialRef.current);
+    tutorialPending.current = true;
   }, [shell.status, currentMode]);
 
   const endTutorial = () => {
     if (!tutorialRef.current) return;
     tutorialRef.current = null;
+    tutorialPending.current = false;
     setTutorialHud(null);
     markTutorialSeen();
+    if (!online && typeof document !== 'undefined') {
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      shell.root.current?.focus({ preventScroll: true });
+    }
   };
 
   const pickPractice = (pick: string) => {
@@ -639,12 +778,22 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         return;
       }
       if (packet.r !== (room.round || 1)) return;
+      if (localPausedRef.current && (packet.k === 'mv' || packet.k === 'pd')) return;
       if (room.isHost && packet.k === 'mv') {
         if (packet.seat !== from || packet.seat < 0 || packet.seat > 3) return;
         if (inputFreshness.current.record(performance.now(), from)) {
           remoteSeats.current.delete(from);
+          postMatchInput.current.delete(from);
           const id = controllerPlayers.current.get(from);
           if (id !== undefined) remoteCommands.current.set(id, neutralCommand());
+        }
+        if (postMatchOpenRef.current) {
+          const previous = postMatchInput.current.get(from) ?? { seq: -1, edge: -1, direction: 0, changedAt: 0 };
+          const decision = postMatchNavPacket(previous, packet, performance.now());
+          if (decision.move) setPostMatchSelection((value) => (value + (decision.move < 0 ? 2 : 1)) % 3);
+          postMatchInput.current.set(from, decision.state);
+          if (decision.choose) choosePostMatchRef.current(postMatchSelectionRef.current);
+          return;
         }
         const current = worldRef.current;
         const playerId = current?.controlledSeats?.[from] ?? controllerPlayers.current.get(from) ?? playerForSeat(from, displayOnlyRoom.current, currentMode);
@@ -747,6 +896,15 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
 
   const makeCommand = (id: number, p2: boolean, dt: number): ControlCommand => {
     const state = keyboardInput(keys, p2, !p2 && !online && (currentMode === 'cpu' || practicing));
+    let skipKeyHeld = false;
+    for (const code of skipKeyLatch.current) {
+      if (keys.down(code)) skipKeyHeld = true;
+      else skipKeyLatch.current.delete(code);
+    }
+    if (skipKeyHeld) Object.assign(state, {
+      move: { x: 0, z: 0 }, sprint: false, action: null, heldAction: null, pressed: false,
+      jockey: false, finesseHeld: false, press: false, switchNearest: false, contain: false,
+    });
     const current = worldRef.current!;
     const player = current.players[id]!;
     const defending = nearestCarrier(current)?.team !== player.team;
@@ -820,6 +978,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     let title = winner === null ? 'full time · draw' : online
       ? (localPlayerIds.some((id) => teamOf(id) === winner) ? 'you win' : 'match over')
       : winner === localTeam ? 'you win' : 'match lost';
+    let cupContinues = false;
     if (currentCompetition === 'cup') {
       const cup = loadCup() ?? createCup(home.id, current.seed);
       penalties = draw ? outcome.pens ?? (pensWinner !== null ? shootoutScore(current) : undefined) : undefined;
@@ -832,6 +991,20 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       title = nextCup.champion ? 'cup winners!' : nextCup.out ? 'knocked out'
         : nextCup.round === 1 ? 'through to the semi-finals'
         : nextCup.round === 2 ? 'through to the final' : 'through to the next round';
+      const nextFixture = !nextCup.out && !nextCup.champion ? userFixture(nextCup) : null;
+      if (nextFixture) {
+        cupContinues = true;
+        const nextText = nextCupFixtureText(nextCup);
+        if (nextText) detail += ` · ${nextText}`;
+        const nextAway = nextFixture.home === nextCup.user ? nextFixture.away : nextFixture.home;
+        setHomeClubChoice(nextCup.user);
+        setAwayClubChoice(nextAway);
+        if (room?.isHost && lobbyState) {
+          const updated = { ...lobbyState, seq: lobbyState.seq + 1, clubs: [nextCup.user, nextAway] as [string, string], screen: 'match' as const };
+          publishLobby(updated);
+          room.send(updated);
+        }
+      }
     }
     if (room?.isHost) {
       const seats = winner === null ? [] : [...controllerPlayers.current].filter(([, id]) => teamOf(id) === winner).map(([seat]) => seat);
@@ -840,6 +1013,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     const penaltiesText = pensWinner !== null ? ` · pens ${shootoutScore(current).join(' - ')}` : penalties ? ` · pens ${penalties.join(' - ')}` : '';
     detail += ` · shots ${stats.teams[0].shots}-${stats.teams[1].shots} · possession ${homePossession}%-${awayPossession}%${penaltiesText}`;
     fullTimeResult.current = { title, detail };
+    setPostMatchPrimary(postMatchPrimaryLabel(currentCompetition, cupContinues));
     showPresentation('full-time');
   };
 
@@ -869,6 +1043,12 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     }
     telemetryRef.current?.match(matchActive);
     const initialControlled = soccerPerfEnabled ? [...current.controlled] as [number, number] : null;
+    if (tutorialPending.current && !tutorialRef.current && presentation.current === 'live'
+      && current.phase === 'live' && !introPending.current) {
+      tutorialPending.current = false;
+      tutorialRef.current = createTutorial();
+      setTutorialHud(tutorialRef.current);
+    }
     const presentPhoneSeats = room?.players.filter((player) => player.seat > 0).map((player) => player.seat) ?? [];
     let phoneDisconnected = false;
     if (room?.isHost) {
@@ -887,10 +1067,12 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         phoneDisconnected = true;
         remoteCommands.current.set(id, neutralCommand());
         remoteSeats.current.delete(seat);
+        postMatchInput.current.delete(seat);
       }
     }
     setPhoneGone(phoneDisconnected);
     if (phoneDisconnected) accumulator.current = 0;
+    if (localPausedRef.current) accumulator.current = 0;
     if (introPending.current) {
       if (current.phase === 'restart' && current.restart === 'kickoff' && current.half === 1 && current.clock === current.halfLength) {
         introPending.current = false;
@@ -902,6 +1084,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     matchContext && (matchContext.current = { world: current, stats: statsObserver.current.stats });
     if (current.phase === 'full-time') finishMatch(current);
     const presentationKind = presentation.current;
+    let presentationInputConsumed = false;
     if (presentationKind === 'intro' || presentationKind === 'half-time' || presentationKind === 'full-time') {
       const elapsed = (now - presentationAt.current) / 1000;
       const minimum = presentationKind === 'intro' ? 0.6 : presentationKind === 'half-time' ? 1.5 : 2;
@@ -916,13 +1099,22 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         });
       }
       const keyPressed = elapsed >= minimum && keys.pressed(...commandKeys);
+      if (keyPressed) for (const code of commandKeys) if (keys.down(code)) skipKeyLatch.current.add(code);
       const remotePressed = room?.isHost && [...remoteCommands.current.values()].some((command) => command.pressed);
-      const skipped = elapsed >= minimum && (keyPressed || gamepadPressed || remotePressed);
+      const skipped = elapsed >= minimum && !!(keyPressed || gamepadPressed || remotePressed);
+      presentationInputConsumed = skipped && !!(keyPressed || gamepadPressed || remotePressed);
       if (elapsed >= duration || skipped) {
         if (presentationKind === 'full-time') {
           if (!fullTimeShown.current && fullTimeResult.current) {
             fullTimeShown.current = true;
-            shellRef.current.gameOver(undefined, fullTimeResult.current);
+            showPresentation('live');
+            setHud((previous) => ({ ...previous, presentation: 'live' }));
+            const phoneFirstHost = !!onlineRef.current?.isHost;
+            shellRef.current.gameOver(undefined, { ...fullTimeResult.current, hideShellCard: phoneFirstHost });
+            if (phoneFirstHost) {
+              setPostMatchSelection(0);
+              setPostMatchOpen(true);
+            }
           }
         } else {
           showPresentation('live');
@@ -945,6 +1137,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         if (current.controlledSeats && seat < current.controlledSeats.length) current.controlledSeats[seat] = null;
         controllerPlayers.current.delete(seat); remoteCommands.current.delete(id);
         remoteSeats.current.delete(seat);
+        postMatchInput.current.delete(seat);
       }
       const roomMembers: ControllerMember[] = room.players.filter((entry) => entry.seat >= 0).map((entry) => {
         const known = lobbyState?.members.find((member) => member.seat === entry.seat);
@@ -988,7 +1181,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     const frameLocalPlayerIds = [...localSeatIds.values()];
     const localSeatCommands = new Map<number, Command>();
     const edgeCommands = new Map<number, Partial<Command>>();
-    const presentationGated = !isOnlineGuest && (presentation.current === 'intro' || presentation.current === 'half-time' || presentation.current === 'full-time');
+    const presentationGated = presentationInputConsumed || !isOnlineGuest && (presentation.current === 'intro' || presentation.current === 'half-time' || presentation.current === 'full-time');
     if (presentationGated || current.phase === 'goal') pendingLocalEdges.current.clear();
     if (!presentationGated && current.phase !== 'goal' && room && !room.watching) {
       const seat = room.seat;
@@ -1025,7 +1218,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       }
     }
 
-    if (!isOnlineGuest && !phoneDisconnected) {
+    if (!isOnlineGuest && !phoneDisconnected && !localPausedRef.current) {
       const simulationStart = soccerPerfEnabled ? performance.now() : 0;
       accumulator.current = presentationGated ? 0 : Math.min(STEP * 6, accumulator.current + dt);
       const steps = Math.min(6, Math.floor(accumulator.current / STEP));
@@ -1073,7 +1266,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         statsObserver.current.observe(current, STEP);
         matchContext && (matchContext.current = { world: current, stats: statsObserver.current.stats });
         const tutorial = tutorialRef.current;
-        if (tutorial) {
+        if (tutorial && current.phase === 'live' && presentation.current === 'live') {
           const kick = current.kickEvent && current.players[current.kickEvent.playerId]?.team === 0 ? current.kickEvent.action : null;
           const moving = [...commands].some(([id, entry]) => current.players[id]?.human && Math.hypot(entry.move.x, entry.move.z) > 0.3);
           tutorialRef.current = stepTutorial(tutorial, { moving, passed: kick === 'pass' || kick === 'through' || kick === 'lob', shot: kick === 'shoot' || kick === 'finesse' }, STEP);
@@ -1155,7 +1348,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       if ((practice || tutorial) && practiceStatusTimer.current >= 0.4) {
         practiceStatusTimer.current = 0;
         const view = practice ? practiceView(practice) : null;
-        room.send({ t: 'soccer', k: 'pp', r: room.round || 1, seq: snapshotSequence.current++, drill: view?.drill ?? '', prompt: view?.prompt ?? '', hint: view?.hint ?? '', score: view?.score ?? '', best: view?.best ?? '', done: !!view?.done, tutorial: tutorial ? tutorialText(tutorial) : '' });
+        room.send({ t: 'soccer', k: 'pp', r: room.round || 1, seq: snapshotSequence.current++, drill: view?.drill ?? '', prompt: view?.prompt ?? '', hint: view?.hint ?? '', score: view?.score ?? '', best: view?.best ?? '', done: !!view?.done, tutorial: tutorial ? tutorialText(tutorial, nearestCarrier(current)?.team !== 0) : '' });
       }
     }
 
@@ -1268,6 +1461,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   };
 
   const scheme: ControlScheme = online?.isHost ? 'phone' : shell.touch ? 'touch' : 'keys';
+  const tutorialDefending = worldRef.current ? nearestCarrier(worldRef.current)?.team !== 0 : false;
 
   useGameLoop(update, () => {
     if (!renderDirty.current) {
@@ -1323,13 +1517,55 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       <Hud state={hud} watching={!!online?.watching} radarRef={radarRef} world={world} />
       {hud.presentation === 'intro' && <IntroCard />}
       {(hud.presentation === 'half-time' || hud.presentation === 'full-time') && <StatsScreen presentation={hud.presentation} statsVersion={hud.statsVersion} />}
-      {phoneGone && <div className="g-soccer-phone-gone" role="status">Phone disconnected - reopen the link</div>}
+      {phoneGone ? (
+        <div className="g-soccer-disconnect-overlay" role="status">
+          <section className="g-soccer-disconnect-card">
+            <h2>Your phone disconnected</h2>
+            <p>Scan the QR with your iPhone camera to reconnect</p>
+            {reconnectQr && <img src={reconnectQr} alt="Reconnect your phone" />}
+            {reconnectUrl && <p className="g-soccer-invite-url">{reconnectUrl}</p>}
+          </section>
+        </div>
+      ) : localPaused && localPauseEnabled ? (
+        <div className="g-soccer-local-pause-overlay">
+          <section className="g-soccer-local-pause-card">
+            <h2>Paused</h2>
+            {matchContext?.current && <PausePanel match={matchContext.current} />}
+            <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={resumeLocal}>Resume</button>
+            <p>Press Esc to resume</p>
+          </section>
+        </div>
+      ) : null}
+      {postMatchLobby && online?.isHost && <SoccerPhoneLobby postMatch />}
+      {postMatchOpen && !phoneGone && (
+        <div className="g-soccer-postmatch-overlay" role="dialog" aria-modal="true" aria-label="Match complete">
+          <section className="g-soccer-postmatch-card">
+            <h2>{fullTimeResult.current?.title ?? 'Match complete'}</h2>
+            {fullTimeResult.current?.detail && <p>{fullTimeResult.current.detail}</p>}
+            <nav aria-label="After the match">
+              {postMatchChoices.map((label, index) => (
+                <button key={label} type="button" className={`${index === 0 ? 'is-primary' : ''}${postMatchSelection === index ? ' is-selected' : ''}`} onMouseEnter={() => setPostMatchSelection(index)} onClick={() => choosePostMatch(index)}>
+                  {label}
+                </button>
+              ))}
+            </nav>
+            <small>Choose on the Mac or with your phone.</small>
+          </section>
+        </div>
+      )}
+      {postMatchCountdown !== null && !phoneGone && (
+        <div className="g-soccer-postmatch-overlay" role="status">
+          <section className="g-soccer-postmatch-card g-soccer-postmatch-countdown">
+            <h2>Starting in {postMatchCountdown}</h2>
+          </section>
+        </div>
+      )}
       {audioEnabled && caption && <div key={caption.id} className="g-soccer-caption" aria-live="polite">{caption.text}</div>}
       {audioEnabled && shell.status === 'playing' && !muted && volumeChoice !== 'off' && soundLocked && (
-        <div className="g-soccer-sound-lock">Click or press any key for sound</div>
+        <div className="g-soccer-sound-lock">Click to turn on sound</div>
       )}
-      {practicing && practiceHud && shell.status === 'playing' && <PracticePanel view={practiceHud} scheme={scheme} compact={shell.touch} onPick={pickPractice} />}
-      {tutorialHud && shell.status === 'playing' && <TutorialOverlay tutorial={tutorialHud} scheme={scheme} seconds={TUTORIAL_SECONDS} onSkip={endTutorial} />}
+      {practicing && practiceHud && shell.status === 'playing' && hud.phase === 'live' && hud.presentation === 'live' && <PracticePanel view={practiceHud} scheme={scheme} compact={shell.touch} onPick={pickPractice} />}
+      {tutorialHud && shell.status === 'playing' && hud.phase === 'live' && hud.presentation === 'live' && <TutorialOverlay tutorial={tutorialHud} scheme={scheme} seconds={TUTORIAL_SECONDS} defending={tutorialDefending} onSkip={endTutorial} />}
       <Referee world={world} />
       {shell.touch && shell.status === 'playing' && !online?.watching && <Stick movement={movement} />}
       {shell.touch && shell.status === 'playing' && !online?.watching && <TouchControls buttons={[
@@ -1862,8 +2098,9 @@ export function PhoneController() {
     };
   }, [online, mode, displayOnly]);
   if (!online) return null;
-  if (online.round === 0) return <PhoneTeamPicker online={online} />;
-  const phonePlayer = phonePlayerId();
+  if (phoneRoute(online.round, online.started, lobbyState?.screen) === 'picker') return <PhoneTeamPicker online={online} />;
+  const controllerMembers = lobbyState?.members ?? [{ seat: online.seat, role: 'phone' as const, side: sideForRoom(online.code) }];
+  const phonePlayer = assignControllers(controllerMembers, mode, lobbyState?.comp ?? 'quick').get(online.seat) ?? phonePlayerId();
   const attacking = phoneHasBall();
   const labels = phoneWorld.current ? setPieceLabels(phoneWorld.current, teamOf(phonePlayer), phonePlayer) : null;
   const phonePlayerState = phoneWorld.current?.players[phonePlayer];

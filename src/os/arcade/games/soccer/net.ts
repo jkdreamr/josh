@@ -10,7 +10,7 @@ export type PingPacket = { t: 'soccer'; k: 'pg'; id: number; at: number };
 export type SnapshotPacket = { t: 'soccer'; k: 's'; r: number; seq: number; state: World; ack?: number[] };
 export type ConfigPacket = { t: 'soccer'; k: 'cfg'; r: number; seq: number; half: 2 | 3 | 4 | 6; level: 0 | 1 | 2; displayOnly: boolean; mode?: Mode; comp?: CompetitionId; clubs?: [string, string]; offside?: boolean };
 export type LobbyMember = { seat: number; role: 'host' | 'phone' | 'mac'; side: 0 | 1 };
-export type LobbyPacket = { t: 'soccer'; k: 'lobby'; r: number; seq: number; comp: CompetitionId; mode: Mode; clubs: [string, string]; focus: [number, number]; ready: [boolean, boolean]; countdown: number | null; members: LobbyMember[]; cup?: CupSummary };
+export type LobbyPacket = { t: 'soccer'; k: 'lobby'; r: number; seq: number; comp: CompetitionId; mode: Mode; clubs: [string, string]; focus: [number, number]; ready: [boolean, boolean]; countdown: number | null; members: LobbyMember[]; cup?: CupSummary; screen?: 'lobby' | 'match' };
 export type HiPacket = { t: 'soccer'; k: 'hi'; r: number; seq: number; seat: number; role: 'phone' | 'mac'; side: 0 | 1 };
 export type NavPacket = { t: 'soccer'; k: 'nav'; r: number; seq: number; seat: number; dx: -1 | 0 | 1; dy: -1 | 0 | 1; a: boolean; b: boolean; club?: boolean };
 export type PracticePickPacket = { t: 'soccer'; k: 'pd'; r: number; seq: number; seat: number; pick: string };
@@ -200,12 +200,14 @@ export function parsePacket(value: unknown): SoccerPacket | null {
       || !Array.isArray(p.members) || !p.members.every((member) => member && Number.isInteger(member.seat) && member.seat >= 0 && member.seat <= 3
         && ['host', 'phone', 'mac'].includes(member.role) && (member.side === 0 || member.side === 1))
       || new Set(p.members.map((member) => (member as Record<string, unknown>).seat)).size !== p.members.length
-      || (p.cup !== undefined && !validCupSummary(p.cup))) return null;
+      || (p.cup !== undefined && !validCupSummary(p.cup))
+      || (p.screen !== undefined && !['lobby', 'match'].includes(p.screen as string))) return null;
     return {
       t: 'soccer', k: 'lobby', r: p.r as number, seq: p.seq as number, comp: p.comp as CompetitionId,
       mode: p.mode as LobbyPacket['mode'], clubs: [...p.clubs] as [string, string], focus: [...p.focus] as [number, number],
       ready: [...p.ready] as [boolean, boolean], countdown: p.countdown as number | null,
       members: structuredClone(p.members) as LobbyMember[], ...(p.cup === undefined ? {} : { cup: structuredClone(p.cup) as CupSummary }),
+      ...(p.screen === undefined ? {} : { screen: p.screen as LobbyPacket['screen'] }),
     };
   }
   if (p.k === 'hi') {
