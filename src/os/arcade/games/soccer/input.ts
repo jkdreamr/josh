@@ -150,9 +150,10 @@ export function syncControllerSeats(world: World, assignments: Map<number, numbe
       : world.players.find((p) => p.team === target?.team && !p.sentOff && !occupied.has(p.id));
     if (replacement) next.set(seat, replacement.id);
   }
-  for (const id of next.values()) {
+  for (const [seat, id] of next) {
     const player = world.players.find((p) => p.id === id);
     if (player) { player.human = true; player.controlled = true; }
+    if (world.controlledSeats && seat >= 0 && seat < world.controlledSeats.length) world.controlledSeats[seat] = id;
   }
   return next;
 }

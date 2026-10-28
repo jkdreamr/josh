@@ -198,11 +198,13 @@ test('pass reception transfers the current human after switching away from the p
     world.passTarget = 10;
     world.passControl = true;
     transferControl(world, 0, 7);
+    world.controlledSeats![1] = 7;
     if (missingPrimary) world.controlled[0] = 6;
     assert.deepEqual(world.players.filter((p) => p.human).map((p) => p.id), [7]);
     stepWorld(world, STEP, new Map([[7, { move: { x: 0, z: 1 } }]]));
     assert.deepEqual(world.players.filter((p) => p.human || p.controlled).map((p) => p.id), [10]);
     assert.equal(world.controlled[0], 10);
+    assert.equal(world.controlledSeats![1], 10);
     assert.equal(reconcileControllers(world, new Map([[1, 7]])).get(1), 10);
   }
 });
