@@ -34,7 +34,7 @@ export function sideForRoom(roomCode: string | undefined): 0 | 1 {
   return params.get('side') === '1' && (params.get('room') ?? '').toUpperCase() === roomCode.toUpperCase() ? 1 : 0;
 }
 
-const modeLabels: Record<Mode, string> = { cpu: 'vs cpu', versus: '2 player versus', coop: '2 player co-op', practice: 'practice · learn the controls' };
+const modeLabels: Record<Mode, string> = { cpu: 'vs CPU', versus: 'Versus', coop: 'Co-op', practice: 'Practice' };
 const competitionOptions = COMPETITIONS.map(({ id, label }) => [id, label] as const);
 const halfOptions = [['2', '2 min'], ['4', '4 min'], ['6', '6 min']] as const;
 const cameraOptions = [['broadcast', 'Broadcast'], ['end', 'End to end']] as const;
@@ -177,7 +177,9 @@ function HostLobby({ online, postMatch = false }: { online: NonNullable<ReturnTy
     ? `${location.protocol}//${location.host}/?game=soccer&room=${online.code}`
     : '';
   const statusLine = countdown === null
-    ? hostLobbyStatus({ competition, mode, phoneCount, guestMac })
+    ? competition === 'online'
+      ? hostLobbyStatus({ competition, mode, phoneCount, guestMac })
+      : 'Pick a club on your phone.'
     : `Starting in ${countdown}…`;
   const isRunningCup = competition === 'cup' && cup !== null && cup.round < 3 && !cup.out;
 
@@ -347,7 +349,10 @@ function HostLobby({ online, postMatch = false }: { online: NonNullable<ReturnTy
             <Segmented label="competition" value={competition} options={competitionOptions} onChange={changeCompetition} />
             {competition === 'online' && online.code && <p className="g-soccer-friend-link">friend's mac: <a href={`/?game=soccer&room=${online.code}`}>{location.host}/?game=soccer&amp;room={online.code}</a></p>}
             {competition !== 'cup' && (
-              <Segmented label="setup" value={mode} options={lobbySetupOptions(competition).map((arrangement) => [arrangement, modeLabels[arrangement]] as const)} onChange={(value) => { setReady([false, false]); setCountdown(null); setMode(value); }} />
+              <>
+                <Segmented label="setup" value={mode} options={lobbySetupOptions(competition).map((arrangement) => [arrangement, modeLabels[arrangement]] as const)} onChange={(value) => { setReady([false, false]); setCountdown(null); setMode(value); }} />
+                {mode === 'practice' && <p className="g-soccer-practice-note">Learn the controls with one phone.</p>}
+              </>
             )}
             <div className={`g-soccer-lobby-clubs${def.opponentPick ? '' : ' is-single'}`}>
               <ClubPickerCard label="your club" id={homeId} other={awayId} locked={isRunningCup} onChange={(value) => setClub(0, value)} />
