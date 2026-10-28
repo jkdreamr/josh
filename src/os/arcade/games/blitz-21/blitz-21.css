@@ -645,6 +645,10 @@
     width: calc(40px * var(--g-blitz-21-u, 1));
     height: calc(40px * var(--g-blitz-21-u, 1));
   }
+  /* Cards are already zoomed by the frame scale */
+  .g-blitz-21 .arcade-ov .arcade-seg > button {
+    height: 40px;
+  }
   .g-blitz-21 .arcade-score,
   .g-blitz-21 .g-blitz-21-hud,
   .g-blitz-21 .g-blitz-21-float,
@@ -665,5 +669,132 @@
   }
   .g-blitz-21 .g-blitz-21-count {
     padding-bottom: 4px;
+  }
+}
+
+/* Short framed windows (the laptop): cards spread sideways so Play and Play Again stay in view without scrolling */
+@container arcade-ov (max-height: 320px) and (min-width: 400px) {
+  .g-blitz-21 .arcade-card:not(.arcade-howto, .arcade-lb-card, .arcade-online-card):not(:has(.g-blitz-21-results)) {
+    flex-flow: row wrap;
+    justify-content: center;
+    width: min(440px, 100%);
+  }
+  .g-blitz-21 .arcade-card:not(.arcade-howto, .arcade-lb-card, .arcade-online-card):not(:has(.g-blitz-21-results)) > :not(.arcade-btn) {
+    flex-basis: 100%;
+  }
+  .g-blitz-21 .arcade-card:not(.arcade-howto, .arcade-lb-card, .arcade-online-card):not(:has(.g-blitz-21-results)) > .arcade-btn-lg {
+    width: auto;
+    min-width: 0;
+    padding: 0 18px;
+  }
+}
+@container arcade-ov (max-height: 320px) {
+  /* How to Play scrolls inside its card; keep its lines and Got It at full height */
+  .g-blitz-21 .arcade-howto > * {
+    flex-shrink: 0;
+  }
+}
+/* The Game Over breakdown sits beside the score, with the actions in one row under both */
+@container arcade-ov (max-height: 380px) and (min-width: 400px) {
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) {
+    display: grid;
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    grid-template-areas:
+      't t t r r r'
+      'f f f r r r'
+      'd d d r r r'
+      'l l l r r r'
+      'a a b b c c';
+    grid-template-rows: auto auto auto 1fr auto;
+    align-items: center;
+    column-gap: 16px;
+    row-gap: 6px;
+    width: min(600px, 100%);
+  }
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) > h2 {
+    grid-area: t;
+  }
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) > .arcade-final {
+    grid-area: f;
+    margin: 0;
+  }
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) > .arcade-final b {
+    font-size: 32px;
+  }
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) > .arcade-detail {
+    grid-area: d;
+    margin: 0;
+  }
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) > .arcade-lb-form {
+    grid-area: l;
+    align-self: start;
+  }
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) > .arcade-setup {
+    grid-area: r;
+    margin: 0;
+  }
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) > .arcade-btn-primary {
+    grid-area: a;
+  }
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) > .arcade-btn-lg:not(.arcade-btn-primary) {
+    grid-area: b;
+  }
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) > .arcade-btn-lg {
+    width: 100%;
+    min-width: 0;
+    padding: 0 10px;
+  }
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) > .arcade-row {
+    grid-area: c;
+    margin: 0;
+  }
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) > .arcade-row > .arcade-btn {
+    flex: 1 1 auto;
+    min-width: 0;
+    padding: 0 8px;
+  }
+  .g-blitz-21 .g-blitz-21-results > div {
+    padding: 4px 2px;
+  }
+}
+/* The smallest laptop window (about 464 by 156): everything tightens to fit in one view */
+@container arcade-ov (max-height: 220px) and (min-width: 400px) {
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) {
+    grid-template-areas:
+      't t t r r r'
+      'f f f r r r'
+      'l l l r r r'
+      'a a b b c c';
+    grid-template-rows: auto auto 1fr auto;
+    row-gap: 3px;
+    width: calc(100% + 20px);
+    max-width: none;
+    margin: -10px;
+    padding: 6px 12px;
+  }
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) > h2 {
+    font-size: 17px;
+  }
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) > .arcade-final {
+    flex-direction: row;
+    align-items: baseline;
+    justify-content: center;
+    gap: 8px;
+  }
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) > .arcade-final b {
+    font-size: 24px;
+  }
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) .arcade-btn {
+    height: 28px;
+  }
+  /* Clear of the shell toolbar, which stays above the card */
+  .g-blitz-21 .arcade-card:has(> .arcade-setup .g-blitz-21-results):not(:has(.arcade-race)) > .arcade-setup {
+    align-self: stretch;
+    padding-top: 34px;
+  }
+  .g-blitz-21 .g-blitz-21-results > div {
+    padding: 1px 2px;
+    font-size: 12px;
+    line-height: 15px;
   }
 }
