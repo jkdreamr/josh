@@ -7,14 +7,20 @@ export const STICK = { deadZone: 0.14, outerZone: 0.92, curve: 1.45, travel: 0.3
 export const FACE_SLOP = 1.3;
 export type FaceLabels = { a: string; b: string; x: string; y: string };
 
-export function faceLabels(attacking: boolean, overrides?: Partial<FaceLabels> | null): FaceLabels {
+export function faceLabels(attacking: boolean, overrides?: Partial<FaceLabels> | null, cross = false): FaceLabels {
   const labels = {
     ...(attacking
-      ? { a: 'Pass', b: 'Shoot', x: 'Lob · Cross', y: 'Through' }
+      ? { a: 'Pass', b: 'Shoot', x: cross ? 'Cross' : 'Lob', y: 'Through' }
       : { a: 'Contain', b: 'Tackle', x: 'Slide', y: 'Press' }),
     ...overrides,
   };
-  return attacking ? labels : { ...labels, y: 'Press' };
+  return attacking
+    ? { ...labels, x: cross ? 'Cross' : 'Lob' }
+    : { ...labels, y: 'Press' };
+}
+
+export function phoneClockLabel(minute: number | null | undefined): string | null {
+  return minute == null ? null : `${minute}'`;
 }
 
 /**

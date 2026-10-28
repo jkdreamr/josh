@@ -1,5 +1,5 @@
 import type { KeyState } from '../../kit/keys.ts';
-import type { Command, Point, World } from './logic.ts';
+import { nearestCarrier, type Command, type Point, type Team, type World } from './logic.ts';
 
 export type ViewBasis = { right: Point; forward: Point };
 export const IDENTITY_BASIS: ViewBasis = { right: { x: 1, z: 0 }, forward: { x: 0, z: -1 } };
@@ -36,6 +36,13 @@ export type InputState = ControlCommand & {
 
 export function chargePower(seconds: number) {
   return Math.max(0.1, Math.min(1, seconds));
+}
+
+export function phoneAttacking(world: World | null, team: Team): boolean {
+  return !!world && (
+    nearestCarrier(world)?.team === team
+    || world.phase === 'restart' && world.restartTeam === team
+  );
 }
 
 export function keyboardInput(keys: KeyState, p2 = false, arrows = false): InputState {

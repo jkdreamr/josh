@@ -5,7 +5,7 @@ import { BASELINE, multipliersFor, worldMultipliers } from '../src/os/arcade/gam
 import { createWorld, stepWorld, type World } from '../src/os/arcade/games/soccer/logic.ts';
 import { clearCup, createCup, cupSummary, loadCup, matchOutcome, recordUserResult, saveCup, userFixture } from '../src/os/arcade/games/soccer/cup.ts';
 import { simulateShootout } from '../src/os/arcade/games/soccer/shootout.ts';
-import { assignControllers, playerForSeat } from '../src/os/arcade/games/soccer/seats.ts';
+import { applyClubNavigation, assignControllers, playerForSeat } from '../src/os/arcade/games/soccer/seats.ts';
 import { parsePacket } from '../src/os/arcade/games/soccer/net.ts';
 import { COMPETITIONS, COMPETITION_IDS, competitionFromOption } from '../src/os/arcade/games/soccer/modes.ts';
 
@@ -228,6 +228,16 @@ test('controller assignment preserves standard seats and maps online players by 
   ], 'cpu', 'online');
   assert.equal(sideOnePhones.get(2), 17);
   assert.equal(sideOnePhones.get(3), 20);
+});
+
+test('club navigation changes the club with setup focus without changing mode', () => {
+  const state = { mode: 'cpu' as const, clubs: DEFAULT_CLUBS, focus: [0, 0] as const };
+  const next = applyClubNavigation(state, 0, 1);
+  assert.notEqual(next.clubs[0], DEFAULT_CLUBS[0]);
+  assert.equal(next.clubs[1], DEFAULT_CLUBS[1]);
+  assert.equal(next.mode, state.mode);
+  assert.deepEqual(next.focus, [1, 0]);
+  assert.deepEqual(state.focus, [0, 0]);
 });
 
 test('rated simulation remains deterministic and cloneable over fixed steps', () => {

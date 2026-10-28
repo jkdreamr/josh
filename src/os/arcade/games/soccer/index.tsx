@@ -2,10 +2,10 @@ import { Component, useContext, useEffect, useMemo, useRef, useState, useSyncExt
 import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useOnline, useSetting, useMuted, getSetting, Segmented, defineSetting, levelOptions, levelIndex, TouchControls, sfx } from '../../kit';
 import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
-import { carryEdge, chargePower, screenToWorld, gamepadInput, keyboardInput, phoneControlledPlayer, reconcileControllers, syncControllerSeats, type ControlCommand, type GamepadHistory } from './input.ts';
+import { carryEdge, chargePower, screenToWorld, gamepadInput, keyboardInput, phoneAttacking, phoneControlledPlayer, reconcileControllers, syncControllerSeats, type ControlCommand, type GamepadHistory } from './input.ts';
 import { desiredCameraBasis } from './camera.ts';
 import { acceptMovePacket, cloneSnapshot, consumeCommand, InputFreshness, neutralCommand, movePacket, parsePacket, type RemoteSeat, type LobbyMember } from './net.ts';
-import { createWorld, distance, teamOf, findReceiver, isCross, matchClock, nearestCarrier, setRestart, stepWorld, STEP, type Command, type Team, type World } from './logic.ts';
+import { createWorld, distance, teamOf, findReceiver, isCross, matchClock, nearestCarrier, setRestart, stepWorld, STEP, type Command, type Point, type Team, type World } from './logic.ts';
 import { phoneStoppagePrompt, setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { SoccerSound, type CommentaryMode } from './audio.ts';
@@ -17,7 +17,7 @@ import { broadcastClock, createStatsObserver, possessionShare } from './broadcas
 import { IntroCard, MatchContext, PausePanel, StatsScreen, type MatchData, type Presentation } from './presentation.tsx';
 import { captureSnapshot, createSnapshot, interpolateInto, type Snapshot } from './render-lerp.ts';
 import { publishSoccerPerf, recordSoccerPerf, recordSoccerRendererStats, soccerPerfEnabled } from './perf.ts';
-import { clampOrigin, faceLabels, followOrigin, haptic as padHaptic, hitButton, STICK, stickVector, type PadPoint } from './pad.ts';
+import { clampOrigin, faceLabels, followOrigin, haptic as padHaptic, hitButton, phoneClockLabel, STICK, stickVector, type PadPoint } from './pad.ts';
 import { assignControllers, missingPhoneSeats, playerForSeat, type ControllerMember, type Mode } from './seats.ts';
 import type { PitchPattern } from './stadium.ts';
 import { createPracticeState, createTutorial, markTutorialSeen, selectDrill, setupDrill, stepPractice, stepTutorial, tutorialSeen, TUTORIAL_SECONDS, DRILLS, type DrillId, type PracticeState, type TutorialState } from './practice.ts';
@@ -646,22 +646,16 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         const seat = remoteSeats.current.get(from) ?? { seq: -1, edge: -1, held: null, pressUsed: false };
         const previous = remoteCommands.current.get(player.id);
         const carrier = nearestCarrier(current);
-        const accepted = acceptMovePacket(seat, previous, packet, !!carrier && carrier.team !== player.team);
+        const remoteRole = lobbyState?.members.find((member) => member.seat === from)?.role;
+        const basis = displayOnlyRoom.current && remoteRole !== 'mac'
+          ? viewRef.current?.viewBasis() ?? desiredCameraBasis(current, player.team, 16 / 9, 'broadcast')
+          : null;
+        const toWorld = basis ? (point: Point) => screenToWorld(point, basis) : undefined;
+        const accepted = acceptMovePacket(seat, previous, packet, !!carrier && carrier.team !== player.team, toWorld);
         remoteSeats.current.set(from, accepted.seat);
         if (!accepted.command) return;
         telemetryRef.current?.seq(packet.seq, packet.seat);
         const command = accepted.command;
-        const freshSequence = packet.seq > seat.seq;
-        const freshEdge = packet.e !== undefined && packet.e > seat.edge;
-        if (displayOnlyRoom.current) {
-          const basis = viewRef.current?.viewBasis() ?? desiredCameraBasis(current, player.team, 16 / 9, 'broadcast');
-          if (freshSequence) command.move = screenToWorld(command.move, basis);
-          if (freshSequence || freshEdge) {
-            if (command.switchDir) command.switchDir = screenToWorld(command.switchDir, basis);
-            const aim = screenToWorld(command.aim ?? { x: 0, z: 0 }, basis);
-            command.aim = Math.hypot(aim.x, aim.z) > 0.05 ? aim : { x: 0, z: 0 };
-          }
-        }
         remoteCommands.current.set(player.id, command);
         return;
       }
@@ -705,7 +699,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       }
     });
     return off;
-  }, [audioEnabled, online, online?.round, online?.isHost, setHalfChoice, setLevelChoice, setModeChoice, setCompetitionChoice, setHomeClubChoice, setAwayClubChoice, setOffsideChoice, sound]);
+  }, [audioEnabled, online, online?.round, online?.isHost, lobbyState?.members, setHalfChoice, setLevelChoice, setModeChoice, setCompetitionChoice, setHomeClubChoice, setAwayClubChoice, setOffsideChoice, sound]);
 
   useEffect(() => {
     if (!online?.isHost) return;
@@ -1070,9 +1064,9 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
           if (tutorialRef.current.finished) endTutorial();
         }
         const assignments = reconcileControllers(current, controllerPlayers.current);
-        for (const [seat, id] of assignments) {
-          if (current.controlledSeats && current.controlledSeats[seat] !== null) assignments.set(seat, current.controlledSeats[seat]!);
-          else if (current.controlledSeats && id !== undefined) current.controlledSeats[seat] = id;
+        for (const seat of assignments.keys()) {
+          const assigned = current.controlledSeats?.[seat];
+          if (assigned !== undefined && assigned !== null) assignments.set(seat, assigned);
         }
         for (const [seat, id] of assignments) {
           const old = controllerPlayers.current.get(seat);
@@ -1387,7 +1381,7 @@ function PadStick({ movement, onChange }: { movement: { current: { x: number; z:
       base.current.style.left = `${origin.current.x}px`;
       base.current.style.top = `${origin.current.y}px`;
     }
-    if (knob.current) knob.current.style.transform = `translate(${offset.x}px, ${offset.y}px)`;
+    if (knob.current) knob.current.style.transform = `translate(calc(-50% + ${offset.x}px), calc(-50% + ${offset.y}px))`;
   };
   const release = (event: PointerEvent<HTMLDivElement>) => {
     if (pointer.current !== event.pointerId) return;
@@ -1601,7 +1595,7 @@ export function PhoneController() {
   }, []);
   const phoneHasBall = () => {
     const snapshot = phoneWorld.current;
-    return !!snapshot && nearestCarrier(snapshot)?.team === teamOf(phonePlayerId());
+    return phoneAttacking(snapshot, teamOf(phonePlayerId()));
   };
   const phonePlayerId = () => {
     const seat = online?.seat ?? 0;
@@ -1816,10 +1810,15 @@ export function PhoneController() {
   const phonePlayer = phonePlayerId();
   const attacking = phoneHasBall();
   const labels = phoneWorld.current ? setPieceLabels(phoneWorld.current, teamOf(phonePlayer), phonePlayer) : null;
+  const phonePlayerState = phoneWorld.current?.players[phonePlayer];
+  const cross = !!phoneWorld.current && !!phonePlayerState && isCross(phoneWorld.current, phonePlayerState);
+  const phoneClock = phoneWorld.current && !(phoneWorld.current.phase === 'restart' && phoneWorld.current.restart === 'kickoff')
+    ? phoneClockLabel(matchClock(phoneWorld.current))
+    : null;
   const stoppagePrompt = phoneWorld.current ? phoneStoppagePrompt(phoneWorld.current, phonePlayer) : null;
   const taking = phoneWorld.current?.phase === 'restart' && phoneWorld.current.setPiece?.takerId === phonePlayer;
   const chargingKey = FACE_KEYS.find((key) => FACE[key] === chargingAction) ?? null;
-  const faceLabel = faceLabels(attacking, labels ? { a: labels.a, b: labels.b, x: labels.x, y: labels.y } : null);
+  const faceLabel = faceLabels(attacking, labels ? { a: labels.a, b: labels.b, x: labels.x, y: labels.y } : null, cross);
   const faceAt = (event: PointerEvent<HTMLElement>) => hitButton({ x: event.clientX, y: event.clientY }, FACE_KEYS.flatMap((id) => {
     const rect = faceRefs.current[id]?.getBoundingClientRect();
     return rect ? [{ id, x: rect.left + rect.width / 2, y: rect.top + rect.height / 2, r: rect.width / 2 }] : [];
@@ -1880,7 +1879,7 @@ export function PhoneController() {
       <div className="g-soccer-pad-strip">
         <div className="g-soccer-pad-score" aria-label={`Score ${score[0]} to ${score[1]}`}>
           <strong>{score[0]} <i>–</i> {score[1]}</strong>
-          <span>{phoneWorld.current ? matchClock(phoneWorld.current) : '00:00'}</span>
+          {phoneClock && <span>{phoneClock}</span>}
         </div>
         {practiceStatus && <PhonePracticeStrip status={practiceStatus} onPick={(pick) => online.send({ t: 'soccer', k: 'pd', r: online.round || 1, seq: sequence.current++, seat: online.seat, pick })} />}
         {stoppagePrompt && <small className="g-soccer-setpiece-hint" role="status">{stoppagePrompt}</small>}
@@ -1934,7 +1933,7 @@ export function PhoneController() {
         <button className="g-soccer-pad-trigger" {...pad('RT: Sprint (hold)', sprintDown, sprintUp)}><b>RT</b><small>Sprint</small></button>
       </div>
       <div className="g-soccer-pad-rotate" aria-live="polite">
-        <svg viewBox="0 0 48 48" aria-hidden="true"><path d="M9 17h30v18H9zM15 12h18v5H15z" /><path d="M17 29c3-4 8-4 11 0m-3-4 3 4-4 1" /></svg>
+        <svg width="48" height="48" viewBox="0 0 48 48" fill="none" stroke="currentColor" aria-hidden="true"><path d="M9 17h30v18H9zM15 12h18v5H15z" /><path d="M17 29c3-4 8-4 11 0m-3-4 3 4-4 1" /></svg>
         <strong>Rotate your phone</strong>
         <span>The controller works in landscape</span>
       </div>
