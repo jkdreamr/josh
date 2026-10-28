@@ -10,6 +10,28 @@
   user-select: none;
 }
 
+.g-tennis-stage .arcade-btns {
+  width: 104px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.g-tennis-stage .arcade-tbtn {
+  width: 48px;
+  height: 48px;
+  font-size: 8px;
+}
+
+.g-tennis-stage::after {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 46%, transparent 55%, rgba(18, 24, 24, .28) 100%);
+  content: "";
+  pointer-events: none;
+}
+
 .g-tennis-stage canvas {
   position: absolute;
   inset: 0;
@@ -192,6 +214,74 @@
   text-transform: uppercase;
 }
 
+.g-tennis-bounce-cue {
+  position: absolute;
+  left: 50%;
+  bottom: 76px;
+  transform: translateX(-50%);
+  padding: 8px 14px;
+  border: 1px solid rgba(232, 239, 151, .45);
+  border-radius: 999px;
+  background: rgba(18, 33, 33, .78);
+  color: #eff4b2;
+  font-size: 13px;
+  font-weight: 800;
+  letter-spacing: .04em;
+  box-shadow: 0 0 18px rgba(193, 214, 85, .2);
+  animation: g-tennis-timing-pop .18s ease-out both;
+}
+
+.g-tennis-replay-tag {
+  position: absolute;
+  top: 20px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 7px 14px;
+  border: 1px solid rgba(255, 235, 190, .7);
+  border-radius: 4px;
+  background: rgba(32, 24, 18, .68);
+  color: #ffe6a7;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: .22em;
+}
+
+.g-tennis-rally-chip {
+  position: absolute;
+  top: 125px;
+  right: 18px;
+  padding: 6px 11px;
+  border: 1px solid rgba(245, 244, 226, .35);
+  border-radius: 999px;
+  background: rgba(18, 33, 33, .72);
+  color: #f3e5bd;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.g-tennis-feedback {
+  position: absolute;
+  left: 50%;
+  top: 30%;
+  transform: translateX(-50%);
+  color: #fff8d8;
+  font-size: clamp(20px, 4vw, 38px);
+  font-weight: 950;
+  letter-spacing: .12em;
+  text-shadow: 0 3px 18px rgba(0, 0, 0, .7), 0 0 22px rgba(255, 244, 181, .55);
+  animation: g-tennis-feedback-pop .42s cubic-bezier(.16,.9,.25,1) both;
+}
+
+.g-tennis-feedback-perfect {
+  color: #fffde9;
+  text-shadow: 0 3px 18px rgba(0, 0, 0, .7), 0 0 26px rgba(255, 248, 197, .9);
+}
+
+.g-tennis-feedback-nice {
+  color: #e8f2a7;
+  font-size: clamp(17px, 3vw, 27px);
+}
+
 .g-tennis-timing {
   position: absolute;
   right: 20px;
@@ -293,6 +383,12 @@
 @keyframes g-tennis-timing-pop {
   from { opacity: 0; transform: translateY(5px) scale(.92); }
   to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes g-tennis-feedback-pop {
+  from { opacity: 0; transform: translate(-50%, 10px) scale(.75); }
+  25% { opacity: 1; transform: translate(-50%, 0) scale(1.08); }
+  to { opacity: 0; transform: translate(-50%, -11px) scale(1); }
 }
 
 @media (max-width: 600px) {

@@ -3,7 +3,7 @@ type Three = typeof import('three');
 function canvasTexture(THREE: Three, canvas: HTMLCanvasElement, color = true, anisotropy = 8) {
   const texture = new THREE.CanvasTexture(canvas);
   if (color) texture.colorSpace = THREE.SRGBColorSpace;
-  texture.anisotropy = anisotropy;
+  texture.anisotropy = Math.min(8, anisotropy);
   texture.needsUpdate = true;
   return texture;
 }
@@ -13,15 +13,35 @@ export function courtTextures(THREE: Three, lite: boolean, anisotropy = 8) {
   const color = document.createElement('canvas');
   color.width = color.height = size;
   const ctx = color.getContext('2d')!;
-  ctx.fillStyle = '#285f82';
+  ctx.fillStyle = '#2b6385';
   ctx.fillRect(0, 0, size, size);
-  for (let i = 0; i < size * size * 0.055; i++) {
-    const shade = 4 + Math.floor(Math.random() * 10);
-    ctx.fillStyle = `rgba(${shade},${shade + 5},${shade + 8},${0.035 + Math.random() * 0.045})`;
+  for (let i = 0; i < size * size * 0.035; i++) {
+    const shade = 185 + Math.floor(Math.random() * 60);
+    ctx.fillStyle = `rgba(${shade},${shade + 2},${shade + 4},${0.025 + Math.random() * 0.045})`;
     const x = Math.random() * size;
     const y = Math.random() * size;
-    const grain = 1 + Math.random() * 2;
+    const grain = 1 + Math.random() * 1.5;
     ctx.fillRect(x, y, grain, grain);
+  }
+  for (const y of [0.025, 0.24, 0.5, 0.76, 0.975]) {
+    const center = y * size;
+    const wear = ctx.createLinearGradient(0, center - size * 0.012, 0, center + size * 0.012);
+    wear.addColorStop(0, 'rgba(16,35,49,0)');
+    wear.addColorStop(0.5, 'rgba(16,35,49,0.12)');
+    wear.addColorStop(1, 'rgba(16,35,49,0)');
+    ctx.fillStyle = wear;
+    ctx.fillRect(0, center - size * 0.012, size, size * 0.024);
+  }
+  const surround = document.createElement('canvas');
+  surround.width = surround.height = size;
+  const surroundCtx = surround.getContext('2d')!;
+  surroundCtx.fillStyle = '#426b53';
+  surroundCtx.fillRect(0, 0, size, size);
+  for (let i = 0; i < size * size * 0.035; i++) {
+    const shade = 190 + Math.floor(Math.random() * 56);
+    surroundCtx.fillStyle = `rgba(${shade},${shade + 4},${shade},${0.025 + Math.random() * 0.04})`;
+    const grain = 1 + Math.random() * 1.5;
+    surroundCtx.fillRect(Math.random() * size, Math.random() * size, grain, grain);
   }
 
   const normal = document.createElement('canvas');
@@ -50,15 +70,19 @@ export function courtTextures(THREE: Three, lite: boolean, anisotropy = 8) {
 
   const maps = [
     canvasTexture(THREE, color, true, anisotropy),
+    canvasTexture(THREE, surround, true, anisotropy),
     canvasTexture(THREE, normal, false, anisotropy),
     canvasTexture(THREE, roughness, false, anisotropy),
   ];
   for (const map of maps) {
     map.wrapS = THREE.RepeatWrapping;
     map.wrapT = THREE.RepeatWrapping;
-    map.repeat.set(11, 24);
   }
-  return { color: maps[0], normal: maps[1], roughness: maps[2] };
+  maps[0]!.repeat.set(1, 1);
+  maps[1]!.repeat.set(11, 24);
+  maps[2]!.repeat.set(11, 24);
+  maps[3]!.repeat.set(11, 24);
+  return { color: maps[0]!, surroundColor: maps[1]!, normal: maps[2]!, roughness: maps[3]! };
 }
 
 export function netTexture(THREE: Three) {

@@ -1,19 +1,20 @@
-import { rng32, type Command, type Event, type Format, type Level, type MatchLength, type Swing, type World } from './logic.ts';
+import { rng32, type Command, type Event, type Format, type Level, type MatchLength, type MoveInput, type Swing, type World } from './logic.ts';
 
 export type ConfigPacket = { t?: 'tennis'; k: 'cfg'; r: number; format: Format; length: MatchLength; level: Level };
-export type SwingPacket = { t?: 'tennis'; k: 'sw'; r: number; shot: number; delta: number; kind: Swing['kind']; aim: -1 | 0 | 1; swipe: number };
-export type ServePacket = { t?: 'tennis'; k: 'toss' | 'serve'; r: number; aim: -1 | 0 | 1 };
+export type SwingPacket = { t?: 'tennis'; k: 'sw'; r: number; shot: number; delta: number; kind: Swing['kind']; aim: number; swipe: number };
+export type MovePacket = { t?: 'tennis'; k: 'mv'; r: number; x: number; z: number };
+export type ServePacket = { t?: 'tennis'; k: 'toss' | 'serve'; r: number; aim: number; kind?: 'topspin' | 'slice' | 'flat' };
 export type StatePacket = { t?: 'tennis'; k: 'S'; r: number; state: World };
 export type EventPacket = { t?: 'tennis'; k: 'ev'; r: number; event: Event };
-export type Packet = ConfigPacket | SwingPacket | ServePacket | StatePacket | EventPacket;
+export type Packet = ConfigPacket | SwingPacket | MovePacket | ServePacket | StatePacket | EventPacket;
 
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const roundOk = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 const levelOk = (value: unknown): value is Level => value === 0 || value === 1 || value === 2;
 const formatOk = (value: unknown): value is Format => value === 'singles' || value === 'doubles';
 const lengthOk = (value: unknown): value is MatchLength => value === 'game' || value === 'three' || value === 'set';
-const kindOk = (value: unknown): value is Swing['kind'] => value === 'drive' || value === 'slice' || value === 'lob';
-const aimOk = (value: unknown): value is -1 | 0 | 1 => value === -1 || value === 0 || value === 1;
+const kindOk = (value: unknown): value is Swing['kind'] => value === 'topspin' || value === 'slice' || value === 'flat' || value === 'lob' || value === 'drop' || value === 'smash' || value === 'volley';
+const aimOk = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 1;
 const pointCalls = ['fault', 'double fault', 'let', 'out', 'net', 'point', 'game', 'set', 'match'];
 const phases = ['serve-ready', 'serve-toss', 'serve-flight', 'rally', 'point', 'done'];
 
@@ -23,7 +24,10 @@ export const configOf = (round: number, format: Format, length: MatchLength, lev
 export const swingOf = (round: number, shot: number, swing: Swing): SwingPacket => ({
   t: 'tennis', k: 'sw', r: round, shot, delta: swing.delta, kind: swing.kind, aim: swing.aim, swipe: swing.swipe ?? 0,
 });
-export const serveOf = (round: number, k: 'toss' | 'serve', aim: -1 | 0 | 1 = 0): ServePacket => ({ t: 'tennis', k, r: round, aim });
+export const moveOf = (round: number, move: MoveInput): MovePacket => ({
+  t: 'tennis', k: 'mv', r: round, x: Math.round(move.x * 100) / 100, z: Math.round(move.z * 100) / 100,
+});
+export const serveOf = (round: number, k: 'toss' | 'serve', aim = 0, kind: 'topspin' | 'slice' | 'flat' = 'topspin'): ServePacket => ({ t: 'tennis', k, r: round, aim, kind });
 export const stateOf = (round: number, state: World): StatePacket => {
   const { random: _random, ...serializable } = state;
   return {
@@ -42,23 +46,29 @@ function bounded(value: unknown, limit: number): value is number {
 function validState(value: unknown): value is World {
   if (!value || typeof value !== 'object') return false;
   const state = value as Partial<World>;
-  if (!formatOk(state.format) || !lengthOk(state.match?.length) || !phases.includes(state.phase ?? '')) return false;
+  if (!formatOk(state.format) || !levelOk(state.level) || !lengthOk(state.match?.length) || !phases.includes(state.phase ?? '')) return false;
   if (!Array.isArray(state.players) || state.players.length !== (state.format === 'doubles' ? 4 : 2)) return false;
   if (!state.players.every((player) => player && Number.isInteger(player.seat) && player.seat >= 0 && player.seat <= 3
     && (player.team === 0 || player.team === 1)
     && bounded(player.x, 20) && bounded(player.z, 30) && bounded(player.vx, 20) && bounded(player.vz, 20)
+    && bounded(player.prevX, 20) && bounded(player.prevZ, 30)
+    && player.input && bounded(player.input.x, 1) && bounded(player.input.z, 1)
+    && (player.pending === null || (player.pending && kindOk(player.pending.kind) && bounded(player.pending.at, 1e9) && aimOk(player.pending.aim)))
+    && kindOk(player.swingKind) && bounded(player.swingLunge, 1) && bounded(player.lungeX, 1) && bounded(player.lungeZ, 1)
     && bounded(player.facing, Math.PI * 2) && bounded(player.swing, 2) && bounded(player.anim, 1e9)
     && typeof player.name === 'string' && player.name.length <= 32
     && (player.ai === null || levelOk(player.ai)) && typeof player.connected === 'boolean')) return false;
   const ball = state.ball;
-  if (!ball || !ball.p || !ball.v || !ball.spin
+  if (!ball || !ball.p || !ball.prev || !ball.v || !ball.spin
     || !bounded(ball.p.x, 40) || !bounded(ball.p.y, 40) || !bounded(ball.p.z, 40)
+    || !bounded(ball.prev.x, 40) || !bounded(ball.prev.y, 40) || !bounded(ball.prev.z, 40)
     || !bounded(ball.v.x, 100) || !bounded(ball.v.y, 100) || !bounded(ball.v.z, 100)
     || !bounded(ball.spin.x, 1000) || !bounded(ball.spin.y, 1000) || !bounded(ball.spin.z, 1000)
     || !Number.isInteger(ball.hitByTeam) || ball.hitByTeam < 0 || ball.hitByTeam > 1
     || !Number.isInteger(ball.canHitTeam) || ball.canHitTeam < 0 || ball.canHitTeam > 1
     || !Number.isInteger(ball.bounces) || ball.bounces < 0 || ball.bounces > 2
     || !Number.isInteger(ball.targetTeam) || ball.targetTeam < 0 || ball.targetTeam > 1
+    || !kindOk(ball.shotKind)
     || !Number.isSafeInteger(ball.rallyShot) || ball.rallyShot < 0
     || typeof ball.inPlay !== 'boolean' || typeof ball.netCord !== 'boolean') return false;
   const match = state.match;
@@ -93,7 +103,8 @@ function validEvent(value: unknown): value is Event {
   if (event.type === 'call') return typeof event.call === 'string' && pointCalls.includes(event.call);
   if (event.type === 'hit') return Number.isInteger(event.seat) && (event.seat as number) >= 0 && (event.seat as number) <= 3
     && typeof event.serve === 'boolean' && bounded(event.speed, 500) && kindOk(event.kind)
-    && Number.isSafeInteger(event.shot) && (event.shot as number) >= 0;
+    && Number.isSafeInteger(event.shot) && (event.shot as number) >= 0
+    && (event.delta === undefined || bounded(event.delta, 1));
   if (event.type === 'bounce') return bounded(event.x, 40) && bounded(event.z, 40) && typeof event.in === 'boolean'
     && typeof event.line === 'boolean' && typeof event.serve === 'boolean';
   if (event.type === 'net') return bounded(event.x, 40) && bounded(event.z, 40);
@@ -121,9 +132,14 @@ export function parsePacket(value: unknown): Packet | null {
     if (!roundOk(packet.shot) || !bounded(packet.delta, 1) || !kindOk(packet.kind) || !aimOk(packet.aim) || !bounded(packet.swipe, 2500)) return null;
     return { k: 'sw', r, shot: packet.shot, delta: packet.delta, kind: packet.kind, aim: packet.aim, swipe: packet.swipe };
   }
+  if (packet.k === 'mv') {
+    const quantized = (value: unknown) => bounded(value, 1) && Math.abs(value * 100 - Math.round(value * 100)) < 1e-6;
+    if (!quantized(packet.x) || !quantized(packet.z)) return null;
+    return { k: 'mv', r, x: packet.x as number, z: packet.z as number };
+  }
   if (packet.k === 'toss' || packet.k === 'serve') {
-    if (!aimOk(packet.aim)) return null;
-    return { k: packet.k, r, aim: packet.aim };
+    if (!aimOk(packet.aim) || (packet.k === 'serve' && packet.kind !== 'topspin' && packet.kind !== 'slice' && packet.kind !== 'flat')) return null;
+    return { k: packet.k, r, aim: packet.aim, ...(packet.k === 'serve' ? { kind: packet.kind as 'topspin' | 'slice' | 'flat' } : {}) };
   }
   if (packet.k === 'S' && validState(packet.state)) {
     const { random: _random, ...serializable } = packet.state as World;
@@ -133,12 +149,13 @@ export function parsePacket(value: unknown): Packet | null {
   return null;
 }
 
-export function commandOf(packet: SwingPacket | ServePacket, seat: number): Command | null {
+export function commandOf(packet: SwingPacket | MovePacket | ServePacket, seat: number): Command | null {
   if (!Number.isInteger(seat) || seat < 0 || seat > 3) return null;
+  if (packet.k === 'mv') return { seat, move: { x: packet.x, z: packet.z } };
   if (packet.k === 'sw') return {
     seat,
     swing: { kind: packet.kind, aim: packet.aim, delta: packet.delta, swipe: packet.swipe },
   };
   if (packet.k === 'toss') return { seat, toss: true };
-  return { seat, serve: true, swing: { kind: 'drive', aim: packet.aim, delta: 0 } };
+  return { seat, serve: true, swing: { kind: packet.kind ?? 'topspin', aim: packet.aim, delta: 0 } };
 }
