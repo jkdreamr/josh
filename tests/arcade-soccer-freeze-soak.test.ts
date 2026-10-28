@@ -108,6 +108,7 @@ for (const seed of seeds) test(`full-match phone pipeline soak seed ${seed}`, ()
   let blackout = -1, resumed = false, resumeResponses = 0, resumeWindow = 0;
   let previousId = 6, previousDirection = direction, unresponsive = 0, stopped = 0;
   let maxStopped = 0, transfers = 0, halfTime = false, restarts = 0;
+  let plantingTicks = 0, maxPlantingTicks = 0;
   const violations = new Map<string, unknown>();
   const record = (kind: string, detail: unknown) => {
     if (!violations.has(kind)) violations.set(kind, { seed, simSeconds: simTicks * STEP, ...Object(detail) });
@@ -206,7 +207,15 @@ for (const seed of seeds) test(`full-match phone pipeline soak seed ${seed}`, ()
     if (process.env.SOCCER_PLANT_TRACE === '1' && seed === 98765 && simTicks >= 292 && simTicks <= 330) {
       console.log(JSON.stringify({ plantingTrace: { step: simTicks, time: simTicks * STEP, id, move: command?.move, before, after: { vx: player.vx, vz: player.vz, planting: player.planting }, projectionChange: projection - previousProjection, responded } }));
     }
-    if (eligible && world.phase === 'live' && !player.slide && nextId === id && previousId === id && sameDirection) {
+    if (eligible && world.phase === 'live' && !player.slide && nextId === id) {
+      if (player.planting || before.planting) {
+        plantingTicks = previousId === id ? plantingTicks + 1 : 1;
+        maxPlantingTicks = Math.max(maxPlantingTicks, plantingTicks);
+        assert.ok(plantingTicks * STEP <= 0.5, `planting exceeds 0.5s seed=${seed} id=${id} steps=${plantingTicks}`);
+      }
+      if (!player.planting) plantingTicks = 0;
+    } else plantingTicks = 0;
+    if (eligible && world.phase === 'live' && !player.slide && !player.planting && nextId === id && previousId === id && sameDirection) {
       unresponsive = responded ? 0 : unresponsive + 1;
       if (resumed && resumeWindow < 6) {
         resumeWindow++;
@@ -224,6 +233,6 @@ for (const seed of seeds) test(`full-match phone pipeline soak seed ${seed}`, ()
   assert.ok(lossTicks > 0, 'short loss bursts were exercised');
   assert.ok(pausedTicks > 0 && resumed, 'blackout paused and resumed the host');
   assert.ok(resumeResponses > 0, 'resumed controller responded');
-  console.log(JSON.stringify({ seed, seconds: simTicks * STEP, wallSeconds: (performance.now() - started) / 1000, transfers, restarts, maxStoppageSeconds: maxStopped * STEP, pausedTicks, rules: world.rules!.stats, violations: [...violations] }));
+  console.log(JSON.stringify({ seed, seconds: simTicks * STEP, wallSeconds: (performance.now() - started) / 1000, transfers, restarts, maxStoppageSeconds: maxStopped * STEP, maxPlantingSeconds: maxPlantingTicks * STEP, pausedTicks, rules: world.rules!.stats, violations: [...violations] }));
   assert.deepEqual([...violations], [], 'soak violations (first evidence per category)');
 });
