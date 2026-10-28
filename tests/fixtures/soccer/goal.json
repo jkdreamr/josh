@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "seed": 254,
+  "clubs": [
+    "bay-city",
+    "northshore"
+  ],
+  "mode": "cpu",
+  "halfLength": 120,
+  "humans": 1,
+  "level": "normal",
+  "seats": {
+    "0": 6
+  },
+  "frames": 90,
+  "commands": [
+    {
+      "from": 0,
+      "to": 0,
+      "seat": 0,
+      "command": {
+        "move": {
+          "x": 0,
+          "z": 0
+        },
+        "aim": {
+          "x": 1,
+          "z": 0
+        },
+        "action": "shoot",
+        "power": 0.45,
+        "pressed": true
+      }
+    }
+  ],
+  "setup": {
+    "name": "live",
+    "players": {
+      "6": {
+        "x": 45,
+        "z": 0,
+        "facing": 1.5707963267948966
+      },
+      "11": {
+        "x": 51,
+        "z": 12
+      }
+    },
+    "ball": {
+      "x": 45.3,
+      "z": 0
+    },
+    "lastTouch": 0,
+    "carrierId": 6,
+    "park": true
+  }
+}

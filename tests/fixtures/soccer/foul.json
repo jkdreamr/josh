@@ -1,0 +1,90 @@
+{
+  "version": 1,
+  "seed": 254,
+  "clubs": [
+    "bay-city",
+    "northshore"
+  ],
+  "mode": "versus",
+  "halfLength": 120,
+  "humans": 2,
+  "level": "normal",
+  "seats": {
+    "0": 6,
+    "1": 17,
+    "2": 1
+  },
+  "frames": 900,
+  "commands": [
+    {
+      "from": 0,
+      "to": 0,
+      "seat": 0,
+      "command": {
+        "move": {
+          "x": 0,
+          "z": 0
+        },
+        "aim": {
+          "x": 1,
+          "z": 0
+        },
+        "action": "slide",
+        "power": 0.5,
+        "pressed": true
+      }
+    },
+    {
+      "from": 0,
+      "to": 80,
+      "seat": 1,
+      "command": {
+        "move": {
+          "x": -1,
+          "z": 0
+        },
+        "sprint": true
+      }
+    },
+    {
+      "from": 5,
+      "to": 30,
+      "seat": 2,
+      "command": {
+        "move": {
+          "x": 1,
+          "z": 0
+        }
+      }
+    }
+  ],
+  "setup": {
+    "name": "live",
+    "players": {
+      "1": {
+        "x": -9,
+        "z": 0,
+        "cooldown": 5
+      },
+      "6": {
+        "x": -4.55,
+        "z": 0,
+        "facing": -1.5707963267948966
+      },
+      "17": {
+        "x": -5.2,
+        "z": 0,
+        "facing": -1.5707963267948966,
+        "touchCd": 0.5
+      }
+    },
+    "ball": {
+      "x": -6.4,
+      "z": 0,
+      "vx": -3
+    },
+    "lastTouch": 1,
+    "carrierId": 17,
+    "park": true
+  }
+}
