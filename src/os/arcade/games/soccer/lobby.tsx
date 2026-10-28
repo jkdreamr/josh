@@ -6,7 +6,7 @@ import { CLUBS, clubById, DEFAULT_CLUBS } from './teams.ts';
 import { MODE, COMPETITION, HOME_CLUB, AWAY_CLUB, HALF, LEVEL, CAMERA, TIME } from './settings.ts';
 import type { Mode } from './modes.ts';
 import { clearCup, createCup, cupSummary, loadCup, saveCup, userFixture, type Cup } from './cup.ts';
-import { hostLobbyStatus, lobbySetupOptions, phoneStatusLine, requiredPhones, sideForLobbyMember } from './phone-flow.ts';
+import { hasLobbyPhoneMember, hostLobbyStatus, lobbySetupOptions, phoneStatusLine, requiredPhones, sideForLobbyMember } from './phone-flow.ts';
 import { parsePacket, type LobbyMember, type LobbyPacket } from './net.ts';
 import { Crest } from './crest.tsx';
 import { preloadSoccer } from './load.ts';
@@ -488,11 +488,13 @@ export function PhoneTeamPicker({ online }: { online: NonNullable<ReturnType<typ
   lobbyRef.current = lobby;
 
   useEffect(() => {
-    const interval = window.setInterval(() => {
+    const sendHello = () => {
       const current = lobbyRef.current;
-      if (current?.members.some((member) => member.seat === online.seat && member.role === 'phone' && member.side === side)) return;
+      if (current && hasLobbyPhoneMember(current.members, online.seat)) return;
       online.send({ t: 'soccer', k: 'hi', r: online.round || 1, seq: sequence.current++, seat: online.seat, role: 'phone', side });
-    }, 1500);
+    };
+    sendHello();
+    const interval = window.setInterval(sendHello, 1500);
     return () => window.clearInterval(interval);
   }, [online, side]);
   useEffect(() => {
@@ -504,6 +506,8 @@ export function PhoneTeamPicker({ online }: { online: NonNullable<ReturnType<typ
       publishLobby(packet);
     });
     const timer = window.setInterval(() => {
+      const current = lobbyRef.current;
+      if (!current || !hasLobbyPhoneMember(current.members, online.seat)) return;
       const direction = (value: number, previous: number) => {
         if (Math.abs(value) < 0.3) return 0;
         if (previous && Math.sign(value) === previous && Math.abs(value) < 0.6) return previous;

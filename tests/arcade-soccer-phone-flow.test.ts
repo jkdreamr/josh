@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createCup, recordUserResult, userFixture } from '../src/os/arcade/games/soccer/cup.ts';
-import { nextCupFixtureText, hostLobbyStatus, lobbySetupOptions, phoneRoute, phoneStatusLine, postMatchPrimaryLabel, requiredPhones, sideForLobbyMember } from '../src/os/arcade/games/soccer/phone-flow.ts';
+import { hasLobbyPhoneMember, nextCupFixtureText, hostLobbyStatus, lobbySetupOptions, phoneRoute, phoneStatusLine, postMatchPrimaryLabel, requiredPhones, sideForLobbyMember } from '../src/os/arcade/games/soccer/phone-flow.ts';
 import { DEFAULT_CLUBS } from '../src/os/arcade/games/soccer/teams.ts';
 import { reconnectedSeats } from '../src/os/arcade/games/soccer/net.ts';
 import { postMatchNavPacket, repeatPostMatchNav } from '../src/os/arcade/games/soccer/post-match-nav.ts';
@@ -24,6 +24,13 @@ test('host lobby assigns versus phone sides by seat while other modes stay home'
   assert.equal(sideForLobbyMember('quick', 'cpu', 'phone', 2, 1), 0);
   assert.equal(sideForLobbyMember('quick', 'practice', 'phone', 1, 1), 0);
   assert.equal(sideForLobbyMember('online', 'cpu', 'mac', 2, 1), 1);
+});
+
+test('phone picker waits for the lobby to register its seat before sending input', () => {
+  const members = [{ seat: 0, role: 'host' as const }, { seat: 2, role: 'phone' as const }];
+  assert.equal(hasLobbyPhoneMember(members, 1), false);
+  assert.equal(hasLobbyPhoneMember(members, 0), false);
+  assert.equal(hasLobbyPhoneMember(members, 2), true);
 });
 
 test('phone lobby lists connected phones and only routes to the picker in the lobby', () => {

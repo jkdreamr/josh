@@ -25,6 +25,10 @@ export function sideForLobbyMember(
   return seat === 2 ? 1 : 0;
 }
 
+export function hasLobbyPhoneMember(members: readonly { seat: number; role: 'phone' | 'mac' | 'host' }[], seat: number): boolean {
+  return members.some((member) => member.seat === seat && member.role === 'phone');
+}
+
 export function phoneStatusLine(
   members: readonly { seat: number; role: 'phone' | 'mac' | 'host'; side?: number }[],
   ready?: readonly boolean[],
