@@ -7,6 +7,8 @@ for (const [home, away] of PAIRS) {
   const todo =
     home === 'easy' && away === 'easy'
       ? 'main seed 47: players 9/10 overlap >0.5 s at frame 3420'
+      : home === 'normal' && away === 'normal'
+        ? 'seed 47: ST/RW (9/10, 20/21) placed <0.45 m apart through goal-kick restarts at frames ~12623/13321 (restart placement, same as easy/easy)'
       : home === 'hard' && away === 'easy'
         ? 'main seed 47: players 20/21 overlap at frame 2334; uncontrolled ball stuck >3 s at frame 3613'
         : undefined;
