@@ -37,6 +37,34 @@ test('assisted pass respects the cone, angle preference, and blocked lanes', () 
   assert.equal(findReceiver(world, player, { x: 1, z: 0 }, false)?.id, angled.id);
 });
 
+test('human pass prefers the aimed centre-back over a similarly aligned goalkeeper', () => {
+  const world = createWorld();
+  const carrier = world.players[4]!;
+  const centerBack = world.players[3]!;
+  const keeper = world.players[0]!;
+  for (const player of world.players) player.sentOff = true;
+  carrier.sentOff = false; carrier.x = 0; carrier.z = 0;
+  centerBack.sentOff = false; centerBack.x = -11.5; centerBack.z = 14.7;
+  keeper.sentOff = false; keeper.x = -19; keeper.z = 25.3;
+  const angle = 127.5 * Math.PI / 180;
+
+  assert.equal(findReceiver(world, carrier, { x: Math.cos(angle), z: Math.sin(angle) }, false, false, false, 0.75)?.id, centerBack.id);
+});
+
+test('human pass can choose an aimed goalkeeper when no outfielder is within 25 degrees', () => {
+  const world = createWorld();
+  const carrier = world.players[4]!;
+  const centerBack = world.players[3]!;
+  const keeper = world.players[0]!;
+  for (const player of world.players) player.sentOff = true;
+  carrier.sentOff = false; carrier.x = 0; carrier.z = 0;
+  keeper.sentOff = false; keeper.x = 20; keeper.z = 0;
+  const angle = 27 * Math.PI / 180;
+  centerBack.sentOff = false; centerBack.x = 18 * Math.cos(angle); centerBack.z = 18 * Math.sin(angle);
+
+  assert.equal(findReceiver(world, carrier, { x: 1, z: 0 }, false, false, false, 0.75)?.id, keeper.id);
+});
+
 test('receiver selection covers eight stick directions in a teammate ring and values tap versus held range', () => {
   const { world, player } = setup();
   player.x = 0; player.z = 0;
@@ -55,7 +83,7 @@ test('receiver selection covers eight stick directions in a teammate ring and va
   }
 
   for (const mate of teammates) mate.sentOff = true;
-  const near = teammates[0]!, far = teammates[1]!;
+  const near = teammates[1]!, far = teammates[2]!;
   near.sentOff = far.sentOff = false;
   near.x = 10; near.z = 0;
   far.x = 25; far.z = 0;

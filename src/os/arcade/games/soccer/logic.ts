@@ -687,7 +687,8 @@ export function findReceiver(world: World, from: Player, direction: Point, throu
     }
     const inBox = player.x * dir > FIELD.length / 2 - FIELD.penaltyDepth && Math.abs(player.z) < FIELD.penaltyWidth / 2;
     const forwardTowardGoal = dx * dir;
-    return angle / 30 + 0.35 * Math.min(1, Math.abs(targetDistance - preferred) / 30) + (blocked ? 1 : 0)
+    return angle / 30 + 0.35 * Math.min(1, Math.abs(targetDistance - preferred) / 30)
+      + (player.slot === 'GK' ? 0.6 : 0) + (blocked ? 1 : 0)
       + (through ? -0.2 * clamp(forwardTowardGoal / 20, 0, 1) : 0) + (cross && inBox ? -0.6 : 0);
   };
   for (const cone of [30, 45]) {
