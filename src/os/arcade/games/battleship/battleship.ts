@@ -358,65 +358,103 @@ export function boardTopBelow(statusBottom: number, u = 1): number {
   return Math.ceil(statusBottom + 18 * u);
 }
 
-/** Board placement inside the stage; fixed-size chrome (buttons, labels, gaps) grows with u. */
-export function boardGeometry(w: number, h: number, placing: boolean, top: number, u = 1) {
+/** Space a zoomed target board keeps for its row and column labels, and after its last row and column. */
+export const ZOOM_PAD = 18;
+export const ZOOM_PAD_END = 4;
+
+/**
+ * Board placement inside the stage; fixed-size chrome (buttons, labels, gaps) grows with u.
+ * A target (or, while placing, placement) cell smaller than `minCell` grows to it inside a pannable view of targetViewW x targetViewH.
+ */
+export function boardGeometry(w: number, h: number, placing: boolean, top: number, u = 1, minCell = 0) {
   const wide = w / Math.max(1, h) >= 1.25 || h < 220;
   const bottom = h < 220 ? 4 : 8;
   const available = Math.max(1, h - top - bottom);
+  const zoomContent = (cell: number) => (ZOOM_PAD + ZOOM_PAD_END) * u + cell * 10 + 9;
   if (placing) {
     if (wide) {
-      const cell = Math.floor(Math.max(7, Math.min((available - 9) / 10, (w - 187 * u) / 10)));
+      const fit = Math.floor(Math.max(7, Math.min((available - 9) / 10, (w - 187 * u) / 10)));
+      const zoomed = fit < minCell;
+      const cell = zoomed ? minCell : fit;
       const side = cell * 10 + 9;
-      const x = Math.max(8, (w - side - 162 * u) / 2);
+      const viewW = zoomed ? Math.min(zoomContent(cell), Math.max(fit * 10 + 9, w - 178 * u)) : side;
+      const viewH = zoomed ? Math.min(zoomContent(cell), available) : side;
+      const toolsH = minCell ? 144 * u : 108 * u;
+      const x = Math.max(8, (w - viewW - 162 * u) / 2);
       return {
         portrait: false, targetCell: cell, targetX: 0, targetY: 0, ownCell: cell, ownX: 0, ownY: 0,
-        placeCell: cell, placeX: x, placeY: top + (available - side) / 2,
-        toolsX: x + side + 20 * u, toolsY: top + (available - 108 * u) / 2,
-        fireX: 0, fireY: 0,
+        placeCell: cell, placeX: x, placeY: top + (available - viewH) / 2,
+        toolsX: x + viewW + 20 * u, toolsY: Math.max(top, top + (available - toolsH) / 2),
+        fireX: 0, fireY: 0, targetViewW: zoomed ? viewW : 0, targetViewH: zoomed ? viewH : 0, zoomed,
       };
     }
-    const cell = Math.floor(Math.max(18, Math.min((w - 24 * u) / 10, (available - 65 * u) / 10)));
+    const fit = Math.floor(Math.max(18, Math.min((w - 24 * u) / 10, (available - 65 * u) / 10)));
+    const zoomed = fit < minCell;
+    const cell = zoomed ? minCell : fit;
     const side = cell * 10 + 9;
-    const placeY = top + Math.max(4, (available - side - 62 * u) / 2);
+    const clear = zoomed ? 12 * u : 0;
+    const viewW = zoomed ? Math.min(zoomContent(cell), w - 12 * u) : side;
+    const viewH = zoomed ? Math.min(zoomContent(cell), Math.max(fit * 10 + 9, available - clear - 74 * u)) : side;
+    const placeY = top + clear + Math.max(4, (available - clear - viewH - 62 * u) / 2);
     return {
       portrait: true, targetCell: cell, targetX: 0, targetY: 0, ownCell: cell, ownX: 0, ownY: 0,
-      placeCell: cell, placeX: Math.max(16 * u, (w - side) / 2), placeY,
-      toolsX: Math.max(10 * u, (w - 330 * u) / 2), toolsY: Math.min(placeY + side + 12 * u, top + available - 52 * u),
-      fireX: 0, fireY: 0,
+      placeCell: cell, placeX: zoomed ? (w - viewW) / 2 : Math.max(16 * u, (w - side) / 2), placeY,
+      toolsX: Math.max(10 * u, (w - 330 * u) / 2), toolsY: Math.min(placeY + viewH + 12 * u, top + available - 52 * u),
+      fireX: 0, fireY: 0, targetViewW: zoomed ? viewW : 0, targetViewH: zoomed ? viewH : 0, zoomed,
     };
   }
+  const fireW = 120 * u;
+  const fireH = 50 * u;
   if (wide) {
-    const cell = Math.floor(Math.max(7, Math.min((available - 9) / 10, (w - 42 * u) / 16.2)));
-    const ownCell = Math.max(7, Math.floor(cell * 0.62));
-    const targetSide = cell * 10 + 9;
+    const fit = Math.floor(Math.max(7, Math.min((available - 9) / 10, (w - 42 * u) / 16.2)));
+    const zoomed = fit < minCell;
+    const cell = zoomed ? minCell : fit;
+    const ownCell = Math.max(7, Math.floor(fit * 0.62));
     const ownSide = ownCell * 10 + 9;
-    const gap = Math.max(12 * u, cell * 0.55);
-    const x = Math.max(6 * u, (w - targetSide - ownSide - gap) / 2);
-    const y = top + (available - targetSide) / 2;
-    const ownX = x + targetSide + gap;
-    const ownY = y + (targetSide - ownSide) / 2;
-    return {
-      portrait: false, targetCell: cell, targetX: x, targetY: y, ownCell, ownX, ownY,
+    const gap = Math.max(12 * u, fit * 0.55);
+    const viewW = zoomed ? Math.min(zoomContent(cell), Math.max(fit * 10 + 9, w - 12 * u - ownSide - gap)) : cell * 10 + 9;
+    const viewH = zoomed ? Math.min(zoomContent(cell), available) : cell * 10 + 9;
+    const x = Math.max(6 * u, (w - viewW - ownSide - gap) / 2);
+    const y = top + (available - viewH) / 2;
+    const ownX = x + viewW + gap;
+    const centeredOwnY = y + (viewH - ownSide) / 2;
+    const base = {
+      portrait: false, targetCell: cell, targetX: x, targetY: y, ownCell, ownX,
       placeCell: cell, placeX: 0, placeY: 0,
       toolsX: 0, toolsY: 0,
-      fireX: Math.min(w - 128 * u, Math.max(8 * u, ownX + (ownSide - 120 * u) / 2)),
-      fireY: Math.min(ownY + ownSide + 10 * u, h - bottom - 50 * u),
+      fireX: Math.min(w - 128 * u, Math.max(8 * u, ownX + (ownSide - fireW) / 2)),
+      targetViewW: viewW, targetViewH: viewH, zoomed,
     };
+    // Fire goes under the own board; lift the board if needed so the two never overlap.
+    const ownY = Math.max(top, Math.min(centeredOwnY, h - bottom - fireH - 10 * u - ownSide));
+    if (ownY + ownSide + 10 * u + fireH <= h - bottom + 1e-9) {
+      return { ...base, ownY, fireY: ownY + ownSide + 10 * u };
+    }
+    const besideX = ownX + ownSide + 8 * u;
+    if (besideX + fireW <= w - 8 * u) {
+      return { ...base, ownY: centeredOwnY, fireX: besideX, fireY: Math.max(top, centeredOwnY + (ownSide - fireH) / 2) };
+    }
+    return { ...base, ownY: centeredOwnY, fireY: Math.min(centeredOwnY + ownSide + 10 * u, h - bottom - fireH) };
   }
-  const cell = Math.floor(Math.max(18, Math.min((w - 24 * u) / 10, (available - 92 * u) / 15.8)));
-  const ownCell = Math.max(12, Math.floor(cell * 0.58));
-  const targetSide = cell * 10 + 9;
+  const fit = Math.floor(Math.max(18, Math.min((w - 24 * u) / 10, (available - 92 * u) / 15.8)));
+  const zoomed = fit < minCell;
+  const cell = zoomed ? minCell : fit;
+  const ownCell = Math.max(12, Math.floor(fit * 0.58));
   const ownSide = ownCell * 10 + 9;
   const gapAbove = 8 * u;
-  const fireHeight = 50 * u;
   // The own board's column labels sit 15 units above it, so leave them clear of Fire.
   const gapBelow = 18 * u;
-  const total = targetSide + gapAbove + fireHeight + gapBelow + ownSide;
-  const y = top + Math.max(0, (available - total) / 2);
+  const chrome = gapAbove + fireH + gapBelow + ownSide;
+  const viewW = zoomed ? Math.min(zoomContent(cell), w - 12 * u) : cell * 10 + 9;
+  // A zoomed view fills the width, so drop it a little to keep its caption clear of the shell controls.
+  const clear = zoomed ? 12 * u : 0;
+  const viewH = zoomed ? Math.max(fit * 10 + 9, Math.min(zoomContent(cell), available - chrome - clear)) : cell * 10 + 9;
+  const y = top + clear + Math.max(0, (available - clear - viewH - chrome) / 2);
   return {
-    portrait: true, targetCell: cell, targetX: (w - targetSide) / 2, targetY: y,
-    ownCell, ownX: (w - ownSide) / 2, ownY: y + targetSide + gapAbove + fireHeight + gapBelow,
+    portrait: true, targetCell: cell, targetX: (w - viewW) / 2, targetY: y,
+    ownCell, ownX: (w - ownSide) / 2, ownY: y + viewH + gapAbove + fireH + gapBelow,
     placeCell: cell, placeX: 0, placeY: 0,
-    toolsX: 0, toolsY: 0, fireX: (w - 120 * u) / 2, fireY: y + targetSide + gapAbove,
+    toolsX: 0, toolsY: 0, fireX: (w - fireW) / 2, fireY: y + viewH + gapAbove,
+    targetViewW: viewW, targetViewH: viewH, zoomed,
   };
 }
