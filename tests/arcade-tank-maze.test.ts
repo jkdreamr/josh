@@ -34,7 +34,6 @@ import {
   type Maze,
 } from '../src/os/arcade/games/tank-maze/logic.ts';
 import { makeMemory, STANDOFF, think } from '../src/os/arcade/games/tank-maze/bots.ts';
-<<<<<<< HEAD
 import { endPacket, inputPacket, parsePacket, rosterPacket, roundPacket, seatNames, statePacket, tankHolders, holdersLeft, tankName } from '../src/os/arcade/games/tank-maze/net.ts';
 import { clipName, finalLine, freeSpans, layoutChips, listNames, packChipRows, packChips, rosterLine, type Span } from '../src/os/arcade/games/tank-maze/hud.ts';
 import { formatTally } from '../src/os/arcade/kit/tally.ts';
