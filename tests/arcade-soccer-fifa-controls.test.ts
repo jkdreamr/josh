@@ -392,9 +392,10 @@ test('active human teams take kickoff at the start, after goals, and in the seco
   }
 });
 
-test('kickoff skips stale AI commands until the human acts or the timeout expires', () => {
+test('kickoff skips stale AI commands and waits for the human even after 30 seconds', () => {
   const world = worldWithSeats(537, [null, 6, null, null]);
   const taker = world.players.find((player) => player.team === 0 && player.slot === 'ST')!;
+  const clock = world.clock;
   const runFrame = (frame: number) => {
     const { commands, byTeam } = matchAICommands(world, frame);
     if (frame === 0) assert.equal(byTeam[0].get(taker.id)?.action, 'pass');
@@ -405,20 +406,26 @@ test('kickoff skips stale AI commands until the human acts or the timeout expire
     commands.set(humanId!, { move: { x: 0, z: 0 } });
     stepWorld(world, STEP, commands);
     assert.equal(world.kickEvent, null, `no AI kick on frame ${frame}`);
+    assert.equal(world.phase, 'restart');
     assert.equal(world.players.filter((player) => player.team === 0 && player.human).length, 1);
     assert.equal(taker.human, true);
     assert.equal(world.controlledSeats?.[1], taker.id);
     assertSeatInvariant(world);
   };
 
-  for (let frame = 0; frame < 400; frame++) runFrame(frame);
+  for (let frame = 0; frame < 31 * 60; frame++) runFrame(frame);
   assert.equal(world.restart, 'kickoff');
-  assert.ok(world.restartClock < 10);
-  for (let frame = 400; world.restart !== null && frame < 700; frame++) runFrame(frame);
+  assert.ok(world.restartClock > 30);
+  assert.equal(world.clock, clock);
+
+  stepWorld(world, STEP, new Map([[taker.id, {
+    move: { x: 0, z: 0 }, aim: { x: 1, z: 0 }, action: 'pass', power: 0.5, pressed: true,
+  }]]));
   assert.equal(world.restart, null);
   assert.equal(world.phase, 'live');
-  assert.ok(world.restartClock >= 10);
-  assert.equal(world.kickEvent, null);
+  assert.equal(world.kickEvent?.action, 'pass');
+  assert.ok(Math.hypot(world.ball.vx, world.ball.vz) > 0);
+  assert.equal(world.clock, clock);
 });
 
 test('the human kickoff taker can pass with the requested aim and release once', () => {

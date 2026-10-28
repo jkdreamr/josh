@@ -366,16 +366,23 @@ export function stepShootout(w: World,t: number) {
   if(w.phase==='live') { s.flight=(s.flight??0)+t; if(s.flight>=3.5) {resolveShootoutKick(w,false); return true;} }
   return false;
 }
+export function kickoffPrompt(w: World, playerId?: number): string | null {
+  if (w.phase !== 'restart' || w.restart !== 'kickoff') return null;
+  const taker = restartTaker(w);
+  if (!taker.human) return null;
+  if (playerId !== undefined && playerId !== taker.id) return 'Kick off · waiting for the taker';
+  return playerId === undefined
+    ? 'Kick off · Press A to kick off'
+    : 'Kick off · aim with stick · Press A to kick off';
+}
 export function phoneStoppagePrompt(w: World, playerId: number): string | null {
   const player = w.players.find((p) => p.id === playerId);
   if (!player) return null;
   const labels = setPieceLabels(w, player.team, playerId);
   if (labels) return `${labels.title} · ${labels.hint}`;
+  const kickoff = kickoffPrompt(w, playerId);
+  if (kickoff) return kickoff;
   if (w.phase === 'restart') {
-    const taker = w.restart === 'kickoff' ? restartTaker(w) : null;
-    if (taker?.human) return playerId === taker.id
-      ? 'Kick off · aim with stick, press A to pass'
-      : 'Kick off · waiting for the taker';
     return `${w.event || 'Kick off'} · move the stick or press to take`;
   }
   if (w.phase !== 'live') return w.event || w.phase;

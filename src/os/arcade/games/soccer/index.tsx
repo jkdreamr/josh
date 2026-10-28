@@ -6,7 +6,7 @@ import { carryEdge, chargePower, screenToWorld, gamepadInput, keyboardInput, pho
 import { desiredCameraBasis } from './camera.ts';
 import { acceptMovePacket, consumeCommand, InputFreshness, neutralCommand, movePacket, parsePacket, sameStick, stickSendDelay, trimSnapshot, type RemoteSeat, type LobbyMember } from './net.ts';
 import { createWorld, distance, teamOf, findReceiver, isCross, matchClock, nearestCarrier, possessionTeam, setRestart, stepWorld, STEP, type Command, type Point, type Team, type World } from './logic.ts';
-import { phoneStoppagePrompt, setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
+import { kickoffPrompt, phoneStoppagePrompt, setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { SoccerSound, type CommentaryMode } from './audio.ts';
 import type { CameraMode, SoccerView, TimeMode } from './scene.ts';
@@ -1430,11 +1430,13 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     hudTimer.current += dt;
     if (hudTimer.current > 0.09) {
       hudTimer.current = 0;
-      if (current.event !== previousHudEvent.current || current.eventTime > previousHudEventTime.current + 0.02) {
+      const event = kickoffPrompt(current) ?? current.event;
+      const eventTime = event === current.event ? current.eventTime : 1;
+      if (event !== previousHudEvent.current || eventTime > previousHudEventTime.current + 0.02) {
         hudEventKey.current++;
       }
-      previousHudEvent.current = current.event;
-      previousHudEventTime.current = current.eventTime;
+      previousHudEvent.current = event;
+      previousHudEventTime.current = eventTime;
       const selectedState = selected.action === 'jockey' ? selectedCommand?.contain || remote?.contain ? 'CONTAIN' : 'JOCKEY'
         : selected.action === 'shield' ? 'SHIELD'
           : selected.slide ? 'SLIDE' : Math.hypot(selected.vx, selected.vz) > 7.1 ? 'SPRINT' : null;
@@ -1447,7 +1449,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       const partner = localPlayerIds.map((id) => current.players[id]).find((player) => player && player.id !== selectedPlayerId && player.team === selected.team && player.human) ?? null;
       const nextHud: HudState = {
         score0: current.score[0], score1: current.score[1], clock: clock.label, added: clock.added,
-        half: current.half, phase: current.phase, event: current.event, eventTime: current.eventTime, eventKey: hudEventKey.current,
+        half: current.half, phase: current.phase, event, eventTime, eventKey: hudEventKey.current,
         selectedId: selectedPlayerId, stamina: Math.round(selected.stamina * 50) / 50, rivalId: rival?.id ?? null, rivalStamina: Math.round((rival?.stamina ?? 1) * 50) / 50, partnerId: partner?.id ?? null, partnerStamina: Math.round((partner?.stamina ?? 1) * 50) / 50, state: selectedState, targetId: target,
         power: indicatorPower, replaying: current.phase === 'goal' && !replaySkipped.current,
         statsVersion: statsObserver.current.stats.version, presentation: presentation.current,

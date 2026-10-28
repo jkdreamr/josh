@@ -13,7 +13,7 @@ test('phone stoppage prompts cover phases and slides but not unrestricted live p
   stepWorld(world, STEP);
   const taker = restartTaker(world);
   assert.equal(taker.human, true);
-  assert.equal(phoneStoppagePrompt(world, taker.id), 'Kick off · aim with stick, press A to pass');
+  assert.equal(phoneStoppagePrompt(world, taker.id), 'Kick off · aim with stick · Press A to kick off');
   const teammate = world.players.find((player) => player.team === taker.team && player.id !== taker.id)!;
   assert.equal(phoneStoppagePrompt(world, teammate.id), 'Kick off · waiting for the taker');
 
@@ -47,6 +47,12 @@ test('a mid-match human red card hands off control, prompts the free kick and re
     for (const [id, command] of remote) {
       commands.set(id, { ...command });
       remote.set(id, consumeCommand(command));
+    }
+    if (world.phase === 'restart' && world.restart === 'kickoff') {
+      const taker = restartTaker(world);
+      if (taker.human) commands.set(taker.id, {
+        move: { x: 0, z: 0 }, aim: { x: 1, z: 0 }, action: 'pass', pressed: true, power: 0.5,
+      });
     }
     stepWorld(world, STEP, commands, 20);
     const next = reconcileControllers(world, assignments);
@@ -141,7 +147,11 @@ for (const seed of seeds) test(`full-match phone pipeline soak seed ${seed}`, ()
         state = { seq: -1, edge: -1, held: null, pressUsed: false };
         remote.set(id, neutralCommand());
       }
-      const action = tick % 180 === 0 ? (['pass', 'shoot', 'through'] as const)[Math.floor(random() * 3)] : null;
+      const player = world.players[id]!;
+      const kickoffTaker = world.phase === 'restart' && world.restart === 'kickoff'
+        && world.restartTeam === player.team && player.id === restartTaker(world).id && player.human;
+      const action = kickoffTaker ? 'pass'
+        : tick % 180 === 0 ? (['pass', 'shoot', 'through'] as const)[Math.floor(random() * 3)] : null;
       const switching = tick % 420 === 0;
       if (action || switching) edge++;
       const packet = movePacket(1, seq++, 1, {

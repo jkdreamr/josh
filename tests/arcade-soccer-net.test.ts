@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { ROOM_MESSAGE_MAX_BYTES } from '../worker/src/room-core.ts';
 import { computeAI } from '../src/os/arcade/games/soccer/ai.ts';
-import { createWorld, STEP, stepWorld, type Command, type World } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, restartTaker, STEP, stepWorld, type Command, type World } from '../src/os/arcade/games/soccer/logic.ts';
 import { acceptMovePacket, commandFromPacket, consumeCommand, InputFreshness, mergeRemoteCommand, movePacket, parsePacket, sameStick, stickSendDelay, trimSnapshot, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
 import { chargePower, screenToWorld } from '../src/os/arcade/games/soccer/input.ts';
 import { desiredCameraBasis } from '../src/os/arcade/games/soccer/camera.ts';
@@ -353,6 +353,12 @@ test('trimmed full-match and worst-case snapshots fit the worker relay', () => {
     commands.clear();
     for (const [id, command] of homeCommands) commands.set(id, command);
     for (const [id, command] of awayCommands) commands.set(id, command);
+    if (world.phase === 'restart' && world.restart === 'kickoff') {
+      const taker = restartTaker(world);
+      if (taker.human) commands.set(taker.id, {
+        move: { x: 0, z: 0 }, aim: { x: 1, z: 0 }, action: 'pass', pressed: true, power: 0.5,
+      });
+    }
     stepWorld(world, STEP, commands);
     if (tick % 3 !== 0) continue;
 

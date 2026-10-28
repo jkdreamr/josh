@@ -1196,7 +1196,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
     rulesStep(world, t);
     world.restartClock += t;
     if (world.setPiece) {
-      if (!world.shootout) world.clock = Math.max(0, world.clock - clockStep);
+      if (!world.shootout && world.restart !== 'kickoff') world.clock = Math.max(0, world.clock - clockStep);
       stepSetPiece(world, commands, t);
       return;
     }
@@ -1231,11 +1231,14 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
       }
     }
     const action = commands.get(taker.id);
-    world.clock = Math.max(0, world.clock - clockStep);
+    if (world.restart !== 'kickoff') world.clock = Math.max(0, world.clock - clockStep);
     const moved = !humanKickoff && world.players.some((player) => player.team === world.restartTeam && player.controlled
       && !player.sentOff
       && Math.hypot(commands.get(player.id)?.move.x ?? 0, commands.get(player.id)?.move.z ?? 0) > 0.05);
-    if ((action?.pressed && action.action) || moved || world.restartClock >= 10) {
+    const kickAction = action?.action === 'pass' || action?.action === 'through' || action?.action === 'lob'
+      || action?.action === 'shoot' || action?.action === 'finesse';
+    const pressedKick = !!action?.pressed && (humanKickoff ? kickAction : !!action.action);
+    if (pressedKick || !humanKickoff && (moved || world.restartClock >= 10)) {
       world.phase = 'live';
       world.ball.x = world.restartAt.x; world.ball.z = world.restartAt.z; world.ball.y = 0.11;
       if (action?.action) kick(world, taker, action.action, action);

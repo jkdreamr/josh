@@ -54,8 +54,8 @@ export const Hud = memo(function Hud({ state, watching, radarRef, world }: {
         {labels && <small>{labels.title}</small>}
       </div>}
       </Scoreboard>
+      {(live || state.phase === 'restart') && <EventBanner key={state.eventKey} event={state.event} eventKey={state.eventKey} eventTime={state.eventTime} phase={state.phase} />}
       {live && <>
-        <EventBanner key={state.eventKey} event={state.event} eventKey={state.eventKey} eventTime={state.eventTime} phase={state.phase} />
         <GoalBanner statsVersion={state.statsVersion} />
         <Ticker statsVersion={state.statsVersion} />
         <PlayerTag selectedId={state.selectedId} stamina={state.stamina} state={state.state} power={state.power} playerName={selected ? playerName(selected.id, world) : 'player'} club={selected ? clubs[selected.team] : undefined} />
