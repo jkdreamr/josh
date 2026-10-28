@@ -1,6 +1,6 @@
 import { clubById, DEFAULT_CLUBS } from './teams.ts';
 
-import { FIELD, distance, kick, movePlayer, rng, setRestart, teamDir, transferControl, type Action, type Command, type Player, type Point, type Team, type World } from './logic.ts';
+import { FIELD, distance, kick, movePlayer, restartTaker, rng, setRestart, teamDir, transferControl, type Action, type Command, type Player, type Point, type Team, type World } from './logic.ts';
 import { stepBall } from './physics.ts';
 
 export type SetPiece = { kind: 'corner' | 'free-kick' | 'penalty' | 'goal-kick' | 'throw-in'; option: string; aim: Point & { y: number }; curl: -1 | 0 | 1; direct: boolean; takerId: number; wall: number[]; keeperDive: -1 | 0 | 1 | null; cpuDelay: number; marks?: Record<number, number> };
@@ -88,7 +88,7 @@ export function arrangeSetPiece(w: World) {
   } else if (kind === 'penalty') {
     w.players.filter(p => p.id !== taker.id).forEach((p,i) => snap(p,w.shootout ? (i%3-1)*3 : w.restartAt.x-d*(12+i%3),w.shootout ? (Math.floor(i/3)-3)*1.5 : (i%2 ? 1 : -1)*(22+i%4)));
     const keeper = enemies.find(p => p.slot === 'GK')!; snap(keeper,g-d*0.15,0);
-    if (enemies.some(p => p.human)) transferControl(w,keeper.team,keeper.id);
+    if (enemies.some(p => p.human) && !keeper.human) transferControl(w,keeper.team,keeper.id);
   } else if (kind === 'goal-kick') {
     team.filter(p => p.slot === 'CB').forEach((p,i) => snap(p,-g+d*17,i ? 13 : -13));
     enemies.forEach(p => { if (p.x*d < -36) snap(p,-d*34,p.z); });
@@ -99,7 +99,7 @@ export function arrangeSetPiece(w: World) {
   snap(taker,w.ball.x-(aim.x-w.ball.x)/r*0.5,w.ball.z-(aim.z-w.ball.z)/r*0.5);
   taker.facing = Math.atan2(aim.x-taker.x,aim.z-taker.z);
   spaceOut(w, taker);
-  if (team.some(p => p.human)) transferControl(w,w.restartTeam,taker.id);
+  if (team.some(p => p.human) && !taker.human) transferControl(w,w.restartTeam,taker.id);
 }
 
 // Fixed-time shooting solves all three components against the simulation integrator.
@@ -303,7 +303,13 @@ export function phoneStoppagePrompt(w: World, playerId: number): string | null {
   if (!player) return null;
   const labels = setPieceLabels(w, player.team, playerId);
   if (labels) return `${labels.title} · ${labels.hint}`;
-  if (w.phase === 'restart') return `${w.event || 'Kick off'} · move the stick or press to take`;
+  if (w.phase === 'restart') {
+    const taker = w.restart === 'kickoff' ? restartTaker(w) : null;
+    if (taker?.human) return playerId === taker.id
+      ? 'Kick off · aim with stick, press A to pass'
+      : 'Kick off · waiting for the taker';
+    return `${w.event || 'Kick off'} · move the stick or press to take`;
+  }
   if (w.phase !== 'live') return w.event || w.phase;
   if (player.slide) return 'Sliding · movement resumes after the slide';
   return null;
