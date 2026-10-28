@@ -16,6 +16,8 @@ export type HudState = {
   eventTime: number;
   selectedId: number;
   stamina: number;
+  rivalId: number | null;
+  rivalStamina: number;
   state: string | null;
   targetId: number | null;
   power: number | null;
@@ -51,7 +53,8 @@ export const Hud = memo(function Hud({ state, watching, radarRef, world }: {
         <EventBanner key={state.eventKey} event={state.event} eventKey={state.eventKey} eventTime={state.eventTime} phase={state.phase} />
         <GoalBanner statsVersion={state.statsVersion} />
         <Ticker statsVersion={state.statsVersion} />
-        <PlayerTag selectedId={state.selectedId} stamina={state.stamina} state={state.state} power={state.power} playerName={selected ? rosterName(clubs[selected.team], selected.id % 11) : 'player'} />
+        <PlayerTag selectedId={state.selectedId} stamina={state.stamina} state={state.state} power={state.power} playerName={selected ? rosterName(clubs[selected.team], selected.id % 11) : 'player'} club={selected ? clubs[selected.team] : undefined} />
+        {state.rivalId !== null && <PlayerTag selectedId={state.rivalId} stamina={state.rivalStamina} state={null} power={null} playerName={rosterName(clubs[world.players[state.rivalId]?.team ?? 1], state.rivalId % 11)} club={clubs[world.players[state.rivalId]?.team ?? 1]} />}
       </>}
       <Radar ref={radarRef} world={world} />
       {state.replaying && <div className="g-soccer-replay">replay</div>}
@@ -89,6 +92,8 @@ const Radar = memo(forwardRef<RadarHandle, { world: World }>(function Radar({ wo
     <div className="g-soccer-radar" aria-label="match radar">
       <div className="g-soccer-radar-half" />
       <div className="g-soccer-radar-circle" />
+      <div className="g-soccer-radar-box is-left" />
+      <div className="g-soccer-radar-box is-right" />
       {Array.from({ length: 22 }, (_, id) => (
         <i
           key={id}

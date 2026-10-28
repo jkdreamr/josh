@@ -114,17 +114,19 @@ export function PowerMeter({ power }: { power: number }) {
   );
 }
 
-export const PlayerTag = memo(function PlayerTag({ selectedId, stamina, state, power, playerName: selectedName }: {
+export const PlayerTag = memo(function PlayerTag({ selectedId, stamina, state, power, playerName: selectedName, club }: {
   selectedId: number;
   stamina: number;
   state: string | null;
   power: number | null;
   playerName?: string;
+  club?: Club;
 }) {
   const team = teamOf(selectedId);
   const level = stamina > 0.6 ? 'high' : stamina > 0.3 ? 'mid' : 'low';
   return (
-    <div className="g-soccer-player-tag">
+    <div className={`g-soccer-player-tag ${team === 1 ? 'is-away' : 'is-home'}`}>
+      {club ? <span className="g-soccer-player-crest is-svg"><Crest club={club} size={26} /></span> : <i className={`g-soccer-player-crest is-team-${team}`} />}
       <b className={`g-soccer-player-number is-team-${team}`}>{jerseyNumber(selectedId)}</b>
       <div className="g-soccer-player-name">
         <strong>{selectedName ?? playerName(selectedId)}</strong>

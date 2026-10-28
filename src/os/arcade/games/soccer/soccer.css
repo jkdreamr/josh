@@ -1582,3 +1582,19 @@
 @media (prefers-reduced-motion: reduce) {
   .g-soccer-phone-flash { display: none; animation: none; }
 }
+
+.g-soccer-player-tag { grid-template-columns: 1.6em 2.2em 1fr; }
+.g-soccer-player-tag > .g-soccer-stamina, .g-soccer-player-tag > .g-soccer-state, .g-soccer-player-tag > .g-soccer-power { grid-column: 2 / -1; }
+.g-soccer-player-tag { width: 13em; }
+.g-soccer-player-tag.is-away { left: auto; right: .9em; direction: rtl; border-left: 0; border-right: .18em solid #6bbfe7; background: linear-gradient(270deg, #081a25e8, #0a1923bf); }
+.g-soccer-player-tag.is-away > * { direction: ltr; }
+.g-soccer-player-crest { grid-row: 1 / span 2; align-self: start; box-sizing: border-box; width: 1.3em; height: 1.55em; border: .11em solid #f4f1ea; clip-path: polygon(0 0, 100% 0, 92% 70%, 50% 100%, 8% 70%); background: linear-gradient(90deg, #d53549 0 48%, #f4f1ea 48% 57%, #d53549 57%); filter: drop-shadow(0 0 .3em #0008); }
+.g-soccer-player-crest.is-team-1 { border-color: #6bbfe7; background: linear-gradient(90deg, #0d2a44 0 44%, #6bbfe7 44% 60%, #0d2a44 60%); }
+.g-soccer-radar { background: linear-gradient(140deg, #0f3d2e8c, #0a2f2580); border-color: #ecf4d973; backdrop-filter: blur(2px); }
+.g-soccer-radar-box { position: absolute; top: 30%; bottom: 30%; width: 15.7%; border: 1px solid #ffffff4a; }
+.g-soccer-radar-box.is-left { left: 4px; border-left: 0; }
+.g-soccer-radar-box.is-right { right: 4px; border-right: 0; }
+.g-soccer-player-tag.is-away > .g-soccer-stamina { transform: scaleX(-1); }
+.g-soccer-scoreboard { min-width: 0; }
+.g-soccer-player-crest.is-svg { width: auto; height: auto; border: 0; clip-path: none; background: none; }
+.g-soccer-player-crest.is-svg > svg { display: block; width: 1.65em; height: 1.65em; }
