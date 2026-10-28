@@ -6,7 +6,7 @@ import type { CupSummary } from './cup.ts';
 import { validRules } from './rules.ts';
 
 export type MovePacket = { t: 'soccer'; k: 'mv'; r: number; seq: number; seat: number; x: number; z: number; ax: number; az: number; power: number; buttons: number; held: number; e?: number; sx?: number; sz?: number };
-export type SnapshotPacket = { t: 'soccer'; k: 's'; r: number; seq: number; state: World };
+export type SnapshotPacket = { t: 'soccer'; k: 's'; r: number; seq: number; state: World; ack?: number[] };
 export type ConfigPacket = { t: 'soccer'; k: 'cfg'; r: number; seq: number; half: 2 | 3 | 4 | 6; level: 0 | 1 | 2; displayOnly: boolean; mode?: Mode; comp?: CompetitionId; clubs?: [string, string]; offside?: boolean };
 export type LobbyMember = { seat: number; role: 'host' | 'phone' | 'mac'; side: 0 | 1 };
 export type LobbyPacket = { t: 'soccer'; k: 'lobby'; r: number; seq: number; comp: CompetitionId; mode: Mode; clubs: [string, string]; focus: [number, number]; ready: [boolean, boolean]; countdown: number | null; members: LobbyMember[]; cup?: CupSummary };
@@ -190,7 +190,13 @@ export function parsePacket(value: unknown): SoccerPacket | null {
     return { t: 'soccer', k: 'pp', r: p.r as number, seq: p.seq as number, drill: p.drill as string, prompt: p.prompt as string, hint: p.hint as string, score: p.score as string, best: p.best as string, done: p.done as boolean, tutorial: p.tutorial as string };
   }
   if (p.k === 's' && validWorld(p.state)) {
-    return { t: 'soccer', k: 's', r: p.r as number, seq: p.seq as number, state: structuredClone(p.state) };
+    const ack = Array.isArray(p.ack) && p.ack.length <= 4 && p.ack.every((seq) => Number.isSafeInteger(seq) && (seq as number) >= -1)
+      ? p.ack as number[]
+      : undefined;
+    return {
+      t: 'soccer', k: 's', r: p.r as number, seq: p.seq as number, state: structuredClone(p.state),
+      ...(ack === undefined ? {} : { ack: [...ack] }),
+    };
   }
   return null;
 }
