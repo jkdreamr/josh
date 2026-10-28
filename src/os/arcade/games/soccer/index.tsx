@@ -2,11 +2,11 @@ import { Component, useContext, useEffect, useMemo, useRef, useState, useSyncExt
 import { GameShell, useShell, useKeys, useGameLoop, useCanvas, useOnline, useSetting, useMuted, getSetting, Segmented, defineSetting, levelOptions, levelIndex, TouchControls, sfx } from '../../kit';
 import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
-import { chargePower, screenToWorld, gamepadInput, keyboardInput, reconcileControllers, type ControlCommand, type GamepadHistory } from './input.ts';
+import { chargePower, screenToWorld, gamepadInput, keyboardInput, phoneControlledPlayer, reconcileControllers, syncControllerSeats, type ControlCommand, type GamepadHistory } from './input.ts';
 import { desiredCameraBasis } from './camera.ts';
-import { acceptMovePacket, cloneSnapshot, consumeCommand, movePacket, parsePacket, type RemoteSeat, type LobbyMember } from './net.ts';
+import { acceptMovePacket, cloneSnapshot, consumeCommand, InputFreshness, neutralCommand, movePacket, parsePacket, type RemoteSeat, type LobbyMember } from './net.ts';
 import { createWorld, distance, teamOf, findReceiver, isCross, matchClock, nearestCarrier, setRestart, stepWorld, STEP, type Command, type Team, type World } from './logic.ts';
-import { setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
+import { phoneStoppagePrompt, setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
 import { SoccerSound, type CommentaryMode } from './audio.ts';
 import type { CameraMode, SoccerView, TimeMode } from './scene.ts';
@@ -313,6 +313,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const simulationCommands = useRef(new Map<number, Command>());
   const aiCommands = useRef<[Map<number, Command>, Map<number, Command>]>([new Map(), new Map()]);
   const remoteSeats = useRef(new Map<number, RemoteSeat>());
+  const inputFreshness = useRef(new InputFreshness());
   const guestSnapshots = useRef<NetworkFrame[]>([]);
   const pendingNetworkAction = useRef<Command | null>(null);
   const charging = useRef(new Map<number, { holding: boolean; action: Command['action']; seconds: number }>());
@@ -429,6 +430,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     controllerPlayers.current.clear();
     const fresh = freshWorld();
     matchSeats.current = null;
+    inputFreshness.current = new InputFreshness();
     setPhoneGone(false);
     if (!practicing) {
       const forced = debugConfig.setpiece;
@@ -582,6 +584,23 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   }, [size.w, size.h, shell]);
 
   useEffect(() => {
+    const stage = ref.current?.parentElement;
+    if (!stage) return;
+    const frame = requestAnimationFrame(() => {
+      const box = stage.getBoundingClientRect();
+      let top = box.bottom;
+      stage.querySelectorAll('.g-soccer-radar, .g-soccer-player-tag').forEach((el) => {
+        const r = el.getBoundingClientRect();
+        if (r.height > 0 && r.top > box.top + box.height / 2) top = Math.min(top, r.top);
+      });
+      viewRef.current?.setSafeBottom(box.height > 0 ? (box.bottom - top) / box.height : 0);
+      renderDirty.current = true;
+      shell.invalidate();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [size.w, size.h, shell, hud.presentation, ref]);
+
+  useEffect(() => {
     viewRef.current?.setTime(timeChoice);
     renderDirty.current = true;
     shell.invalidate();
@@ -602,6 +621,11 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       if (!packet || packet.r !== (room.round || 1)) return;
       if (room.isHost && packet.k === 'mv') {
         if (packet.seat !== from || packet.seat < 0 || packet.seat > 3) return;
+        if (inputFreshness.current.record(performance.now(), from)) {
+          remoteSeats.current.delete(from);
+          const id = controllerPlayers.current.get(from);
+          if (id !== undefined) remoteCommands.current.set(id, neutralCommand());
+        }
         const current = worldRef.current;
         const playerId = current?.controlledSeats?.[from] ?? controllerPlayers.current.get(from) ?? playerForSeat(from, displayOnlyRoom.current, currentMode);
         const player = current?.players[playerId];
@@ -820,6 +844,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     const presentPhoneSeats = room?.players.filter((player) => player.seat > 0).map((player) => player.seat) ?? [];
     let phoneDisconnected = false;
     if (room?.isHost) {
+      inputFreshness.current.sync(now, presentPhoneSeats, matchSeats.current === null || previousFrame !== null && now - previousFrame > 500);
       if (matchSeats.current === null) matchSeats.current = [...presentPhoneSeats];
       const missing = missingPhoneSeats(matchSeats.current, presentPhoneSeats);
       if (missing.length === 0) {
@@ -828,6 +853,13 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         }
       }
       phoneDisconnected = missingPhoneSeats(matchSeats.current, presentPhoneSeats).length > 0;
+      for (const seat of inputFreshness.current.staleSeats(now, presentPhoneSeats)) {
+        const id = controllerPlayers.current.get(seat);
+        if (id === undefined || !current.players[id]?.controlled) continue;
+        phoneDisconnected = true;
+        remoteCommands.current.set(id, neutralCommand());
+        remoteSeats.current.delete(seat);
+      }
     }
     setPhoneGone(phoneDisconnected);
     if (phoneDisconnected) accumulator.current = 0;
@@ -884,17 +916,23 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         if (player) { player.human = false; player.controlled = false; }
         if (current.controlledSeats && seat < current.controlledSeats.length) current.controlledSeats[seat] = null;
         controllerPlayers.current.delete(seat); remoteCommands.current.delete(id);
+        remoteSeats.current.delete(seat);
       }
       const roomMembers: ControllerMember[] = room.players.filter((entry) => entry.seat >= 0).map((entry) => {
         const known = lobbyState?.members.find((member) => member.seat === entry.seat);
         return known ?? { seat: entry.seat, role: entry.seat === 0 ? 'host' : 'phone', side: entry.seat === 0 ? 0 : 1 };
       });
       const assigned = assignControllers(roomMembers, currentMode, currentCompetition);
-      for (const [seat, id] of assigned) {
+      const authoritative = new Map(controllerPlayers.current);
+      for (const [seat] of assigned) {
         const active = current.controlledSeats?.[seat] ?? controllerPlayers.current.get(seat);
-        if (active !== undefined && active !== null) controllerPlayers.current.set(seat, active);
-        else if (!controllerPlayers.current.has(seat)) controllerPlayers.current.set(seat, id);
+        if (active !== undefined && active !== null) authoritative.set(seat, active);
       }
+      const synced = syncControllerSeats(current, authoritative, assigned);
+      for (const [seat, id] of controllerPlayers.current) {
+        if (synced.get(seat) !== id) remoteCommands.current.delete(id);
+      }
+      controllerPlayers.current = synced;
     } else if (currentMode === 'coop' && controllerPlayers.current.size === 0) {
       controllerPlayers.current.set(0, 6); controllerPlayers.current.set(1, 9);
     }
@@ -1337,6 +1375,7 @@ export function PhoneController() {
   const [practiceStatus, setPracticeStatus] = useState<PhonePracticeStatus | null>(null);
   const [chargeProgress, setChargeProgress] = useState(0);
   const [chargingAction, setChargingAction] = useState<Command['action']>(null);
+  const [stickReset, setStickReset] = useState(0);
   const chargeStartedAt = useRef<number | null>(null);
   useEffect(() => {
     const telemetry = startSoccerTelemetry('controller');
@@ -1379,23 +1418,37 @@ export function PhoneController() {
     body.style.setProperty('-webkit-user-select', 'none');
     body.style.setProperty('-webkit-touch-callout', 'none');
     let live = true;
-    let lock: { release: () => Promise<void> } | null = null;
+    type ScreenLock = { release: () => Promise<void>; addEventListener: (type: 'release', listener: () => void) => void };
+    let lock: ScreenLock | null = null;
+    let requesting = false;
     const requestWakeLock = async () => {
-      if (!live || document.visibilityState !== 'visible' || lock) return;
+      if (!live || document.visibilityState !== 'visible' || lock || requesting) return;
+      requesting = true;
       try {
-        const wakeLock = (navigator as Navigator & { wakeLock?: { request: (type: 'screen') => Promise<{ release: () => Promise<void> }> } }).wakeLock;
-        lock = await wakeLock?.request('screen') ?? null;
-      } catch {}
+        const wakeLock = (navigator as Navigator & { wakeLock?: { request: (type: 'screen') => Promise<ScreenLock> } }).wakeLock;
+        const acquired = await wakeLock?.request('screen') ?? null;
+        if (!live || document.visibilityState !== 'visible') {
+          void acquired?.release().catch(() => {});
+          return;
+        }
+        lock = acquired;
+        acquired?.addEventListener('release', () => {
+          if (lock !== acquired) return;
+          lock = null;
+          void requestWakeLock();
+        });
+      } catch {} finally { requesting = false; }
     };
     const preventGesture = (event: Event) => event.preventDefault();
     const onVisibility = () => {
       if (document.visibilityState === 'visible') {
-        lock = null;
         void requestWakeLock();
       } else {
+        void lock?.release().catch(() => {});
         lock = null;
       }
     };
+    const onWake = () => { void requestWakeLock(); };
     const preventScroll = (event: TouchEvent) => { if (event.cancelable) event.preventDefault(); };
     document.addEventListener('gesturestart', preventGesture, { passive: false });
     document.addEventListener('touchmove', preventScroll, { passive: false });
@@ -1403,6 +1456,8 @@ export function PhoneController() {
     document.addEventListener('selectstart', preventGesture);
     document.addEventListener('contextmenu', preventGesture);
     document.addEventListener('visibilitychange', onVisibility);
+    window.addEventListener('pageshow', onWake);
+    window.addEventListener('focus', onWake);
     void requestWakeLock();
     return () => {
       live = false;
@@ -1412,6 +1467,8 @@ export function PhoneController() {
       document.removeEventListener('selectstart', preventGesture);
       document.removeEventListener('contextmenu', preventGesture);
       document.removeEventListener('visibilitychange', onVisibility);
+      window.removeEventListener('pageshow', onWake);
+      window.removeEventListener('focus', onWake);
       void lock?.release().catch(() => {});
       Object.assign(html.style, previousHtml);
       Object.assign(body.style, previousBody);
@@ -1453,17 +1510,15 @@ export function PhoneController() {
   }, []);
   const phoneHasBall = () => {
     const snapshot = phoneWorld.current;
-    const seat = online?.seat ?? 0;
-    const member = lobbyState?.members.find((entry) => entry.seat === seat)
-      ?? { seat, role: 'phone' as const, side: sideForRoom(online?.code) };
-    const playerId = snapshot?.controlledSeats?.[seat] ?? assignControllers([member], mode, lobbyState?.comp ?? 'quick').get(seat)
-      ?? playerForSeat(seat, displayOnly, mode);
-    return !!snapshot && nearestCarrier(snapshot)?.team === teamOf(playerId);
+    return !!snapshot && nearestCarrier(snapshot)?.team === teamOf(phonePlayerId());
   };
   const phonePlayerId = () => {
     const seat = online?.seat ?? 0;
     const snapshot = phoneWorld.current;
-    return snapshot?.controlledSeats?.[seat] ?? playerForSeat(seat, displayOnly, mode);
+    const members = lobbyState?.members ?? [{ seat, role: 'phone' as const, side: sideForRoom(online?.code) }];
+    const assigned = snapshot?.controlledSeats?.[seat] ?? assignControllers(members, mode, lobbyState?.comp ?? 'quick').get(seat)
+      ?? playerForSeat(seat, displayOnly, mode);
+    return phoneControlledPlayer(snapshot, assigned);
   };
   const aimForKick = () => {
     const now = performance.now();
@@ -1602,6 +1657,25 @@ export function PhoneController() {
   }, [online]);
   useEffect(() => {
     if (!online) return;
+    const resetInput = () => {
+      movement.current = { x: 0, z: 0 };
+      held.current = null;
+      sprint.current = false;
+      shoulder.current = false;
+      jockey.current = false;
+      press.current = false;
+      holdAim.current = null;
+      lastAim.current = { x: 0, z: 0, t: 0 };
+      edgeRepeat.current = null;
+      chargeStartedAt.current = null;
+      facePointers.current.clear();
+      setChargingAction(null);
+      setChargeProgress(0);
+      setStickReset((value) => value + 1);
+      send();
+    };
+    document.addEventListener('visibilitychange', resetInput);
+    window.addEventListener('pagehide', resetInput);
     const off = online.onMessage((from, data) => {
       if (from !== 0) return;
       const packet = parsePacket(data);
@@ -1613,7 +1687,7 @@ export function PhoneController() {
         telemetryRef.current?.setPhase(packet.state.phase);
         telemetryRef.current?.match(packet.state.phase !== 'full-time');
         phoneWorld.current = packet.state;
-        const phoneTeam = teamOf(playerForSeat(online.seat, displayOnly, mode));
+        const phoneTeam = teamOf(phonePlayerId());
         const feedback = phoneFx(previousScore.current, previousKickKey.current, packet.state, phoneTeam);
         if (feedback) {
           if (feedback === 'goal-for') fxHaptic([70, 40, 120]);
@@ -1640,7 +1714,11 @@ export function PhoneController() {
       send();
       if (chargeStartedAt.current !== null) setChargeProgress(Math.min(1, (performance.now() - chargeStartedAt.current) / 1000));
     }, 1000 / 30);
-    return () => { off(); window.clearInterval(timer); window.clearTimeout(stickSendTimer.current); };
+    return () => {
+      off(); window.clearInterval(timer); window.clearTimeout(stickSendTimer.current);
+      document.removeEventListener('visibilitychange', resetInput);
+      window.removeEventListener('pagehide', resetInput);
+    };
   }, [online, mode, displayOnly]);
   if (!online) return null;
   if (online.round === 0) return <PhoneTeamPicker online={online} />;
@@ -1652,6 +1730,7 @@ export function PhoneController() {
   const phoneClock = phoneWorld.current && !(phoneWorld.current.phase === 'restart' && phoneWorld.current.restart === 'kickoff')
     ? phoneClockLabel(matchClock(phoneWorld.current))
     : null;
+  const stoppagePrompt = phoneWorld.current ? phoneStoppagePrompt(phoneWorld.current, phonePlayer) : null;
   const taking = phoneWorld.current?.phase === 'restart' && phoneWorld.current.setPiece?.takerId === phonePlayer;
   const chargingKey = FACE_KEYS.find((key) => FACE[key] === chargingAction) ?? null;
   const faceLabel = faceLabels(attacking, labels ? { a: labels.a, b: labels.b, x: labels.x, y: labels.y } : null, cross);
@@ -1711,13 +1790,14 @@ export function PhoneController() {
   return (
     <div className={`g-soccer-phone-controller g-soccer-pad ${attacking ? 'is-attack' : 'is-defend'}`}>
       {phoneFlash && <div key={phoneFlash.id} className={`g-soccer-phone-flash is-${phoneFlash.kind}`} aria-hidden="true" onAnimationEnd={() => setPhoneFlash(null)} />}
-      <PadStick movement={movement} onChange={sendStickChange} />
+      <PadStick key={stickReset} movement={movement} onChange={sendStickChange} />
       <div className="g-soccer-pad-strip">
         <div className="g-soccer-pad-score" aria-label={`Score ${score[0]} to ${score[1]}`}>
           <strong>{score[0]} <i>–</i> {score[1]}</strong>
           {phoneClock && <span>{phoneClock}</span>}
         </div>
         {practiceStatus && <PhonePracticeStrip status={practiceStatus} onPick={(pick) => online.send({ t: 'soccer', k: 'pd', r: online.round || 1, seq: sequence.current++, seat: online.seat, pick })} />}
+        {stoppagePrompt && <small className="g-soccer-setpiece-hint" role="status">{stoppagePrompt}</small>}
       </div>
       <div
         className="g-soccer-pad-face"

@@ -299,7 +299,7 @@
   inset: 0;
   pointer-events: none;
   z-index: 3;
-  font-size: clamp(12px, 1.25cqw, 30px);
+  font-size: clamp(9px, min(1.25cqw, 2.2cqh), 30px);
   font-variant-numeric: tabular-nums;
 }
 
