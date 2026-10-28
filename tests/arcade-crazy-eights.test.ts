@@ -376,3 +376,31 @@ test('the table keeps its old roomy and short layouts where nothing overlapped',
   const fourUp = tableLayout({ w: 1280, h: 496, n: 4, online: false, nameH: 42, barH: 44 });
   assert.ok(fourUp.cw >= 70, `cards stay readable at fullscreen 1280x720, got ${fourUp.cw}`);
 });
+
+test('on a phone the top rival starts below the finger-sized toolbar and still clears the pile', async () => {
+  const { tableLayout, topSeatBottom, pileTop } = await import('../src/os/arcade/games/crazy-eights/layout.ts');
+  for (const [w, h] of [[390, 700], [375, 560], [430, 780]]) {
+    for (const online of [false, true]) {
+      const plain = tableLayout({ w, h, n: 4, online, nameH: 41, barH: 50 });
+      const l = tableLayout({ w, h, n: 4, online, nameH: 41, barH: 50, topClear: 66 });
+      assert.equal(l.seatTop, 66, `${w}x${h} online=${online}`);
+      assert.ok(topSeatBottom(l, 41) <= pileTop(l, h, 50), `${w}x${h} online=${online}: top rival overlaps the pile`);
+      assert.ok(plain.seatTop < 66);
+    }
+  }
+  const desk = tableLayout({ w: 1440, h: 900, n: 4, online: false, nameH: 42, barH: 44 });
+  assert.equal(desk.seatTop, 10);
+});
+
+test('crazy eights css keeps the short departure label, finger-sized touch toolbar and game-prefixed selectors', async () => {
+  const { readFileSync } = await import('node:fs');
+  const css = readFileSync(new URL('../src/os/arcade/games/crazy-eights/crazy-eights.css', import.meta.url), 'utf8');
+  const short = css.match(/\.is-short \.g-crazy-eights-name em \{([^}]*)\}/);
+  assert.ok(short && !/display:\s*none/.test(short[1]), 'the left, bot playing label is visible in short windows');
+  assert.match(css, /\.g-crazy-eights \.arcade-ctrl button \{\s*width: calc\(44px \* var\(--g-crazy-eights-u, 1\)\);\s*height: calc\(44px \* var\(--g-crazy-eights-u, 1\)\);/);
+  assert.match(css, /@container arcade-ov \(max-height: 320px\)/);
+  const selectors = css.replace(/\/\*[\s\S]*?\*\//g, '').match(/[^{}]+(?=\{)/g) ?? [];
+  for (const sel of selectors.map((s) => s.trim()).filter((s) => !s.startsWith('@') && !/^(from|to|\d+%)/.test(s))) {
+    for (const part of sel.replace(/\([^)]*\)/g, '()').split(',')) assert.match(part.trim(), /^\.g-crazy-eights\b/, `unprefixed selector: ${part.trim()}`);
+  }
+});

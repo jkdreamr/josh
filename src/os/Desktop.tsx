@@ -3,7 +3,7 @@ import { apps, dockOrder, games, mobileDock, tabletDock } from './registry';
 import { AppIcon, type IconKind } from './icons';
 import { OSContext, useOS as useOSLocal, WinContext, type AppId, type OpenArgs, type Origin, type OSApi } from './types';
 import { badgeLabel, useBadge } from './badges';
-import { sidePanel } from './placement';
+import { refit, sidePanel } from './placement';
 import { folders, links, profile } from './data';
 import Wallpaper from './Wallpaper';
 import Banner from './Banner';
@@ -122,14 +122,11 @@ export default function Desktop({ mobile, tablet = false, fullscreen, toggleFull
   }, []);
 
   // Keep windows reachable when the screen changes size (e.g. entering/leaving full screen).
+  const fitSize = useRef(size);
   useEffect(() => {
-    setWins((ws) =>
-      ws.map((w) => {
-        const nw = Math.min(w.w, size.w - 16);
-        const nh = Math.min(w.h, size.h - MENU_H - 12);
-        return { ...w, w: nw, h: nh, x: clamp(w.x, 8 - nw / 2, size.w - nw / 2), y: clamp(w.y, MENU_H + 4, size.h - 60) };
-      }),
-    );
+    const prev = fitSize.current;
+    fitSize.current = size;
+    setWins((ws) => ws.map((w) => ({ ...w, ...refit(w, prev, size, MENU_H, DOCK_SPACE) })));
   }, [size.w, size.h]);
 
   const focus = useCallback((id: AppId) => {
