@@ -30,7 +30,11 @@ export type ClientRoomMessage =
   | { t: 'listed'; on: boolean }
   | { t: 'watchable'; on: boolean }
   | { t: 'watch'; d: unknown }
-  | { t: 'msg'; to?: number; d: unknown }
+  /**
+   * to: one seat, several (each gets it once), or everyone else when left out. fast: the next one replaces it (a
+   * snapshot), so it isn't kept for someone away for a moment (see HOLD_MS).
+   */
+  | { t: 'msg'; to?: number | number[]; d: unknown; fast?: true }
   | { t: 'signal'; to: number; d: unknown }
   | { t: 'result'; round: number; winner: number | null; team?: number[] };
 
@@ -87,11 +91,68 @@ export function gatherFull(room: RoomState, people: number, now: number): boolea
  * When the room's alarm should next go off, or null for none: a gathering room's start, and every LISTING_REFRESH_MS
  * while it is `listed` (an alarm already set for sooner is kept, so changes never put the refresh off).
  */
-export function nextAlarm(room: RoomState, listed: boolean, current: number | null, now: number): number | null {
+export function nextAlarm(room: RoomState, listed: boolean, current: number | null, now: number, holdUntil: number | null = null): number | null {
   const refresh = listed ? (current !== null && current > now ? current : now + LISTING_REFRESH_MS) : null;
   const start = gathering(room) ? room.startAt! : null;
-  if (refresh === null) return start;
-  return start === null ? refresh : Math.min(refresh, start);
+  const times = [refresh, start, holdUntil].filter((t): t is number => t !== null);
+  return times.length ? Math.min(...times) : null;
+}
+
+/**
+ * Clients that come back to their own seat when their connection drops (protocol 4): the room gives each one a key
+ * when it takes a seat, and keeps the seat of anyone whose socket goes without a goodbye for HOLD_MS, mid-round
+ * included, so a dropped connection, a laptop waking up or the Worker being redeployed costs a moment, not the race.
+ */
+export const RESUME_VERSION = 4;
+export const HOLD_MS = 20_000;
+/** A seat's key and the name it was taken under, kept in storage so they outlive the object being reset. */
+export type SeatKey = { key: string; name: string };
+/** A seat waiting for its player to come back: until when, and the round under way when they dropped. */
+export type Hold = { until: number; round: number };
+export const isSeatKey = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{32}$/.test(v);
+
+/** Seats whose hold ran out by `now`, in seat order. */
+export function holdsDue(held: Record<string, Hold>, now: number): number[] {
+  return Object.entries(held).filter(([, h]) => h.until <= now).map(([seat]) => Number(seat)).sort((a, b) => a - b);
+}
+
+/** The soonest a hold runs out, or null for none. */
+export const holdUntil = (held: Record<string, Hold>) => Object.values(held).reduce<number | null>((t, h) => (t === null || h.until < t ? h.until : t), null);
+
+/**
+ * Whether someone can have seat `seat` back with `key`: it is still theirs (a hold that hasn't run out, or a seat the
+ * room never saw them leave, which is how every seat looks after the object restarts).
+ */
+export function canResume(keys: Record<string, SeatKey>, seat: number, key: unknown): boolean {
+  const entry = Number.isInteger(seat) ? keys[String(seat)] : undefined;
+  return !!entry && isSeatKey(key) && entry.key === key;
+}
+
+/** The seats a room that has just woken up should hold: seats with a key whose socket is gone and isn't held yet. */
+export function orphanSeats(keys: Record<string, SeatKey>, held: Record<string, Hold>, open: Iterable<number>): number[] {
+  const live = new Set(open);
+  return Object.keys(keys).map(Number).filter((seat) => !live.has(seat) && !Object.hasOwn(held, String(seat))).sort((a, b) => a - b);
+}
+
+/** What the room keeps for a seat held for someone coming back, at most: their messages, oldest dropped first. */
+export const BACKLOG_MAX = 256;
+export const BACKLOG_BYTES = 128 * 1024;
+
+/** Keeps a message for a held seat, dropping the oldest past the limits. */
+export function keepFor(backlog: { data: string[]; bytes: number }, data: string) {
+  backlog.data.push(data);
+  backlog.bytes += data.length;
+  while (backlog.data.length > BACKLOG_MAX || (backlog.bytes > BACKLOG_BYTES && backlog.data.length > 1)) backlog.bytes -= backlog.data.shift()!.length;
+}
+
+/** Who a relayed message goes to: one seat, several, or (undefined) everyone else. */
+export const relayTargets = (to: number | number[] | undefined): Set<number> | null => (to === undefined ? null : new Set(Array.isArray(to) ? to : [to]));
+
+/** A rough byte count that never undercounts (UTF-8 is at most three bytes a UTF-16 unit), so most messages skip the encoder. */
+function byteLength(raw: string | ArrayBuffer): number {
+  if (typeof raw !== 'string') return raw.byteLength;
+  if (raw.length * 3 <= ROOM_MESSAGE_MAX_BYTES || raw.length > ROOM_MESSAGE_MAX_BYTES) return raw.length;
+  return new TextEncoder().encode(raw).byteLength;
 }
 
 /** The most spectators a room takes at once. */
@@ -197,8 +258,7 @@ function validSeat(seat: unknown, seats: number): seat is number {
 }
 
 export function parseRoomMessage(raw: string | ArrayBuffer, seats: number): ClientRoomMessage | null {
-  const byteLength = typeof raw === 'string' ? new TextEncoder().encode(raw).byteLength : raw.byteLength;
-  if (byteLength > ROOM_MESSAGE_MAX_BYTES) return null;
+  if (byteLength(raw) > ROOM_MESSAGE_MAX_BYTES) return null;
 
   let value: unknown;
   try {
@@ -217,8 +277,13 @@ export function parseRoomMessage(raw: string | ArrayBuffer, seats: number): Clie
   if (message.t === 'watch') return Object.hasOwn(message, 'd') ? { t: 'watch', d: message.d } : null;
   if (message.t === 'msg') {
     if (!Object.hasOwn(message, 'd')) return null;
-    if (message.to === undefined) return { t: 'msg', d: message.d };
-    return validSeat(message.to, seats) ? { t: 'msg', to: message.to, d: message.d } : null;
+    const fast = message.f === 1 ? { fast: true as const } : {};
+    if (message.to === undefined) return { t: 'msg', d: message.d, ...fast };
+    if (Array.isArray(message.to)) {
+      const to = message.to;
+      return to.length && to.length <= seats && to.every((s) => validSeat(s, seats)) && new Set(to).size === to.length ? { t: 'msg', to: [...(to as number[])], d: message.d, ...fast } : null;
+    }
+    return validSeat(message.to, seats) ? { t: 'msg', to: message.to, d: message.d, ...fast } : null;
   }
   if (message.t === 'signal') {
     return validSeat(message.to, seats) && Object.hasOwn(message, 'd') ? { t: 'signal', to: message.to, d: message.d } : null;

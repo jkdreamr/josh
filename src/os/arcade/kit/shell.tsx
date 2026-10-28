@@ -145,6 +145,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const [onlineRound, setOnlineRound] = useState(0);
   const [onlinePlayers, setOnlinePlayers] = useState<RoomPlayer[]>([]);
   const [onlineTransport, setOnlineTransport] = useState<RoomTransport>('relay');
+  /** The room connection dropped and the link is getting this player's seat back. */
+  const [onlineReconnecting, setOnlineReconnecting] = useState(false);
   const [onlineHandoffs, setOnlineHandoffs] = useState(0);
   const [onlineBusy, setOnlineBusy] = useState(false);
   const [onlineError, setOnlineError] = useState('');
@@ -373,6 +375,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setOnlineMode(false);
     setOnlineRound(0);
     setOnlineTransport('relay');
+    setOnlineReconnecting(false);
     const link = new RoomLink(code, nameOverride ?? onlineName, ARCADE_API, { watch });
     raceRef.current = { link, seat: null, round: 0, scores: {} };
     setRaceScores({});
@@ -491,6 +494,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       if (verdict) gameOver(undefined, verdict);
     });
     link.on('transport', setOnlineTransport);
+    link.on('link', (state) => setOnlineReconnecting(state === 'reconnecting'));
     link.on('start', ({ round: serverRound, bots, players }) => {
       setOnlineOpen(false);
       setOnlineInProgress(false);
@@ -930,6 +934,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       players={onlinePlayers}
       bots={gameBots}
       transport={onlineTransport}
+      reconnecting={onlineReconnecting}
       handoffs={onlineHandoffs}
       quick={quick}
       pool={pool}

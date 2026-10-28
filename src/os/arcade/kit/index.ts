@@ -11,4 +11,5 @@ export { ArcadeHost } from './host';
 export { Segmented, modeOptions, levelOptions, levelIndex, levelLabel, PLAY_MODES, LEVEL_NAMES, type SegmentedProps, type PlayMode, type LevelName } from './controls';
 export { defineSetting, useSetting, getSetting, setSetting, onSettingChange, type Setting, type SettingChange } from './settings';
 export { useOnline } from './online';
+export { every } from './ticker';
 export { formatTally, type TallyOptions } from './tally.ts';
