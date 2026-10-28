@@ -1088,6 +1088,10 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
       return;
     }
     const taker = restartTaker(world);
+    if (world.restart === 'kickoff' && !taker.human
+      && world.players.some((player) => player.team === world.restartTeam && player.human && !player.sentOff)) {
+      transferControl(world, world.restartTeam, taker.id);
+    }
     for (const p of world.players) {
       if (p.team === world.restartTeam && p.controlled) {
         const multipliers = worldMultipliers(world, p.id);
@@ -1185,6 +1189,13 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
     world.passControl = false;
     world.passPoint = null;
     world.passFrom = null;
+  }
+  if (!world.practice && nowCarrier && nowCarrier.id !== previousCarrierId && !nowCarrier.human) {
+    const team = nowCarrier.team;
+    const current = world.players.find((player) => player.id === world.controlled[team]
+      && player.team === team && player.human && !player.sentOff)
+      ?? world.players.find((player) => player.team === team && player.human && !player.sentOff);
+    if (current) transferControl(world, team, nowCarrier.id, current.id);
   }
   if (nowCarrier) {
     world.lastTouch = nowCarrier.team;

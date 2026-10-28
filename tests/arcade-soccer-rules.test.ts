@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createWorld, distance, FIELD, matchClock, PLAYER_COUNT, resolveBoundary, stepWorld, TEAM_SIZE, teamOf, type World } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, distance, FIELD, matchClock, PLAYER_COUNT, resolveBoundary, restartTaker, stepWorld, TEAM_SIZE, teamOf, type World } from '../src/os/arcade/games/soccer/logic.ts';
 
 const world = () => {
   const g = createWorld(12, 120);
@@ -49,7 +49,7 @@ test('kickoff starts centered and opponents are kept at distance', () => {
 
 test('kickoff movement starts play immediately and moves the selected player', () => {
   const g = createWorld(22, 120);
-  const player = g.players[6]!;
+  const player = restartTaker(g);
   const startX = player.x;
   stepWorld(g, 1 / 60, new Map([[player.id, { move: { x: 1, z: 0 }, sprint: true }]]));
   assert.equal(g.phase, 'live');

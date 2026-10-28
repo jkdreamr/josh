@@ -33,6 +33,47 @@ function worldWithSeats(seed: number, seats: (number | null)[]) {
   return world;
 }
 
+function worldWithHumanOnCM(seed: number, team: 0 | 1, seat: number) {
+  const world = createWorld(seed, 120, 1);
+  const cm = world.players.find((player) => player.team === team && player.slot === 'CM')!;
+  world.controlledSeats = [null, null, null, null];
+  world.controlledSeats[seat] = cm.id;
+  for (const player of world.players) {
+    player.human = player.id === cm.id;
+    player.controlled = player.human;
+  }
+  world.controlled[team] = cm.id;
+  return world;
+}
+
+function prepareLooseBall(world: ReturnType<typeof createWorld>, targetId: number, targetX = 0.5) {
+  world.phase = 'live';
+  world.restart = null;
+  world.setPiece = null;
+  world.carrierId = null;
+  world.lastToucherId = null;
+  world.passTarget = null;
+  world.passFrom = null;
+  world.passControl = false;
+  world.passPoint = null;
+  let humanIndex = 0;
+  for (const player of world.players) {
+    player.sentOff = player.id !== targetId && !player.human;
+    player.vx = 0;
+    player.vz = 0;
+    player.touchCd = 0;
+    player.cooldown = 0;
+    if (player.id === targetId) {
+      player.x = targetX;
+      player.z = 0;
+    } else if (player.human) {
+      player.x = -10;
+      player.z = humanIndex++ * 3;
+    }
+  }
+  world.ball = { x: 0, y: 0.11, z: 0, vx: 0, vy: 0, vz: 0, spin: 0, grounded: true, inNet: false };
+}
+
 function assertSeatInvariant(world: ReturnType<typeof createWorld>) {
   const seats = world.controlledSeats ?? [];
   for (const team of [0, 1] as const) {
@@ -301,6 +342,86 @@ test('control-seat ownership stays exact through kickoff, AI play, passes, resta
     assert.equal(world.controlledSeats?.[phoneSeat], replacement.id);
     assertSeatInvariant(world);
   }
+});
+
+test('active human teams take kickoff at the start, after goals, and in the second half', () => {
+  const cases = [
+    { seed: 530, team: 0 as const, seat: 1, phase: 'kickoff' as const },
+    { seed: 531, team: 0 as const, seat: 1, phase: 'goal' as const },
+    { seed: 532, team: 1 as const, seat: 2, phase: 'half-time' as const },
+  ];
+  for (const { seed, team, seat, phase } of cases) {
+    const world = worldWithHumanOnCM(seed, team, seat);
+    if (phase === 'goal') {
+      world.phase = 'goal';
+      world.eventTime = 0;
+      world.restartTeam = team;
+      stepWorld(world, STEP);
+    } else if (phase === 'half-time') {
+      world.phase = 'half-time';
+      world.eventTime = 0;
+      stepWorld(world, STEP);
+    }
+    stepWorld(world, STEP);
+    const taker = world.players.find((player) => player.team === world.restartTeam && player.slot === 'ST')!;
+    assert.equal(world.restart, 'kickoff');
+    assert.equal(taker.human, true);
+    assert.equal(world.players.filter((player) => player.team === world.restartTeam && player.human).length, 1);
+    assert.equal(world.controlledSeats?.[seat], taker.id);
+    assertSeatInvariant(world);
+  }
+});
+
+test('a teammate who collects a loose ball receives the single human seat', () => {
+  const world = worldWithSeats(533, [null, 6, null, null]);
+  const teammate = world.players[7]!;
+  prepareLooseBall(world, teammate.id, 1.2);
+  assert.ok(distance(teammate, world.ball) > 0.64);
+  for (let frame = 0; frame < 120 && world.controlledSeats?.[1] !== teammate.id; frame++) {
+    stepWorld(world, STEP, new Map([[teammate.id, { move: { x: -1, z: 0 } }]]));
+  }
+  assert.ok(distance(teammate, world.ball) < 0.64);
+  assert.equal(world.controlledSeats?.[1], teammate.id);
+  assert.equal(teammate.human, true);
+  assert.equal(world.players.filter((player) => player.team === 0 && player.human).length, 1);
+  assertSeatInvariant(world);
+});
+
+test('a loose-ball auto-switch changes only the controlled co-op seat', () => {
+  const world = worldWithSeats(534, [6, 9, null, null]);
+  const teammate = world.players[7]!;
+  prepareLooseBall(world, teammate.id);
+  stepWorld(world, STEP);
+  assert.equal(world.controlledSeats?.[0], teammate.id);
+  assert.equal(world.controlledSeats?.[1], 9);
+  assert.equal(world.controlled[0], teammate.id);
+  assert.equal(world.players[9]?.human, true);
+  assert.equal(world.players[6]?.human, false);
+  assertSeatInvariant(world);
+});
+
+test('opponent possession does not switch a human seat', () => {
+  const world = worldWithSeats(535, [null, 6, null, null]);
+  const opponent = world.players[TEAM_SIZE + 6]!;
+  prepareLooseBall(world, opponent.id);
+  stepWorld(world, STEP);
+  assert.equal(world.controlledSeats?.[1], 6);
+  assert.equal(world.players[6]?.human, true);
+  assert.equal(opponent.human, false);
+  assert.equal(world.players.filter((player) => player.team === 1 && player.human).length, 0);
+  assertSeatInvariant(world);
+});
+
+test('practice mode does not auto-switch to an AI teammate on possession', () => {
+  const world = worldWithSeats(536, [null, 6, null, null]);
+  const teammate = world.players[7]!;
+  prepareLooseBall(world, teammate.id);
+  world.practice = true;
+  stepWorld(world, STEP);
+  assert.equal(world.controlledSeats?.[1], 6);
+  assert.equal(world.players[6]?.human, true);
+  assert.equal(teammate.human, false);
+  assertSeatInvariant(world);
 });
 
 test('red-card send-off transfers the seated controller to a replacement', () => {
