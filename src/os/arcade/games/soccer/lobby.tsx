@@ -66,7 +66,7 @@ function ClubPickerCard({ label, id, other, locked, onChange }: {
         <Crest club={club} size={36} />
         <div className="g-soccer-club-picker-copy">
           <strong>{club.name}</strong>
-          <span>ovr {overall} · att {club.ratings.attack} mid {club.ratings.midfield} def {club.ratings.defense}</span>
+          <span>ovr {overall}</span>
         </div>
         {!locked && <button type="button" aria-label={`next ${label}`} onClick={() => onChange(nextClubId(id, 1, other))}>▶</button>}
       </div>
@@ -316,9 +316,22 @@ function HostLobby({ online, postMatch = false }: { online: NonNullable<ReturnTy
   return (
     <div className="g-soccer-phone-lobby-shell">
       <div className={`g-soccer-phone-lobby${connected.length ? ' is-connected' : ''}${phonesNeeded === 2 && phoneCount === 1 ? ' needs-second-phone' : ''}`}>
+        <div className="g-soccer-phone-lobby-rail">
         <div className="g-soccer-phone-qr">
           {qr && <img src={qr} alt="Connect phone QR code" />}
           {phoneCount > 0 && showSecondPhoneCaption && <strong>Scan to add a second phone</strong>}
+        </div>
+        {phoneCount > 0 && (
+          <div className="g-soccer-phone-lobby-status">
+            <p className="g-soccer-lobby-status" role="status">{statusLine}</p>
+            <div className="g-soccer-phone-connections" role="status">
+              {phoneStatus && <span>{phoneStatus}</span>}
+              {competition === 'online' && <span className={guestMac ? '' : 'is-waiting'}>{guestMac ? 'Other Mac connected' : 'Waiting for the other Mac'}</span>}
+              {competition === 'online' && <span className={sideOnePhones ? '' : 'is-waiting'}>{sideOnePhones ? 'Other phone connected' : 'Other phone optional'}</span>}
+              {competition !== 'online' && phonesNeeded === 2 && phoneCount === 1 && <span className="is-waiting">Waiting for a second phone</span>}
+            </div>
+          </div>
+        )}
         </div>
         <div className="g-soccer-phone-lobby-content">
         {!phoneCount && (
@@ -326,15 +339,9 @@ function HostLobby({ online, postMatch = false }: { online: NonNullable<ReturnTy
             <h2>Scan with your iPhone camera</h2>
             <p>Your phone becomes the controller. No app needed.</p>
             {inviteUrl && <p className="g-soccer-invite-url">{inviteUrl}</p>}
+            <div className="g-soccer-phone-connections" role="status"><span className="is-waiting">Waiting for your phone…</span></div>
           </div>
         )}
-        {(phoneCount > 0 || countdown !== null) && <p className="g-soccer-lobby-status" role="status">{statusLine}</p>}
-        <div className="g-soccer-phone-connections" role="status">
-          {phoneStatus ? <span>{phoneStatus}</span> : phonesNeeded > 0 && <span className="is-waiting">Waiting for your phone…</span>}
-          {competition === 'online' && <span className={guestMac ? '' : 'is-waiting'}>{guestMac ? 'Other Mac connected' : 'Waiting for the other Mac'}</span>}
-          {competition === 'online' && <span className={sideOnePhones ? '' : 'is-waiting'}>{sideOnePhones ? 'Other phone connected' : 'Other phone optional'}</span>}
-          {competition !== 'online' && phonesNeeded === 2 && phoneCount === 1 && <span className="is-waiting">Waiting for a second phone</span>}
-        </div>
         {connected.length > 0 && (
           <>
             <Segmented label="competition" value={competition} options={competitionOptions} onChange={changeCompetition} />
@@ -349,13 +356,11 @@ function HostLobby({ online, postMatch = false }: { online: NonNullable<ReturnTy
               )}
             </div>
             {competition === 'cup' && <CupLobbyCard cup={cup} homeId={homeId} setHomeId={setHomeId} setCup={setCup} />}
-            <div className="g-soccer-lobby-ready">
-              <button type="button" className="arcade-btn arcade-btn-primary" disabled={!enoughPlayers || countdown !== null} onClick={start}>
-                Start match
-              </button>
-            </div>
           </>
         )}
+        <LoadProgress />
+        </div>
+        <div className="g-soccer-phone-lobby-footer">
         <details className="g-soccer-phone-settings">
           <summary>Settings</summary>
           <div className="g-soccer-settings">
@@ -365,7 +370,7 @@ function HostLobby({ online, postMatch = false }: { online: NonNullable<ReturnTy
             <Segmented label="Time of day" value={time} options={timeOptions} onChange={setTime} />
           </div>
         </details>
-        <LoadProgress />
+        {connected.length > 0 && <button type="button" className="arcade-btn arcade-btn-primary" disabled={!enoughPlayers || countdown !== null} onClick={start}>Start match</button>}
         </div>
       </div>
     </div>

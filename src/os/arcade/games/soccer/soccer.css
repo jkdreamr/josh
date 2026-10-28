@@ -1686,3 +1686,45 @@
   .g-soccer-phone-picker > header { padding-top: 46px; }
   .g-soccer-phone-picker .g-soccer-picker-mode { margin-top: 10px; }
 }
+
+.g-soccer .arcade-phone-first-card:not(.is-phone-join) { box-sizing: border-box; width: min(960px, 100%); height: calc(100% - 16px); max-height: calc(100% - 16px); min-height: 0; padding: 10px; gap: 6px; overflow: hidden; }
+.g-soccer-phone-lobby-shell { display: grid; width: 100%; height: 100%; min-height: 0; max-width: 960px; container-type: inline-size; }
+.g-soccer-phone-lobby { display: grid; grid-template-columns: 150px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; gap: 8px 12px; width: 100%; height: 100%; min-height: 0; overflow: hidden; }
+.g-soccer-phone-lobby-rail { display: grid; align-content: start; justify-items: center; gap: 6px; min-width: 0; }
+.g-soccer-phone-lobby .g-soccer-phone-qr { display: grid; justify-items: center; gap: 4px; width: 100%; padding: 0; }
+.g-soccer-phone-lobby .g-soccer-phone-qr img { width: 140px; height: 140px; max-width: 100%; aspect-ratio: 1; }
+.g-soccer-phone-lobby.is-connected .g-soccer-phone-qr img { width: 96px; height: 96px; }
+.g-soccer-phone-lobby .g-soccer-phone-qr strong { font-size: 9px; }
+.g-soccer-phone-lobby-status { width: 100%; }
+.g-soccer-phone-lobby .g-soccer-lobby-status { min-height: 0; margin: 0 0 4px; font-size: 12px; line-height: 1.15; }
+.g-soccer-phone-lobby .g-soccer-phone-connections { gap: 4px; font-size: 10px; }
+.g-soccer-phone-lobby .g-soccer-phone-connections span { padding: 3px 6px; }
+.g-soccer-phone-lobby-content { display: flex; flex-direction: column; align-self: stretch; gap: 5px; min-width: 0; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.g-soccer-phone-lobby-content > .arcade-segmented { flex: 0 0 auto; }
+.g-soccer-phone-lobby .arcade-segmented { gap: 3px; }
+.g-soccer-phone-lobby .arcade-segmented label { font-size: 11px; }
+.g-soccer-phone-lobby .arcade-segmented button { min-height: 32px; padding: 3px 6px; font-size: 10px; }
+.g-soccer-lobby-clubs { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 5px; }
+.g-soccer-lobby-club { gap: 3px; }
+.g-soccer-lobby-club-label { font-size: 11px; }
+.g-soccer-club-picker-card { display: flex; align-items: center; gap: 4px; min-width: 0; }
+.g-soccer-club-picker-card button { flex: 0 0 40px; min-width: 40px; min-height: 40px; padding: 0; }
+.g-soccer-club-picker-card > svg { flex: 0 0 28px; width: 28px; height: 28px; }
+.g-soccer-club-picker-copy { min-width: 0; container-type: inline-size; }
+.g-soccer-club-picker-copy strong { overflow: visible; text-overflow: clip; white-space: nowrap; }
+.g-soccer-phone-lobby-footer { display: flex; grid-column: 1 / -1; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; padding-top: 5px; border-top: 1px solid #ffffff20; }
+.g-soccer-phone-lobby-footer .g-soccer-phone-settings { margin: 0; }
+.g-soccer-phone-lobby-footer > .arcade-btn { min-height: 34px; }
+.g-soccer-lobby-instructions h2 { font-size: 22px; }
+.g-soccer-lobby-instructions p { font-size: 11px; }
+@container (max-width: 519px) {
+  .g-soccer-phone-lobby { grid-template-columns: minmax(0, 1fr); }
+  .g-soccer-phone-lobby-rail { display: flex; align-items: center; justify-content: flex-start; gap: 8px; }
+  .g-soccer-phone-lobby .g-soccer-phone-qr { display: flex; flex: 0 0 96px; width: 96px; }
+  .g-soccer-phone-lobby .g-soccer-phone-qr img,
+  .g-soccer-phone-lobby.is-connected .g-soccer-phone-qr img { width: 96px; height: 96px; }
+  .g-soccer-phone-lobby-content { grid-row: 2; }
+}
+@container (max-width: 140px) {
+  .g-soccer-club-picker-copy strong { overflow: hidden; text-overflow: ellipsis; }
+}
