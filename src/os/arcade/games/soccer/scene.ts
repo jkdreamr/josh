@@ -7,6 +7,8 @@ import { loadSoccerModel, MODEL_URLS } from './load.ts';
 import { ballNumberTexture, ballTexture } from './textures.ts';
 import { buildStadium, type PitchPattern } from './stadium.ts';
 import { IDENTITY_BASIS, type ViewBasis } from './input.ts';
+import { cameraGoal, createCameraRig, stepCameraBasis, stepCameraRig, type CameraMode } from './camera.ts';
+export type { CameraMode } from './camera.ts';
 import { createPracticeMarkers } from './practice-markers.ts';
 import type { PracticeMarker } from './practice.ts';
 import { approachAngle, bindSoccerRig, bodyFrameVelocity, createSoccerAnimationInput, createSoccerAnimator, kickingFoot, playSoccerClip, preferredFoot, soccerClipActive, soccerDribbleOffset, updateSoccerAnimator, type SoccerAnimator, type SoccerClip } from './player.ts';
@@ -14,7 +16,6 @@ import type { SoccerRenderStats } from './perf.ts';
 import { createFxLayer, type FxDirector } from './fx.ts';
 
 type Three = typeof import('three');
-export type CameraMode = 'broadcast' | 'end' | 'replay' | 'intro' | 'setpiece';
 export type TimeMode = 'day' | 'night' | 'golden' | 'overcast' | 'rain';
 export type SoccerCameraNdc = {
   ball: { x: number; y: number };
@@ -31,7 +32,7 @@ export type SoccerView = {
   viewBasis(): ViewBasis;
   getCameraNdc(): SoccerCameraNdc;
   perfStats(): SoccerRenderStats;
-  update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId?: number | null, power?: number | null): void;
+  update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId?: number | null, power?: number | null, cameraDt?: number): void;
   setFx(director: FxDirector | null): void;
   render(): void;
   /** Resolves once the shaders are compiled; frames rendered meanwhile are skipped. */
@@ -181,9 +182,6 @@ function createPlayer(THREE: Three, player: Player, lite: boolean, kits: [Kit, K
   return { root, anim, team: player.team, keeper: isKeeper(player), contact, fallback, marker, arrow, carrierRing, powerBar, powerFill, number, kitMaterials: { shirt, shorts, socks, trim }, prevCooldown: 0, prevAction: 'idle', lastKick: null, keeperShot: false, celebrated: false, lodTick: 0, lodDt: 0, skeletons: [] };
 }
 
-// Broadcast telecam framing (main-stand gantry, long lens). Only the framing lives here; follow/smoothing stays in update().
-// aimZ/followZ bias the aim point to the far side so the far ad boards and a band of crowd stay in shot.
-const BROADCAST = { height: 25, distance: 50, fov: 24, pan: 0.55, aimZ: 6, followZ: 0.3 } as const;
 
 export function createScene(THREE: Three, host: HTMLElement, lite: boolean, timeMode: TimeMode, pattern: PitchPattern): SoccerView | null {
   let renderer: T.WebGLRenderer;
@@ -439,26 +437,12 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
   const roar: [number, number] = [0, 0];
   let introStartedAt: number | null = null;
   let disposed = false;
-  const target = new THREE.Vector3(0, 0, 0);
-  const desired = new THREE.Vector3(0, 0, 0);
-  const introCameraStart = new THREE.Vector3(-FIELD.length * 0.62, 30, -FIELD.width * 0.9);
-  const lookAt = new THREE.Vector3(0, 0, 0);
-  const cameraSafeOffset = new THREE.Vector3();
-  const cameraPanShift = new THREE.Vector3();
+  const cameraRig = createCameraRig();
   const cameraSample = new THREE.Vector3();
-  const cameraRight = new THREE.Vector3();
-  const cameraUp = new THREE.Vector3();
   const cameraNdc: SoccerCameraNdc = {
-    ball: { x: 0, y: 0 },
-    feet: { x: 0, y: 0 },
-    powerBar: { x: 0, y: 0 },
-    maxAbsX: 0,
-    maxAbsY: 0,
+    ball: { x: 0, y: 0 }, feet: { x: 0, y: 0 }, powerBar: { x: 0, y: 0 },
+    maxAbsX: 0, maxAbsY: 0,
   };
-  const cameraDepth = { ball: 1, feet: 1, powerBar: 1 };
-  const cameraBounds = { minX: 0, maxX: 0, minY: 0, maxY: 0, centerX: 0, centerY: 0, depth: 1 };
-  let cameraPanned = false;
-  let cameraReady = false;
   let width = 1, height = 1;
   function updateCameraNdc(world: World, controlledPlayer: Player | null) {
     camera.getWorldDirection(cameraDirection);
@@ -467,81 +451,18 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     const feetY = Math.max(0, playerActor?.anim.figure.position.y ?? 0);
     const playerX = controlledPlayer?.x ?? world.ball.x;
     const playerZ = controlledPlayer?.z ?? world.ball.z;
-    const direction = cameraDirection;
-    const cameraX = camera.position.x, cameraY = camera.position.y, cameraZ = camera.position.z;
-    cameraDepth.ball = Math.max(1, (world.ball.x - cameraX) * direction.x + (world.ball.y - cameraY) * direction.y + (world.ball.z - cameraZ) * direction.z);
     cameraSample.set(world.ball.x, world.ball.y, world.ball.z).project(camera);
     cameraNdc.ball.x = cameraSample.x;
     cameraNdc.ball.y = cameraSample.y;
-    cameraDepth.feet = Math.max(1, (playerX - cameraX) * direction.x + (feetY - cameraY) * direction.y + (playerZ - cameraZ) * direction.z);
     cameraSample.set(playerX, feetY, playerZ).project(camera);
     cameraNdc.feet.x = cameraSample.x;
     cameraNdc.feet.y = cameraSample.y;
     const barY = feetY + 2.2 * scale;
-    cameraDepth.powerBar = Math.max(1, (playerX - cameraX) * direction.x + (barY - cameraY) * direction.y + (playerZ - cameraZ) * direction.z);
     cameraSample.set(playerX, barY, playerZ).project(camera);
     cameraNdc.powerBar.x = cameraSample.x;
     cameraNdc.powerBar.y = cameraSample.y;
     cameraNdc.maxAbsX = Math.max(Math.abs(cameraNdc.ball.x), Math.abs(cameraNdc.feet.x), Math.abs(cameraNdc.powerBar.x));
     cameraNdc.maxAbsY = Math.max(Math.abs(cameraNdc.ball.y), Math.abs(cameraNdc.feet.y), Math.abs(cameraNdc.powerBar.y));
-    cameraBounds.minX = Math.min(cameraNdc.ball.x, cameraNdc.feet.x, cameraNdc.powerBar.x);
-    cameraBounds.maxX = Math.max(cameraNdc.ball.x, cameraNdc.feet.x, cameraNdc.powerBar.x);
-    cameraBounds.minY = Math.min(cameraNdc.ball.y, cameraNdc.feet.y, cameraNdc.powerBar.y);
-    cameraBounds.maxY = Math.max(cameraNdc.ball.y, cameraNdc.feet.y, cameraNdc.powerBar.y);
-    cameraBounds.centerX = (cameraBounds.minX + cameraBounds.maxX) * 0.5;
-    cameraBounds.centerY = (cameraBounds.minY + cameraBounds.maxY) * 0.5;
-    cameraBounds.depth = (cameraDepth.ball + cameraDepth.feet + cameraDepth.powerBar) / 3;
-  }
-  function panCameraToSafeArea(world: World, controlledPlayer: Player) {
-    updateCameraNdc(world, controlledPlayer);
-    if (cameraNdc.maxAbsX <= 0.8 && cameraNdc.maxAbsY <= 0.75) return;
-    cameraRight.setFromMatrixColumn(camera.matrixWorld, 0).normalize();
-    cameraUp.setFromMatrixColumn(camera.matrixWorld, 1).normalize();
-    const halfHeight = cameraBounds.depth * Math.tan(camera.fov * Math.PI / 360);
-    const shiftX = cameraBounds.centerX * halfHeight * camera.aspect;
-    const shiftY = cameraBounds.centerY * halfHeight;
-    cameraPanned = true;
-    cameraPanShift.copy(cameraRight).multiplyScalar(shiftX).addScaledVector(cameraUp, shiftY);
-    camera.position.add(cameraPanShift);
-    cameraSafeOffset.add(cameraPanShift);
-    target.add(cameraPanShift);
-    desired.add(cameraPanShift);
-    lookAt.copy(target);
-    camera.lookAt(lookAt);
-    camera.updateMatrixWorld(true);
-    updateCameraNdc(world, controlledPlayer);
-  }
-  function keepCameraSubjectsInFrame(world: World, controlledPlayer: Player, baseFov: number, dt: number) {
-    cameraPanned = false;
-    updateCameraNdc(world, controlledPlayer);
-    for (let i = 0; i < 3 && (cameraNdc.maxAbsX > 0.8 || cameraNdc.maxAbsY > 0.75); i++) {
-      panCameraToSafeArea(world, controlledPlayer);
-    }
-    if (cameraNdc.maxAbsX > 0.8 || cameraNdc.maxAbsY > 0.75) {
-      const fitScale = Math.max(
-        (cameraBounds.maxX - cameraBounds.minX) / 1.6,
-        (cameraBounds.maxY - cameraBounds.minY) / 1.5,
-      );
-      if (fitScale > 1) {
-        const requiredFov = 2 * Math.atan(Math.tan(camera.fov * Math.PI / 360) * fitScale) * 180 / Math.PI;
-        const safeFov = Math.min(baseFov + 8, Math.max(camera.fov, requiredFov));
-        if (safeFov > camera.fov) {
-          camera.fov = Math.max(damp(camera.fov, safeFov, 2.4, dt), Math.min(baseFov + 8, requiredFov));
-          camera.updateProjectionMatrix();
-          camera.updateMatrixWorld(true);
-          updateCameraNdc(world, controlledPlayer);
-          for (let i = 0; i < 3 && (cameraNdc.maxAbsX > 0.8 || cameraNdc.maxAbsY > 0.75); i++) {
-            panCameraToSafeArea(world, controlledPlayer);
-          }
-        }
-      }
-    }
-    updateCameraNdc(world, controlledPlayer);
-    if (!cameraPanned && dt > 0) {
-      cameraSafeOffset.x = damp(cameraSafeOffset.x, 0, 0.7, dt);
-      cameraSafeOffset.y = damp(cameraSafeOffset.y, 0, 0.7, dt);
-      cameraSafeOffset.z = damp(cameraSafeOffset.z, 0, 0.7, dt);
-    }
   }
   const debug = typeof location !== 'undefined' && new URLSearchParams(location.search).has('soccerdebug');
   const quality = {
@@ -562,11 +483,10 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     width = Math.max(1, w); height = Math.max(1, h);
     renderer.setSize(width, height, false);
     camera.aspect = width / height;
-    camera.fov = height > width ? 84 : BROADCAST.fov;
     camera.updateProjectionMatrix();
   }
 
-  function update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId: number | null = null, power: number | null = null) {
+  function update(world: World, dt: number, time: number, humanTeam: Team, cameraMode: CameraMode, targetId: number | null = null, power: number | null = null, cameraDt = dt) {
     const clubs = world.clubs ?? DEFAULT_CLUBS;
     setKits([clubs[0], clubs[1]]);
     elapsed += Math.min(0.05, dt);
@@ -586,36 +506,14 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
     else introStartedAt = null;
     let currentCarrier: World['players'][number] | null = null;
     let controlledPlayer: World['players'][number] | null = null;
-    let controlled: World['players'][number] | null = null;
     for (const player of world.players) {
       if (currentCarrier === null && Math.hypot(world.ball.x - player.x, world.ball.z - player.z) < 0.8) currentCarrier = player;
       if (controlledPlayer === null && player.id === world.controlled[humanTeam]) controlledPlayer = player;
-      if (controlled === null && player.controlled) controlled = player;
     }
+    const controlled = controlledPlayer;
     let dribbleOffsetX = 0;
     let dribbleOffsetZ = 0;
 
-    const portrait = camera.aspect < 0.72;
-    const attackDir = teamDir(humanTeam, world.endsSwapped);
-    const focusDx = (controlledPlayer?.x ?? world.ball.x) - world.ball.x;
-    const focusDz = (controlledPlayer?.z ?? world.ball.z) - world.ball.z;
-    const focusDistance = Math.hypot(focusDx, focusDz);
-    const playerFocusWeight = controlledPlayer ? Math.min(0.32, 8 / Math.max(0.001, focusDistance)) : 0;
-    const focusX = world.ball.x + focusDx * playerFocusWeight;
-    const focusZ = world.ball.z + focusDz * playerFocusWeight;
-    const broadcast = cameraMode === 'broadcast' || cameraMode === 'intro';
-    const trackedX = broadcast
-      ? focusX + attackDir * FIELD.goalWidth * 0.3
-      : world.ball.x * 0.35;
-    target.set(
-      trackedX + (portrait && broadcast ? attackDir * FIELD.goalWidth * 0.28 : attackDir * FIELD.goalWidth * 0.2),
-      0.55,
-      broadcast ? portrait ? focusZ * 0.55 : BROADCAST.aimZ + (focusZ - BROADCAST.aimZ) * BROADCAST.followZ : world.ball.z * 0.22,
-    );
-    if (cameraMode === 'replay') desired.set(world.ball.x - attackDir * FIELD.goalWidth * 1.1, 5.2, world.ball.z + FIELD.width * 0.2);
-    else if (broadcast && portrait) desired.set(target.x - attackDir * FIELD.width * 0.42, FIELD.width * 0.24, target.z);
-    else if (broadcast) desired.set(target.x * BROADCAST.pan, BROADCAST.height, -BROADCAST.distance);
-    else desired.set(target.x - attackDir * FIELD.length * 0.26, FIELD.width * 0.2, target.z);
     const setPiece = world.setPiece;
     reticle.visible = world.phase === 'restart' && !!setPiece;
     if (setPiece) {
@@ -623,64 +521,25 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       reticle.rotation.set(mouth ? 0 : -Math.PI / 2, mouth ? Math.PI / 2 : 0, 0);
       reticle.scale.setScalar(mouth ? 1 : 4);
       reticle.position.set(setPiece.aim.x, mouth ? setPiece.aim.y : 0.12, setPiece.aim.z);
-      if (cameraMode === 'setpiece') {
-        const dx = setPiece.aim.x - world.ball.x, dz = setPiece.aim.z - world.ball.z;
-        const gap = Math.max(0.01, Math.hypot(dx, dz)), behind = setPiece.kind === 'penalty' ? 6 : 9;
-        target.set(setPiece.aim.x, setPiece.aim.y, setPiece.aim.z);
-        desired.set(world.ball.x - dx / gap * behind, setPiece.kind === 'penalty' ? 1.9 : 3.5, world.ball.z - dz / gap * behind + (setPiece.kind === 'penalty' ? 2.4 : 0));
-        if (setPiece.kind === 'corner') {
-          desired.x = Math.max(-FIELD.length / 2 + 3, Math.min(FIELD.length / 2 - 3, desired.x));
-          desired.z = Math.max(-FIELD.width / 2 + 5, Math.min(FIELD.width / 2 - 5, desired.z));
-          desired.y = 8;
-        }
-      }
     }
-    if (broadcast) {
-      target.add(cameraSafeOffset);
-      desired.add(cameraSafeOffset);
-    } else {
-      cameraSafeOffset.set(0, 0, 0);
+    const goal = cameraGoal(world, humanTeam, camera.aspect, cameraMode, (time - (introStartedAt ?? time)) / 5.5);
+    // Camera FX enter the same bounded springs; no render-only displacement or zoom bypasses them.
+    if (fxDirector) {
+      const shiftX = fxDirector.nudgeX + fxDirector.shakeX;
+      const shiftY = fxDirector.shakeY;
+      goal.position.x += shiftX; goal.target.x += shiftX;
+      goal.position.y += shiftY; goal.target.y += shiftY;
+      goal.fov += fxDirector.punch;
     }
-    const broadcastZoom = portrait ? 68 : BROADCAST.fov;
-    const zoom = cameraMode === 'setpiece' ? portrait ? 62 : 42 : cameraMode === 'replay' ? 36 : cameraMode === 'broadcast' || cameraMode === 'intro' ? broadcastZoom : 28;
-    if (cameraMode === 'intro') {
-      const p = Math.max(0, Math.min(1, (time - (introStartedAt ?? time)) / 5.5));
-      const t = p * p * (3 - 2 * p);
-      camera.position.lerpVectors(introCameraStart, desired, t);
-      target.multiplyScalar(t);
-      camera.fov = 50 + (broadcastZoom - 50) * t;
-    } else {
-      camera.fov = damp(camera.fov, zoom, 2.4, dt);
-    }
+    stepCameraRig(cameraRig, goal, cameraDt);
+    camera.position.set(cameraRig.position.x, cameraRig.position.y, cameraRig.position.z);
+    camera.lookAt(cameraRig.target.value.x, cameraRig.target.value.y, cameraRig.target.value.z);
+    camera.fov = cameraRig.zoom.value.x;
     camera.updateProjectionMatrix();
-    if (cameraMode === 'intro') {
-      camera.lookAt(target);
-      cameraReady = true;
-    } else if (!cameraReady) {
-      camera.position.copy(desired);
-      camera.lookAt(target);
-      cameraReady = true;
-    } else {
-      camera.position.x = damp(camera.position.x, desired.x, 2.8, dt);
-      camera.position.y = damp(camera.position.y, desired.y, 2.8, dt);
-      camera.position.z = damp(camera.position.z, desired.z, 2.8, dt);
-      lookAt.set(target.x, target.y, target.z);
-      camera.lookAt(lookAt);
-    }
     camera.updateMatrixWorld(true);
-    if (cameraMode === 'broadcast' && controlledPlayer) {
-      keepCameraSubjectsInFrame(world, controlledPlayer, zoom, dt);
-    } else {
-      updateCameraNdc(world, controlledPlayer);
-    }
-    if (cameraMode !== 'replay' && cameraMode !== 'intro') {
-      camera.getWorldDirection(cameraDirection);
-      const forwardLength = Math.hypot(cameraDirection.x, cameraDirection.z);
-      if (forwardLength >= 1e-3) {
-        const forward = { x: cameraDirection.x / forwardLength, z: cameraDirection.z / forwardLength };
-        lastViewBasis = { forward, right: { x: -forward.z, z: forward.x } };
-      }
-    }
+    updateCameraNdc(world, controlledPlayer);
+    // Set pieces and replays never rotate a held stick. Only an explicit view/orientation change slews the basis.
+    lastViewBasis = stepCameraBasis(lastViewBasis, world, humanTeam, camera.aspect, cameraMode, cameraDt);
     frustumMatrix.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
     frustum.setFromProjectionMatrix(frustumMatrix);
     const homeCall = clubById(world.clubs?.[0] ?? DEFAULT_CLUBS[0]).call.toLowerCase();
@@ -783,7 +642,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       const cameraDx = player.x - camera.position.x;
       const cameraDy = 1 - camera.position.y;
       const cameraDz = player.z - camera.position.z;
-      const interval = offscreen ? 4 : cameraDx * cameraDx + cameraDy * cameraDy + cameraDz * cameraDz > 35 * 35 ? 2 : 1;
+      const interval = player.controlled || carrying || player.id === targetId ? 1 : offscreen ? 4 : cameraDx * cameraDx + cameraDy * cameraDy + cameraDz * cameraDz > 35 * 35 ? 2 : 1;
       actor.lodDt += dt;
       actor.lodTick = (actor.lodTick + 1) % interval;
       if (interval === 1 || actor.lodTick === player.id % interval) {
@@ -830,8 +689,8 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       }
     } else indicator.style.display = 'none';
     const sunLow = stadium.sunLow();
-    key.position.set(target.x - FIELD.length * 0.17, sunLow ? 18 : 30, target.z + (sunLow ? FIELD.width * 0.3 : -FIELD.width * 0.28));
-    key.target.position.set(target.x, 0, target.z);
+    key.position.set(cameraRig.target.value.x - FIELD.length * 0.17, sunLow ? 18 : 30, cameraRig.target.value.z + (sunLow ? FIELD.width * 0.3 : -FIELD.width * 0.28));
+    key.target.position.set(cameraRig.target.value.x, 0, cameraRig.target.value.z);
     key.target.updateMatrixWorld();
     key.shadow.camera.updateProjectionMatrix();
     stadium.update({
@@ -900,12 +759,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, time
       }
     }
     quality.lastRender = now;
-    fxLayer.applyCamera(camera);
-    try {
-      renderer.render(scene, camera);
-    } finally {
-      fxLayer.restoreCamera(camera);
-    }
+    renderer.render(scene, camera);
     if (debug && now >= quality.nextLog) {
       quality.nextLog = now + 3000;
       console.info('[soccerdebug]', {

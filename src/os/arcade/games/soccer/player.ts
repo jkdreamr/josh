@@ -469,7 +469,7 @@ export function soccerDribbleOffset(anim: SoccerAnimator, speed: number) {
   let u = (anim.phase - touch) / TAU;
   u -= Math.floor(u);
   const amp = 0.14 * smooth(0.8, 4, speed);
-  return u < 0.12 ? -amp + 2 * amp * (u / 0.12) : amp - 2 * amp * ((u - 0.12) / 0.88);
+  return u < 0.12 ? -amp + 2 * amp * smooth(0, 0.12, u) : amp - 2 * amp * smooth(0.12, 1, u);
 }
 
 export function soccerLegPhase(anim: SoccerAnimator) {
