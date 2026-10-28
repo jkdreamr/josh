@@ -6,7 +6,7 @@ const EXTRAPOLATE: Record<Level, number> = { easy: 0, normal: 0.9, hard: 1 };
 export const LUNGE_COMMIT = 0.3;
 
 type Sample = { tick: number; x: number; y: number; z: number; vx: number; vz: number; facing: number; action: string };
-type Lunge = { until: number; x: number; z: number };
+type Lunge = { from: number; until: number; x: number; z: number };
 type PerceptionState = {
   tick: number;
   samples: Map<number | 'ball', Sample[]>;
@@ -115,14 +115,17 @@ export function perceivedTackleWindow(world: World, player: Player, seenOpponent
 
 export function commitLunge(world: World, id: number, tick: number, move: { x: number; z: number }) {
   stateFor(world, tick).lunges.set(id, {
-    until: tick + Math.round(LUNGE_COMMIT * 60), x: move.x, z: move.z,
+    from: tick, until: tick + Math.round(LUNGE_COMMIT * 60), x: move.x, z: move.z,
   });
 }
 
 export function activeLunge(world: World, id: number, tick: number) {
   const lunge = states.get(world)?.lunges.get(id);
   if (!lunge) return undefined;
-  if (tick < lunge.until) return lunge;
-  states.get(world)?.lunges.delete(id);
+  if (tick >= lunge.until) {
+    states.get(world)?.lunges.delete(id);
+    return undefined;
+  }
+  if (lunge.from < tick) return lunge;
   return undefined;
 }

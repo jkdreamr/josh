@@ -57,8 +57,8 @@ test('window decisions are deterministic and an empty opponent team causes no ta
   let tick = advance(world, player, 9);
   const before = structuredClone(world);
   const first = computeAI(world, 'hard', STEP, tick, 0);
-  const identical = structuredClone(world);
-  assert.deepEqual([...first], [...computeAI(identical, 'hard', STEP, tick, 0)]);
+  const second = computeAI(world, 'hard', STEP, tick, 0);
+  assert.deepEqual([...first], [...second]);
   assert.deepEqual(world, before);
   world.players = world.players.filter((p) => p.team === 0);
   player.z = 2;
