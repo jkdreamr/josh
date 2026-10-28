@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { BALANCE } from './soccer-replay/bands.ts';
 import { computeAI, simulateCpuMatchStats } from '../src/os/arcade/games/soccer/ai.ts';
 import { createWorld, FIELD, findReceiver, nearestCarrier, restartTaker, setRestart, stepWorld, STEP, TEAM_SIZE, type World } from '../src/os/arcade/games/soccer/logic.ts';
 import { parsePacket } from '../src/os/arcade/games/soccer/net.ts';
@@ -464,7 +465,7 @@ test('CPU match averages stay within the foul and offside limits and reach full 
   const reds = matches.reduce((total, match) => total + match.world.rules!.stats.reds[0] + match.world.rules!.stats.reds[1], 0)
     / matches.length;
   console.info(`soccer law CPU averages (${matches.length} matches): fouls/team ${fouls.toFixed(2)}, offsides/team ${offsides.toFixed(2)}, yellow/match ${yellows.toFixed(2)}, red/match ${reds.toFixed(2)}`);
-  assert.ok(fouls <= 2, `fouls per team per match: ${fouls}`);
-  assert.ok(offsides <= 2.5, `offsides per team per match: ${offsides}`);
-  assert.equal(reds, 0, `red cards per match: ${reds}`);
+  assert.ok(fouls <= BALANCE.fouls, `fouls per team per match: ${fouls}`);
+  assert.ok(offsides <= BALANCE.offsides, `offsides per team per match: ${offsides}`);
+  assert.equal(reds, BALANCE.reds, `red cards per match: ${reds}`);
 });

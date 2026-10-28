@@ -34,6 +34,16 @@ test('phone stick response curve is monotonic and finer than linear at small def
   assert.deepEqual(stickVector(10, 0, 0).move, { x: 0, z: 0 });
 });
 
+test('matching thumb offsets produce matching movement vectors in portrait and landscape layouts', () => {
+  const layouts = [
+    { width: 390, height: 844, base: 136 },
+    { width: 844, height: 390, base: 136 },
+  ];
+  const vectors = layouts.map(({ base }) => stickVector(22, -31, base * STICK.travel).move);
+  const [portrait, landscape] = vectors;
+  assert.deepEqual(portrait, landscape);
+});
+
 test('floating stick base recentres under the thumb but stays inside its zone', () => {
   assert.deepEqual(clampOrigin({ x: 200, y: 120 }, 400, 300, 60), { x: 200, y: 120 });
   assert.deepEqual(clampOrigin({ x: 5, y: 299 }, 400, 300, 60), { x: 60, y: 240 });

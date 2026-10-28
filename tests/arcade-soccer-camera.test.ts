@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { CAMERA_LIMITS, broadcastGoal, cameraGoal, createCameraRig, stepCameraBasis, stepCameraRig, type CameraMode, type Vec3 } from '../src/os/arcade/games/soccer/camera.ts';
+import { CAMERA_LIMITS, broadcastGoal, cameraGoal, createCameraRig, desiredCameraBasis, stepCameraBasis, stepCameraRig, type CameraMode, type Vec3 } from '../src/os/arcade/games/soccer/camera.ts';
 import { IDENTITY_BASIS, screenToWorld } from '../src/os/arcade/games/soccer/input.ts';
 import { createWorld, STEP, stepWorld, switchPlayer, transferControl } from '../src/os/arcade/games/soccer/logic.ts';
 
@@ -85,6 +85,18 @@ test('camera-relative held input is invariant to switches and frozen during repl
     basis = next;
   }
   assert.ok(basis.forward.x < -0.999);
+});
+
+test('frame one snaps to broadcast camera basis and maps screen stick axes into world axes', () => {
+  const world = createWorld();
+  const basis = stepCameraBasis(null, world, 0, 16 / 9, 'broadcast', STEP);
+  assert.deepEqual(basis, { forward: { x: 0, z: 1 }, right: { x: -1, z: 0 } });
+  assert.deepEqual(screenToWorld({ x: 0, z: -1 }, basis), { x: 0, z: 1 });
+  assert.deepEqual(screenToWorld({ x: 1, z: 0 }, basis), { x: -1, z: 0 });
+  assert.notDeepEqual(basis, IDENTITY_BASIS);
+  assert.deepEqual(desiredCameraBasis(world, 0, 16 / 9, 'broadcast'), basis);
+  assert.deepEqual(stepCameraBasis(null, world, 0, 16 / 9, 'replay', STEP), basis);
+  assert.deepEqual(stepCameraBasis(null, world, 0, 16 / 9, 'setpiece', STEP), basis);
 });
 
 test('switching only has a small influence on the ball-centred broadcast goal', () => {
