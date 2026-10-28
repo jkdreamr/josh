@@ -9,18 +9,21 @@ import { isChannel, sameSecret } from '../../src/os/arcade/lounge-core.ts';
 import { Chat, type ChatEnv } from './chat';
 import { Lobby } from './lobby';
 import { Lounge, type LoungeEnv } from './lounge';
+import { Telemetry, type TelemetryEnv } from './telemetry';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
 import { agreedWinners, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, canWatchRoom, endRound, GATHER_MS, gatherFull, gathering, isPool, isRelayMessage, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, roomListing, roundPlayable, roundSeats, seatsFor, type RecordedRounds, type RelayRoomMessage, type RoomPlayer, type RoomState, type RoundReports } from './room-core';
+import { MAX_BODY_BYTES } from '../../src/os/arcade/games/soccer/telemetry-core.ts';
 
-export { Chat, Lobby, Lounge };
+export { Chat, Lobby, Lounge, Telemetry };
 
-interface Env extends ChatEnv, LoungeEnv {
+interface Env extends ChatEnv, LoungeEnv, TelemetryEnv {
   BOARDS: DurableObjectNamespace<Boards>;
   ROOMS: DurableObjectNamespace<Room>;
   STATS: DurableObjectNamespace<Stats>;
   CHAT: DurableObjectNamespace<Chat>;
   LOUNGE: DurableObjectNamespace<Lounge>;
   LOBBY: DurableObjectNamespace<Lobby>;
+  TELEMETRY: DurableObjectNamespace<Telemetry>;
 }
 
 const RATE_LIMIT = 6;
@@ -713,6 +716,22 @@ export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
     if (request.method === 'OPTIONS') return withCors(new Response(null, { status: 204 }));
+    if (url.pathname === '/telemetry' && request.method === 'POST') {
+      const contentLength = Number(request.headers.get('content-length'));
+      if (Number.isFinite(contentLength) && contentLength > MAX_BODY_BYTES) return withCors(json({ error: 'too large' }, 413));
+      try {
+        return withCors(await env.TELEMETRY.get(env.TELEMETRY.idFromName('global')).fetch(request));
+      } catch {
+        return withCors(json({ error: 'unavailable' }, 503));
+      }
+    }
+    if (url.pathname === '/telemetry/summary' && request.method === 'GET') {
+      try {
+        return await env.TELEMETRY.get(env.TELEMETRY.idFromName('global')).fetch(request);
+      } catch {
+        return json({ error: 'unavailable' }, 503);
+      }
+    }
     if (url.pathname === '/leaderboard' && (request.method === 'GET' || request.method === 'POST')) {
       const id = env.BOARDS.idFromName('global');
       return withCors(await env.BOARDS.get(id).fetch(request));
