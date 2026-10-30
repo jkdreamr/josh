@@ -590,12 +590,15 @@ function Play({ mode }: { mode: Mode }) {
   const finishRef = useRef(finishOnline);
   finishRef.current = finishOnline;
 
-  /** Runs the online race on to the wall clock (at most `cap` seconds of it now), sending what its events say. */
-  const runOnline = (r: Race, cap: number, background: boolean) => {
+  /**
+   * Runs the online race on to the wall clock (at most `cap` seconds of it now), sending what its events say. `now`:
+   * a frame's own time (see useGameLoop), so the race moves on by as much as the screen does each frame.
+   */
+  const runOnline = (r: Race, cap: number, background: boolean, now = performance.now()) => {
     const n = net.current;
     const v = view.current;
     // (a guest's race also keeps to the host's clock, see onHostClock)
-    advance(r, onHostClock(n, !!onlineRef.current?.isHost, pacer.current.take(performance.now(), cap)), (evs) => {
+    advance(r, onHostClock(n, !!onlineRef.current?.isHost, pacer.current.take(now, cap)), (evs) => {
       for (const e of evs) {
         // (no sound or sparks for a page nobody is looking at: they would all go off at once when it comes back)
         if (!background) {
@@ -606,7 +609,7 @@ function Play({ mode }: { mode: Mode }) {
       }
     });
     const o = onlineRef.current;
-    if (o && n.outbox.length) for (const d of flushEvents(n, o.round)) o.send(d);
+    if (o && n.outbox.length) for (const d of flushEvents(n, o.round, r.time)) o.send(d);
   };
   const runRef = useRef(runOnline);
   runRef.current = runOnline;
@@ -618,7 +621,7 @@ function Play({ mode }: { mode: Mode }) {
       const o = onlineRef.current;
       const r = race.current;
       if (!o || !r) return;
-      const heard = receive(n, r, o, from, d, () => lookFor(loadGarage()));
+      const heard = receive(n, r, o, from, d, () => lookFor(loadGarage()), pacer.current.lag(performance.now()));
       if (!heard) return;
       if (heard.sitOut) {
         if (shellRef.current.status === 'playing') shellRef.current.gameOver(undefined, { title: 'Sitting This One Out', detail: 'You Will Race the Next One.' });
@@ -641,8 +644,8 @@ function Play({ mode }: { mode: Mode }) {
         if (me && document.hidden) Object.assign(me.input, { steer: 0, fwd: false, brake: false, drift: false, hold: false, use: false, hop: false });
         runRef.current(r, 2, true);
       }
-      const { out, end } = tick(n, r, o, lookRef.current);
-      for (const { d, fast } of out) o.send(d, fast ? { fast: true } : undefined);
+      const { out, end } = tick(n, r, o, lookRef.current, pacer.current.lag(performance.now()), o.transport === 'relay');
+      for (const { d, fast, everyone } of out) o.send(d, fast || everyone ? { fast, everyone } : undefined);
       if (end) finishRef.current(end.order, end.w);
     });
     return () => {
@@ -655,7 +658,7 @@ function Play({ mode }: { mode: Mode }) {
   // The frame loop: input, simulation, sounds, camera, HUD.
 
   useGameLoop(
-    (dt) => {
+    (dt, frameNow) => {
       const r = race.current!;
       const v = view.current;
       const n = net.current;
@@ -699,7 +702,7 @@ function Play({ mode }: { mode: Mode }) {
       if (live) {
         // online the race keeps to the wall clock: a slow frame is caught up rather than played in slow motion
         frameAt.current = performance.now();
-        runOnline(r, 0.25, false);
+        runOnline(r, 0.25, false, frameNow);
       } else {
         step(r, dt);
         for (const e of r.events.splice(0)) {

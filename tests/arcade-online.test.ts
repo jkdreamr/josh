@@ -344,6 +344,29 @@ test('RoomLink uses host-only relay fallback without WebRTC', async () => {
   });
 });
 
+test('RoomLink: a guest’s word for everyone goes to everyone through the room; a backed-up socket drops snapshots', async () => {
+  await withFakeRoom(async () => {
+    const link = new RoomLink('ABCD', 'Guest', 'https://arcade.test');
+    const socket = FakeWebSocket.last as FakeWebSocket & { bufferedAmount?: number };
+    socket.open();
+    socket.receive({ t: 'welcome', seat: 1, code: 'ABCD', game: 'palmdrive', seats: 3, players: [{ seat: 0, name: 'Host' }, { seat: 1, name: 'Guest' }, { seat: 2, name: 'Other' }] });
+    link.send({ kart: 1 }, { fast: true, everyone: true });
+    link.send({ kart: 2 }, { everyone: true });
+    link.send({ item: 1 });
+    assert.deepEqual(socket.sent.map((message) => JSON.parse(message)), [
+      { t: 'msg', d: { kart: 1 }, f: 1 },
+      { t: 'msg', d: { kart: 2 } },
+      { t: 'msg', to: 0, d: { item: 1 } },
+    ]);
+    // (a connection that can't keep up: a snapshot the next one replaces only queues up behind the rest)
+    socket.bufferedAmount = FAST_BUFFER_LIMIT + 1;
+    link.send({ kart: 3 }, { fast: true, everyone: true });
+    link.send({ item: 2 });
+    assert.deepEqual(socket.sent.slice(3).map((message) => JSON.parse(message)), [{ t: 'msg', to: 0, d: { item: 2 } }]);
+    link.close();
+  });
+});
+
 test('RoomLink relays a host broadcast once when every recipient is relayed', async () => {
   await withFakeRoom(async () => {
     const link = new RoomLink('ABCD', 'Host', 'https://arcade.test');

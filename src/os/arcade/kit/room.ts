@@ -235,7 +235,13 @@ export class RoomLink {
     this.sendSocket({ t: 'over', round });
   }
 
-  send(d: unknown, options: { to?: number; fast?: boolean; reliable?: boolean } = {}) {
+  /**
+   * To the host (from a guest) or to everyone (from the host), or `to` one seat. `everyone`, from a guest: what all the
+   * others should see as soon as they can (its own state in a race, say). Over a direct link it goes to the host, who
+   * passes it on as ever; through the room it goes to everyone at once, rather than to the host and back out again
+   * (two more trips through the room, on top of the host's own connection). Either way the host gets it too.
+   */
+  send(d: unknown, options: { to?: number; fast?: boolean; reliable?: boolean; everyone?: boolean } = {}) {
     const labels = sendLabels(options.fast, options.reliable);
     const primary = labels[0]!;
     const payload = JSON.stringify(d);
@@ -263,7 +269,7 @@ export class RoomLink {
     }
     // (a fast message says so: the next one replaces it, so the room never keeps it for someone away for a moment)
     const fast = options.fast && !options.reliable ? { f: 1 } : {};
-    if (plan.relayAll) this.sendSocket({ t: 'msg', d, ...fast });
+    if (plan.relayAll || (options.everyone && this.seat !== 0 && options.to === undefined && plan.relay.length)) this.sendSocket({ t: 'msg', d, ...fast });
     // (several seats the room relays to: one message for all of them, where the room takes a list)
     else if (this.multi && this.seat === 0 && plan.relay.length > 1) this.sendSocket({ t: 'msg', to: plan.relay, d, ...fast });
     else for (const seat of plan.relay) this.sendSocket({ t: 'msg', to: this.seat === 0 ? seat : 0, d, ...fast });
@@ -662,7 +668,10 @@ export class RoomLink {
       if (message.t !== 'signal' && message.t !== 'watch' && !message.f && this.held.length < HELD_MAX) this.held.push(JSON.stringify(message));
       return;
     }
-    if (this.socket.readyState === WebSocket.OPEN) this.socket.send(JSON.stringify(message));
+    if (this.socket.readyState !== WebSocket.OPEN) return;
+    // (a connection that can't keep up: a snapshot the next one replaces would only queue up behind the rest)
+    if (message.f && fastSendBlocked(this.socket.bufferedAmount ?? 0)) return;
+    this.socket.send(JSON.stringify(message));
   }
 
   private updateTransport() {

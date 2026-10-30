@@ -87,7 +87,7 @@ export function useOnline() {
       watching: room.watching,
       watchers: room.watchers,
       // Tagged with the round this player is in at the moment it's sent, which a game that kept an old handle still gets.
-      send: (d: unknown, options?: { to?: number; fast?: boolean; reliable?: boolean }) => room.link.send(tagRound(room.router.round, d), options),
+      send: (d: unknown, options?: { to?: number; fast?: boolean; reliable?: boolean; everyone?: boolean }) => room.link.send(tagRound(room.router.round, d), options),
       onMessage: (listener: (from: number, d: unknown) => void) => room.router.listen(listener),
       /** Who won: a seat, with every seat on its team for a team game, or null. */
       reportResult: (round: number, winner: number | null, team?: number[]) => room.link.reportResult(round, winner, team),

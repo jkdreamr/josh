@@ -41,6 +41,8 @@ const trailKind = (item: Item | null) => (item === 'bananas' ? 'banana' : item =
  * state, how long (ms) the host had a guest's kart before passing it on, so that guest can time the round trip.
  */
 export type Car = { seat: number; x: number; z: number; y: number; h: number; v: number; p: number; f: number; fin: number; look: number; t: number | null; hold?: number };
+/** A guest's state as the host had it, without the state: the guest's seat, its sample time and how long (ms) the host had held it. */
+export type Echo = [number, number, number];
 export type NetEv =
   | { y: 'spawn'; id: number; kind: ThingKind; x: number; z: number; vx: number; vz: number; vy: number; yy: number; tg: number; pg: number; gr: number }
   | { y: 'gone'; id: number }
@@ -57,9 +59,12 @@ export type NetEv =
   | { y: 'pow'; at: number };
 
 export type Packet =
-  | { k: 'S'; round: number; go: number; cc: string; course: string; roster: number[]; cars: Car[] }
-  | { k: 's'; round: number; car: Omit<Car, 'seat'> }
-  | { k: 'e'; round: number; o: number; ev: NetEv[] }
+  /** echoes: [seat, t, hold] for guests' states the host had but did not pass on (they went to everyone themselves), so each can still time its round trip. */
+  | { k: 'S'; round: number; go: number; cc: string; course: string; roster: number[]; cars: Car[]; echoes: Echo[] }
+  /** all: the guest sent it to everyone at once (through the room), so the host need not pass it on. */
+  | { k: 's'; round: number; car: Omit<Car, 'seat'>; all: boolean }
+  /** at: when they happened, on the sender's race clock (null from older clients, which never said). */
+  | { k: 'e'; round: number; o: number; ev: NetEv[]; at: number | null }
   | { k: 'end'; round: number; w: number | null; order: [number, number][] }
   | { k: 'cfg'; round: number; cc: string; course: string };
 
@@ -154,7 +159,7 @@ function unpackCar(a: unknown): Omit<Car, 'seat'> | null {
   return { x, z, y, h, v, p, f: f | 0, fin, look, t, ...(hold !== undefined ? { hold } : {}) };
 }
 
-export const hostState = (round: number, go: number, cc: string, roster: number[], cars: Car[], course = 'palm') => ({
+export const hostState = (round: number, go: number, cc: string, roster: number[], cars: Car[], course = 'palm', echoes: Echo[] = []) => ({
   t: 'pk',
   r: round,
   k: 'S',
@@ -163,9 +168,10 @@ export const hostState = (round: number, go: number, cc: string, roster: number[
   co: course,
   ro: roster,
   cars: cars.map((c) => [c.seat, ...packCar(c)]),
+  ...(echoes.length ? { ec: echoes.map(([seat, t, hold]) => [seat, t, Math.max(0, Math.round(hold))]) } : {}),
 });
-export const guestState = (round: number, car: Omit<Car, 'seat'>) => ({ t: 'pk', r: round, k: 's', c: packCar(car) });
-export const events = (round: number, origin: number, ev: NetEv[]) => ({ t: 'pk', r: round, k: 'e', o: origin, ev });
+export const guestState = (round: number, car: Omit<Car, 'seat'>, all = false) => ({ t: 'pk', r: round, k: 's', c: packCar(car), ...(all ? { a: 1 } : {}) });
+export const events = (round: number, origin: number, ev: NetEv[], at: number | null = null) => ({ t: 'pk', r: round, k: 'e', o: origin, ev, ...(at === null ? {} : { at: r3(at) }) });
 export const endOf = (round: number, winner: number | null, order: [number, number][]) => ({ t: 'pk', r: round, k: 'end', w: winner, order });
 /** The host's picks for the next race, sent while the room waits so guests can see them. */
 export const configOf = (round: number, cc: string, course = 'palm') => ({ t: 'pk', r: round, k: 'cfg', cc, co: course });
@@ -199,7 +205,7 @@ export function parsePacket(value: unknown): Packet | null {
   const round = p.r as number;
   if (p.k === 's') {
     const car = unpackCar(p.c);
-    return car ? { k: 's', round, car } : null;
+    return car ? { k: 's', round, car, all: p.a === 1 } : null;
   }
   if (p.k === 'S') {
     if (!num(p.go) || typeof p.cc !== 'string' || !Array.isArray(p.ro) || !Array.isArray(p.cars)) return null;
@@ -210,12 +216,13 @@ export function parsePacket(value: unknown): Packet | null {
       const car = unpackCar(raw.slice(1));
       if (car) cars.push({ seat: raw[0], ...car });
     }
-    return { k: 'S', round, go: p.go, cc: p.cc, course: courseOf(p.co), roster, cars };
+    const echoes = Array.isArray(p.ec) ? p.ec.slice(0, 16).filter((e): e is Echo => Array.isArray(e) && seatOk(e[0]) && num(e[1]) && num(e[2]) && e[2] >= 0) : [];
+    return { k: 'S', round, go: p.go, cc: p.cc, course: courseOf(p.co), roster, cars, echoes };
   }
   if (p.k === 'e') {
     if (!seatOk(p.o) || !Array.isArray(p.ev)) return null;
     const ev = p.ev.slice(0, 32).map(parseEv).filter((e): e is NetEv => e !== null);
-    return { k: 'e', round, o: p.o, ev };
+    return { k: 'e', round, o: p.o, ev, at: num(p.at) ? p.at : null };
   }
   if (p.k === 'cfg') return typeof p.cc === 'string' ? { k: 'cfg', round, cc: p.cc, course: courseOf(p.co) } : null;
   if (p.k === 'end') {
