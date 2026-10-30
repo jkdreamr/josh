@@ -1201,6 +1201,11 @@
   top: calc(50% - 82px);
   bottom: auto;
 }
+/* in a car, the way out sits low, over the car's bar, clear of the car and the road ahead */
+.g-scramble .g-scramble-hud.is-touch .g-scramble-prompt.is-ride {
+  top: auto;
+  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 182px);
+}
 .g-scramble .g-scramble-hud.is-touch .g-scramble-banner {
   font-size: 24px;
 }

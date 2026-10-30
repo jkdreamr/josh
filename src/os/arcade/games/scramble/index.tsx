@@ -2723,7 +2723,7 @@ function Play({ mode }: { mode: StageMode }) {
             </div>
           )}
           {hud.prompt && hud.phase === 'ground' && (
-            <button type="button" className={`g-scramble-prompt${hud.reviving ? ' is-revive' : ''}`} style={hud.reviveColor ? { ['--mate' as string]: hud.reviveColor } : undefined} {...(hud.reviving ? holdDown : tap((t) => (t.interact = true)))}>
+            <button type="button" className={`g-scramble-prompt${hud.reviving ? ' is-revive' : ''}${hud.car ? ' is-ride' : ''}`} style={hud.reviveColor ? { ['--mate' as string]: hud.reviveColor } : undefined} {...(hud.reviving ? holdDown : tap((t) => (t.interact = true)))}>
               {!touchMode && <kbd>E</kbd>}
               {hud.prompt}
             </button>

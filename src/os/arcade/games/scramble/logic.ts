@@ -63,6 +63,7 @@ import {
 import {
   BUS_Y,
   CAMP,
+  CAR,
   CRATE_HALF,
   EDGE,
   DROP_BASE,
@@ -74,6 +75,7 @@ import {
   ROAD_SPEED,
   SUPPLY_FALL,
   TOILET_R,
+  TRUCK,
   WALL_T,
   DEEP,
   basementAt,
@@ -2898,7 +2900,8 @@ export function castRay(m: Match, x: number, z: number, dx: number, dz: number, 
     const team = m.fighters[skip]?.team ?? -1;
     let egg = null as RayHit | null;
     for (const o of m.fighters) {
-      if (o.x < x0 || o.x > x1 || o.z < z0 || o.z > z1 || o.id === skip || o.team === team || !fighting(o)) continue;
+      // (an egg in a car sits behind its body: see shootRide)
+      if (o.x < x0 || o.x > x1 || o.z < z0 || o.z > z1 || o.id === skip || o.team === team || o.ride >= 0 || !fighting(o)) continue;
       const t = rayCircle(x, z, dx, dz, len, o.x, o.z, HIT_R);
       if (t >= (egg?.t ?? Infinity)) continue;
       const ol = levelOf(o.y);
@@ -4283,13 +4286,18 @@ function ridesOf(map: GameMap): Ride[] {
   map.cars.forEach((c, i) => {
     if (!c.ride) return;
     const kind: RideKind = c.truck ? 'truck' : c.look < 2 ? 'coupe' : 'jeep';
-    const hp = RIDES[kind].hp;
-    const hl = c.alongX ? c.hw : c.hd;
-    const hw = c.alongX ? c.hd : c.hw;
-    const a = angleDiff(parkedAim(map, c), 0);
-    out.push({ i: out.length, car: i, kind, x: c.x, z: c.z, a, vx: 0, vz: 0, hw, hl, hp, max: hp, seats: RIDES[kind].seats.map(() => -1), dead: false, by: -1, at: -99, leave: false, rams: new Map(), crashAt: -99, ob: { x: c.x, z: c.z, sa: 0, ca: 1, hw, hd: hl }, oa: NaN });
+    out.push(makeRide(out.length, kind, c.x, c.z, angleDiff(parkedAim(map, c), 0), i));
   });
   return out;
+}
+
+/** A car of a kind, parked anywhere facing `a`, nobody in it (`car` its place in map.cars; tests put them where they like). */
+export function makeRide(i: number, kind: RideKind, x: number, z: number, a: number, car = -1): Ride {
+  const hp = RIDES[kind].hp;
+  const size = kind === 'truck' ? TRUCK : CAR;
+  const hw = size.across / 2;
+  const hl = size.along / 2;
+  return { i, car, kind, x, z, a, vx: 0, vz: 0, hw, hl, hp, max: hp, seats: RIDES[kind].seats.map(() => -1), dead: false, by: -1, at: -99, leave: false, rams: new Map(), crashAt: -99, ob: { x, z, sa: 0, ca: 1, hw, hd: hl }, oa: NaN };
 }
 
 /** A car's box, turned the way it faces (worked out again only once it has turned). */
@@ -4511,7 +4519,7 @@ export function freeSeat(m: Match, fid: number, x?: number, z?: number, a?: numb
   const f = m.fighters[fid];
   const c = !f ? undefined : f.ride >= 0 ? m.rides[f.ride] : m.rides.find((r) => r.seats.includes(fid));
   if (!m.world || !f || !c || owned(f)) return false;
-  if (c.seats[0] === fid && x !== undefined && z !== undefined && a !== undefined && Math.hypot(x - c.x, z - c.z) < 8) {
+  if (c.seats[0] === fid && x !== undefined && z !== undefined && a !== undefined && Math.hypot(x - c.x, z - c.z) < 25) {
     c.x = x;
     c.z = z;
     c.a = a;
@@ -4805,8 +4813,11 @@ function ram(m: Match, f: Fighter, c: Ride) {
   const o = rideObb(c);
   for (const e of m.fighters) {
     if (e.ride >= 0 || e.team === f.team || !fighting(e) || e.y > 1.2 || Math.abs(e.x - c.x) > c.hl + 1 || Math.abs(e.z - c.z) > c.hl + 1) continue;
-    if (!pushObb(e.x, e.z, FIGHTER_R + 0.2, o) || m.clock - (c.rams.get(e.id) ?? -9) < 0.8) continue;
+    if (!pushObb(e.x, e.z, FIGHTER_R + 0.2, o)) continue;
+    // once a bump: not again until it has been clear of the car a moment
+    const last = c.rams.get(e.id) ?? -9;
     c.rams.set(e.id, m.clock);
+    if (m.clock - last < 0.8) continue;
     strike(m, f, e, clamp(speed * RAM.k, RAM.min, RAM.max), 'car', e.x, e.z);
     // and it slows for the bump
     c.vx *= 0.85;
@@ -4814,20 +4825,21 @@ function ram(m: Match, f: Fighter, c: Ride) {
   }
 }
 
-/** An egg this client owns, run over by egg `by`'s car: knocked flying, off to the side and on the way the car goes. */
+/**
+ * An egg this client owns, run over by egg `by`'s car: knocked flying, off to the side of the car's way (its left,
+ * hit dead on) and on along it, out of its path.
+ */
 function rammed(m: Match, f: Fighter, by: number) {
   const d = m.fighters[by];
   const c = d && d.ride >= 0 ? m.rides[d.ride] : undefined;
   if (!c) return;
   const speed = Math.hypot(c.vx, c.vz);
-  const dx = f.x - c.x;
-  const dz = f.z - c.z;
-  const len = Math.hypot(dx, dz) || 1;
+  const ux = speed > 0.5 ? c.vx / speed : Math.sin(c.a);
+  const uz = speed > 0.5 ? c.vz / speed : Math.cos(c.a);
+  const side = (f.x - c.x) * uz - (f.z - c.z) * ux >= 0 ? 1 : -1;
   const k = Math.min(16, 4 + speed * 0.6);
-  const ux = speed > 0.5 ? c.vx / speed : 0;
-  const uz = speed > 0.5 ? c.vz / speed : 0;
-  f.kx += ((dx / len) * 0.6 + ux * 0.8) * k;
-  f.kz += ((dz / len) * 0.6 + uz * 0.8) * k;
+  f.kx += (uz * side * 0.85 + ux * 0.55) * k;
+  f.kz += (-ux * side * 0.85 + uz * 0.55) * k;
 }
 
 /**
@@ -4965,8 +4977,9 @@ function carry(m: Match, dt: number) {
     }
     if (burning(c)) {
       c.hp -= c.max * BURN.rate * dt;
-      if (c.hp <= 0 && m.world) wreckRide(m, c.i, c.by, true);
-      else c.hp = Math.max(0.5, c.hp);
+      if (m.world && c.hp <= 0) wreckRide(m, c.i, c.by, true);
+      // (a guest's waits for the host's word that it went up)
+      else if (!m.world) c.hp = Math.max(0.5, c.hp);
     }
   }
   if (!m.world) return;

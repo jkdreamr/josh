@@ -2893,7 +2893,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         [0.88, -1.2, 0.36, 0.28],
         [-0.88, -1.2, 0.36, 0.28],
       ],
-      sit: [0.5, 0.5],
+      sit: [0.36, 0.36],
       pipe: [-0.5, 0.35, -1.95],
     },
     jeep: {
@@ -2921,7 +2921,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         [0.9, -1.25, 0.42, 0.34],
         [-0.9, -1.25, 0.42, 0.34],
       ],
-      sit: [0.62, 0.62, 0.62, 0.62],
+      sit: [0.46, 0.46, 0.46, 0.46],
       pipe: [-0.55, 0.38, -1.98],
     },
     truck: {
@@ -2953,7 +2953,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
         [1.04, -1.65, 0.48, 0.36],
         [-1.04, -1.65, 0.48, 0.36],
       ],
-      sit: [1.0, 1.0, 0.98, 0.98],
+      sit: [0.86, 0.86, 0.84, 0.84],
       pipe: [-0.7, 0.4, -2.75],
     },
   };
@@ -2965,7 +2965,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   const rideWheels = many(G.cyl, lambert(0x24262b), rides.length * 4);
   const rideHubs = many(G.box, lambert(0xb8bec6), rides.length * 4);
   const rideShadows = many(G.plane, M.shadow, rides.length);
-  const headGlow = basic(0xfff1c4, { map: keep(glowTexture(THREE)), transparent: true, opacity: 0.3, depthWrite: false, blending: ADDITIVE });
+  const headGlow = basic(0xfff1c4, { map: keep(glowTexture(THREE)), transparent: true, opacity: 0.16, depthWrite: false, blending: ADDITIVE });
   const rideBeams = many(G.plane, headGlow, rides.length * 2);
   const rideFlames = many(G.pine, basic(0xffffff), rides.length * 3);
   const rideMeshes = [rideBoxes, rideGlass, rideLights, rideWheels, rideHubs, rideShadows, rideBeams, rideFlames];
@@ -2975,10 +2975,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     im.frustumCulled = false;
   }
   scene.add(...rideMeshes);
-  const paintOf = (c: Ride) => {
-    const car = map.cars[c.car];
-    return CAR_COLORS[car.look % CAR_COLORS.length];
-  };
+  const paintOf = (c: Ride) => CAR_COLORS[(map.cars[c.car]?.look ?? c.i) % CAR_COLORS.length];
   /** What a car looked like last frame: its wheels' turn and roll, its lean, its speed, and when it last puffed smoke. */
   const rideLook = rides.map(() => ({ steer: 0, roll: 0, pitch: 0, lean: 0, spin: 0, v: 0, a: 0, puff: 0, burn: 0 }));
   const rootM = new THREE.Matrix4();
@@ -3049,7 +3046,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       }
       putPart(rideShadows, i, [SUN.x * 0.4, 0.04, SUN.z * 0.4, c.hw * 2 + 0.7, c.hl * 2 + 0.8, 1, 0, -Math.PI / 2], null);
       // the glow the headlights throw on the ground ahead
-      for (const s of [1, -1]) putPart(rideBeams, counts.beam++, driven ? [s * c.hw * 0.55, 0.06, c.hl + 2.4, 2.2, 4.6, 1, 0, -Math.PI / 2] : [0, -5, 0, 0, 0, 0, 0], null);
+      for (const s of [1, -1]) putPart(rideBeams, counts.beam++, driven ? [s * c.hw * 0.55, 0.06, c.hl + 2, 1.7, 3.8, 1, 0, -Math.PI / 2] : [0, -5, 0, 0, 0, 0, 0], null);
       // flames off the hood of one that burns, flickering, taller the nearer it is to going up
       st.burn = damp(st.burn, fire ? 1 : 0, 3, dt);
       const tall = 0.8 + (1 - c.hp / (c.max * BURN.at)) * 0.9;
