@@ -1260,9 +1260,9 @@ test('packets survive the trip and anything malformed is turned away', () => {
   assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(guestState(4, s, 7)))), { k: 's', round: 4, state: s, watch: 7 });
   assert.equal(parsePacket({ ...guestState(4, s), v: MAX_FIGHTERS }), null);
   const host = parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, -2.5, 'hard', [0, 1, -1], [[0, s], [2, s]]))));
-  assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]], glass: null, doors: [], mode: 'solo', teams: null });
+  assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]], glass: null, doors: [], mode: 'solo', teams: null, rides: [] });
   // the roster only goes with some of the host's reports
-  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]], glass: null, doors: null, mode: 'solo', teams: null });
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]], glass: null, doors: null, mode: 'solo', teams: null, rides: null });
   assert.equal(parsePacket({ ...hostState(4, 99, 3, 'hard', null, []), ro: 'all' }), null);
   assert.deepEqual(parsePacket(endOf(4, 2, [[2, 1, 3], [0, 2, 1]])), { k: 'end', round: 4, winner: 2, places: [[2, 1, 3], [0, 2, 1]] });
   assert.deepEqual(parsePacket(configOf(4, 'none', 'easy')), { k: 'cfg', round: 4, bots: 'none', level: 'easy', mode: 'solo', picks: [] });
@@ -7649,7 +7649,8 @@ test('in busy matches, the egg the camera follows never sees another egg blink o
   let raw = 0;
   let held = 0;
   let hidden = 0;
-  for (const seed of [2, 10]) {
+  // (seeds where eggs hide often enough, and the lines are crossed, to tell)
+  for (const seed of [10, 7]) {
     const names = botNames(seed);
     const entrants: Entrant[] = names.slice(0, MAX_FIGHTERS).map((name) => ({ name, color: '#fff', kind: 'bot', seat: -1 }));
     const m = createMatch({ seed, role: 'solo', level: 'hard', entrants, me: -1, countdown: 0, mode: 'duos' });

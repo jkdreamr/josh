@@ -2976,8 +2976,11 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
   }
   scene.add(...rideMeshes);
   const paintOf = (c: Ride) => CAR_COLORS[(map.cars[c.car]?.look ?? c.i) % CAR_COLORS.length];
-  /** What a car looked like last frame: its wheels' turn and roll, its lean, its speed, and when it last puffed smoke. */
-  const rideLook = rides.map(() => ({ steer: 0, roll: 0, pitch: 0, lean: 0, spin: 0, v: 0, a: 0, puff: 0, burn: 0 }));
+  /**
+   * What a car looked like last frame: its wheels' turn and roll, its lean, its speed, when it last puffed smoke, and
+   * where it was drawn (one that hasn't moved or changed since isn't drawn again).
+   */
+  const rideLook = rides.map(() => ({ steer: 0, roll: 0, pitch: 0, lean: 0, spin: 0, v: 0, a: 0, puff: 0, burn: 0, x: NaN, z: 0, hp: 0, dead: false }));
   const rootM = new THREE.Matrix4();
   const partM = new THREE.Matrix4();
   const bodyColor = new THREE.Color();
@@ -2997,8 +3000,9 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
    * from its exhaust and dust off the grass as it goes (when the camera is near), and flames and black smoke once it
    * burns; one gone up is a black shell.
    */
-  const placeRides = (dt: number, clock: number, near: (x: number, z: number) => boolean) => {
+  const placeRides = (dt: number, clock: number, matchClock: number, near: (x: number, z: number) => boolean) => {
     const counts = { box: 0, glass: 0, light: 0, wheel: 0, beam: 0, flame: 0 };
+    let moved = false;
     rides.forEach((c, i) => {
       const look = RIDE_LOOK[c.kind];
       const st = rideLook[i];
@@ -3015,45 +3019,58 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       st.a = c.a;
       const driven = !c.dead && c.seats[0] >= 0;
       const fire = burning(c);
-      dummy.position.set(c.x, c.dead ? -0.12 : 0, c.z);
-      dummy.rotation.set(-st.pitch, c.a, st.roll, 'YXZ');
-      dummy.scale.set(1, 1, 1);
-      dummy.updateMatrix();
-      rootM.copy(dummy.matrix);
-      const hurt = c.dead ? 1 : 1 - c.hp / c.max;
-      bodyColor.setHex(paintOf(c)).lerp(color2.setHex(0x2a2624), c.dead ? 0.92 : hurt * 0.35);
-      for (const p of look.boxes) putPart(rideBoxes, counts.box++, p, p[6] === PAINT ? bodyColor : c.dead ? color.setHex(0x1e1c1b) : color.setHex(p[6]));
-      // a burnt shell has no glass left
-      for (const p of look.glass) putPart(rideGlass, counts.glass++, c.dead ? [0, -5, 0, 0, 0, 0, 0] : p, null);
-      for (const p of look.lights) {
-        const tail = p[6] !== 0xfff4c8;
-        const on = driven ? (tail ? (fwd > 1 && st.pitch > 0.01 ? 1 : 0.55) : 1) : 0.15;
-        putPart(rideLights, counts.light++, p, c.dead ? color.setHex(0x1e1c1b) : color.setHex(p[6]).multiplyScalar(0.35 + on * 0.65));
-      }
-      for (const [x, z, r, w] of look.wheels) {
-        const front = z > 0;
-        dummy.position.set(x, r, z);
-        dummy.rotation.set(st.spin, front ? st.steer : 0, Math.PI / 2, 'YXZ');
-        dummy.scale.set(r, w, r);
-        dummy.updateMatrix();
-        partM.multiplyMatrices(rootM, dummy.matrix);
-        rideWheels.setMatrixAt(counts.wheel, partM);
-        // a hub plate through the axle, so the roll shows
-        dummy.scale.set(r * 0.9, w + 0.02, r * 0.18);
-        dummy.updateMatrix();
-        partM.multiplyMatrices(rootM, dummy.matrix);
-        rideHubs.setMatrixAt(counts.wheel++, partM);
-      }
-      putPart(rideShadows, i, [SUN.x * 0.4, 0.04, SUN.z * 0.4, c.hw * 2 + 0.7, c.hl * 2 + 0.8, 1, 0, -Math.PI / 2], null);
-      // the glow the headlights throw on the ground ahead
-      for (const s of [1, -1]) putPart(rideBeams, counts.beam++, driven ? [s * c.hw * 0.55, 0.06, c.hl + 2, 1.7, 3.8, 1, 0, -Math.PI / 2] : [0, -5, 0, 0, 0, 0, 0], null);
-      // flames off the hood of one that burns, flickering, taller the nearer it is to going up
       st.burn = damp(st.burn, fire ? 1 : 0, 3, dt);
-      const tall = 0.8 + (1 - c.hp / (c.max * BURN.at)) * 0.9;
-      for (let f = 0; f < 3; f++) {
-        const flick = 0.75 + Math.sin(clock * (13 + f * 4) + i) * 0.25;
-        const fz = c.hl * (0.55 - f * 0.4);
-        putPart(rideFlames, counts.flame++, st.burn > 0.02 ? [(f - 1) * 0.35, 1 + tall * 0.4, fz, 0.38 * st.burn, tall * flick * st.burn, 0.38 * st.burn, 0] : [0, -5, 0, 0, 0, 0, 0], color.setHex(f === 1 ? 0xffd34a : 0xff6a1a));
+      // parked just as it was last frame, its lean settled and no flames on it: its parts are where they were
+      const same = !driven && st.burn < 0.02 && c.x === st.x && c.z === st.z && c.hp === st.hp && c.dead === st.dead && Math.abs(st.roll) + Math.abs(st.pitch) + Math.abs(st.steer) < 1e-3;
+      Object.assign(st, { x: c.x, z: c.z, hp: c.hp, dead: c.dead });
+      if (same) {
+        counts.box += look.boxes.length;
+        counts.glass += look.glass.length;
+        counts.light += look.lights.length;
+        counts.wheel += look.wheels.length;
+        counts.beam += 2;
+        counts.flame += 3;
+      } else {
+        moved = true;
+        dummy.position.set(c.x, c.dead ? -0.12 : 0, c.z);
+        dummy.rotation.set(-st.pitch, c.a, st.roll, 'YXZ');
+        dummy.scale.set(1, 1, 1);
+        dummy.updateMatrix();
+        rootM.copy(dummy.matrix);
+        const hurt = c.dead ? 1 : 1 - c.hp / c.max;
+        bodyColor.setHex(paintOf(c)).lerp(color2.setHex(0x2a2624), c.dead ? 0.92 : hurt * 0.35);
+        for (const p of look.boxes) putPart(rideBoxes, counts.box++, p, p[6] === PAINT ? bodyColor : c.dead ? color.setHex(0x1e1c1b) : color.setHex(p[6]));
+        // a burnt shell has no glass left
+        for (const p of look.glass) putPart(rideGlass, counts.glass++, c.dead ? [0, -5, 0, 0, 0, 0, 0] : p, null);
+        for (const p of look.lights) {
+          const tail = p[6] !== 0xfff4c8;
+          const on = driven ? (tail ? (fwd > 1 && st.pitch > 0.01 ? 1 : 0.55) : 1) : 0.15;
+          putPart(rideLights, counts.light++, p, c.dead ? color.setHex(0x1e1c1b) : color.setHex(p[6]).multiplyScalar(0.35 + on * 0.65));
+        }
+        for (const [x, z, r, w] of look.wheels) {
+          const front = z > 0;
+          dummy.position.set(x, r, z);
+          dummy.rotation.set(st.spin, front ? st.steer : 0, Math.PI / 2, 'YXZ');
+          dummy.scale.set(r, w, r);
+          dummy.updateMatrix();
+          partM.multiplyMatrices(rootM, dummy.matrix);
+          rideWheels.setMatrixAt(counts.wheel, partM);
+          // a hub plate through the axle, so the roll shows
+          dummy.scale.set(r * 0.9, w + 0.02, r * 0.18);
+          dummy.updateMatrix();
+          partM.multiplyMatrices(rootM, dummy.matrix);
+          rideHubs.setMatrixAt(counts.wheel++, partM);
+        }
+        putPart(rideShadows, i, [SUN.x * 0.4, 0.04, SUN.z * 0.4, c.hw * 2 + 0.7, c.hl * 2 + 0.8, 1, 0, -Math.PI / 2], null);
+        // the glow the headlights throw on the ground ahead
+        for (const s of [1, -1]) putPart(rideBeams, counts.beam++, driven ? [s * c.hw * 0.55, 0.06, c.hl + 2, 1.7, 3.8, 1, 0, -Math.PI / 2] : [0, -5, 0, 0, 0, 0, 0], null);
+        // flames off the hood of one that burns, flickering, taller the nearer it is to going up
+        const tall = 0.8 + (1 - c.hp / (c.max * BURN.at)) * 0.9;
+        for (let f = 0; f < 3; f++) {
+          const flick = 0.75 + Math.sin(clock * (13 + f * 4) + i) * 0.25;
+          const fz = c.hl * (0.55 - f * 0.4);
+          putPart(rideFlames, counts.flame++, st.burn > 0.02 ? [(f - 1) * 0.35, 1 + tall * 0.4, fz, 0.38 * st.burn, tall * flick * st.burn, 0.38 * st.burn, 0] : [0, -5, 0, 0, 0, 0, 0], color.setHex(f === 1 ? 0xffd34a : 0xff6a1a));
+        }
       }
       if (!near(c.x, c.z)) return;
       st.puff -= dt;
@@ -3061,8 +3078,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       const [px, py, pz] = look.pipe;
       const sa = Math.sin(c.a);
       const ca = Math.cos(c.a);
-      if (fire || (c.dead && clock % 3 < 1.5)) {
-        // black smoke rolling up off it
+      if (fire || (c.dead && matchClock - c.at < 12 && clock % 3 < 1.5)) {
+        // black smoke rolling up off it (and off the shell a while)
         st.puff = 0.18;
         puff(c.x + (Math.random() - 0.5) * 1.2, 1.6, c.z + (Math.random() - 0.5) * 1.2, 0.7, 2.2, 0x2b2b2b, 0.5, 0.3, 1.3, -0.2, 2.6);
       } else if (driven) {
@@ -3075,6 +3092,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     // (the kinds have more parts or fewer: only as many as are in use)
     rideBoxes.count = counts.box;
     rideGlass.count = counts.glass;
+    if (!moved) return;
     for (const im of rideMeshes) {
       im.instanceMatrix.needsUpdate = true;
       if (im.instanceColor) im.instanceColor.needsUpdate = true;
@@ -5153,7 +5171,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       placeShades();
       placeDoors(dt, clock);
       placeStashes(false);
-      if (rides.length) placeRides(dt, clock, (x, z) => Math.abs(x - cam.x) < cam.view * 1.8 && Math.abs(z - cam.z) < cam.view * 1.8);
+      if (rides.length) placeRides(dt, clock, m.clock, (x, z) => Math.abs(x - cam.x) < cam.view * 1.8 && Math.abs(z - cam.z) < cam.view * 1.8);
       for (const bc of beacons) bc.mat.color.setHex(Math.sin(clock * 9) * bc.k > 0 ? (bc.k < 0 ? 0xff3030 : 0x3a7bff) : bc.k < 0 ? 0x5a1414 : 0x14285a);
       chestGlowMat.opacity = 0.35 + Math.sin(clock * 4) * 0.2;
 
