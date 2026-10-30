@@ -360,6 +360,9 @@ function Stage() {
   return <Play key={current.current.key} mode={current.current.mode} />;
 }
 
+/** The card for someone who joined just as a match was set up, and sits it out. */
+const SIT_OUT = { title: 'Sitting This One Out', detail: 'You Will Be in the Next Round.' };
+
 /** A stand-in while a guest waits for the host: the island with nobody on it. */
 const waitingMatch = (level: Level) => createMatch({ seed: 1, role: 'guest', level, entrants: [], me: -1 });
 
@@ -777,15 +780,23 @@ function Play({ mode }: { mode: StageMode }) {
     const o = onlineRef.current;
     const n = net.current;
     const m = match.current;
-    if (!o || !m || !n.synced) return;
+    if (!o || !m) return;
     const ours = o.handedOff.filter((h) => h.round === o.round);
     if (ours.length <= n.handoffs) return;
+    if (!n.synced) {
+      // made the host of a match we sat out: nothing to take over, nor to hold the next one for
+      n.handoffs = ours.length;
+      if (o.isHost && shellRef.current.status === 'over') shellRef.current.updateOver(SIT_OUT);
+      return;
+    }
     const now = performance.now() / 1000;
     for (const h of ours.slice(n.handoffs)) handOff(n, m, h.from, now);
     const me = { seat: o.seat, isHost: o.isHost, round: o.round };
     if (o.isHost && !n.host) {
       takeOver(n, m, me, o.players.map((p) => p.seat), now);
       hosting.current = true;
+      // (a card up since we were done watching: our timer runs the match from now, not from when we stopped)
+      lastStep.current = now;
       // a card already up: out early, it is the host's now; with the result in, the room may hear the match is over
       if (n.over && n.early) finishRef.current(false, true);
       else if (n.over) {
@@ -810,7 +821,7 @@ function Play({ mode }: { mode: StageMode }) {
       // Left out of the host's match (joined just as it was set up): sit it out rather than wait for good.
       const packet = !n.synced && from === 0 ? parsePacket(d) : null;
       if (packet?.k === 'S' && packet.round === o.round && packet.roster && !packet.roster.includes(o.seat)) {
-        if (shellRef.current.status === 'playing') shellRef.current.gameOver(undefined, { title: 'Sitting This One Out', detail: 'You Will Be in the Next Round.' });
+        if (shellRef.current.status === 'playing') shellRef.current.gameOver(undefined, SIT_OUT);
         return;
       }
       const next = receive(n, m, { seat: o.seat, isHost: o.isHost, round: o.round }, from, d, (seed, lvl, time, roster, md, teams) => guestMatch(o.players, o.seat, seed, lvl, time, roster, md, teams), performance.now() / 1000);

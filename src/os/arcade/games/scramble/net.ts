@@ -22,7 +22,7 @@
 // session.ts takeOver). So that it can, the host tells the guests likeliest to be next what each computer egg carries
 // (its kit), every guest keeps the last few seconds of what the host settled and hands it to the new host (who settles
 // whatever it hadn't heard of), and the host's reliable reports say how many hand-offs the match has had.
-import { AMMO_TYPES, BOOST, MATS, MAT_MAX, MAT_SPECS, MAX_ARMOR, MAX_RARITY, MAX_SCOPE, MELEE, MELEE_IDS, THROWS, THROW_IDS, USE_IDS, WEAPONS, WEAPON_IDS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
+import { AMMO_TYPES, BOOST, MATS, MAT_MAX, MAT_SPECS, MAX_ARMOR, MAX_PACK, MAX_RARITY, MAX_SCOPE, MELEE, MELEE_IDS, THROWS, THROW_IDS, USE_IDS, WEAPONS, WEAPON_IDS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
 import { DROP_BASE, HALF, opens, topX } from './map.ts';
 import { meta } from './meta.ts';
 import {
@@ -420,7 +420,7 @@ export function parseKit(a: unknown): Kit | null {
   const ammo = counts(AMMO_TYPES, 999);
   const items = counts(USE_IDS, 99);
   const [boost, pack, wood, stone, metal, mat, dropSeq, wallSeq] = v.slice(at);
-  if (guns[0] === undefined || guns[1] === undefined || melee >= MELEE_IDS.length || slot > SLOT_THROW || pick >= THROW_IDS.length || pack > 3 || mat >= MATS.length) return null;
+  if (guns[0] === undefined || guns[1] === undefined || melee >= MELEE_IDS.length || slot > SLOT_THROW || pick >= THROW_IDS.length || pack > MAX_PACK || mat >= MATS.length) return null;
   return { guns: [guns[0], guns[1]], melee: MELEE_IDS[melee], slot, pick: THROW_IDS[pick], throws, ammo, items, boost: Math.min(BOOST.max, boost), pack, wood: Math.min(MAT_MAX, wood), stone: Math.min(MAT_MAX, stone), metal: Math.min(MAT_MAX, metal), mat, dropSeq, wallSeq };
 }
 
