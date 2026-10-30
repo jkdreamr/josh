@@ -635,3 +635,17 @@
 .bd.is-phone .bd-bar {
   padding: 10px 14px calc(10px + var(--sab, 0px));
 }
+
+.bd-agent-learned h3 {
+  margin: 6px 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.bd-agent-learned ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: rgba(241, 243, 236, 0.78);
+}
