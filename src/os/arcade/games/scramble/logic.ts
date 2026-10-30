@@ -468,8 +468,8 @@ export type Ai = {
   /**
    * The car we're making for or riding in (-1 for none), until when (match time) we give up getting to it or driving,
    * where we drive to, and the wait before we think of a car again. At the wheel (see chauffeur): when we got in, the
-   * way we steer for and the wait before we look again, how long we've gone nowhere, backing up for so long, and how
-   * many times we've had to.
+   * way we steer for and the wait before we look again, how long we've gone nowhere, backing up for so long, how
+   * many times we've had to, and how far we had to go when we got in.
    */
   car: number;
   carT: number;
@@ -482,6 +482,7 @@ export type Ai = {
   slowT: number;
   backT: number;
   jams: number;
+  fromD: number;
 };
 
 export type Fighter = {
@@ -1320,6 +1321,7 @@ function newAi(m: Match, f: Fighter): Ai {
     slowT: 0,
     backT: 0,
     jams: 0,
+    fromD: 0,
   };
 }
 
@@ -4551,6 +4553,50 @@ export function applySeat(m: Match, fid: number, v: number, s: number, x: number
   return true;
 }
 
+/**
+ * The cars as a reliable report from the host has them, quietly (any news of them has come and gone): one gone up is
+ * a burnt shell where it stood with nobody in it, and the rest have the health the host says and who sits where (not
+ * a car whose seats changed here just now: the report may have set out before), and stand where it says while nobody
+ * drives them.
+ */
+export function syncRides(m: Match, notes: { i: number; x: number; z: number; a: number; hp: number; seats: number[] }[]) {
+  if (m.world) return;
+  for (const n of notes) {
+    const c = m.rides[n.i];
+    if (!c || c.dead) continue;
+    if (n.hp <= 0) {
+      for (const id of c.seats) {
+        const o = m.fighters[id];
+        if (o && o.ride === c.i) unseat(m, o);
+      }
+      c.dead = true;
+      c.hp = 0;
+      c.seats.fill(-1);
+      c.x = n.x;
+      c.z = n.z;
+      c.a = n.a;
+      c.vx = 0;
+      c.vz = 0;
+      continue;
+    }
+    if (m.clock - c.at < 1.5) continue;
+    c.hp = Math.min(c.max, n.hp);
+    for (let k = 0; k < c.seats.length; k++) {
+      const id = n.seats[k] ?? -1;
+      if (c.seats[k] === id) continue;
+      const was = m.fighters[c.seats[k]];
+      if (id >= 0 && m.fighters[id]) applySeat(m, id, c.i, k, c.x, c.z, c.a);
+      else if (was) unseat(m, was);
+      else c.seats[k] = -1;
+    }
+    if (c.seats[0] < 0) {
+      c.x = n.x;
+      c.z = n.z;
+      c.a = n.a;
+    }
+  }
+}
+
 /** Can an egg stand at (x, z), out of car `c`: on the island, out of every building and stairway, and clear of everything solid and every other car? */
 function roomBy(m: Match, c: Ride, x: number, z: number) {
   if (Math.abs(x) > EDGE - 0.5 || Math.abs(z) > EDGE - 0.5) return false;
@@ -5678,6 +5724,8 @@ function think(m: Match, f: Fighter, dt: number) {
       ai.backT = 0;
       ai.driveT = 0;
       ai.jams = 0;
+      ai.driveA = NaN;
+      ai.fromD = Math.hypot(ai.carX - c.x, ai.carZ - c.z);
     }
   }
   if (m.mode !== 'solo' && !inp.hold && !f.using && !bring(m, f, ai)) share(m, f, ai);
@@ -5908,7 +5956,8 @@ const CAR_NEAR = 28;
  * where it was going. True while it's making for one.
  */
 function carFor(m: Match, f: Fighter, ai: Ai, far: number) {
-  if (!m.rides.length || isDeep(f.x) || f.y > 1) return false;
+  // (nobody drives down a stairway)
+  if (!m.rides.length || isDeep(f.x) || isDeep(ai.gx) || f.y > 1) return false;
   let c = ai.car >= 0 ? m.rides[ai.car] : undefined;
   if (c && (seatFor(m, c, f) < 0 || burning(c) || m.time > ai.carT || (c.seats[0] < 0 ? far < CAR_FAR * 0.7 : Math.hypot(c.vx, c.vz) > 4))) {
     ai.car = -1;
@@ -5949,13 +5998,15 @@ function carFor(m: Match, f: Fighter, ai: Ai, far: number) {
 
 /** The turns a computer egg at the wheel tries, straight on first. */
 const DRIVE_TURNS = [0, 0.3, -0.3, 0.65, -0.65, 1.05, -1.05, 1.5, -1.5, 2, -2];
+/** How hard a computer egg reckons on braking (meters a second, a second), to stop short of what's ahead. */
+const BOT_BRAKE = 12;
 
 /**
  * A computer egg at the wheel drives where it was going (on into the storm's circle as it moves): it feels the way
- * ahead for a clear line a car's width across (see wayClear), eases off near the end, into sharp turns and with no
- * way clear, and backs up when it's stuck. It gets out once it's there, the car is on fire, it has been stuck too
- * often or driven long enough, or there's a fight right by it going slow; in teams it waits a moment first for any
- * teammates on their way to get in.
+ * ahead for the first clear line a car's width across (see clearFor), round to it from straight there, slows for a
+ * sharp turn, the end of the way and anything ahead it couldn't stop short of (braking hard if need be), and backs up
+ * when it's stuck. It gets out once it's there, the car is on fire, it has been stuck too often or driven long
+ * enough, or there's a fight right by it going slow; in teams it first waits a moment for teammates on their way in.
  */
 function chauffeur(m: Match, f: Fighter, ai: Ai, c: Ride, dt: number) {
   const inp = f.input;
@@ -5972,7 +6023,9 @@ function chauffeur(m: Match, f: Fighter, ai: Ai, c: Ride, dt: number) {
   const speed = Math.hypot(c.vx, c.vz);
   const t = ai.target >= 0 ? m.fighters[ai.target] : undefined;
   const fight = !!t && fighting(t) && Math.hypot(t.x - f.x, t.z - f.z) < 12 && speed < 6;
-  if (d < 10 || burning(c) || ai.jams > 4 || m.time > ai.carT || fight) {
+  // (and a car that won't get out of where it's parked is soon left there)
+  const going = m.time - ai.boardAt < 12 || d < ai.fromD - 15;
+  if (d < 10 || isDeep(ai.carX) || burning(c) || ai.jams > 3 || !going || m.time > ai.carT || fight) {
     inp.interact = true;
     ai.car = -1;
     ai.carCool = 20 + m.rng() * 20;
@@ -5980,65 +6033,95 @@ function chauffeur(m: Match, f: Fighter, ai: Ai, c: Ride, dt: number) {
   }
   if (m.time - ai.boardAt < 3 && m.fighters.some((o) => o !== f && o.team === f.team && o.ai?.car === c.i && o.ride < 0 && upright(o))) return;
   if (ai.backT > 0) {
-    // backing up, the tail swinging off to one side
+    // backing up, its nose swinging round the way we want to go
     ai.backT -= dt;
-    const a = c.a + Math.PI + ai.strafe * 0.5;
+    const a = c.a + Math.PI + ai.strafe * 0.6;
     inp.mx = Math.sin(a);
     inp.mz = Math.cos(a);
     return;
   }
+  const look = c.hl + 5 + speed * 0.8;
+  const want = Math.atan2(dx, dz);
   ai.driveT -= dt;
   if (ai.driveT <= 0) {
     ai.driveT = 0.12;
-    const want = Math.atan2(dx, dz);
-    const look = c.hl + 4 + speed * 0.6;
+    const need = Math.min(look, d);
+    const was = ai.driveA;
+    let best = -1;
     ai.driveA = NaN;
-    for (const turn of DRIVE_TURNS)
-      if (wayClear(m, f, c, want + turn, look)) {
+    // straight there; else on the way we chose (round whatever is in the way), while it's clear; else the first clear way
+    if (!Number.isNaN(was) && Math.abs(angleDiff(was, want)) < 2.1 && clearFor(m, f, c, want, look) < need && clearFor(m, f, c, was, look) >= need) ai.driveA = was;
+    else
+      for (const turn of DRIVE_TURNS) {
+      const free = clearFor(m, f, c, want + turn, look);
+      if (free >= need) {
         ai.driveA = want + turn;
         break;
       }
+        // none clear all the way: the one that goes farthest
+        if (free > best && free > c.hl + 3) {
+          best = free;
+          ai.driveA = want + turn;
+        }
+      }
   }
   const lost = Number.isNaN(ai.driveA);
-  const a = lost ? Math.atan2(dx, dz) : ai.driveA;
-  const off = Math.abs(angleDiff(a, c.a));
-  const k = lost ? 0.35 : d < 30 || off > 0.9 ? 0.6 : 1;
-  inp.mx = Math.sin(a) * k;
-  inp.mz = Math.cos(a) * k;
-  inp.brake = off > 1.3 && speed > 11;
+  const a = lost ? want : ai.driveA;
+  const turn = angleDiff(a, c.a);
+  const off = Math.abs(turn);
+  const ahead = clearFor(m, f, c, c.a, look) - c.hl - 1.5;
+  // a tight turn with no room ahead to make it: back up, swinging round
+  if (off > 1.4 && ahead < 3 && speed < 4) {
+    ai.backT = 0.9;
+    ai.strafe = turn >= 0 ? 1 : -1;
+    return;
+  }
+  // as fast as it could still stop short of what's ahead, round a turn and at the end of the way
+  const top = topSpeed(m, c);
+  const fwd = c.vx * Math.sin(c.a) + c.vz * Math.cos(c.a);
+  const safe = Math.min(Math.sqrt(2 * BOT_BRAKE * Math.max(0, ahead)) + 3, off > 0.8 ? 7 : off > 0.35 ? 13 : top, 6 + d * 0.5, lost ? 5 : top);
+  if (fwd > safe + 2) {
+    // the brakes (the stick back the way it came)
+    inp.mx = -Math.sin(c.a);
+    inp.mz = -Math.cos(c.a);
+  } else {
+    const k = Math.max(0.3, Math.min(1, safe / top));
+    inp.mx = Math.sin(a) * k;
+    inp.mz = Math.cos(a) * k;
+  }
   // gone nowhere a moment: back up, then try again
   ai.slowT = speed < 1.5 ? ai.slowT + dt : 0;
   if (ai.slowT > 1.2) {
     ai.slowT = 0;
     ai.backT = 1;
     ai.jams++;
-    ai.strafe = m.rng() < 0.5 ? -1 : 1;
+    ai.strafe = turn >= 0 ? 1 : -1;
   }
 }
 
 /**
- * Is the way along `b` clear for a car for `look` meters, its width across: nothing solid, no building, stairway or
- * other car, and nobody of its driver's team (never run over the team)?
+ * How far the way along `b` is clear for a car, its width across, up to `look` meters: nothing solid, no building,
+ * stairway or other car, and nobody of its driver's team (never run over the team).
  */
-function wayClear(m: Match, f: Fighter, c: Ride, b: number, look: number) {
+function clearFor(m: Match, f: Fighter, c: Ride, b: number, look: number) {
   const ex = Math.sin(b);
   const ez = Math.cos(b);
   const side = c.hw + 0.25;
+  let free = look;
   for (const k of [-1, 0, 1]) {
     const x = c.x + ez * side * k;
     const z = c.z - ex * side * k;
-    if (castRay(m, x, z, ex, ez, look, f.id, false, true) !== null) return false;
-    let hit = false;
-    lotsNear(m.map, x + (ex * look) / 2, z + (ez * look) / 2, look / 2 + 1, (o) => {
-      if (!hit && rayBox(x, z, ex, ez, look, o.x, o.z, o.hw, o.hd) < Infinity) hit = true;
+    const hit = castRay(m, x, z, ex, ez, free, f.id, false, true);
+    if (hit) free = hit.t;
+    lotsNear(m.map, x + (ex * free) / 2, z + (ez * free) / 2, free / 2 + 1, (o) => {
+      free = Math.min(free, rayBox(x, z, ex, ez, free, o.x, o.z, o.hw, o.hd));
     });
-    if (hit) return false;
   }
   for (const id of m.teams[f.team] ?? []) {
     const o = m.fighters[id];
-    if (o !== f && o.ride < 0 && fighting(o) && rayCircle(c.x, c.z, ex, ez, look, o.x, o.z, side + FIGHTER_R) < Infinity) return false;
+    if (o !== f && o.ride < 0 && fighting(o)) free = Math.min(free, rayCircle(c.x, c.z, ex, ez, free, o.x, o.z, side + FIGHTER_R));
   }
-  return true;
+  return free;
 }
 
 /** A car on fire close enough to an egg to catch it when it goes up, as a circle to get out of, or null. */

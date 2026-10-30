@@ -1,7 +1,7 @@
 // One client's side of an online Scramble match: what it does with each message from the room, what it sends on its
 // regular tick, the events it queues and flushes, and when the match is over. Pure, so a whole room can be simulated
 // in a test; index.tsx connects it to the real room.
-import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, MAX_TEAMS, TEAM_SIZE, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, ordinal, owned, step, teamCount, teamsLeft, viewAt, type Entrant, type Ev, type Fighter, type Level, type Match, type Mode } from './logic.ts';
+import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, MAX_TEAMS, TEAM_SIZE, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, ordinal, owned, step, syncRides, teamCount, teamsLeft, viewAt, type Entrant, type Ev, type Fighter, type Level, type Match, type Mode } from './logic.ts';
 import { BUS_Y, stormEnd } from './map.ts';
 import { actorOf, applyNet, endOf, guestState, hostState, packEvents, parsePacket, pieceEv, placesOf, stateKey, stateOf, toNet, type NetEv, type State } from './net.ts';
 
@@ -257,6 +257,8 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
         const st = p.doors[i] ?? 0;
         if (m.doors[i] !== st && m.clock - m.doorAt[i] > 1) m.doors[i] = st;
       }
+    // and the cars that aren't as they started, the same way
+    if (p.rides && !late) syncRides(m, p.rides);
   } else if (p.k === 'e') {
     if (!s.synced || (!me.isHost && from !== 0)) return m;
     for (const [origin, evs] of p.groups) {
@@ -328,7 +330,7 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
     let sent = s.sent.get(seat);
     if (!sent) s.sent.set(seat, (sent = []));
     const list = g ? statesFor(m, g, states, keys, sent, s.ticks, s.watching.get(g.id) ?? -1) : [];
-    out.push({ d: hostState(me.round, m.seed, m.time, m.level, fast ? null : s.roster, list, m.broken, m.doors, m.mode, teams), fast, to: seat });
+    out.push({ d: hostState(me.round, m.seed, m.time, m.level, fast ? null : s.roster, list, m.broken, m.doors, m.mode, teams, m.rides), fast, to: seat });
   }
   // a guest that has only now started reporting may have missed pieces built before it was ready: here they all are
   for (const seat of s.fresh) if (present.includes(seat) && m.walls.size) for (const d of packEvents(me.round, [...m.walls.values()].filter((w) => w.dir >= 0).map((w): [number, NetEv] => [me.seat, pieceEv(w)]))) out.push({ d, fast: false, to: seat });
