@@ -3,7 +3,7 @@
 import type { T } from './gl';
 import { createGL, damp, disposeTree, type GL } from './gl';
 import { BARREL_R, BEACH, BRIDGE_HALF, BUSH_R, BUS_Y, CAMP, CHEST_HD, CHEST_HW, CRATE_HALF, DEEP, DEEP_H, FENCE_T, FRIDGE_HD, FRIDGE_HW, HALF, HAY_HD, HAY_HW, LAMP_R, LOG_R, PAD, RIVER_HALF, ROAD_HALF, STASH, SUPPLY_FALL, SUPPLY_HALF, TABLE_HD, TABLE_HW, TOILET_R, WALL_T, bridgeAt, busAt, fieldAt, isDeep, isStash, padAt, peekAt, riverDist2, roadAt, type Building, type BuildingKind, type Container } from './map';
-import { BARREL, BUILD_START, CELL_B, CRATE_HP, DIR_X, DIR_Z, DOOR_GONE, DOOR_IN, DOOR_OPENING, DOOR_OUT, F_DRINKING, F_GHILLIE, F_HEALING, F_PAN, F_RELOAD, F_REVIVE, F_SHIELDING, F_SMOOTHIE, F_SPIN, F_STUN, F_TART, GAP, HAY_HP, LEVEL_H, MATE_COLORS, PING_T, TOILET_HP, SEEN_HOLD, clearLine, concealed, editable, gridOf, held, levelOf, makePiece, mateIndex, owned, pieceIn, pingOf, planPiece, reviveShare, revivedBy, roofOver, seenStep, shut, tossAt, viewAt, type Ev, type Fighter, type Held, type LootItem, type Seen, type Match, type Plan, type Toss, type Wall, type Zone } from './logic';
+import { BARREL, BURN, BUILD_START, CELL_B, CRATE_HP, RIDES, angleDiff, burning, DIR_X, DIR_Z, DOOR_GONE, DOOR_IN, DOOR_OPENING, DOOR_OUT, F_DRINKING, F_GHILLIE, F_HEALING, F_PAN, F_RELOAD, F_REVIVE, F_SHIELDING, F_SMOOTHIE, F_SPIN, F_STUN, F_TART, GAP, HAY_HP, LEVEL_H, MATE_COLORS, PING_T, TOILET_HP, SEEN_HOLD, clearLine, concealed, editable, gridOf, held, levelOf, makePiece, mateIndex, owned, pieceIn, pingOf, planPiece, reviveShare, revivedBy, roofOver, seenStep, shut, tossAt, viewAt, type Ev, type Fighter, type Held, type LootItem, type Ride, type RideKind, type Seen, type Match, type Plan, type Toss, type Wall, type Zone } from './logic';
 import { MATS, MAT_SPECS, MELEE, RARITY_COLORS, THROWS, WEAPONS, isMelee, isThrow, isWeapon, legendary, type LootDef, type Mat, type UseId } from './items';
 
 type Three = typeof import('three');
@@ -2809,18 +2809,20 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     for (const [k, y] of [0.5, 0.95].entries()) put(fenceRails, i * 2 + k, r.x, y, r.z, r.hw * 2, 0.1, r.hd * 2);
   });
   postSpots.forEach((p, i) => put(fencePosts, i, p.x, 0.6, p.z, FENCE_T + 0.1, 1.2, FENCE_T + 0.1));
-  // cars: a body, glass with a roof on it (a cab and a bed on a truck) and four wheels
+  // the old cars that never go anywhere: a body, glass with a roof on it and four wheels, the paint gone dull and
+  // rusty (those that can be driven are drawn where they are every frame, see placeRides)
   const CAR_COLORS = [0xe53935, 0x1e88e5, 0xf5f7fa, 0x43a047, 0xfdd835, 0x5e35b1];
-  const carBodies = many(G.box, lambert(0xffffff), map.cars.length);
-  const carCabins = many(G.box, lambert(0xffffff), map.cars.length);
-  const carTops = many(G.box, lambert(0xffffff), map.cars.length);
+  const oldCars = map.cars.filter((c) => !c.ride);
+  const carBodies = many(G.box, lambert(0xffffff), oldCars.length);
+  const carCabins = many(G.box, lambert(0xffffff), oldCars.length);
+  const carTops = many(G.box, lambert(0xffffff), oldCars.length);
   // (their own material: one shared with plain meshes would switch shaders between them every frame)
-  const wheels = many(G.cyl, lambert(0x2b2d33), map.cars.length * 4);
-  map.cars.forEach((c, i) => {
+  const wheels = many(G.cyl, lambert(0x2b2d33), oldCars.length * 4);
+  oldCars.forEach((c, i) => {
     const ry = c.alongX ? Math.PI / 2 : 0;
     const len = c.alongX ? c.hw * 2 : c.hd * 2;
     const wide = c.alongX ? c.hd * 2 : c.hw * 2;
-    const paint = CAR_COLORS[c.look % CAR_COLORS.length];
+    const paint = color2.setHex(CAR_COLORS[c.look % CAR_COLORS.length]).lerp(color.setHex(0x7a5a42), 0.55).getHex();
     // a point `u` meters along the car from its middle (toward the nose)
     const at = (u: number) => [c.x + (c.alongX ? u : 0), c.z + (c.alongX ? 0 : u)] as const;
     if (c.truck) {
@@ -2832,7 +2834,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       put(carTops, i, bx, 1.02, bz, wide - 0.08, 0.22, len - 1.9, ry, color.setHex(0x4a4e55));
     } else {
       put(carBodies, i, c.x, 0.55, c.z, wide, 0.6, len, ry, color.setHex(paint));
-      put(carCabins, i, c.x, 1.08, c.z, wide - 0.2, 0.5, len * 0.55, ry, color.setHex(0x9ecbe8));
+      put(carCabins, i, c.x, 1.08, c.z, wide - 0.2, 0.5, len * 0.55, ry, color.setHex(0x8a9ba3));
       put(carTops, i, c.x, 1.36, c.z, wide - 0.36, 0.07, len * 0.42, ry, color.setHex(paint));
     }
     for (const [k, [a, b]] of [
@@ -2852,6 +2854,240 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     }
   });
   scene.add(roads, poles, lampHeads, lampCaps, mailPosts, mailBoxes, tableTops, benches, tableLegs, fenceRails, fencePosts, carBodies, carCabins, carTops, wheels);
+
+  // the cars that can be driven: open tops (a coupe, a jeep with a roll bar, a pickup with a glass roof on its cab and
+  // a bed behind), so whoever sits in one shows. Moved, turned and lit every frame, one draw call a kind of part for
+  // all of them: painted panels, glass, wheels and their hubs (turning as they roll, the front ones steering), head
+  // and tail lights, the glow the headlights throw ahead, a shadow, and flames on one that burns.
+  type RidePart = [x: number, y: number, z: number, sx: number, sy: number, sz: number, c: number, rx?: number];
+  const PAINT = -1;
+  const TRIM = 0x2b2d33;
+  const FLOOR = 0x3a3d44;
+  const LEATHER = 0x6b4630;
+  const seatParts = (kind: RideKind, y: number): RidePart[] =>
+    RIDES[kind].seats.flatMap(([u, v]): RidePart[] => [
+      [u, y, v, 0.58, 0.16, 0.55, LEATHER],
+      [u, y + 0.24, v - 0.3, 0.58, 0.5, 0.12, LEATHER],
+    ]);
+  const RIDE_LOOK: Record<RideKind, { boxes: RidePart[]; glass: RidePart[]; lights: RidePart[]; wheels: [x: number, z: number, r: number, w: number][]; sit: number[]; pipe: [number, number, number] }> = {
+    coupe: {
+      boxes: [
+        [0, 0.55, 0, 1.8, 0.5, 3.8, PAINT],
+        [0, 0.84, 1.15, 1.7, 0.08, 1.4, PAINT],
+        [0, 0.84, -1.4, 1.7, 0.08, 0.9, PAINT],
+        [0, 0.81, -0.2, 1.5, 0.03, 1.5, FLOOR],
+        [0, 0.42, 1.93, 1.86, 0.16, 0.1, TRIM],
+        [0, 0.42, -1.93, 1.86, 0.16, 0.1, TRIM],
+        ...seatParts('coupe', 0.9),
+      ],
+      glass: [[0, 1.08, 0.66, 1.62, 0.46, 0.05, 0, -0.45]],
+      lights: [
+        [0.58, 0.64, 1.91, 0.36, 0.14, 0.05, 0xfff4c8],
+        [-0.58, 0.64, 1.91, 0.36, 0.14, 0.05, 0xfff4c8],
+        [0.64, 0.66, -1.91, 0.3, 0.12, 0.05, 0xd8262a],
+        [-0.64, 0.66, -1.91, 0.3, 0.12, 0.05, 0xd8262a],
+      ],
+      wheels: [
+        [0.88, 1.2, 0.36, 0.28],
+        [-0.88, 1.2, 0.36, 0.28],
+        [0.88, -1.2, 0.36, 0.28],
+        [-0.88, -1.2, 0.36, 0.28],
+      ],
+      sit: [0.5, 0.5],
+      pipe: [-0.5, 0.35, -1.95],
+    },
+    jeep: {
+      boxes: [
+        [0, 0.62, 0, 1.8, 0.56, 3.8, PAINT],
+        [0, 0.93, 1.38, 1.72, 0.06, 1.05, PAINT],
+        [0, 0.91, -0.3, 1.56, 0.03, 2.5, FLOOR],
+        [0.82, 1.32, -0.2, 0.1, 0.8, 0.1, TRIM],
+        [-0.82, 1.32, -0.2, 0.1, 0.8, 0.1, TRIM],
+        [0, 1.72, -0.2, 1.74, 0.1, 0.1, TRIM],
+        [0, 0.46, 1.95, 1.9, 0.2, 0.14, TRIM],
+        [0, 0.46, -1.95, 1.9, 0.2, 0.14, TRIM],
+        ...seatParts('jeep', 1),
+      ],
+      glass: [[0, 1.2, 0.86, 1.7, 0.48, 0.05, 0, -0.2]],
+      lights: [
+        [0.6, 0.74, 1.91, 0.3, 0.2, 0.05, 0xfff4c8],
+        [-0.6, 0.74, 1.91, 0.3, 0.2, 0.05, 0xfff4c8],
+        [0.66, 0.74, -1.91, 0.24, 0.16, 0.05, 0xd8262a],
+        [-0.66, 0.74, -1.91, 0.24, 0.16, 0.05, 0xd8262a],
+      ],
+      wheels: [
+        [0.9, 1.25, 0.42, 0.34],
+        [-0.9, 1.25, 0.42, 0.34],
+        [0.9, -1.25, 0.42, 0.34],
+        [-0.9, -1.25, 0.42, 0.34],
+      ],
+      sit: [0.62, 0.62, 0.62, 0.62],
+      pipe: [-0.55, 0.38, -1.98],
+    },
+    truck: {
+      boxes: [
+        [0, 0.64, 0, 2.2, 0.6, 5.4, PAINT],
+        [0, 1.2, 1.55, 2.1, 0.55, 1.95, PAINT],
+        [0, 1.48, 1.45, 1.86, 0.03, 1.5, FLOOR],
+        [0.98, 1.86, 0.65, 0.09, 0.8, 0.09, TRIM],
+        [-0.98, 1.86, 0.65, 0.09, 0.8, 0.09, TRIM],
+        [0, 2.26, 0.65, 2.05, 0.09, 0.09, TRIM],
+        [0, 0.96, -1.08, 2.0, 0.03, 3.1, FLOOR],
+        [1.04, 1.16, -1.08, 0.1, 0.42, 3.1, PAINT],
+        [-1.04, 1.16, -1.08, 0.1, 0.42, 3.1, PAINT],
+        [0, 1.16, -2.66, 2.18, 0.42, 0.1, PAINT],
+        [0, 0.5, 2.74, 2.24, 0.24, 0.14, TRIM],
+        ...seatParts('truck', 1.56).slice(0, 4),
+        ...seatParts('truck', 1.06).slice(4),
+      ],
+      glass: [[0, 1.84, 2.34, 1.9, 0.66, 0.05, 0, -0.12]],
+      lights: [
+        [0.76, 0.8, 2.71, 0.36, 0.18, 0.05, 0xfff4c8],
+        [-0.76, 0.8, 2.71, 0.36, 0.18, 0.05, 0xfff4c8],
+        [0.86, 0.84, -2.71, 0.26, 0.2, 0.05, 0xd8262a],
+        [-0.86, 0.84, -2.71, 0.26, 0.2, 0.05, 0xd8262a],
+      ],
+      wheels: [
+        [1.04, 1.75, 0.48, 0.36],
+        [-1.04, 1.75, 0.48, 0.36],
+        [1.04, -1.65, 0.48, 0.36],
+        [-1.04, -1.65, 0.48, 0.36],
+      ],
+      sit: [1.0, 1.0, 0.98, 0.98],
+      pipe: [-0.7, 0.4, -2.75],
+    },
+  };
+  const rides = m.rides;
+  const most = <K extends 'boxes' | 'glass' | 'lights'>(k: K) => Math.max(...Object.values(RIDE_LOOK).map((l) => l[k].length));
+  const rideBoxes = many(G.box, lambert(0xffffff), rides.length * most('boxes'));
+  const rideGlass = many(G.box, lambert(0xcfe8f2, { transparent: true, opacity: 0.38, depthWrite: false }), rides.length * most('glass'));
+  const rideLights = many(G.box, basic(0xffffff), rides.length * 4);
+  const rideWheels = many(G.cyl, lambert(0x24262b), rides.length * 4);
+  const rideHubs = many(G.box, lambert(0xb8bec6), rides.length * 4);
+  const rideShadows = many(G.plane, M.shadow, rides.length);
+  const headGlow = basic(0xfff1c4, { map: keep(glowTexture(THREE)), transparent: true, opacity: 0.3, depthWrite: false, blending: ADDITIVE });
+  const rideBeams = many(G.plane, headGlow, rides.length * 2);
+  const rideFlames = many(G.pine, basic(0xffffff), rides.length * 3);
+  const rideMeshes = [rideBoxes, rideGlass, rideLights, rideWheels, rideHubs, rideShadows, rideBeams, rideFlames];
+  for (const im of rideMeshes) {
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    // (they go wherever they're driven, so never culled by where they started)
+    im.frustumCulled = false;
+  }
+  scene.add(...rideMeshes);
+  const paintOf = (c: Ride) => {
+    const car = map.cars[c.car];
+    return CAR_COLORS[car.look % CAR_COLORS.length];
+  };
+  /** What a car looked like last frame: its wheels' turn and roll, its lean, its speed, and when it last puffed smoke. */
+  const rideLook = rides.map(() => ({ steer: 0, roll: 0, pitch: 0, lean: 0, spin: 0, v: 0, a: 0, puff: 0, burn: 0 }));
+  const rootM = new THREE.Matrix4();
+  const partM = new THREE.Matrix4();
+  const bodyColor = new THREE.Color();
+  /** Puts part `p` of a car (in the car's own frame, see rootM) into instance `i` of `im`. */
+  const putPart = (im: T.InstancedMesh, i: number, p: RidePart, tint: T.Color | null, ry = 0, rz = 0) => {
+    dummy.position.set(p[0], p[1], p[2]);
+    dummy.rotation.set(p[7] ?? 0, ry, rz, 'YXZ');
+    dummy.scale.set(p[3], p[4], p[5]);
+    dummy.updateMatrix();
+    partM.multiplyMatrices(rootM, dummy.matrix);
+    im.setMatrixAt(i, partM);
+    if (tint) im.setColorAt(i, tint);
+  };
+  /**
+   * Every car where it is, the way it faces, leaning into its turns and back as it speeds up, its front wheels
+   * steering and all of them rolling, its lights on while someone drives it (the tail lights brighter braking), smoke
+   * from its exhaust and dust off the grass as it goes (when the camera is near), and flames and black smoke once it
+   * burns; one gone up is a black shell.
+   */
+  const placeRides = (dt: number, clock: number, near: (x: number, z: number) => boolean) => {
+    const counts = { box: 0, glass: 0, light: 0, wheel: 0, beam: 0, flame: 0 };
+    rides.forEach((c, i) => {
+      const look = RIDE_LOOK[c.kind];
+      const st = rideLook[i];
+      const speed = Math.hypot(c.vx, c.vz);
+      const fwd = c.vx * Math.sin(c.a) + c.vz * Math.cos(c.a);
+      const k = dt > 0 ? 1 / dt : 0;
+      // the wheels turn the way it turns, and it leans out of the turn and back as it speeds up
+      const turnRate = dt > 0 ? angleDiff(c.a, st.a) * k : 0;
+      st.steer = damp(st.steer, Math.max(-0.5, Math.min(0.5, (turnRate / Math.max(2, Math.abs(fwd))) * 2.4 * Math.sign(fwd || 1))), 10, dt);
+      st.roll = damp(st.roll, Math.max(-0.07, Math.min(0.07, turnRate * fwd * 0.004)), 6, dt);
+      st.pitch = damp(st.pitch, Math.max(-0.05, Math.min(0.05, (fwd - st.v) * k * 0.004)), 6, dt);
+      st.spin += (fwd * dt) / look.wheels[0][2];
+      st.v = fwd;
+      st.a = c.a;
+      const driven = !c.dead && c.seats[0] >= 0;
+      const fire = burning(c);
+      dummy.position.set(c.x, c.dead ? -0.12 : 0, c.z);
+      dummy.rotation.set(-st.pitch, c.a, st.roll, 'YXZ');
+      dummy.scale.set(1, 1, 1);
+      dummy.updateMatrix();
+      rootM.copy(dummy.matrix);
+      const hurt = c.dead ? 1 : 1 - c.hp / c.max;
+      bodyColor.setHex(paintOf(c)).lerp(color2.setHex(0x2a2624), c.dead ? 0.92 : hurt * 0.35);
+      for (const p of look.boxes) putPart(rideBoxes, counts.box++, p, p[6] === PAINT ? bodyColor : c.dead ? color.setHex(0x1e1c1b) : color.setHex(p[6]));
+      // a burnt shell has no glass left
+      for (const p of look.glass) putPart(rideGlass, counts.glass++, c.dead ? [0, -5, 0, 0, 0, 0, 0] : p, null);
+      for (const p of look.lights) {
+        const tail = p[6] !== 0xfff4c8;
+        const on = driven ? (tail ? (fwd > 1 && st.pitch > 0.01 ? 1 : 0.55) : 1) : 0.15;
+        putPart(rideLights, counts.light++, p, c.dead ? color.setHex(0x1e1c1b) : color.setHex(p[6]).multiplyScalar(0.35 + on * 0.65));
+      }
+      for (const [x, z, r, w] of look.wheels) {
+        const front = z > 0;
+        dummy.position.set(x, r, z);
+        dummy.rotation.set(st.spin, front ? st.steer : 0, Math.PI / 2, 'YXZ');
+        dummy.scale.set(r, w, r);
+        dummy.updateMatrix();
+        partM.multiplyMatrices(rootM, dummy.matrix);
+        rideWheels.setMatrixAt(counts.wheel, partM);
+        // a hub plate through the axle, so the roll shows
+        dummy.scale.set(r * 0.9, w + 0.02, r * 0.18);
+        dummy.updateMatrix();
+        partM.multiplyMatrices(rootM, dummy.matrix);
+        rideHubs.setMatrixAt(counts.wheel++, partM);
+      }
+      putPart(rideShadows, i, [SUN.x * 0.4, 0.04, SUN.z * 0.4, c.hw * 2 + 0.7, c.hl * 2 + 0.8, 1, 0, -Math.PI / 2], null);
+      // the glow the headlights throw on the ground ahead
+      for (const s of [1, -1]) putPart(rideBeams, counts.beam++, driven ? [s * c.hw * 0.55, 0.06, c.hl + 2.4, 2.2, 4.6, 1, 0, -Math.PI / 2] : [0, -5, 0, 0, 0, 0, 0], null);
+      // flames off the hood of one that burns, flickering, taller the nearer it is to going up
+      st.burn = damp(st.burn, fire ? 1 : 0, 3, dt);
+      const tall = 0.8 + (1 - c.hp / (c.max * BURN.at)) * 0.9;
+      for (let f = 0; f < 3; f++) {
+        const flick = 0.75 + Math.sin(clock * (13 + f * 4) + i) * 0.25;
+        const fz = c.hl * (0.55 - f * 0.4);
+        putPart(rideFlames, counts.flame++, st.burn > 0.02 ? [(f - 1) * 0.35, 1 + tall * 0.4, fz, 0.38 * st.burn, tall * flick * st.burn, 0.38 * st.burn, 0] : [0, -5, 0, 0, 0, 0, 0], color.setHex(f === 1 ? 0xffd34a : 0xff6a1a));
+      }
+      if (!near(c.x, c.z)) return;
+      st.puff -= dt;
+      if (st.puff > 0) return;
+      const [px, py, pz] = look.pipe;
+      const sa = Math.sin(c.a);
+      const ca = Math.cos(c.a);
+      if (fire || (c.dead && clock % 3 < 1.5)) {
+        // black smoke rolling up off it
+        st.puff = 0.18;
+        puff(c.x + (Math.random() - 0.5) * 1.2, 1.6, c.z + (Math.random() - 0.5) * 1.2, 0.7, 2.2, 0x2b2b2b, 0.5, 0.3, 1.3, -0.2, 2.6);
+      } else if (driven) {
+        // exhaust from its pipe, quicker as it goes, and dust kicked off the grass behind it at speed
+        st.puff = speed > 2 ? 0.12 : 0.35;
+        puff(c.x + ca * px + sa * pz, py, c.z - sa * px + ca * pz, 0.22, 0.8, 0xd8d8d8, 0.45, -c.vx * 0.15, 0.5, -c.vz * 0.15, 1.8);
+        if (speed > 8 && !roadAt(map, c.x, c.z)) puff(c.x - sa * c.hl, 0.2, c.z - ca * c.hl, 0.5, 0.7, 0xd8c99a, 0.35, -c.vx * 0.1, 0.4, -c.vz * 0.1, 1.6);
+      } else st.puff = 0.5;
+    });
+    // (the kinds have more parts or fewer: only as many as are in use)
+    rideBoxes.count = counts.box;
+    rideGlass.count = counts.glass;
+    for (const im of rideMeshes) {
+      im.instanceMatrix.needsUpdate = true;
+      if (im.instanceColor) im.instanceColor.needsUpdate = true;
+    }
+  };
+  /** A car hitting something hard: a burst of dust and bits where it hit. */
+  const crashAt = (x: number, z: number, d: number) => {
+    dustRing(x, z, 8, 0.4, 0.55, 0xd8c99a, 0.6, 2 + d * 0.15);
+    burst(x, 0.7, z, 6, 3 + d * 0.15, 0.1, 0.5, [partMat.metal, partMat.wood]);
+  };
 
   // campfires: a ring of stones round crossed logs, flames that flicker, and a warm glow on the ground. All instanced.
   const STONES = 8;
@@ -3150,7 +3386,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     const alongX = p.hw > p.hd;
     wallShades.push({ x: p.x + SUN.x * 0.45, z: p.z + SUN.z * 0.45, sx: 2 * (alongX ? p.hw : p.hd) + 0.3, sz: 2 * (alongX ? p.hd : p.hw) + 2.4, ry: alongX ? 0 : Math.PI / 2, id: -1 });
   }
-  for (const c of map.cars) shadeBox(c.x, c.z, c.hw, c.hd, 0.5, 0.8);
+  for (const c of map.cars) if (!c.ride) shadeBox(c.x, c.z, c.hw, c.hd, 0.5, 0.8);
   for (const l of map.logs) shadeBox(l.x, l.z, l.hw, l.hd, 0.2, 0.3);
   for (const t of map.tables) shadeBox(t.x, t.z, t.alongX ? TABLE_HW : TABLE_HD, t.alongX ? TABLE_HD : TABLE_HW, 0.4, 0.25);
   for (const c of map.containers) {
@@ -4455,10 +4691,11 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
     if (!shown) return false;
     const ease = back ? Infinity : dt;
     if (back) v.sq = v.sqV = 0;
-    // wading through a pond sinks an egg to its middle
-    v.root.position.set(f.x, f.y - (f.wet && f.phase === 'ground' ? 0.45 : 0), f.z);
+    // wading through a pond sinks an egg to its middle; in a car it sits down in its seat (and rides, never walks)
+    const car = f.ride >= 0 && f.phase === 'ground' ? rides[f.ride] : undefined;
+    v.root.position.set(f.x, f.y - (f.wet && f.phase === 'ground' ? 0.45 : 0) + (car ? RIDE_LOOK[car.kind].sit[f.sit] ?? 0.6 : 0), f.z);
     v.body.rotation.y = f.aim;
-    const speed = Math.hypot(f.vx, f.vz);
+    const speed = car ? 0 : Math.hypot(f.vx, f.vz);
     const walking = f.phase === 'ground' && speed > 0.4;
     if (walking) v.walk += dt * speed * 2.2;
     // the bob and the give of a stride ease in and out as it starts and stops (no hanging in the air mid step)
@@ -4535,17 +4772,19 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       v.bubble.scale.set(1.05 + (1 - v.shimmer) * 0.15, 1.2 + (1 - v.shimmer) * 0.15, 1.05 + (1 - v.shimmer) * 0.15);
     }
     v.glider.visible = f.phase === 'drop';
-    v.shadow.visible = (f.phase === 'ground' && !f.wet) || (f.phase === 'drop' && f.y < 25);
+    // (in a car, the car's shadow is its)
+    v.shadow.visible = (f.phase === 'ground' && !f.wet && !car) || (f.phase === 'drop' && f.y < 25);
     // on the ground or on whatever it stands on; gliding, on the ground far below
     v.shadow.position.y = f.phase === 'ground' ? 0.03 : 0.03 - f.y;
     v.shadow.scale.setScalar(0.85 * (1 + (f.phase === 'ground' ? 0 : f.y * 0.02)));
-    // an egg up on something built is drawn a little bigger, so the high ground reads from above
-    v.root.scale.setScalar(f.phase === 'ground' ? 1 + levelOf(f.y) * 0.1 : 1);
-    // what it holds
+    // an egg up on something built is drawn a little bigger, so the high ground reads from above (and a little
+    // smaller sat in a car, to fit)
+    v.root.scale.setScalar(f.phase === 'ground' ? (car ? 0.88 : 1 + levelOf(f.y) * 0.1) : 1);
+    // what it holds (at the wheel, nothing: both hands on it)
     const h = held(f);
     const key = h.w;
     const look = `${key}:${h.r}`;
-    for (const [k, g] of v.guns) g.group.visible = k === look && f.phase === 'ground' && !f.down;
+    for (const [k, g] of v.guns) g.group.visible = k === look && f.phase === 'ground' && !f.down && !(car && f.sit === 0);
     let gun = v.guns.get(look);
     if (!gun && f.phase === 'ground') {
       gun = gunModel(key, h.r);
@@ -4917,6 +5156,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       placeShades();
       placeDoors(dt, clock);
       placeStashes(false);
+      if (rides.length) placeRides(dt, clock, (x, z) => Math.abs(x - cam.x) < cam.view * 1.8 && Math.abs(z - cam.z) < cam.view * 1.8);
       for (const bc of beacons) bc.mat.color.setHex(Math.sin(clock * 9) * bc.k > 0 ? (bc.k < 0 ? 0xff3030 : 0x3a7bff) : bc.k < 0 ? 0x5a1414 : 0x14285a);
       chestGlowMat.opacity = 0.35 + Math.sin(clock * 4) * 0.2;
 
@@ -5056,7 +5296,8 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
       const hm = me ? held(me) : null;
       const aimGun = hm && isWeapon(hm.w) ? hm.w : null;
       const aimThrow = !!hm && isThrow(hm.w);
-      aimLine.visible = !!me && me.phase === 'ground' && (!!aimGun || aimThrow);
+      // (not at the wheel: a driver has no shot)
+      aimLine.visible = !!me && me.phase === 'ground' && (!!aimGun || aimThrow) && !(me.ride >= 0 && me.sit === 0);
       if (aimLine.visible && me) {
         const len = aimGun ? Math.min(WEAPONS[aimGun].range, 26) : Math.min(20, me.input.reach > 0 ? me.input.reach : 14);
         const fx = Math.sin(me.aim);
@@ -5367,7 +5608,7 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           } else if (e.what === 'tree') burst(e.x, 1, e.z, 4, 3, 0.1, 0.4, [partMat.wood, partMat.leaf]);
           else if (e.what === 'rock') burst(e.x, 1, e.z, 4, 3, 0.09, 0.35, [partMat.stone, partMat.dust]);
           else if (e.what === 'barrel') burst(e.x, 1, e.z, 4, 3, 0.09, 0.35, [partMat.red, partMat.metal]);
-          else if (e.what === 'car' || e.what === 'post') {
+          else if (e.what === 'car' || e.what === 'ride' || e.what === 'post') {
             burst(e.x, 1, e.z, 5, 4, 0.07, 0.3, [partMat.spark, partMat.metal]);
             flash(e.x, 1, e.z, 0.2, 0.05, 0, flashMat);
           } else if (e.what === 'fire') burst(e.x, 0.6, e.z, 6, 3, 0.08, 0.5, [partMat.spark, partMat.fire], 3);
@@ -5388,6 +5629,11 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           break;
         case 'smash': {
           if (!near(e.x, e.z)) break;
+          if (e.kind === 'car') {
+            // sparks off a car's panels
+            burst(e.x, 1, e.z, 5, 4, 0.07, 0.3, [partMat.spark, partMat.metal]);
+            break;
+          }
           const kind = e.kind === 'crate' ? map.containers[e.id]?.kind : 'wall';
           const piece = e.kind === 'wall' ? m.walls.get(e.id) : undefined;
           const bits = piece?.mat === 'stone' ? [partMat.stone, partMat.dust] : piece?.mat === 'metal' ? [partMat.spark, partMat.metal] : [partMat.wood];
@@ -5485,6 +5731,22 @@ export function buildView(THREE: Three, host: HTMLElement, m: Match): View | nul
           }
           const f = m.fighters[focus];
           if (f && Math.hypot(f.x - e.x, f.z - e.z) < 25) shake = Math.max(shake, 1.1);
+          break;
+        }
+        case 'crash': {
+          if (!near(e.x, e.z)) break;
+          crashAt(e.x, e.z, e.d);
+          const f = m.fighters[focus];
+          if (f && f.ride === e.v) shake = Math.max(shake, Math.min(0.9, e.d * 0.03));
+          break;
+        }
+        case 'wreck': {
+          // a car going up: a bigger fireball than its bang alone (see boom), its panels flying, the shell left black
+          if (!near(e.x, e.z)) break;
+          flash(e.x, 1.4, e.z, 2, 0.45, 8, boomMat);
+          burst(e.x, 1.2, e.z, 24, 10, 0.26, 1.1, [partMat.fire, partMat.metal, partMat.spark, partMat.smoke]);
+          for (let i = 0; i < 6; i++) puff(e.x + (Math.random() - 0.5) * 2, 1.5 + Math.random(), e.z + (Math.random() - 0.5) * 2, 1.3, 2.4, 0x2b2b2b, 0.55, (Math.random() - 0.5) * 2, 1.6, (Math.random() - 0.5) * 2, 2.4);
+          ripple(e.x, 0.2, e.z, 11, 0.55, 0xffc890);
           break;
         }
         case 'opened': {
