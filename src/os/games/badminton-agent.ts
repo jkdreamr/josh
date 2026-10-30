@@ -2,13 +2,19 @@ import {
   chargePower,
   chooseShot,
   contactAccuracy,
+  COURT_HALF_LENGTH,
+  createFlight,
   HALF_SMASH_POWER,
   LOW_HEIGHT,
   OVERHEAD_HEIGHT,
+  planShot,
+  PLAYER_RUN_SPEED,
   pressuredAccuracy,
   RACKET_REACH,
   SMASH_MIN_HEIGHT,
+  smashRecoveryMs,
   stepFlight,
+  type Direction,
   type FlightState,
   type Intent,
   type Point2D,
@@ -17,9 +23,10 @@ import {
 
 /**
  * The Agent level: the same body, reach, swing and charge as the player (see the Olympic level), with a mind that
- * learns the player's habits. It never gets faster feet, quicker hands or a harder smash than a human has; it gets
- * better by choosing better: which stroke beats you from each spot, when a full smash is worth winding up, and where
- * to wait for your reply.
+ * learns the player. It never gets faster feet, quicker hands or a harder smash than a human has; it gets better by
+ * choosing better. Within a few points it measures how quickly the opponent reacts and how fast they run, then picks
+ * the stroke the opponent is least able to reach or punish. As the match goes on it also learns which strokes win
+ * from each spot, when a full smash is worth winding up, and where to wait for each reply. Every match starts fresh.
  */
 
 export type ContactBand = 'smash' | 'over' | 'mid' | 'low';
@@ -33,7 +40,6 @@ export type Arm = { a: number; b: number; tries: number; won: number };
 export type ReplyHabit = { n: number; depth: number; short: number; fast: number; deep: number };
 
 export type AgentBrain = {
-  version: 1;
   rallies: number;
   /** stroke choice per situation, keyed by contactKey */
   shots: Record<string, Partial<Record<Intent, Arm>>>;
@@ -41,70 +47,41 @@ export type AgentBrain = {
   smash: Partial<Record<DepthBand, Partial<Record<PowerArm, Arm>>>>;
   /** how the player answers each of the Agent's shots */
   replies: Partial<Record<ShotType, ReplyHabit>>;
+  /** how quickly the player reacts and how fast they run, measured from their movement */
+  opponent?: OpponentModel;
 };
+
+export type OpponentModel = { reactionMs: number; speed: number; reads: number };
+/** Before it has seen you move, the Agent assumes you are as quick as anyone can be, and learns otherwise. */
+const DEFAULT_OPPONENT: OpponentModel = { reactionMs: 80, speed: PLAYER_RUN_SPEED, reads: 0 };
 
 type ShotRecord = { key: string; intent: Intent; smash?: { band: DepthBand; arm: PowerArm } };
 /** A full smash the Agent means to wind up for the incoming shuttle, and when to start holding. */
 export type ChargePlan = { band: DepthBand; arm: PowerArm; chargeAt: number; used: boolean };
-export type AgentRally = { shots: ShotRecord[]; plan: ChargePlan | null; lastAgentShot: ShotType | null; abandoned: Array<{ band: DepthBand; arm: PowerArm }> };
+/** Watching the opponent after the Agent's shot: when they start to respond, and their top speed. */
+type Watch = { since: number; vx: number; reacted: boolean; top: number };
+export type AgentRally = {
+  shots: ShotRecord[];
+  plan: ChargePlan | null;
+  lastAgentShot: ShotType | null;
+  abandoned: Array<{ band: DepthBand; arm: PowerArm }>;
+  /** when to weigh up the shuttle in reach again */
+  thinkAt: number;
+  watch: Watch | null;
+};
 
-export const AGENT_STORAGE_KEY = 'jk-badminton-agent';
 /** Older evidence fades so the Agent keeps up when the player changes style. */
 const ARM_CAP = 30;
 const HOME_DEFAULT = 2.6;
 const INTENTS: Intent[] = ['normal', 'power', 'soft'];
+const DEPTHS: DepthBand[] = ['front', 'mid', 'back'];
 
 export function newBrain(): AgentBrain {
-  return { version: 1, rallies: 0, shots: {}, smash: {}, replies: {} };
+  return { rallies: 0, shots: {}, smash: {}, replies: {} };
 }
 
 export function newAgentRally(): AgentRally {
-  return { shots: [], plan: null, lastAgentShot: null, abandoned: [] };
-}
-
-const finite = (value: unknown, min = 0, max = 1e6): value is number => typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max;
-const isObject = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
-
-function parseArm(value: unknown): Arm | null {
-  if (!isObject(value) || !finite(value.a) || !finite(value.b) || !finite(value.tries) || !finite(value.won)) return null;
-  return { a: value.a, b: value.b, tries: value.tries, won: Math.min(value.won, value.tries) };
-}
-
-function parseArms<K extends string>(value: unknown, keys: readonly K[]): Partial<Record<K, Arm>> {
-  const arms: Partial<Record<K, Arm>> = {};
-  if (!isObject(value)) return arms;
-  for (const key of keys) {
-    const arm = parseArm(value[key]);
-    if (arm) arms[key] = arm;
-  }
-  return arms;
-}
-
-const DEPTHS: DepthBand[] = ['front', 'mid', 'back'];
-const SHOT_TYPES: ShotType[] = ['clear', 'drop', 'smash', 'drive', 'net', 'lift', 'serve', 'high-serve'];
-
-/** Reads a brain back from storage, dropping anything malformed instead of trusting it. */
-export function parseBrain(value: unknown): AgentBrain {
-  const brain = newBrain();
-  if (!isObject(value) || value.version !== 1) return brain;
-  if (finite(value.rallies)) brain.rallies = Math.floor(value.rallies);
-  if (isObject(value.shots)) {
-    for (const [key, arms] of Object.entries(value.shots)) {
-      if (/^(smash|over|mid|low)(\|[a-z|]+)?$/.test(key) && key.length < 32) brain.shots[key] = parseArms(arms, INTENTS);
-    }
-  }
-  if (isObject(value.smash)) {
-    for (const band of DEPTHS) if (isObject(value.smash[band])) brain.smash[band] = parseArms(value.smash[band], ['half', 'full'] as const);
-  }
-  if (isObject(value.replies)) {
-    for (const type of SHOT_TYPES) {
-      const habit = value.replies[type];
-      if (isObject(habit) && finite(habit.n) && finite(habit.depth, 0, 8) && finite(habit.short) && finite(habit.fast) && finite(habit.deep)) {
-        brain.replies[type] = { n: habit.n, depth: habit.depth, short: habit.short, fast: habit.fast, deep: habit.deep };
-      }
-    }
-  }
-  return brain;
+  return { shots: [], plan: null, lastAgentShot: null, abandoned: [], thinkAt: -Infinity, watch: null };
 }
 
 export function contactBand(y: number): ContactBand {
@@ -226,8 +203,9 @@ export function agentStroke(
   pressure: number,
   heldMs: number | null,
   random: () => number = Math.random,
+  chosen?: Intent,
 ): AgentStroke {
-  const intent = chooseIntent(brain, contact, playerDistanceFromNet, random);
+  const intent = chosen ?? chooseIntent(brain, contact, playerDistanceFromNet, random);
   const type = chooseShot(intent, contact);
   const power = type === 'smash' && heldMs !== null ? chargePower(heldMs) : HALF_SMASH_POWER;
   const record: ShotRecord = { key: contactKey(contact, playerDistanceFromNet), intent };
@@ -285,6 +263,7 @@ function reward(arm: Arm | undefined, value: number, won: boolean): Arm {
  * earlier ones only learn that they kept the rally alive.
  */
 export function recordRallyEnd(brain: AgentBrain, rally: AgentRally, agentWon: boolean) {
+  settleWatch(brain, rally);
   const count = rally.shots.length;
   rally.shots.forEach((shot, index) => {
     const fromEnd = count - 1 - index;
@@ -309,6 +288,175 @@ export function recordRallyEnd(brain: AgentBrain, rally: AgentRally, agentWon: b
     brain.smash[plan.band] = smash;
   }
   brain.rallies += 1;
+}
+
+export function opponentModel(brain: AgentBrain): OpponentModel {
+  return brain.opponent ?? DEFAULT_OPPONENT;
+}
+
+/** Called as the Agent's shot leaves the racket: start timing the opponent's response. */
+export function startWatch(brain: AgentBrain, rally: AgentRally, clock: number, opponentVx: number) {
+  settleWatch(brain, rally);
+  rally.watch = { since: clock, vx: opponentVx, reacted: false, top: Math.abs(opponentVx) };
+}
+
+/** Called every step while the Agent's shot is in the air, with the opponent's running speed. */
+export function observeOpponent(brain: AgentBrain, rally: AgentRally, clock: number, opponentVx: number) {
+  const watch = rally.watch;
+  if (!watch) return;
+  watch.top = Math.max(watch.top, Math.abs(opponentVx));
+  if (watch.reacted || Math.abs(opponentVx - watch.vx) < 1.2) return;
+  watch.reacted = true;
+  const model = { ...opponentModel(brain) };
+  // Leans hard on the first few reads so a new opponent is sized up within a handful of points.
+  const weight = 1 / Math.min(model.reads + 1.5, 6);
+  model.reactionMs += (Math.max(40, Math.min(500, clock - watch.since)) - model.reactionMs) * weight;
+  model.reads = Math.min(model.reads + 1, 1000);
+  brain.opponent = model;
+}
+
+function settleWatch(brain: AgentBrain, rally: AgentRally) {
+  const watch = rally.watch;
+  rally.watch = null;
+  if (!watch || watch.top < 2.5) return;
+  const model = { ...opponentModel(brain) };
+  model.speed += (Math.min(watch.top, 12) - model.speed) * (watch.top > model.speed ? 0.6 : 0.15);
+  brain.opponent = model;
+}
+
+const fixedRandom = (seed: number) => () => {
+  seed = (seed * 16807) % 2147483647;
+  return seed / 2147483647;
+};
+
+/** The highest a player's racket reaches with a full jump, and the lowest it can scoop. */
+const TOP_RACKET = 1.2 + 1.09;
+const LOW_RACKET = 1.2;
+
+/**
+ * How good this stroke is from here, 0 to 1, judged the way a player sizes up a shot: where it would go, and whether
+ * the opponent, from where they stand and as quickly as they react and run, could get a racket on it.
+ * 1 is a clean winner, 0 a shot into the net or out.
+ */
+export function shotValue(
+  type: ShotType,
+  direction: Direction,
+  contact: Point2D,
+  accuracy: number,
+  power: number,
+  opponent: { x: number; vx: number },
+  model: OpponentModel,
+  samples = 2,
+  self?: { x: number; speed: number },
+): number {
+  const random = fixedRandom(7919);
+  const opponentDirection = -direction as Direction;
+  const near = opponentDirection > 0 ? -COURT_HALF_LENGTH - 0.3 : 0.55;
+  const far = opponentDirection > 0 ? -0.55 : COURT_HALF_LENGTH + 0.3;
+  const reaction = model.reactionMs / 1000;
+  let total = 0;
+  for (let sample = 0; sample < samples; sample += 1) {
+    const plan = planShot(type, direction, contact, random, accuracy, { power });
+    let flight = createFlight(contact, plan.velocity, 'b', direction);
+    let best = -Infinity;
+    // Opponents play the shuttle the first moment they can, so that moment decides whether they can attack it.
+    let first: (Point2D & { speed: number; t: number }) | null = null;
+    for (let step = 0; step < 360 && flight.status === 'flying'; step += 1) {
+      flight = stepFlight(flight, 1 / 120);
+      const { x, y } = flight.shuttle;
+      if (x * direction < -0.12) continue;
+      const lift = y > TOP_RACKET ? y - TOP_RACKET : y < LOW_RACKET ? LOW_RACKET - y : 0;
+      if (lift > RACKET_REACH) continue;
+      const reach = Math.sqrt(RACKET_REACH * RACKET_REACH - lift * lift);
+      const needed = x - opponentDirection * 0.5;
+      const stand = Math.max(near, Math.min(far, needed));
+      const t = flight.elapsed;
+      const start = opponent.x + opponent.vx * Math.min(t, reaction);
+      const run = Math.max(0, model.speed * (t - reaction) - 0.3);
+      const margin = run + reach - Math.abs(needed - stand) - Math.abs(stand - start);
+      if (margin >= 0 && !first) first = { x, y, t, speed: Math.hypot(flight.shuttle.vx, flight.shuttle.vy) };
+      best = Math.max(best, margin);
+    }
+    if (flight.status === 'fault') continue;
+    let value = 1;
+    if (first) {
+      // What the opponent can do from where they first meet it: met high and close they smash it straight back,
+      // met high and deep they can only clear or drop, met low they have to lift or push.
+      // Close to the net even a shuttle at shoulder height can be pushed down for a winner.
+      // A fast shuttle met that high can only be blocked, so only a slow one is a gift.
+      const slow = first.speed < 14;
+      const killable = slow && ((first.y >= SMASH_MIN_HEIGHT && Math.abs(first.x) < 4) || (first.y >= 1.55 && Math.abs(first.x) < 2.5));
+      const base = killable ? 0.03 : first.y >= SMASH_MIN_HEIGHT ? 0.3 : first.y >= LOW_HEIGHT ? 0.4 : 0.5;
+      // The less room they have to spare getting there, the more likely a weak reply.
+      value = base + (0.9 - base) * Math.exp(-best / 0.5);
+      if (self) {
+        // Can the hitter get back to the net before a short reply lands there? A smash costs balance too.
+        const recover = type === 'smash' ? smashRecoveryMs(power) / 1000 : 0;
+        const time = first.t + 0.55;
+        const run = self.speed * Math.max(0, time - recover) + self.speed * 0.5 * Math.min(time, recover) - 0.3;
+        if (Math.abs(self.x) - 1.3 > run + RACKET_REACH) value *= 0.35;
+      }
+    }
+    if (type === 'smash' && power >= 0.7) value = Math.min(1, value + 0.08);
+    total += value;
+  }
+  return total / samples;
+}
+
+/** Whether the shuttle will be out of the racket's reach a moment from now, so it is now or never. */
+export function lastChanceToHit(body: { x: number; vx: number; jump: number; jumpVelocity: number }, flight: FlightState, direction: Direction, aheadMs = 13): boolean {
+  const next = stepFlight(flight, aheadMs / 1000);
+  if (next.status !== 'flying') return true;
+  const seconds = aheadMs / 1000;
+  const racketX = body.x + direction * 0.5 + body.vx * seconds;
+  const racketY = 1.2 + Math.max(0, body.jump + body.jumpVelocity * seconds);
+  return Math.hypot(next.shuttle.x - racketX, next.shuttle.y - racketY) > RACKET_REACH;
+}
+
+export type DecideInput = {
+  clock: number;
+  contact: Point2D;
+  direction: Direction;
+  contactDistance: number;
+  pressure: number;
+  heldMs: number | null;
+  opponent: { x: number; vx: number };
+  lastChance: boolean;
+  /** the racket is at its natural contact point (olympicContactReady): where a player meets the shuttle without waiting */
+  ready: boolean;
+};
+
+/**
+ * Called each step the shuttle is in reach. Weighs every stroke from here and plays the best one at the natural
+ * contact point, or earlier if one is already a clean winner. Letting the shuttle drop for a better look only
+ * hands the opponent time, so it never waits past that point.
+ */
+export function agentDecide(brain: AgentBrain, rally: AgentRally, input: DecideInput, random: () => number = Math.random): AgentStroke | null {
+  const now = input.ready || input.lastChance;
+  if (!now && input.clock < rally.thinkAt) return null;
+  rally.thinkAt = input.clock + 20;
+  const accuracy = pressuredAccuracy(contactAccuracy(input.contactDistance, RACKET_REACH), input.pressure);
+  const power = input.heldMs !== null ? chargePower(input.heldMs) : HALF_SMASH_POWER;
+  const model = opponentModel(brain);
+  const playerDistance = Math.abs(input.opponent.x);
+  const arms = brain.shots[contactKey(input.contact, playerDistance)] ?? {};
+  let best: Intent = 'normal';
+  let bestValue = -Infinity;
+  for (const intent of INTENTS) {
+    const type = chooseShot(intent, input.contact);
+    const arm = arms[intent];
+    // What has actually won against this player tips close calls.
+    const record = arm ? (arm.a + 1) / (arm.a + arm.b + 2) - 0.5 : 0;
+    const stroke = type === 'smash' ? power : HALF_SMASH_POWER;
+    const self = { x: input.contact.x - input.direction * 0.5, speed: PLAYER_RUN_SPEED };
+    const value = shotValue(type, input.direction, input.contact, accuracy, stroke, input.opponent, model, 2, self) + 0.1 * record;
+    if (value > bestValue) {
+      best = intent;
+      bestValue = value;
+    }
+  }
+  if (!now && bestValue < 0.9) return null;
+  return agentStroke(brain, rally, input.contact, playerDistance, input.contactDistance, input.pressure, input.heldMs, random, best);
 }
 
 const SHOT_NAME: Partial<Record<ShotType, string>> = { clear: 'clears', drop: 'drops', smash: 'smashes', drive: 'drives', net: 'net shots', lift: 'lifts', serve: 'short serves', 'high-serve': 'high serves' };
@@ -353,6 +501,10 @@ export function agentInsights(brain: AgentBrain): string[] {
     if (Math.abs(fullRate - halfRate) < 0.15) continue;
     const better = fullRate > halfRate ? 'full' : 'half';
     notes.push({ weight: Math.abs(fullRate - halfRate) * 20, text: `From ${WHERE[band]}, its ${better} smashes trouble you more than its ${better === 'full' ? 'half' : 'full'} ones.` });
+  }
+  const model = brain.opponent;
+  if (model && model.reads >= 3) {
+    notes.push({ weight: 30, text: `You react in about ${(model.reactionMs / 1000).toFixed(2)} s and run up to ${model.speed.toFixed(1)} m/s, so it aims where you cannot get to in time.` });
   }
   return notes.sort((x, y) => y.weight - x.weight).slice(0, 3).map((note) => note.text);
 }

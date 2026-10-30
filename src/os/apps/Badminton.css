@@ -636,12 +636,6 @@
   padding: 10px 14px calc(10px + var(--sab, 0px));
 }
 
-.bd-agent-note {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
 .bd-agent-learned h3 {
   margin: 6px 0 4px;
   font-size: 13px;

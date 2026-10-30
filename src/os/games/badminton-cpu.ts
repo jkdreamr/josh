@@ -20,7 +20,7 @@ import {
   type ShotType,
   type Side,
 } from './badminton.ts';
-import { agentHome, agentStroke, newAgentRally, newBrain, planForIncoming, recordRallyEnd, recordReply, type AgentBrain, type AgentRally } from './badminton-agent.ts';
+import { agentDecide, agentHome, lastChanceToHit, newAgentRally, newBrain, observeOpponent, planForIncoming, recordRallyEnd, recordReply, startWatch, type AgentBrain, type AgentRally } from './badminton-agent.ts';
 
 /** Player physics shared by the app and the CPU-vs-CPU tests. */
 export const PLAYER_STEP = 1 / 240;
@@ -93,7 +93,7 @@ export function stepCpuBody(
               if (preview.status !== 'flying') break;
               const { x, y } = preview.shuttle;
               const intercept = clampToHalf(x - direction * 0.5, direction);
-              if (x * direction < 0 && y < 2 && Math.abs(intercept - body.x) < profile.speed * Math.max(0, time - 0.12) + (profile.anticipates ?? 0.15)) {
+              if (x * direction < 0 && y < (profile.interceptHeight ?? 2) && Math.abs(intercept - body.x) < profile.speed * Math.max(0, time - 0.12) + (profile.anticipates ?? 0.15)) {
                 mind.target = intercept;
                 break;
               }
@@ -103,13 +103,17 @@ export function stepCpuBody(
         }
         target = mind.target;
         const racketX = body.x + direction * 0.5;
-        if (
+        const { y: shuttleY, vy } = flight.shuttle;
+        // A jump peaks about 0.35 s after take-off, so meeting the shuttle high means leaving the floor that long before it arrives.
+        const timedJump = profile.interceptHeight !== undefined
+          && vy < 0 && shuttleY > 2.2 && shuttleY - profile.interceptHeight <= -vy * 0.35 && Math.abs(flight.shuttle.x - racketX) < 1;
+        if (profile.interceptHeight !== undefined ? timedJump && body.jump <= 0.001 && body.jumpVelocity <= 0 : (
           flight.shuttle.y > 2.25 &&
           flight.shuttle.vy < 1.5 &&
           Math.abs(flight.shuttle.x - racketX) < 1.4 &&
           body.jump <= 0.001 &&
           body.jumpVelocity <= 0
-        ) {
+        )) {
           body.jumpRequested = true;
         }
       }
@@ -184,11 +188,11 @@ export function simulateCpuRally(
   };
   const serveStart = { x: bodies[server].x + directions[server] * 0.45, y: 1.05 };
   const serve = planShot(random() < 0.5 ? 'serve' : 'high-serve', directions[server], serveStart, random, CPU_PROFILES[levels[server]].accuracy);
+  let incoming: ShotType | null = serve.type;
   if (serve.fault) return finish(opposite(server), 0);
   let flight = createFlight(serveStart, serve.velocity, server, directions[server], true);
   if (agents[server]) agents[server]!.rally.lastAgentShot = serve.type;
   answered(server, serve.type, serve.targetX, flight, 0);
-  let incoming: ShotType | null = serve.type;
   let incomingPower = HALF_SMASH_POWER;
   let missed = false;
   let shots = 1;
@@ -200,6 +204,7 @@ export function simulateCpuRally(
       const agent = agents[side];
       if (agent && agent.rally.plan && !agent.rally.plan.used && agent.chargeStart === null && flight.hitter !== side && clock >= agent.rally.plan.chargeAt) agent.chargeStart = clock;
       const charging = agent !== undefined && agent.chargeStart !== null && clock - agent.chargeStart > CHARGE_MIN_MS;
+      if (agent && flight.hitter === side) observeOpponent(agent.brain, agent.rally, clock, bodies[opposite(side)].vx);
       stepCpuBody(bodies[side], minds[side], { clock, rallying: true, flight, side, direction: directions[side], profile: CPU_PROFILES[levels[side]], charging });
     }
     flight = stepFlight(flight, PLAYER_STEP);
@@ -212,17 +217,26 @@ export function simulateCpuRally(
     const distance = Math.hypot(shuttle.x - racket.x, shuttle.y - racket.y);
     if (distance > RACKET_REACH) continue;
     const contact = { x: shuttle.x, y: shuttle.y };
-    if (CPU_PROFILES[levels[side]].humanBody && !olympicContactReady(bodies[side], flight, direction, clock)) continue;
     const agent = agents[side];
+    if (CPU_PROFILES[levels[side]].humanBody && !agent && !olympicContactReady(bodies[side], flight, direction, clock)) continue;
     let reply: CpuReturn;
     if (agent) {
-      if (random() < 0.002) reply = { kind: 'miss' };
-      else {
-        const held = agent.chargeStart === null ? null : clock - agent.chargeStart;
-        agent.chargeStart = null;
-        const stroke = agentStroke(agent.brain, agent.rally, contact, Math.abs(bodies[flight.hitter].x), distance, smashPressure(incoming, flight.elapsed), held, random);
-        reply = { kind: 'hit', type: stroke.type, accuracy: stroke.accuracy, options: { power: stroke.power } };
-      }
+      if (clock < (bodies[side].swingStart ?? -Infinity) + PLAYER_SWING_COOLDOWN_MS) continue;
+      const held = agent.chargeStart === null ? null : clock - agent.chargeStart;
+      const stroke = agentDecide(agent.brain, agent.rally, {
+        clock,
+        contact,
+        direction,
+        contactDistance: distance,
+        pressure: smashPressure(incoming, flight.elapsed),
+        heldMs: held,
+        opponent: { x: bodies[flight.hitter].x, vx: bodies[flight.hitter].vx },
+        lastChance: lastChanceToHit(bodies[side], flight, direction),
+        ready: olympicContactReady(bodies[side], flight, direction, clock),
+      }, random);
+      if (!stroke) continue;
+      agent.chargeStart = null;
+      reply = random() < 0.002 ? { kind: 'miss' } : { kind: 'hit', type: stroke.type, accuracy: stroke.accuracy, options: { power: stroke.power } };
     } else {
       reply = cpuReturn(contact, incoming, flight.elapsed, Math.abs(bodies[flight.hitter].x), levels[side], random, incomingPower, distance);
     }
@@ -237,6 +251,7 @@ export function simulateCpuRally(
     if (agent) {
       agent.rally.lastAgentShot = plan.type;
       minds[side].home = agentHome(agent.brain, plan.type);
+      startWatch(agent.brain, agent.rally, clock, bodies[opposite(side)].vx);
     }
     answered(side, plan.type, plan.targetX, flight, clock);
     incoming = plan.type;

@@ -85,9 +85,10 @@ export type RallyOutcome = { winner: Side; cause: RallyCause; shots: number; sec
  * pressureResistance: fraction of smash pressure ignored for aim; smashPower overrides situational power.
  * punishNetRush: clear or lift over a net-rusher rather than smash from the back court.
  * humanBody: moves, jumps, swings and charges by the player's rules (stepPlayerBody, olympicContactReady).
+ * interceptHeight: the highest point it runs to meet the shuttle at, jumping for it (default 2 m, below smash height).
  * learns: chooses strokes and smash power from what it has learned about the player (badminton-agent).
  */
-export type CpuProfile = { label: string; reactionMs: number; speed: number; accuracy: number; dropChance: number; tactics?: boolean; ruthless?: boolean; anticipates?: number; home?: number; unforcedMiss?: number; acceleration?: number; predictionMs?: number; pressureResistance?: number; smashPower?: number; punishNetRush?: boolean; humanBody?: boolean; learns?: boolean };
+export type CpuProfile = { label: string; reactionMs: number; speed: number; accuracy: number; dropChance: number; tactics?: boolean; ruthless?: boolean; anticipates?: number; home?: number; unforcedMiss?: number; acceleration?: number; predictionMs?: number; pressureResistance?: number; smashPower?: number; punishNetRush?: boolean; humanBody?: boolean; interceptHeight?: number; learns?: boolean };
 
 export const CPU_PROFILES: Record<Difficulty, CpuProfile> = {
   easy: { label: 'Easy', reactionMs: 260, speed: 3, accuracy: 0.72, dropChance: 0.15 },
@@ -95,8 +96,8 @@ export const CPU_PROFILES: Record<Difficulty, CpuProfile> = {
   hard: { label: 'Hard', reactionMs: 110, speed: 5, accuracy: 1, dropChance: 0.42 },
   // Quicker first step and feet than Hard, but no faster than a human runs (5.3 m/s) by much, and the same reach and jump.
   pro: { label: 'Pro', reactionMs: 80, speed: 5.6, accuracy: 1.12, dropChance: 0.5, tactics: true },
-  // A player's body and a player's reactions; it improves only by learning how you play.
-  agent: { label: 'Agent', reactionMs: 140, speed: PLAYER_RUN_SPEED, accuracy: PLAYER_MAX_ACCURACY, dropChance: 0.5, humanBody: true, learns: true },
+  // Olympic's body and reactions, the most a human-limited player gets; it wins only by reading how you play.
+  agent: { label: 'Agent', reactionMs: 20, speed: PLAYER_RUN_SPEED, accuracy: PLAYER_MAX_ACCURACY, dropChance: 0.5, humanBody: true, interceptHeight: 2.4, learns: true },
   olympic: { label: 'Olympic', reactionMs: 20, speed: PLAYER_RUN_SPEED, accuracy: PLAYER_MAX_ACCURACY, dropChance: 0.7, tactics: true, humanBody: true, home: 2.4 },
   // Superhuman on purpose: near-instant reads, faster feet than any player and the tightest aim, with the same flight, reach and jump.
   impossible: { label: 'Impossible', reactionMs: 15, speed: 6.2, accuracy: 1.15, dropChance: 0.7, tactics: true, ruthless: true, anticipates: 0.35, home: 2.4, unforcedMiss: 0.0015 },
