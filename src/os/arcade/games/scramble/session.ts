@@ -333,7 +333,7 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
     // the eggs of people who have left the match are nobody's (in the room's seats as we have them)
     if (p.roster && p.handoffs === s.handoffs && p.roster.length === s.roster.length)
       for (let i = 0; i < p.roster.length; i++)
-        if (p.roster[i] === LEFT && s.roster[i] !== LEFT) {
+        if (p.roster[i] === LEFT && s.roster[i] >= 0) {
           s.roster[i] = LEFT;
           if (m.fighters[i]) m.fighters[i].seat = LEFT;
         }
