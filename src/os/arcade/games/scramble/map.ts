@@ -242,8 +242,13 @@ export type Solid =
  * wall does while it's shut (see logic.ts), and nothing once it's open.
  */
 export const low = (s: Solid) => s.what === 'fence' || s.what === 'table' || s.what === 'fire' || s.what === 'log' || s.what === 'seat' || s.what === 'bars';
-/** A parked car or truck: solid cover that stops bullets. Axis aligned, nose along x when `alongX`. */
-export type Car = { x: number; z: number; hw: number; hd: number; look: number; truck: boolean; alongX: boolean };
+/**
+ * A parked car or truck: cover that stops bullets. Axis aligned, nose along +x when `alongX` (else along +z). Trucks
+ * and most cars (`ride`) can be driven off (see logic.ts), so the island's solids leave them out; the rest stay put.
+ */
+export type Car = { x: number; z: number; hw: number; hd: number; look: number; truck: boolean; alongX: boolean; ride: boolean };
+/** Which of the island's cars can be driven: every truck, and cars of the first four looks (the last two are old wrecks). */
+export const drivable = (truck: boolean, look: number) => truck || look < 4;
 /** A farm's fenced yard, with a gate in the middle of each side (gates are doors: the way out is `ox`, `oz`). */
 export type Yard = { x: number; z: number; hw: number; hd: number; fences: Box[]; gates: Door[] };
 /** A dirt road between two places. */
@@ -1854,7 +1859,8 @@ export function generateMap(seed: number): GameMap {
     const r = Math.max(hw, hd);
     if (!onLand(x, z, 3) || !clear(x, z, hw, hd, 1.3) || !free(x, z, r + 1.2) || !offDoors(x, z, r + 1.4) || nearRoad(x, z, r)) return false;
     taken.push({ x, z, r: r + 0.8 });
-    map.cars.push({ x: r1(x), z: r1(z), hw, hd, look: Math.floor(rng() * 6), truck, alongX });
+    const look = Math.floor(rng() * 6);
+    map.cars.push({ x: r1(x), z: r1(z), hw, hd, look, truck, alongX, ride: drivable(truck, look) });
     return true;
   };
   const sidesFrom = (first: number) => [0, 1, 2, 3].map((k) => (first + k) % 4);
@@ -2386,7 +2392,10 @@ export function generateMap(seed: number): GameMap {
   map.yards.forEach((y, i) => {
     for (const f of y.fences) map.solids.push({ shape: 'box', ...f, what: 'fence', ref: i });
   });
-  map.cars.forEach((c, i) => map.solids.push({ shape: 'box', x: c.x, z: c.z, hw: c.hw, hd: c.hd, what: 'car', ref: i }));
+  // (a car that can be driven off stops things where it is, see logic.ts)
+  map.cars.forEach((c, i) => {
+    if (!c.ride) map.solids.push({ shape: 'box', x: c.x, z: c.z, hw: c.hw, hd: c.hd, what: 'car', ref: i });
+  });
   // a bridge's rails, down both sides of the deck
   map.bridges.forEach((b, i) => {
     for (const s of [-1, 1]) {
