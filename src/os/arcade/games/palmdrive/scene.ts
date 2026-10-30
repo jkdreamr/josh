@@ -4373,6 +4373,28 @@ export function buildView(THREE: Three, host: HTMLElement, r: Race): View | null
       gl.dispose();
     },
   };
+  // Every shader the race will want, compiled now, while it is being set up, rather than the first time each thing
+  // comes into view or goes off: a tree round the bend, the first puff of dust, a Boo, a blast, a word over someone's
+  // head. three.js only compiles what it draws, and the first draw of anything new can hold up a frame for a tenth of a
+  // second or more on some laptops (which online is a hitch everyone else sees too). What is made as the race goes
+  // (puffs, sparks, words) is stood in for by a mesh of each of its materials, there just for this.
+  {
+    const warm = new THREE.Group();
+    const mats: T.Material[] = [puffMat, blastMat, boltMat, powMat, kartShared.ghost, kartShared.star, kartShared.gold];
+    for (const m of Object.values(partMat)) mats.push(...(Array.isArray(m) ? m : [m]));
+    for (const m of mats) warm.add(new THREE.Mesh(geo.ball, m));
+    const word = new THREE.SpriteMaterial({ map: powMat.map, transparent: true, depthWrite: false });
+    warm.add(new THREE.Sprite(word));
+    scene.add(warm);
+    try {
+      gl.renderer.compile(scene, camera);
+      river?.warm(gl.renderer, scene);
+    } catch {
+      /* drawn as it comes, as before */
+    }
+    scene.remove(warm);
+    word.dispose();
+  }
   return view;
 }
 

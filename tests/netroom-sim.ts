@@ -21,8 +21,12 @@ export async function resolve(specifier, context, next) {
 }`;
 register('data:text/javascript,' + encodeURIComponent(hooks));
 
-/** One way's network: base latency, extra up to `jitter`, and a `loss` share of messages held up by a retransmit (`rto`). TCP keeps them in order. */
-export type Link = { latency: number; jitter: number; loss: number; rto: number };
+/**
+ * One way's network: base latency, extra up to `jitter`, and a `loss` share of messages held up by a retransmit (`rto`).
+ * TCP keeps them in order. `spike`: the share of messages caught in a Wi-Fi stall of up to `spikeMs` more (everything
+ * behind them waits too, then arrives in a burst).
+ */
+export type Link = { latency: number; jitter: number; loss: number; rto: number; spike?: number; spikeMs?: number };
 export const NET_OK: Link = { latency: 40, jitter: 25, loss: 0.01, rto: 220 };
 
 /** A seeded random number generator, so a run is the same every time. */
@@ -49,7 +53,8 @@ class Pipe {
   send(fn: () => void) {
     const l = this.link();
     const now = Date.now();
-    const at = Math.max(this.last, now + l.latency + this.rand() * l.jitter + (this.rand() < l.loss ? l.rto : 0));
+    const stall = l.spike && this.rand() < l.spike ? this.rand() * (l.spikeMs ?? 0) : 0;
+    const at = Math.max(this.last, now + l.latency + this.rand() * l.jitter + (this.rand() < l.loss ? l.rto : 0) + stall);
     this.last = at;
     setTimeout(fn, at - now);
   }
@@ -208,14 +213,30 @@ export class ClientSocket {
   /** From the room: arrives after the latency, unless the connection is dead. */
   fromServer(data: string) {
     if (this.dead) return;
-    this.down.send(() => {
-      if (this.dead || this.readyState !== 1) return;
-      if (this.client) {
-        this.client.down += data.length;
-        this.client.downMsgs++;
-      }
-      this.emit('message', { data });
-    });
+    this.down.send(() => this.deliver(data));
+  }
+  /** What has come in while the page was busy (a long frame): it is read once the page is free, in order. */
+  private queued: string[] = [];
+  private deliver(data: string) {
+    if (this.dead || this.readyState !== 1) return;
+    const client = this.client;
+    if (client && (Date.now() < client.busyUntil || this.queued.length)) {
+      if (this.queued.push(data) === 1) setTimeout(() => this.flushQueued(), Math.max(0, client.busyUntil - Date.now()));
+      return;
+    }
+    if (client) {
+      client.down += data.length;
+      client.downMsgs++;
+    }
+    this.emit('message', { data });
+  }
+  private flushQueued() {
+    const client = this.client!;
+    if (Date.now() < client.busyUntil) {
+      setTimeout(() => this.flushQueued(), client.busyUntil - Date.now());
+      return;
+    }
+    for (const data of this.queued.splice(0)) this.deliver(data);
   }
   send(data: string) {
     if (this.readyState !== 1) throw new Error('not open');
@@ -311,9 +332,12 @@ export class SimRoom {
   private readonly saved = new Map<string, unknown>();
   readonly code: string;
 
-  constructor(code: string, seed = 1) {
+  /** worker: the Worker's module to load (another build of it, say the one in production). */
+  readonly worker: string;
+  constructor(code: string, seed = 1, worker = '../worker/src/index.ts') {
     this.code = code;
     this.rand = rng(seed);
+    this.worker = worker;
   }
 
   /** Puts the stand-ins in place (globals the Worker and RoomLink use), loads the Worker and opens the room. */
@@ -323,7 +347,7 @@ export class SimRoom {
       this.saved.set(key, (globalThis as Record<string, unknown>)[key]);
       (globalThis as Record<string, unknown>)[key] = value;
     }
-    const worker = (await import('../worker/src/index.ts')) as unknown as { Room: SimRoom['Room'] };
+    const worker = (await import(this.worker)) as unknown as { Room: SimRoom['Room'] };
     this.Room = worker.Room;
     this.boot();
     await this.room.open(this.code, 'palmdrive', ONLINE_SPECS.palmdrive, false);
@@ -406,9 +430,15 @@ export class SimClient {
   downMsgs = 0;
   closed: string[] = [];
   links: string[] = [];
+  /** The page is busy until then (a long frame): nothing else runs, and what comes in waits. */
+  busyUntil = 0;
   /** Frames stop while the page is hidden; its own timers are held to once a second (a hidden page without a worker). */
   hidden = false;
   frameMs: number;
+  /** When given, how long until the next frame (a page whose frame rate wanders and hitches), instead of frameMs. */
+  frames: (() => number) | null;
+  /** Called after each frame, to measure what the screen would show. */
+  onFrame: ((c: SimClient, now: number) => void) | null = null;
   laps: number | undefined;
   end: { w: number | null; order: [number, number][] } | null = null;
   private nextFrame = 0;
@@ -418,11 +448,12 @@ export class SimClient {
   readonly sim: SimRoom;
   readonly name: string;
   net: Link;
-  constructor(sim: SimRoom, name: string, net: Link, opts: { frameMs?: number; laps?: number; legacy?: boolean } = {}) {
+  constructor(sim: SimRoom, name: string, net: Link, opts: { frameMs?: number; frames?: () => number; laps?: number; legacy?: boolean } = {}) {
     this.sim = sim;
     this.name = name;
     this.net = net;
     this.frameMs = opts.frameMs ?? 1000 / 30;
+    this.frames = opts.frames ?? null;
     this.laps = opts.laps;
     this.legacy = !!opts.legacy;
     sim.clients.push(this);
@@ -468,13 +499,15 @@ export class SimClient {
     this.router.listen((from, d) => this.hear(from, d));
   }
 
-  send(d: unknown, fast?: boolean) {
-    this.link.send(tagRound(this.router.round, this.legacy ? stripTimes(d) : d), fast ? { fast: true } : undefined);
+  send(d: unknown, fast?: boolean, everyone?: boolean) {
+    this.link.send(tagRound(this.router.round, this.legacy ? stripTimes(d) : d), fast || (everyone && !this.legacy && !this.toHost) ? { fast, everyone: everyone && !this.legacy && !this.toHost } : undefined);
   }
+  /** A guest's kart goes only to the host, who passes it on (as it did before it went to everyone at once). */
+  toHost = !!process.env.SIM_TOHOST;
 
   private hear(from: number, d: unknown) {
     if (!this.race) return;
-    const heard = receive(this.n, this.race, this.seats, from, d, () => LOOK);
+    const heard = receive(this.n, this.race, this.seats, from, d, () => LOOK, this.legacy ? 0 : this.pacer.lag(Date.now()));
     if (!heard) return;
     if (heard.race) {
       this.race = heard.race;
@@ -498,25 +531,29 @@ export class SimClient {
         for (const e of evs) outgoing(this.n, r, e);
       });
     }
-    for (const d of flushEvents(this.n, this.round)) this.send(d);
+    for (const d of flushEvents(this.n, this.round, this.legacy ? null : r.time)) this.send(d);
   }
 
   /** What happens at this moment on this player's machine: a frame when one is due, and the network tick. */
   update(now: number) {
-    if (!this.race || this.seat === null) return;
+    if (!this.race || this.seat === null || now < this.busyUntil) return;
     if (!this.hidden && now >= this.nextFrame) {
-      this.nextFrame = now + this.frameMs;
+      const gap = this.frames ? this.frames() : this.frameMs;
+      this.nextFrame = now + gap;
+      // (a long frame keeps the page busy: the frame's own work, a shader compile, a collection)
+      if (gap > 50) this.busyUntil = now + gap - 8;
       if (this.n.synced) {
         this.frameAt = now;
         this.run(false);
+        this.onFrame?.(this, now);
       }
     }
     if (now >= this.nextTick) {
       this.nextTick = now + (this.hidden ? 1000 : SEND_MS);
       if (!this.n.synced) return;
       if (!this.legacy && now - this.frameAt > 250) this.run(true);
-      const { out, end } = tick(this.n, this.race, this.seats, 0);
-      for (const { d, fast } of out) this.send(d, fast);
+      const { out, end } = tick(this.n, this.race, this.seats, 0, this.legacy ? 0 : this.pacer.lag(now), !this.legacy && !this.toHost);
+      for (const { d, fast, everyone } of out) this.send(d, fast, everyone);
       if (end) this.end = end;
     }
   }
@@ -555,6 +592,79 @@ export function viewErrors(clients: SimClient[]): number[] {
     }
   }
   return errs;
+}
+
+/**
+ * What everyone's screen shows, frame by frame: how smoothly other people's karts move (each frame's step against the
+ * one before, carried on: a kart that jumps or jerks shows here, one going round a bend or braking hardly at all), how
+ * old the word of them is, how far each frame moves the race clock against the wall clock (which every kart, this
+ * player's own included, and every set piece runs on), and how far each guest's clock is from the host's.
+ */
+export class Screens {
+  /** The step of each remote kart each frame, against the one before carried on (metres), and the same of its owner's kart at those moments. */
+  readonly jumps: number[] = [];
+  readonly truth: number[] = [];
+  /** How old the word of each remote kart is, each frame (seconds): guests' karts seen by other guests, and everyone else's. */
+  readonly ageGuests: number[] = [];
+  readonly ageOthers: number[] = [];
+  /** Each frame: the race clock's move against the wall clock's (seconds), and on a guest how far it is off the host's. */
+  readonly clockStep: number[] = [];
+  readonly clockOff: number[] = [];
+  private readonly seen = new Map<string, { p: [number, number][]; t: number[] }>();
+  private readonly held = new Map<string, number>();
+  private readonly frames = new Map<SimClient, { now: number; time: number; race: Race }>();
+  readonly clients: SimClient[];
+  /** Karts are watched from this race time on (the start is a scrum on the grid). */
+  readonly from: number;
+  constructor(clients: SimClient[], from = 8) {
+    this.clients = clients;
+    this.from = from;
+    for (const c of clients) c.onFrame = (client, now) => this.frame(client, now);
+  }
+  private step(key: string, x: number, z: number, now: number): number | null {
+    let h = this.seen.get(key);
+    if (!h) this.seen.set(key, (h = { p: [], t: [] }));
+    h.p.push([x, z]);
+    h.t.push(now);
+    if (h.p.length > 3) {
+      h.p.shift();
+      h.t.shift();
+    }
+    if (h.p.length < 3) return null;
+    const [a, b, c] = h.p;
+    const s = (h.t[2] - h.t[1]) / (h.t[1] - h.t[0]);
+    return Math.hypot(c[0] - (b[0] + (b[0] - a[0]) * s), c[1] - (b[1] + (b[1] - a[1]) * s));
+  }
+  private frame(c: SimClient, now: number) {
+    const r = c.race!;
+    const host = this.clients.find((x) => x.isHost);
+    const last = this.frames.get(c);
+    this.frames.set(c, { now, time: r.time, race: r });
+    if (last && last.race === r && r.time > 0.5) {
+      this.clockStep.push(Math.abs(r.time - last.time - (now - last.now) / 1000));
+      const h = host && this.frames.get(host);
+      if (!c.isHost && h && h.race === host!.race) {
+        const off = Math.abs(r.time - (h.time + (now - h.now) / 1000));
+        this.clockOff.push(off);
+      }
+    }
+    if (!c.n.synced || r.time < this.from) return;
+    for (const k of r.karts) {
+      if (k.kind !== 'remote' || k.left || k.done !== null) continue;
+      const owner = this.clients.find((x) => x.seat === k.seat && x.race);
+      const truth = owner ? owner.me : host?.race?.karts.find((x) => x.seat === k.seat && x.kind === 'cpu');
+      if (!truth || truth.done !== null || (owner && (owner.hidden || owner.sockets.some((s) => s.dead)))) continue;
+      const key = `${c.name}:${k.seat}`;
+      // (a kart in the water, and for a moment after it is set back on the road, jumps for real)
+      if (truth.sunk > 0 || k.sunk > 0) this.held.set(key, now);
+      const j = this.step(key, k.x, k.z, now);
+      const tj = this.step(`${key}:truth`, truth.x, truth.z, now);
+      if (j === null || tj === null || now - (this.held.get(key) ?? -1e9) < 1500) continue;
+      this.jumps.push(j);
+      this.truth.push(tj);
+      if (k.net) (owner && !c.isHost && !owner.isHost ? this.ageGuests : this.ageOthers).push(r.time - k.net.at);
+    }
+  }
 }
 
 export const percentile = (xs: number[], p: number) => {

@@ -681,6 +681,8 @@ export type River = {
   tick: (race: Race, me: number, clock: number, dt: number) => void;
   /** Renders what the water mirrors (call before the frame's own render), and lets the camera see the water itself. */
   reflect: (renderer: T.WebGLRenderer, scene: T.Scene, camera: T.PerspectiveCamera) => void;
+  /** Compiles every shader the reflection pass will want (drawing into its texture takes shaders of its own). */
+  warm: (renderer: T.WebGLRenderer, scene: T.Scene) => void;
   dispose: () => void;
 };
 
@@ -1822,6 +1824,15 @@ export function buildRiver(THREE: Three, scene: T.Scene, r: Race, look: Look, ge
 
   return {
     reflect,
+    warm(renderer, sc) {
+      const was = renderer.getRenderTarget();
+      renderer.setRenderTarget(rt);
+      try {
+        renderer.compile(sc, virt);
+      } finally {
+        renderer.setRenderTarget(was);
+      }
+    },
     dispose() {
       rt.dispose();
       shared.tNormal.value.dispose();

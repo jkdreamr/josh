@@ -2,24 +2,28 @@
 // real RoomLink, over simulated connections with latency, jitter and retransmits (see netroom-sim.ts), on a mock clock.
 import assert from 'node:assert/strict';
 import { mock, test } from 'node:test';
-import { NET_OK, percentile, rng, runFor, SimClient, SimRoom, viewErrors } from './netroom-sim.ts';
-import { AGE_MAX, HostClock, Pacer, SampleClock } from '../src/os/arcade/games/palmdrive/netsync.ts';
-import { carried } from '../src/os/arcade/games/palmdrive/logic.ts';
-import { carOf, guestState, hostState, parsePacket } from '../src/os/arcade/games/palmdrive/net.ts';
+import { NET_OK, percentile, rng, runFor, Screens, SimClient, SimRoom, viewErrors, type Link } from './netroom-sim.ts';
+import { AGE_MAX, applyEvent, HostClock, onHostClock, newNet, onlineRace, Pacer, receive, SampleClock, tick, type Seats } from '../src/os/arcade/games/palmdrive/netsync.ts';
+import { freshGarage, lookFor } from '../src/os/arcade/games/palmdrive/garage.ts';
+import { carried, GLIDE_FULL, GLIDE_MAX } from '../src/os/arcade/games/palmdrive/logic.ts';
+import { carOf, events, guestState, hostState, parsePacket } from '../src/os/arcade/games/palmdrive/net.ts';
 import { canResume, holdsDue, holdUntil, nextAlarm, orphanSeats, parseRoomMessage, type RoomState } from '../worker/src/room-core.ts';
 
 const NAMES = ['Host', 'Ann', 'Bo', 'Cy', 'Di', 'Ed', 'Fay', 'Gus'];
 
 type Room = { sim: SimRoom; clients: SimClient[]; t0: number; restore: () => void };
 
-/** Eight people in a room, each a little further from the Worker than the last, and the host's Start pressed. */
-async function room(opts: { legacy?: boolean; hostFrameMs?: number; laps?: number } = {}): Promise<Room> {
+/**
+ * Eight people in a room, each a little further from the Worker than the last, and the host's Start pressed. net: each
+ * person's connection (by seat), frames: how long each of their frames takes, when it wanders.
+ */
+async function room(opts: { legacy?: boolean; hostFrameMs?: number; laps?: number; net?: (i: number) => Link; frames?: (i: number) => (() => number) | undefined } = {}): Promise<Room> {
   mock.timers.enable({ apis: ['setTimeout', 'setInterval', 'Date'], now: 1_000_000 });
   const random = Math.random;
   Math.random = rng(11);
   const sim = new SimRoom('PALM', 5);
   await sim.start();
-  const clients = NAMES.map((name, i) => new SimClient(sim, name, { ...NET_OK, latency: 20 + i * 8 }, { laps: opts.laps ?? 1, legacy: opts.legacy, frameMs: i === 0 ? opts.hostFrameMs : undefined }));
+  const clients = NAMES.map((name, i) => new SimClient(sim, name, opts.net?.(i) ?? { ...NET_OK, latency: 20 + i * 8 }, { laps: opts.laps ?? 1, legacy: opts.legacy, frameMs: i === 0 ? opts.hostFrameMs : undefined, frames: opts.frames?.(i) }));
   for (const c of clients) {
     c.join();
     await runFor(mock.timers, sim, 250);
@@ -43,7 +47,7 @@ async function room(opts: { legacy?: boolean; hostFrameMs?: number; laps?: numbe
 let piled = { things: 0, held: 0 };
 
 /** Runs the race to its end (or `ms`), calling `at` hooks at their seconds since Start, and samples the view error. */
-async function race(r: Room, ms: number, hooks: [number, () => void][] = []) {
+async function race(r: Room, ms: number, hooks: [number, () => void][] = [], stepMs?: number) {
   const errs: number[] = [];
   let frame = 0;
   piled = { things: 0, held: 0 };
@@ -59,8 +63,8 @@ async function race(r: Room, ms: number, hooks: [number, () => void][] = []) {
       piled.held = Math.max(piled.held, c.n.cars.size + c.n.clocks.size + c.n.outbox.length);
     }
     // (only karts somebody is looking at, from players whose connection is up)
-    if (++frame % 6 === 0) errs.push(...viewErrors(r.clients.filter((c) => !c.hidden && c.link.link === 'ok' && !c.sockets.at(-1)?.dead)));
-  });
+    if (++frame % Math.round(100 / (stepMs ?? 1000 / 60)) === 0) errs.push(...viewErrors(r.clients.filter((c) => !c.hidden && c.link.link === 'ok' && !c.sockets.at(-1)?.dead)));
+  }, stepMs);
   return errs;
 }
 
@@ -98,12 +102,13 @@ test('eight players race through the real room: bounded bandwidth, nobody droppe
     // what an eight-player race costs: 15 states a second from everyone, the host's to everyone
     const rate = (a: number, b: number) => (b - a) / secs;
     assert.ok(rate(c0.in, c1.in) < 140, `the room takes ${rate(c0.in, c1.in).toFixed(0)} messages a second`);
-    assert.ok(rate(c0.out, c1.out) < 250, `and sends ${rate(c0.out, c1.out).toFixed(0)}`);
+    // (a guest's own kart goes to everyone at once through the room, see RoomLink.send: seven copies of each)
+    assert.ok(rate(c0.out, c1.out) < 900, `and sends ${rate(c0.out, c1.out).toFixed(0)}`);
     assert.ok(rate(c0.up[0], c1.up[0]) < 10_000, `the host sends ${rate(c0.up[0], c1.up[0]).toFixed(0)} B/s`);
     assert.ok(rate(c0.down[0], c1.down[0]) < 16_000, `the host gets ${rate(c0.down[0], c1.down[0]).toFixed(0)} B/s`);
     for (let i = 1; i < 8; i++) {
       assert.ok(rate(c0.up[i], c1.up[i]) < 2_500, `${clients[i].name} sends ${rate(c0.up[i], c1.up[i]).toFixed(0)} B/s`);
-      assert.ok(rate(c0.down[i], c1.down[i]) < 10_000, `${clients[i].name} gets ${rate(c0.down[i], c1.down[i]).toFixed(0)} B/s`);
+      assert.ok(rate(c0.down[i], c1.down[i]) < 17_000, `${clients[i].name} gets ${rate(c0.down[i], c1.down[i]).toFixed(0)} B/s`);
     }
     // every kart on every screen within a few metres of where its owner has it (a kart covers 8 m in a quarter second)
     const [p50, p95] = [percentile(errs, 0.5), percentile(errs, 0.95)];
@@ -125,6 +130,54 @@ test('a host on slow frames keeps its race on the wall clock, rather than everyo
   try {
     await race(r, 40_000);
     for (const c of r.clients) assert.ok(Math.abs(c.race!.time - r.clients[0].race!.time) < 0.2, `${c.name}'s clock is the host's`);
+  } finally {
+    r.restore();
+  }
+});
+
+/**
+ * A rough evening: everyone 120-250 ms from each other through the room, with jitter, 1-3 % of messages held up by a
+ * retransmit (TCP keeps everything behind it waiting) and now and then a Wi-Fi stall of up to 300 ms; the host's
+ * laptop at 30 to 60 frames a second with a 100 ms hitch every few seconds, the guests' with a shorter one now and then.
+ */
+const rough = {
+  net: (i: number): Link => ({ latency: 60 + i * 9, jitter: 30, loss: 0.01 + (i % 3) * 0.01, rto: 250, spike: 0.004, spikeMs: 300 }),
+  frames: (i: number) => {
+    const rand = rng(100 + i);
+    let t = 0;
+    let fps = 45;
+    let hitch = (i ? 3000 : 1000) + rand() * 2000;
+    return () => {
+      fps = i ? 60 : Math.max(30, Math.min(60, fps + (rand() - 0.5) * 6));
+      let gap = 1000 / fps;
+      t += gap;
+      if (t > hitch) {
+        hitch = t + (i ? 4000 + rand() * 4000 : 2000 + rand() * 1500);
+        gap = i ? 40 + rand() * 40 : 100;
+      }
+      return gap;
+    };
+  },
+};
+
+test('on rough connections and a hitching host, other karts move smoothly, clocks agree and nobody’s kart is jerked about', async () => {
+  const r = await room(rough);
+  const screens = new Screens(r.clients);
+  try {
+    // (in 4 ms slices, so frames and messages land when they should: what each screen shows is timed to the moment)
+    const errs = await race(r, 75_000, [], 4);
+    for (const c of r.clients) assert.deepEqual(c.closed, [], `${c.name} stayed connected`);
+    everyoneAgrees(r.clients);
+    const { jumps, truth, ageGuests, clockStep, clockOff } = screens;
+    const big = jumps.filter((j) => j > 1).length;
+    // (a kart's own frame-to-frame step, against the one before, is up to a metre or so: a bump, a hit, frames that don't keep time)
+    assert.ok(percentile(jumps, 0.999) < 1 && Math.max(...jumps) < Math.max(...truth) + 1, `remote karts never jump: p99.9 ${percentile(jumps, 0.999).toFixed(2)} m, most ${Math.max(...jumps).toFixed(2)} m (their owners' ${Math.max(...truth).toFixed(2)} m)`);
+    assert.ok(big < jumps.length / 2000, `${big} frames of ${jumps.length} with a step off by a metre`);
+    assert.ok(percentile(ageGuests, 0.5) < 0.4, `word of another guest is ${percentile(ageGuests, 0.5).toFixed(2)} s old (p50)`);
+    assert.ok(Math.max(...clockStep) < 0.008, `the race clock never jumps: ${(Math.max(...clockStep) * 1000).toFixed(1)} ms at most in a frame`);
+    assert.ok(percentile(clockOff, 0.5) < 0.008 && percentile(clockOff, 0.99) < 0.025, `guests' clocks ${(percentile(clockOff, 0.5) * 1000).toFixed(1)} ms off the host's (p50), ${(percentile(clockOff, 0.99) * 1000).toFixed(1)} ms (p99)`);
+    const [p50, p95] = [percentile(errs, 0.5), percentile(errs, 0.95)];
+    assert.ok(p50 < 1.5 && p95 < 6, `view error p50 ${p50.toFixed(2)} m, p95 ${p95.toFixed(2)} m`);
   } finally {
     r.restore();
   }
@@ -237,11 +290,34 @@ test('reports are placed by when they were sampled, newest only; the host’s cl
   assert.ok(Math.abs(p.behind - 0.35) < 1e-9);
   assert.ok(Math.abs(p.take(1600, 2) - 0.35) < 1e-9);
 
-  // carried round a bend at the rate it was turning
-  const straight = carried({ x: 0, z: 0, h: 0, v: 10 }, 0.5);
-  assert.deepEqual([straight.x, straight.z], [0, 5]);
-  const bend = carried({ x: 0, z: 0, h: 0, v: 10, w: 1 }, Math.PI / 2);
-  assert.ok(Math.abs(bend.x - 10) < 1e-9 && Math.abs(bend.z - 10) < 1e-9 && Math.abs(bend.h - Math.PI / 2) < 1e-9);
+  // carried round a bend at the rate it was turning, speeding up as it was, the way it was really going
+  const straight = carried({ x: 0, z: 0, h: 0, v: 10 }, 0.4);
+  assert.deepEqual([straight.x, straight.z], [0, 4]);
+  const bend = carried({ x: 0, z: 0, h: 0, v: 25, w: 1 }, 0.4);
+  const r = 25;
+  assert.ok(Math.abs(bend.x - r * (1 - Math.cos(0.4))) < 1e-9 && Math.abs(bend.z - r * Math.sin(0.4)) < 1e-9 && Math.abs(bend.h - 0.4) < 1e-9);
+  const faster = carried({ x: 0, z: 0, h: 0, v: 10, a: 8 }, 0.2);
+  assert.ok(Math.abs(faster.z - (2 + 0.5 * 8 * 0.04)) < 1e-9);
+  const braking = carried({ x: 0, z: 0, h: 0, v: 4, a: -20 }, 0.4);
+  assert.ok(Math.abs(braking.z - 0.4) < 1e-9, 'never backing up past a stop');
+  const wall = carried({ x: 0, z: 0, h: 0, v: 30, dir: Math.PI / 2, u: 20 }, 0.1);
+  assert.ok(Math.abs(wall.x - 2) < 1e-9 && Math.abs(wall.z) < 1e-9 && wall.h === 0, 'sliding along a wall, facing into it');
+  // and eased to a stop when word of it stops coming, rather than stopping dead
+  const far = (age: number) => carried({ x: 0, z: 0, h: 0, v: 10 }, age).z;
+  assert.ok(Math.abs(far(GLIDE_FULL) - 10 * GLIDE_FULL) < 1e-9);
+  assert.ok(far(GLIDE_FULL + 0.1) > far(GLIDE_FULL) + 0.9 && far(GLIDE_MAX) === far(GLIDE_MAX + 1));
+  assert.ok(Math.abs(far(GLIDE_MAX) - 10 * (GLIDE_FULL + (GLIDE_MAX - GLIDE_FULL) / 2)) < 1e-9);
+  const air = carried({ x: 0, z: 0, h: 0, v: 0, y: 1, vy: 2 }, 0.1);
+  assert.ok(Math.abs(air.y! - (1 + 0.2 - 0.5 * 28 * 0.01)) < 1e-9, 'up in the air, on the arc it was flying');
+
+  // a guest's clock comes over to the host's a few percent faster or slower, never in a jump
+  const n = newNet(null);
+  n.host.observe(10, 0, 10.05 + 0.04, 10.08);
+  assert.ok(Math.abs(n.host.ahead - 0.05) < 1e-9);
+  const steps = Array.from({ length: 60 }, () => onHostClock(n, false, 1 / 60));
+  assert.ok(steps.every((d) => d <= (1 / 60) * 1.07 && d >= 1 / 60), 'at most 6 % fast');
+  assert.ok(Math.abs(n.host.ahead) < 0.05, 'and closing');
+  assert.equal(onHostClock(n, true, 0.1), 0.1, 'the host keeps its own');
 });
 
 test('the room keeps a dropped seat for its key, relays to several seats at once, and wakes for a hold running out', () => {
@@ -266,4 +342,62 @@ test('the room keeps a dropped seat for its key, relays to several seats at once
   assert.equal(parseRoomMessage('{"t":"msg","to":[],"d":1}', 4), null);
   assert.equal(parseRoomMessage(`{"t":"msg","d":"${'é'.repeat(4200)}"}`, 4), null, 'too big, counted in bytes');
   assert.deepEqual(parseRoomMessage(`{"t":"msg","d":"${'é'.repeat(2000)}"}`, 4), { t: 'msg', d: 'é'.repeat(2000) });
+});
+
+test('a guest’s kart goes to the other guests straight through the room; the host passes it on only at keyframes and sends its time back', () => {
+  const players = [0, 1, 2].map((seat) => ({ seat, name: NAMES[seat] }));
+  const seats = (seat: number): Seats => ({ seat, isHost: seat === 0, round: 1, players, bots: [] });
+  const look = lookFor(freshGarage());
+  const host = { o: seats(0), n: newNet(seats(0)) };
+  const race = (seat: number) => onlineRace(seats(seat), '150cc', 'palm', [0, 1, 2], 3, look);
+  const rh = race(0);
+  const [r1, r2] = [race(1), race(2)];
+  const n1 = newNet(seats(1));
+  const n2 = newNet(seats(2));
+  const wire = (d: unknown) => JSON.parse(JSON.stringify(d));
+  // the host's first state sets everyone's race up
+  const first = tick(host.n, rh, host.o, -1).out[0].d;
+  const g1 = receive(n1, r1, seats(1), 0, wire(first), () => look)!.race!;
+  const g2 = receive(n2, r2, seats(2), 0, wire(first), () => look)!.race!;
+  // Ann's kart, to everyone through the room
+  g1.time = rh.time;
+  const out = tick(n1, g1, seats(1), -1, 0, true).out[0];
+  assert.equal(out.everyone, true);
+  assert.equal((out.d as { a?: number }).a, 1, 'and says so');
+  receive(n2, g2, seats(2), 1, wire(out.d), () => look);
+  assert.equal(g2.karts.find((k) => k.seat === 1)!.net?.at, g1.time, 'Bo has it straight from her');
+  receive(host.n, rh, host.o, 1, wire(out.d), () => look);
+  rh.time += 0.05;
+  // the host's next state leaves her kart out (Bo has it already) but sends her its time back
+  const S = parsePacket(wire(tick(host.n, rh, host.o, -1).out[0].d));
+  assert.ok(S?.k === 'S');
+  assert.ok(!S.cars.some((c) => c.seat === 1));
+  assert.equal(S.echoes.length, 1);
+  assert.deepEqual(S.echoes[0].slice(0, 2), [1, Math.round(g1.time * 1000) / 1000]);
+  assert.ok(Math.abs(S.echoes[0][2] - 50) <= 1, 'held 50 ms');
+  // and every keyframe carries every kart, for anyone who missed it (or a guest from before)
+  let keyframe = false;
+  for (let i = 0; i < 5; i++) {
+    const p = parsePacket(wire(tick(host.n, rh, host.o, -1).out[0].d));
+    if (p?.k === 'S' && p.cars.some((c) => c.seat === 1)) keyframe = true;
+  }
+  assert.ok(keyframe);
+});
+
+test('a shell someone else threw starts out where it has got to by now, not where it was when they threw it', () => {
+  const o: Seats = { seat: 1, isHost: false, round: 1, players: [{ seat: 0, name: 'Host' }, { seat: 1, name: 'Ann' }], bots: [] };
+  const r = onlineRace(o, '150cc', 'palm', [0, 1], 0, lookFor(freshGarage()));
+  r.time = 5;
+  const k = r.karts.find((x) => x.seat === 0)!;
+  const shell = { y: 'spawn' as const, id: 7, kind: 'green' as const, x: k.x, z: k.z, vx: 0, vz: 40, vy: 0, yy: 0.35, tg: -1, pg: 0, gr: 0.6 };
+  applyEvent(r, 0, shell, 0.2);
+  const th = r.things.find((t) => t.id === 7)!;
+  assert.ok(Math.abs(th.z - (k.z + 8)) < 0.5, `carried on 8 m (${(th.z - k.z).toFixed(2)})`);
+  applyEvent(r, 0, { ...shell, id: 8 });
+  assert.equal(r.things.find((t) => t.id === 8)!.z, k.z, 'from an older client, where it was');
+  // the packet says when
+  const e = parsePacket(JSON.parse(JSON.stringify(events(1, 0, [shell], 4.8))));
+  assert.ok(e?.k === 'e' && e.at === 4.8);
+  const old = parsePacket({ t: 'pk', r: 1, k: 'e', o: 0, ev: [shell] });
+  assert.ok(old?.k === 'e' && old.at === null);
 });

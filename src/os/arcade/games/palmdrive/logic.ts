@@ -199,13 +199,38 @@ export const HATS: Hat[] = ['cap', 'tree', 'top', 'bow', 'tower', 'axe', 'dish',
 export type Ai = { pace: number; skill: number; band: number; lane: number; laneTo: number; laneT: number; itemT: number; held: number; driftT: number; care: number; dropGo: boolean; reactS: number; react: boolean; err: number; errLap: number; blunders: Record<string, boolean>; waitT: number; backT: number; backs: number; backAt: number; heldT: number; goT: number; goD: number; shaken: number; fellAt: number; catchBeat: number; catchAt: number; hopKey: string; hopGo: boolean; blink: number; blinkT: number; whirlHold: number };
 /** A fall off the road: into what (and whether down a trench), how fast the kart was going, and where it is put back [s, d]. */
 export type Fell = { past: Past; hole: boolean; v: number; to: [number, number] };
-/** What the network last said about a remote kart. */
 /**
- * A remote kart's last report: where it was at race time `at` (on our clock), how fast it was turning (w, radians a
- * second, from the report before), and (ox, oz) how far from that the kart was showing when the report came in, a
- * correction that fades out (see glide). Older reports had neither.
+ * A remote kart's last report: where it was at race time `at` (on our clock), and from the report before, how fast it
+ * was turning (w, radians a second) and speeding up (a, m/s²), the way it was actually going (dir, at speed u: not
+ * always its heading, against a wall, knocked aside, in a current) and rising (y, vy). `from`: the report before,
+ * carried on as the kart was showing it when this one came in, (fx, fz, fy) off it, which the kart blends away from
+ * over `bl` seconds (BLEND, longer the further it has to go) from `since` (see glide). Older reports (no sample times)
+ * had none of it: (ox, oz) how far off the kart was showing, a correction that fades.
  */
-export type NetState = { x: number; z: number; h: number; v: number; prog: number; done: number | null; flags: number; at: number; ox?: number; oz?: number; w?: number };
+export type NetState = {
+  x: number;
+  z: number;
+  h: number;
+  v: number;
+  prog: number;
+  done: number | null;
+  flags: number;
+  at: number;
+  ox?: number;
+  oz?: number;
+  w?: number;
+  a?: number;
+  dir?: number;
+  u?: number;
+  y?: number;
+  vy?: number;
+  from?: NetState | null;
+  fx?: number;
+  fz?: number;
+  fy?: number;
+  since?: number;
+  bl?: number;
+};
 
 export type Kart = {
   idx: number;
@@ -867,27 +892,93 @@ export function step(r: Race, dt: number) {
   rankKarts(r);
 }
 
-/** How far ahead a remote kart's last report is carried, at most. */
-export const GLIDE_MAX = 0.35;
+/**
+ * How far on a remote kart's last report is carried: at full speed for GLIDE_FULL seconds (word of another guest is a
+ * fifth of a second old or more on a slow connection, and a retransmit can hold it up as long again), then eased to a
+ * stop by GLIDE_MAX, rather than stopping dead and jumping on when the next word comes in.
+ */
+export const GLIDE_FULL = 0.45;
+export const GLIDE_MAX = 1.1;
+/** How long a remote kart takes to go over from where it was showing to where a new report puts it (see glide). */
+export const BLEND = 0.2;
+/** The longest a remote kart is taken to keep speeding up or slowing down at the rate it last was. */
+const ACCEL_T = 0.25;
 
-/** Where a report puts its kart `age` seconds on: along its heading, round the bend it was turning through. */
-export function carried(n: Pick<NetState, 'x' | 'z' | 'h' | 'v' | 'w'>, age: number) {
+/** How much of `age` a report is carried on for (see GLIDE_FULL). */
+function reach(age: number) {
+  if (age <= GLIDE_FULL) return Math.max(0, age);
+  const t = Math.min(age, GLIDE_MAX) - GLIDE_FULL;
+  return GLIDE_FULL + t - (t * t) / (2 * (GLIDE_MAX - GLIDE_FULL));
+}
+
+/**
+ * Where a report puts its kart `age` seconds on: the way it was going (its heading, unless the report says otherwise),
+ * round the bend it was turning through, speeding up or slowing down as it was (never backing up past a stop), and up
+ * in the air on the arc it was flying (y, when the report says). h: which way it faces; s: how far along it has gone.
+ */
+export function carried(n: Pick<NetState, 'x' | 'z' | 'h' | 'v' | 'w' | 'a' | 'dir' | 'u' | 'y' | 'vy'>, age: number) {
+  const e = reach(age);
   const w = n.w ?? 0;
-  if (Math.abs(w) < 1e-3) return { x: n.x + Math.sin(n.h) * n.v * age, z: n.z + Math.cos(n.h) * n.v * age, h: n.h };
-  const h = n.h + w * age;
-  return { x: n.x + (n.v * (Math.cos(n.h) - Math.cos(h))) / w, z: n.z + (n.v * (Math.sin(h) - Math.sin(n.h))) / w, h };
+  const a = n.a ?? 0;
+  const v = n.u ?? n.v;
+  const d = n.dir ?? n.h;
+  let s: number;
+  const ta = Math.min(e, ACCEL_T);
+  if (a < 0 && v > 0 && v + a * ta < 0) {
+    const stop = -v / a;
+    s = e >= stop ? (v * v) / (-2 * a) : v * e + 0.5 * a * e * e;
+  } else s = v * e + a * ta * (e - ta / 2);
+  let x: number;
+  let z: number;
+  const turn = w * e;
+  if (Math.abs(turn) < 1e-6) {
+    x = n.x + Math.sin(d) * s;
+    z = n.z + Math.cos(d) * s;
+  } else {
+    // (round the arc at the speed it averages over it)
+    const r = s / turn;
+    x = n.x + r * (Math.cos(d) - Math.cos(d + turn));
+    z = n.z + r * (Math.sin(d + turn) - Math.sin(d));
+  }
+  let y = n.y;
+  if (y !== undefined && (y > 0.02 || (n.vy ?? 0) > 0.1)) {
+    const ty = Math.min(Math.max(0, age), GLIDE_FULL);
+    y = Math.max(0, y + (n.vy ?? 0) * ty - 0.5 * GRAVITY * ty * ty);
+  }
+  return { x, z, h: n.h + turn, s, y };
 }
 /**
- * Where a remote kart probably is now: its last report carried forward. A report that disagrees with where the kart
- * was showing leaves a correction (ox, oz) that fades out, so the kart never jumps and never trails behind the report
- * either; one without (from an older client) is eased towards instead.
+ * Where a remote kart probably is now: its last report carried forward. A new report that disagrees with where the
+ * kart was showing doesn't move it there at once: the kart goes from the way it was going (the report before, carried
+ * on) over to the new one in a fifth of a second or so, easing in and out, so it never jumps and its speed never jerks either. One
+ * from an older client (no sample times) leaves a correction that fades out, or is eased towards.
  */
 function glide(r: Race, k: Kart, dt: number) {
   const n = k.net;
   if (!n) return;
-  const age = clamp(r.time - n.at, 0, GLIDE_MAX);
-  const { x: px, z: pz, h: ph } = carried(n, age);
-  if (n.ox !== undefined && n.oz !== undefined) {
+  const age = Math.max(0, r.time - n.at);
+  const p = carried(n, age);
+  let px = p.x;
+  let pz = p.z;
+  if (n.since !== undefined) {
+    let py = p.y;
+    const u = (r.time - n.since) / (n.bl ?? BLEND);
+    if (n.from && u < 1) {
+      const q = carried(n.from, r.time - n.from.at);
+      const b = u <= 0 ? 0 : u * u * (3 - 2 * u);
+      const ox = q.x + (n.fx ?? 0);
+      const oz = q.z + (n.fz ?? 0);
+      px = ox + (px - ox) * b;
+      pz = oz + (pz - oz) * b;
+      if (py !== undefined && q.y !== undefined) {
+        const oy = q.y + (n.fy ?? 0);
+        py = oy + (py - oy) * b;
+      }
+    } else if (n.from) n.from = null;
+    k.x = px;
+    k.z = pz;
+    if (py !== undefined) k.y = py;
+  } else if (n.ox !== undefined && n.oz !== undefined) {
     const fade = Math.exp(-10 * dt);
     n.ox *= fade;
     n.oz *= fade;
@@ -901,12 +992,12 @@ function glide(r: Race, k: Kart, dt: number) {
     k.x += (px - k.x) * w;
     k.z += (pz - k.z) * w;
   }
-  const turn = wrapAngle(ph - k.h) * (1 - Math.exp(-14 * dt));
+  const turn = wrapAngle(p.h - k.h) * (1 - Math.exp(-14 * dt));
   k.h = wrapAngle(k.h + turn);
   // lean and turn the front wheels the way the kart is turning
   if (dt > 0) k.steer = approach(k.steer, clamp(-turn / dt / 1.6, -1, 1), 6 * dt);
   k.v = n.v;
-  k.prog = n.prog + n.v * age;
+  k.prog = n.prog + p.s;
   k.done = n.done;
   const at = locate(r.track, k.x, k.z, k.i);
   k.i = at.i;
@@ -3386,6 +3477,24 @@ function quake(r: Race, by: number) {
     o.fireT = 0;
   }
 }
+
+/**
+ * Carries on a thing someone else threw, by `age` seconds, as it would have gone here (online, where it was thrown that
+ * long ago on their screen). Blue shells and bombs go off where their thrower's client says, so they are left be.
+ */
+export function catchUp(r: Race, th: Thing, age: number) {
+  if (th.kind === 'blue' || th.kind === 'bomb') return;
+  const all = r.things;
+  r.things = [th];
+  try {
+    for (let left = age; left > 1e-6 && r.things.length; left -= CATCH_STEP) moveThings(r, Math.min(CATCH_STEP, left));
+  } finally {
+    const gone = !r.things.includes(th);
+    r.things = all;
+    if (gone && all.includes(th)) all.splice(all.indexOf(th), 1);
+  }
+}
+const CATCH_STEP = 1 / 60;
 
 export function removeThing(r: Race, id: number, announce = true) {
   const i = r.things.findIndex((t) => t.id === id);

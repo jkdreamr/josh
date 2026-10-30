@@ -16,11 +16,13 @@ function useDocVisible() {
 }
 
 /**
- * requestAnimationFrame loop. update(dt) gets seconds since the last frame, clamped to 1/20 s; render() runs after it.
+ * requestAnimationFrame loop. update(dt) gets seconds since the last frame, clamped to 1/20 s (and the frame's own time,
+ * on performance.now()'s clock: when the frame began, which keeps in step with the screen where the moment the callback
+ * happens to run does not); render() runs after it.
  * Inside <GameShell> it runs only while status is 'playing' (or always, with { always: true }) and the game is active
  * (tab visible, Chrome tab in front, game on screen). While stopped, render() still runs once after resizes and pauses.
  */
-export function useGameLoop(update: (dt: number) => void, render?: () => void, opts: { always?: boolean } = {}) {
+export function useGameLoop(update: (dt: number, now: number) => void, render?: () => void, opts: { always?: boolean } = {}) {
   const shell = useContext(ShellContext);
   const host = useContext(ArcadeHost);
   const docVisible = useDocVisible();
@@ -37,7 +39,7 @@ export function useGameLoop(update: (dt: number) => void, render?: () => void, o
     const frame = (t: number) => {
       const dt = last < 0 ? 0 : Math.min(Math.max(0, (t - last) / 1000), MAX_DT);
       last = t;
-      u.current(dt);
+      u.current(dt, t);
       r.current?.();
       raf = requestAnimationFrame(frame);
     };
