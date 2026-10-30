@@ -4,7 +4,7 @@
 import { WEAPONS, isMelee, isWeapon } from './items.ts';
 import { DOOR_OPENING, FALL, FIGHTER_COLORS, MAX_FIGHTERS, MAX_TEAMS, TEAM_SIZE, VAULT_TIME, adoptBots, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, grantTake, ordinal, owned, step, teamCount, teamsLeft, viewAt, type Entrant, type Ev, type Fighter, type Level, type Match, type Mode } from './logic.ts';
 import { BUS_Y, DROP_BASE, stormEnd } from './map.ts';
-import { LEFT, SETTLED, actorOf, applyNet, applySettled, endOf, guestState, hostState, kitsOf, logOf, packEvents, parsePacket, pieceEv, placesOf, putKit, stateKey, stateOf, toNet, type Kit, type NetEv, type State } from './net.ts';
+import { LEFT, SETTLED, actorOf, applyNet, applySettled, endOf, guestState, hostState, kitsOf, logOf, packEvents, parsePacket, pieceEv, placesOf, putKit, stateKey, stateOf, toNet, type Kit, type NetEv, type Packet, type State } from './net.ts';
 
 /** How often queued events go out. State goes out on its own tick, about 15 times a second. */
 export const FLUSH = 0.05;
@@ -228,9 +228,13 @@ export type Session = {
   kits: Map<number, Kit>;
   /** A guest's: the last LOG_T seconds of what the host settled, with when (wall time), for a new host. */
   log: [number, NetEv][];
-  /** A host's: wall time it took the match over (-1 for the host it started on), and the seats whose logs it has. */
+  /**
+   * A host's: wall time it took the match over (-1 for the host it started on), and the seats whose logs it has; a
+   * guest's: logs from the others that came before it took over (the room had made it the host a moment before).
+   */
   tookAt: number;
   logs: Set<number>;
+  heldLogs: [number, Extract<Packet, { k: 'L' }>][];
   /** A host's: seats it has had a report from, the next computer egg whose kit goes out, and a report owed to everyone of every egg. */
   told: Set<number>;
   kitAt: number;
@@ -275,6 +279,7 @@ export function newSession(synced: boolean, roster: number[] = [], host = synced
     log: [],
     tookAt: -1,
     logs: new Set(),
+    heldLogs: [],
     told: new Set(),
     kitAt: 0,
     full: false,
@@ -389,18 +394,24 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
     if (me.isHost || from !== 0 || !s.synced) return m;
     for (const [fid, kit] of p.kits) if (m.fighters[fid]?.seat === -1) s.kits.set(fid, kit);
   } else if (p.k === 'L') {
-    // a guest's word on what the host before us settled: once each, while we wait to hear it
-    if (!me.isHost || !s.host || s.tookAt < 0 || clock - s.tookAt > LOG_T * 2 || from === me.seat || s.logs.has(from) || !s.roster.includes(from)) return m;
-    s.logs.add(from);
-    if (p.end && !s.end && !m.ended) {
-      endMatch(m, p.end.winner, p.end.places);
-      s.end = p.end;
-      s.endAt = clock;
-      s.endSends = 0;
-    }
-    for (const ev of p.events) if (applySettled(m, ev)) s.queue.push([me.seat, ev]);
+    // a guest's word on what the host before us settled (one that comes just before we take over waits for it)
+    if (s.host) heardLog(s, m, me, from, p, clock);
+    else if (from !== 0 && s.synced && s.heldLogs.length < MAX_FIGHTERS) s.heldLogs.push([from, p]);
   }
   return m;
+}
+
+/** A guest's word on what the host before us settled: once from each, while we still wait to hear it. */
+function heardLog(s: Session, m: Match, me: Me, from: number, p: Extract<Packet, { k: 'L' }>, clock: number) {
+  if (s.tookAt < 0 || clock - s.tookAt > LOG_T * 2 || from === me.seat || s.logs.has(from) || !s.roster.includes(from)) return;
+  s.logs.add(from);
+  if (p.end && !s.end && !m.ended) {
+    endMatch(m, p.end.winner, p.end.places);
+    s.end = p.end;
+    s.endAt = clock;
+    s.endSends = 0;
+  }
+  for (const ev of p.events) if (applySettled(m, ev)) s.queue.push([me.seat, ev]);
 }
 
 /** Keeps something the host settled for a few seconds (see LOG_T), in case it leaves and someone here runs the match next. */
@@ -603,6 +614,7 @@ export function takeOver(s: Session, m: Match, me: Me, present: number[], clock:
     }
   if (mine) mine.pending.clear();
   for (const ev of asks) applyNet(m, ev);
+  for (const [from, p] of s.heldLogs.splice(0)) heardLog(s, m, me, from, p, clock);
 }
 
 /** What a computer egg nobody told us the kit of carries: what it was seen holding, with a little ammo for it. */
