@@ -1,5 +1,5 @@
 // Canvas drawing for The Axe: field, players, axes, effects and the HUD. Pure canvas, no DOM.
-import { FIELD, OBSTACLES, PLAYER_R, type GameEvent, type World } from './logic.ts';
+import { FIELD, JAILBREAK_TIME, OBSTACLES, PLAYER_R, type GameEvent, type World } from './logic.ts';
 
 export type View = { w: number; h: number; rotate: boolean; scale: number; ox: number; oy: number };
 
@@ -95,6 +95,13 @@ export function fxEvents(fx: Fx, events: GameEvent[], world: World, nameOf: (id:
         sparks(fx, p.x, p.y, GOLD, 16);
       }
       fx.shake = Math.max(fx.shake, 0.35);
+    } else if (e.type === 'jailbreak') {
+      note(fx, `the jails opened! ${e.count} out, run home`, GOLD);
+      for (const j of FIELD.JAILS) {
+        fx.rings.push({ x: j.x + j.w / 2, y: j.y + j.h / 2, color: GOLD, life: 0, max: 0.7, r: 6 });
+        sparks(fx, j.x + j.w / 2, j.y + j.h / 2, GOLD, 18);
+      }
+      fx.shake = Math.max(fx.shake, 0.3);
     } else if (e.type === 'steal') {
       const neutral = world.axes[e.axe]?.owner === -1;
       note(fx, neutral ? `${nameOf(e.who)} has the axe!` : `axe stolen! ${nameOf(e.who)} has it`, TEAM[team(e.who)].light);
@@ -284,7 +291,7 @@ function drawField(c: CanvasRenderingContext2D, view: View, world: World, t: num
   void world;
 }
 
-function drawJail(c: CanvasRenderingContext2D, team: 0 | 1, t: number, count: number) {
+function drawJail(c: CanvasRenderingContext2D, team: 0 | 1, t: number, count: number, jailT: number) {
   const j = FIELD.JAILS[team];
   const color = TEAM[team].main;
   c.save();
@@ -311,6 +318,22 @@ function drawJail(c: CanvasRenderingContext2D, team: 0 | 1, t: number, count: nu
     c.lineWidth = 0.25;
     c.stroke();
   }
+  // the jailbreak clock: a bar along the jail's edge that runs down, gold and blinking in the last three seconds
+  const left = Math.max(0, Math.min(1, jailT / JAILBREAK_TIME));
+  const soon = jailT <= 3;
+  const edge = team === 0 ? j.y + j.h + 0.35 : j.y - 0.35;
+  c.lineCap = 'round';
+  c.lineWidth = 0.32;
+  c.strokeStyle = 'rgba(10, 14, 20, 0.45)';
+  c.beginPath();
+  c.moveTo(j.x, edge);
+  c.lineTo(j.x + j.w, edge);
+  c.stroke();
+  c.strokeStyle = soon ? (Math.floor(t * 6) % 2 ? GOLD : '#ffffff') : 'rgba(255, 255, 255, 0.75)';
+  c.beginPath();
+  c.moveTo(j.x, edge);
+  c.lineTo(j.x + j.w * left, edge);
+  c.stroke();
   c.restore();
 }
 
@@ -850,8 +873,9 @@ function drawHud(c: CanvasRenderingContext2D, view: View, world: World, fx: Fx, 
     c.font = `700 ${small ? 12 : 13}px ${FONT}`;
     c.textAlign = 'left';
     const notes: string[] = [];
-    if (jailed[0]) notes.push(`${jailed[0]} stanford in jail`);
-    if (jailed[1]) notes.push(`${jailed[1]} cal in jail`);
+    const opens = world.phase === 'play' ? `, out in ${Math.ceil(world.jailT)}` : '';
+    if (jailed[0]) notes.push(`${jailed[0]} stanford in jail${opens}`);
+    if (jailed[1]) notes.push(`${jailed[1]} cal in jail${opens}`);
     jailNoteCount = notes.length;
     notes.forEach((n, i) => pillText(c, n, 12, top + barH + 13 + i * 16, i === 0 && jailed[0] ? '#ffb3b3' : '#ffe39a'));
   }
@@ -989,8 +1013,8 @@ export function drawGame(c: CanvasRenderingContext2D, view: View, world: World, 
     const count = [0, 0];
     for (const p of world.players) if (p.jailed) count[p.team]++;
     // a team's jail holds the other team's players
-    drawJail(c, 0, t, count[1]);
-    drawJail(c, 1, t, count[0]);
+    drawJail(c, 0, t, count[1], world.jailT);
+    drawJail(c, 1, t, count[0], world.jailT);
     drawPedestals(c, world, t);
   }
   drawObstacles(c, world, t);
@@ -1005,7 +1029,8 @@ export function drawGame(c: CanvasRenderingContext2D, view: View, world: World, 
     c.textBaseline = 'middle';
     for (const team of [0, 1] as const) {
       const j = FIELD.JAILS[team];
-      uprightText(c, view, 'jail', j.x + j.w / 2, team === 0 ? j.y + j.h + 0.9 : j.y - 0.9, 1.1);
+      const opens = Math.ceil(world.jailT);
+      uprightText(c, view, world.phase === 'play' ? `opens in ${opens}` : 'jail', j.x + j.w / 2, team === 0 ? j.y + j.h + 1.15 : j.y - 1.15, 1.1);
     }
   }
   c.restore();
