@@ -13,5 +13,5 @@ export const meta: GameMeta = {
   music: 'tension',
   // solo matches against forty-nine computer eggs, one board per difficulty: damage dealt, 100 an elimination, 500 a win
   leaderboard: { order: 'desc', max: 10_000, unit: 'pts', measure: 'Best Match vs Computer', variants: { easy: 'Easy', normal: 'Normal', hard: 'Hard' } },
-  online: { seats: 20, lateJoin: true, bots: true, quick: true },
+  online: { seats: 20, lateJoin: true, bots: true, quick: true, migrate: true },
 };

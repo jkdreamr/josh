@@ -66,7 +66,7 @@ import {
   type Plan,
 } from './logic';
 import { configOf, parsePacket, teamAsk, type Bots } from './net';
-import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, frameTime, guestMatch, hostBots, hostMatch, namesOf, newSession, nextTeam, offscreen, pinTeam, receive, resultCard, share, stepIn, teamsFor, tick, winnersOf, type Session } from './session';
+import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, frameTime, guestMatch, handOff, hostBots, hostMatch, namesOf, newSession, nextTeam, offscreen, pinTeam, receive, resultCard, share, stepIn, takeOver, teamsFor, tick, toNewHost, winnersOf, type Session } from './session';
 import { ARMOR_NAMES, MATS, MAT_MAX, MELEE, PIECE_COST, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, ammoCap, isMelee, isThrow, isWeapon, legendary, lootName, reloadOf, type Ammo, type LootDef, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { DEEP, HALF, SUPPLY_FALL, basementAt, isDeep, placeAt, topX, type ContainerKind } from './map';
 import { AMMO_FILL, AmmoIcon, ArmorIcon, BasementArt, CrownIcon, DROP_KEY, EDIT_KEY, EMOTE_KEY, EditIcon, EggIcon, EmoteIcon, emoteText, GhillieIcon, HowToPlay, IslandArt, MAT_KEY, MatIcon, PIECE_KEYS, PIECE_NAMES, PING_KEY, PackIcon, PieceIcon, PingIcon, PlaceNames, SCOPE_KEY, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, keyCode } from './hud';
@@ -734,13 +734,14 @@ function Play({ mode }: { mode: StageMode }) {
   // -------------------------------------------------------------------------------------------------------------
   // Online: state about 15 times a second, events as they happen, the result from the host.
 
-  /** Whether this game runs the match (the host when it started), and the room's host hand-offs by then. */
+  /** Whether this game runs the match: the host when it started, or one that took it over when the host left. */
   const hosting = useRef(!!online?.isHost);
-  const handoffs = useRef(online?.handoffs ?? 0);
   /**
    * The result card for an online match. `report` once the host has called it; `early` when we are out and have seen
    * enough before the end: the match goes on for everyone else (the host's timer keeps running it), and the card
-   * keeps up with it until the result comes, which is still reported.
+   * keeps up with it until the result comes, which is still reported. In a room of our own, the host's Play Again
+   * waits for the end (it starts the next match for everyone); in quick play it never does (it finds another match,
+   * and someone else runs this one).
    */
   const finishOnline = (report: boolean, early = false) => {
     const n = net.current;
@@ -754,7 +755,7 @@ function Play({ mode }: { mode: StageMode }) {
       o.reportResult(o.round, winner ? winner.seat : null, m.mode !== 'solo' && winner ? people.map((f) => f.seat) : undefined);
     }
     if (n.over && !n.early) return;
-    const { won, ...card } = resultCard(m, early, hosting.current);
+    const { won, ...card } = resultCard(m, early, hosting.current && !o?.quick);
     n.early = early;
     if (n.over) {
       shellRef.current.updateOver(card);
@@ -767,10 +768,42 @@ function Play({ mode }: { mode: StageMode }) {
   const finishRef = useRef(finishOnline);
   finishRef.current = finishOnline;
 
+  /**
+   * Follows the room's host hand-offs this match: the roster follows each, and once the room has made us the host our
+   * game takes the match over (see takeOver), while a guest tells the new host what it heard the old one settle. A note
+   * says who runs the match now; nothing else changes on screen.
+   */
+  function syncHost() {
+    const o = onlineRef.current;
+    const n = net.current;
+    const m = match.current;
+    if (!o || !m || !n.synced) return;
+    const ours = o.handedOff.filter((h) => h.round === o.round);
+    if (ours.length <= n.handoffs) return;
+    const now = performance.now() / 1000;
+    for (const h of ours.slice(n.handoffs)) handOff(n, m, h.from, now);
+    const me = { seat: o.seat, isHost: o.isHost, round: o.round };
+    if (o.isHost && !n.host) {
+      takeOver(n, m, me, o.players.map((p) => p.seat), now);
+      hosting.current = true;
+      // a card already up: out early, it is the host's now; with the result in, the room may hear the match is over
+      if (n.over && n.early) finishRef.current(false, true);
+      else if (n.over) {
+        const card = resultCard(m, false, false);
+        shellRef.current.updateOver({ title: card.title, detail: card.detail });
+      }
+    } else if (!o.isHost) for (const d of toNewHost(n, m, me, now)) o.send(d);
+    const host = o.players.find((p) => p.seat === 0);
+    addFeed(o.isHost ? 'you are now running the match' : `${host?.name ?? 'someone else'} is now running the match`, o.isHost);
+  }
+  const syncRef = useRef(syncHost);
+  syncRef.current = syncHost;
+
   useEffect(() => {
     if (!live) return;
     const n = net.current;
     const off = onlineRef.current!.onMessage((from, d) => {
+      syncRef.current();
       const o = onlineRef.current;
       const m = match.current;
       if (!o || !m) return;
@@ -787,21 +820,13 @@ function Play({ mode }: { mode: StageMode }) {
       }
     });
     const timer = window.setInterval(() => {
+      // the host left and someone took over (maybe us): the match goes on
+      syncRef.current();
       const o = onlineRef.current;
       const m = match.current;
       if (!o || !m) return;
       const me = { seat: o.seat, isHost: o.isHost, round: o.round };
       const now = performance.now() / 1000;
-      // the host left and someone took over: the match its game ran is over (the shell has said so), and a card that
-      // went up early stops waiting for it
-      if (o.handoffs !== handoffs.current) {
-        if (n.early) {
-          n.early = false;
-          const card = resultCard(m, false, false);
-          shellRef.current.updateOver({ title: card.title, detail: `${card.detail} The host left before the end.` });
-        }
-        return;
-      }
       // a hidden tab gets no frames, so the match carries on from here: our egg stands still but the storm still
       // bites and the glide still lands. A host keeps the computer eggs and everyone's pickups going, hidden or done
       // watching.

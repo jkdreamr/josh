@@ -195,7 +195,7 @@ import {
 } from '../src/os/arcade/games/scramble/logic.ts';
 import { BLEED_T, CRAWL, DOWN_HP, F_DOWN, F_REVIVE, PING_T, REVIVE_HP, REVIVE_T, dropOut, forfeit, isMode, pingOf, reviveEgg, reviveShare, teamCount, type Mode } from '../src/os/arcade/games/scramble/logic.ts';
 import { ASK_T, EMOTE_GAP, EMOTE_IDS, EMOTE_SPAN, EMOTE_T, FACE_EMOTES, TEAM_EMOTES, ammoAsk, emoteOf, emoteReady, endMatch, isTeamEmote, type EmoteId, type LootItem } from '../src/os/arcade/games/scramble/logic.ts';
-import { actorOf, parseTeams, teamAsk } from '../src/os/arcade/games/scramble/net.ts';
+import { LEFT, actorOf, applySettled, kitOf, kitsOf, logOf, parseKit, parseTeams, putKit, teamAsk } from '../src/os/arcade/games/scramble/net.ts';
 import { nextTeam, pinTeam, teamsFor, winnersOf } from '../src/os/arcade/games/scramble/session.ts';
 import { MAX_KICK, applyNet, configOf, endOf, guestState, hitCap, hostState, packDoors, packEvents, packGlass, packPiece, parsePacket, pieceEv, placesOf, stateOf, toNet, unpackDoors, unpackGlass, unpackPiece, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
 import { END_PAUSE, FAR_EVERY, FIRST_GRACE, FLUSH, LATE_MAX, NEAR, OUT_EVERY, QUICK_LEVEL, STALE, TICK_MS, catchUp, ending, flush, frameTime, guestMatch, hostBots, hostMatch, newSession, offscreen, receive, resultCard, share, stepIn, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
@@ -1247,9 +1247,9 @@ test('packets survive the trip and anything malformed is turned away', () => {
   assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(guestState(4, s, 7)))), { k: 's', round: 4, state: s, watch: 7 });
   assert.equal(parsePacket({ ...guestState(4, s), v: MAX_FIGHTERS }), null);
   const host = parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, -2.5, 'hard', [0, 1, -1], [[0, s], [2, s]]))));
-  assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]], glass: null, doors: [], mode: 'solo', teams: null });
+  assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]], glass: null, doors: [], mode: 'solo', teams: null, handoffs: 0 });
   // the roster only goes with some of the host's reports
-  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]], glass: null, doors: null, mode: 'solo', teams: null });
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]], glass: null, doors: null, mode: 'solo', teams: null, handoffs: 0 });
   assert.equal(parsePacket({ ...hostState(4, 99, 3, 'hard', null, []), ro: 'all' }), null);
   assert.deepEqual(parsePacket(endOf(4, 2, [[2, 1, 3], [0, 2, 1]])), { k: 'end', round: 4, winner: 2, places: [[2, 1, 3], [0, 2, 1]] });
   assert.deepEqual(parsePacket(configOf(4, 'none', 'easy')), { k: 'cfg', round: 4, bots: 'none', level: 'easy', mode: 'solo', picks: [] });
@@ -1499,10 +1499,14 @@ for (const [label, opts] of [
     }
     const gone = 'leave' in opts ? opts.leave.seat : 'stall' in opts ? opts.stall.seat : -1;
     if (gone >= 0) {
-      const egg = host.fighters.find((f) => f.seat === gone)!;
+      // (people's eggs go in seat order)
+      const egg = host.fighters[gone];
       assert.equal(egg.phase, 'out', 'the host took out the egg of someone who stopped playing');
       assert.equal(egg.outCause, 'left');
       assert.notEqual(live[0].s.end!.winner, egg.id);
+      // someone who left is nobody's seat any more, for everyone; someone gone quiet still holds theirs
+      if ('leave' in opts) for (const c of live) assert.equal(c.m!.fighters[gone].seat, LEFT, `seat ${c.seat}: the egg of someone who left is nobody's`);
+      else assert.equal(egg.seat, gone);
     }
   });
 }
@@ -1539,7 +1543,7 @@ for (const [label, opts] of [
     assert.deepEqual([...new Set(end.places.map(([, p]) => p))].sort((a, b) => a - b), Array.from({ length: teamCount(host) }, (_, i) => i + 1));
     if ('leave' in opts) {
       // out for leaving, unless it was cracked before
-      const egg = host.fighters.find((f) => f.seat === opts.leave.seat)!;
+      const egg = host.fighters[opts.leave.seat];
       assert.equal(egg.phase, 'out');
       assert.ok(egg.outCause === 'left' || egg.outAt < opts.leave.at + 1, `the egg of the one who left went out to ${egg.outCause} at ${egg.outAt.toFixed(0)} s`);
     }
@@ -3500,11 +3504,16 @@ test('the host tells each guest about the eggs near the one it watches whenever 
   const heard = new Map<number, number[]>();
   const rosters: number[] = [];
   const other: unknown[] = [];
+  const kits: (number | undefined)[] = [];
   for (let t = 0; t < 30; t++) {
     m.fighters[10].x += 0.5;
     for (const f of m.fighters) s.heard.set(f.id, 0);
     for (const out of tick(s, m, me, [0, 1, 2, 7], 1 + t * 0.066)) {
       const p = parsePacket(JSON.parse(JSON.stringify(out.d)));
+      if (p?.k === 'K') {
+        kits.push(out.to);
+        continue;
+      }
       assert.ok(p && p.k === 'S');
       if (out.to === 7) {
         other.push(p);
@@ -3524,6 +3533,7 @@ test('the host tells each guest about the eggs near the one it watches whenever 
   for (const f of m.fighters) if (f.id !== 1) assert.ok(n(f.id) >= 2, `every egg is heard of (${f.id})`);
   assert.deepEqual(rosters, [4, 9, 14, 19, 24, 29], 'the roster with every reliable report');
   assert.ok(other.length === 6 && other.every((p) => (p as { states: unknown[]; roster: number[] }).states.length === 0 && (p as { roster: number[] }).roster.length === MAX_FIGHTERS), 'someone not in the match only hears the roster');
+  assert.deepEqual(kits, [1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2], 'what the computer eggs carry, with each reliable report, to the guests in the match next in line');
   // once its egg is out, the eggs near the one it watches
   g.phase = 'out';
   s.states.set(1, st(0, 0, 'out'));
@@ -4762,7 +4772,7 @@ test('quick play always fills the island to fifty at normal, whoever hosts and h
 });
 
 test('meta: twenty seats with late joining, bots and quick play, and a board per level', () => {
-  assert.deepEqual(meta.online, { seats: 20, lateJoin: true, bots: true, quick: true });
+  assert.deepEqual(meta.online, { seats: 20, lateJoin: true, bots: true, quick: true, migrate: true });
   assert.match(meta.controls, /Play joins the next match/);
   assert.match(meta.controls, /Play with Bots/);
   assert.deepEqual(Object.keys(meta.leaderboard!.variants!), [...LEVELS]);
@@ -7883,6 +7893,8 @@ test('online over a lossy link that reorders fast packets, no screen sees an egg
   let now = 0;
   let passed = 0;
   const post = (from: C, d: object, fast: boolean, only?: number) => {
+    // (nobody takes the match over here, so what the computer eggs carry needn't go)
+    if ((d as { k?: string }).k === 'K') return;
     const to = from.me.isHost ? clients.filter((c) => c !== from && (only === undefined || c.me.seat === only)) : [clients[0]];
     for (const c of to) {
       if (fast && rng() < 0.15) continue;

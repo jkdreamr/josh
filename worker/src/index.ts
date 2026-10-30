@@ -11,7 +11,7 @@ import { Lobby } from './lobby';
 import { Lounge, type LoungeEnv } from './lounge';
 import { Telemetry, type TelemetryEnv } from './telemetry';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
-import { agreedWinners, beginRound, benchSeat, botSeats, canJoinRoom, canResume, keepFor, canStartRoom, canWatchRoom, endRound, GATHER_MS, gatherFull, gathering, HOLD_MS, holdsDue, holdUntil, isPool, isRelayMessage, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextAlarm, nextHost, orphanSeats, parseRoomMessage, relayTargets, RESUME_VERSION, roomListing, roundPlayable, roundSeats, seatsFor, type Hold, type RecordedRounds, type RelayRoomMessage, type RoomPlayer, type RoomState, type RoundReports, type SeatKey } from './room-core';
+import { agreedWinners, beginRound, benchSeat, botSeats, canJoinRoom, canResume, keepFor, canStartRoom, canWatchRoom, endRound, GATHER_MS, gatherFull, gathering, handOffRound, HOLD_MS, holdsDue, holdUntil, isPool, isRelayMessage, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextAlarm, nextHost, orphanSeats, parseRoomMessage, relayTargets, RESUME_VERSION, roomListing, roundPlayable, roundSeats, seatsFor, type Hold, type RecordedRounds, type RelayRoomMessage, type RoomPlayer, type RoomState, type RoundReports, type SeatKey } from './room-core';
 import { MAX_BODY_BYTES } from '../../src/os/arcade/games/soccer/telemetry-core.ts';
 
 export { Chat, Lobby, Lounge, Telemetry };
@@ -225,7 +225,7 @@ export class Room extends DurableObject<Env> {
       const seats = seatsFor(spec);
       this.seatsCache = seats;
       const gather = quick ? { quick: true, startAt: Date.now() + GATHER_MS, ...(pool ? { pool } : {}) } : {};
-      await this.ctx.storage.put<RoomState>('room', { code, game, seats, started: false, lateJoin: !!spec.lateJoin, ...(spec.bots ? { allowBots: true, bots: quick ? seats - 1 : 0 } : {}), ...(listed || quick ? { listed: true } : {}), ...(spec.watch ? { watch: true, watchable: true } : {}), ...gather });
+      await this.ctx.storage.put<RoomState>('room', { code, game, seats, started: false, lateJoin: !!spec.lateJoin, ...(spec.bots ? { allowBots: true, bots: quick ? seats - 1 : 0 } : {}), ...(listed || quick ? { listed: true } : {}), ...(spec.watch ? { watch: true, watchable: true } : {}), ...(spec.migrate ? { migrate: true } : {}), ...gather });
       await this.ctx.storage.put<RoomResults>('results', { reports: {}, recorded: [] });
       this.seatsState = { keys: {}, held: {} };
       await this.ctx.storage.put<RoomSeats>('seats', this.seatsState);
@@ -707,9 +707,9 @@ export class Room extends DurableObject<Env> {
   /**
    * Someone is gone for good (their socket `ws`, if they still had one). The room carries on while anyone is in it:
    * when the host goes, the person in the lowest seat still connected takes over as host (seat 0) and any round under
-   * way ends, since the host's game ran it; when a guest goes, the round ends only if nobody is left to play against.
-   * Clients from before hand-offs can't follow one, so a room with any of them still closes when its host leaves.
-   * True when the room closed.
+   * way ends, since the host's game ran it, unless the game takes it over (`migrate`): then someone playing the round
+   * takes over, and it goes on while there is someone to play against, as it does when a guest goes. Clients from before
+   * hand-offs can't follow one, so a room with any of them still closes when its host leaves. True when the room closed.
    */
   private async leaveSeat(room: RoomState, seat: number | null, ws: WebSocket | null): Promise<boolean> {
     const except = ws ?? undefined;
@@ -729,13 +729,15 @@ export class Room extends DurableObject<Env> {
       return true;
     }
     let from: number | null = null;
+    // a round the new host's game goes on running
+    const goesOn = seat === 0 && !!room.migrate && room.started;
     if (seat === 0) {
       // nobody here to take over (everyone left is away for a moment): the room is done
       if (!seated.length) {
         await this.closeRoom(except);
         return true;
       }
-      const next = nextHost(seated.map(({ seat: value }) => value))!;
+      const next = nextHost(seated.map(({ seat: value }) => value), goesOn ? room.roster : undefined)!;
       const entry = seated.find(({ seat: value }) => value.seat === next.seat)!;
       from = next.seat;
       entry.seat = { ...entry.seat, seat: 0 };
@@ -747,12 +749,17 @@ export class Room extends DurableObject<Env> {
         if (key) state.keys['0'] = key;
         await this.saveSeats();
       }
-      endRound(room);
+      if (room.migrate) {
+        const results = (await this.ctx.storage.get<RoomResults>('results')) ?? { reports: {}, recorded: [] };
+        handOffRound(room, results.reports, from);
+        await this.ctx.storage.put('results', results);
+      }
+      if (!goesOn) endRound(room);
     }
     const players = this.players(except);
     // Benched latecomers aren't in the round, so they don't keep it going.
     const inRound = room.roster ? players.filter(({ seat: s }) => room.roster!.includes(s)).length : players.length;
-    if (from === null && room.started && !roundPlayable(room, inRound)) endRound(room);
+    if ((from === null || goesOn) && room.started && !roundPlayable(room, inRound)) endRound(room);
     await this.ctx.storage.put('room', room);
     const lineup = { ...this.lineup(room, players), started: room.started };
     this.broadcast(from === null ? { t: 'players', ...lineup } : { t: 'host', from, ...lineup }, except);
