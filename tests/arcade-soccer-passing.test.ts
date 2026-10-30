@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createWorld, distance, FIELD, TEAM_SIZE, findReceiver, groundPassSpeed, kick, STEP, stepWorld, type Action, type Command } from '../src/os/arcade/games/soccer/logic.ts';
+import { createWorld, distance, FIELD, TEAM_SIZE, findReceiver, groundPassSpeed, kick, rng, SHOT_BLOCK_CHANCE, STEP, stepWorld, type Action, type Command } from '../src/os/arcade/games/soccer/logic.ts';
 import { stepBall, type BallState } from '../src/os/arcade/games/soccer/physics.ts';
 import { acceptMovePacket, cloneSnapshot, consumeCommand, movePacket, parsePacket, type RemoteSeat } from '../src/os/arcade/games/soccer/net.ts';
 
@@ -15,6 +15,45 @@ function setup(seed = 47) {
     stepWorld(world, STEP, new Map([[player.id, { move, action, power, aim, pressed: true }]]));
   };
   return { world, player, fire };
+}
+
+function blockFixture(seed = 1, receiver = false) {
+  const world = createWorld(seed);
+  world.practice = true;
+  world.phase = 'live';
+  world.restart = null;
+  const player = world.players[6]!;
+  const blocker = world.players[TEAM_SIZE + 6]!;
+  const receiverPlayer = world.players[7]!;
+  for (const p of world.players) {
+    p.x = p.team === 0 ? -30 : 30;
+    p.z = 24;
+    p.vx = 0;
+    p.vz = 0;
+    p.human = false;
+    p.controlled = false;
+    p.cooldown = 0;
+    p.touchCd = 0;
+  }
+  player.x = 0;
+  player.z = 0;
+  player.facing = Math.PI / 2;
+  player.human = true;
+  player.controlled = true;
+  blocker.x = 1;
+  blocker.z = 0;
+  if (receiver) {
+    receiverPlayer.x = 30;
+    receiverPlayer.z = 0;
+  }
+  world.controlled = [player.id, TEAM_SIZE + 6];
+  world.ball.x = 0.4;
+  world.ball.y = 0.11;
+  world.ball.z = 0;
+  world.carrierId = player.id;
+  world.lastToucherId = player.id;
+  world.lastTouch = player.team;
+  return { world, player, blocker, receiver: receiverPlayer };
 }
 
 function freeStep(ball: BallState) {
@@ -151,6 +190,49 @@ test('a repeated phone pass edge kicks once across 250 ms, starting on the relea
     kickEvents += Number(world.kickEvent?.action === 'pass');
   }
   assert.equal(kickEvents, 1);
+});
+
+test('point-blank shot blocks are probabilistic and roll each defender only once per shot', () => {
+  assert.equal(SHOT_BLOCK_CHANCE, 0.5);
+  let blocked = 0;
+  let passed = 0;
+  for (let seed = 1; seed <= 40; seed++) {
+    const { world, player, blocker } = blockFixture(seed);
+    stepWorld(world, STEP, new Map([[player.id, {
+      move: { x: 0, z: 0 }, action: 'shoot', pressed: true, power: 1, aim: { x: 1, z: 0 },
+    }]]));
+    const roll = world.shotBlockRolls?.[blocker.id];
+    assert.equal(typeof roll, 'boolean');
+    assert.equal(world.lastToucherId === blocker.id, roll);
+    if (roll) blocked++;
+    else passed++;
+
+    const expected = { ...world, seed: world.seed };
+    if (roll) { rng(expected); rng(expected); }
+    Object.assign(world.ball, { x: player.x + 0.4, y: 0.11, z: player.z, vx: 20, vy: 0, vz: 0, grounded: true, inNet: false });
+    world.carrierId = null;
+    world.lastToucherId = player.id;
+    world.lastTouch = player.team;
+    player.action = 'kick';
+    blocker.touchCd = 0;
+    stepWorld(world, STEP);
+    assert.equal(world.seed, expected.seed, `defender ${blocker.id} was rolled again for seed ${seed}`);
+    assert.equal(world.shotBlockRolls?.[blocker.id], roll);
+  }
+  assert.ok(blocked > 0, `no point-blank shots were blocked across 40 seeds (${blocked} blocked, ${passed} passed)`);
+  assert.ok(passed > 0, `all point-blank shots were blocked across 40 seeds (${blocked} blocked, ${passed} passed)`);
+});
+
+test('a pass into a defender remains deterministic', () => {
+  const { world, player, blocker, receiver } = blockFixture(47, true);
+  world.shotBlockRolls = { [blocker.id]: false };
+  stepWorld(world, STEP, new Map([[player.id, {
+    move: { x: 0, z: 0 }, action: 'pass', pressed: true, power: 1, aim: { x: 1, z: 0 },
+  }]]));
+  assert.equal(world.kickEvent?.action, 'pass');
+  assert.equal(world.passTarget, receiver.id);
+  assert.equal(world.lastToucherId, blocker.id);
+  assert.deepEqual(world.shotBlockRolls, {});
 });
 
 test('released phone action is accepted and kicked on the next world step', () => {

@@ -144,6 +144,10 @@ test('snapshots accept new state and reject invalid touch cooldowns', () => {
   const world = createWorld();
   const packet = () => ({ t: 'soccer', k: 's', r: 1, seq: 1, state: cloneSnapshot(world) });
   assert.ok(parsePacket(packet()));
+  world.shotBlockRolls = { 3: true, 4: false };
+  const parsed = parsePacket(packet());
+  assert.ok(parsed && parsed.k === 's');
+  assert.deepEqual(parsed.state.shotBlockRolls, world.shotBlockRolls);
   world.stealProtect = 0.4;
   assert.ok(parsePacket(packet()));
   world.stealProtect = -0.1;
@@ -218,6 +222,30 @@ test('a tackle win locks out the dispossessed player and protects the new carrie
   assert.equal(world.carrierId, player.id);
   assert.equal(world.stealProtect, 0.9);
   assert.equal(opponent.touchCd, 1.2);
+});
+
+test('a shoot press after winning a tackle buffers through cooldown and fires once', () => {
+  const { world, player, tick } = fixture(1);
+  const opponent = world.players.find((p) => p.team !== player.team)!;
+  opponent.x = 1;
+  opponent.z = 0;
+  world.carrierId = opponent.id;
+  world.lastToucherId = opponent.id;
+  tick({ move: { x: 0, z: 0 }, action: 'tackle', pressed: true });
+  assert.equal(world.carrierId, player.id);
+  assert.ok(player.cooldown > 0);
+
+  tick({ move: { x: 0, z: 0 }, action: 'shoot', pressed: true, power: 0.8, aim: { x: 1, z: 0 } });
+  assert.ok(player.cooldown > 0);
+  assert.equal(player.buffer?.action, 'shoot');
+
+  let kickEvents = 0;
+  for (let i = 0; i < 90; i++) {
+    tick({ move: { x: 0, z: 0 } });
+    kickEvents += Number(world.kickEvent?.playerId === player.id && world.kickEvent.action === 'shoot');
+  }
+  assert.equal(kickEvents, 1);
+  assert.equal(player.buffer, null);
 });
 
 test('a slide win protects its receiver and applies the dispossessed lockout', () => {

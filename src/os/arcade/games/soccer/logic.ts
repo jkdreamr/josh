@@ -28,6 +28,7 @@ export const ASSIST_RANGE = 3.0;
 export const ASSIST_CONE = Math.PI / 3;
 export const SPRINT_TURN_LIMIT = (100 * Math.PI) / 180;
 export const KICK_BUFFER = 0.5;
+export const SHOT_BLOCK_CHANCE = 0.5;
 export type Team = 0 | 1;
 export type Slot = 'GK' | 'LB' | 'CB' | 'RB' | 'CM' | 'LW' | 'ST' | 'RW';
 export type Action = 'pass' | 'through' | 'lob' | 'shoot' | 'finesse' | 'tackle' | 'slide' | 'skill';
@@ -101,6 +102,7 @@ export type World = {
   passControl: boolean;
   carrierId?: number | null;
   lastToucherId?: number | null;
+  shotBlockRolls?: Record<number, boolean>;
   passPoint?: Point | null;
   stealProtect?: number;
   stealWinnerId?: number | null;
@@ -206,7 +208,7 @@ export function createWorld(seed = 71423, halfLength = 120, humans: 1 | 2 = 1, c
     ...(clubs ? { clubs: [...clubs] as [string, string] } : {}),
     score: [0, 0], clock: halfLength, halfLength, half: 1, endsSwapped: false,
     phase: 'restart', restart: 'kickoff', restartTeam: 0, restartAt: { x: 0, z: 0 },
-    lastTouch: 0, seed: seed >>> 0 || 1, event: 'kick off', eventTime: 1.35, restartClock: 0, controlled: [6, TEAM_SIZE + 6], controlledSeats: [null, null, null, null], kickEvent: null, passTarget: null, passFrom: null, passStrikeAt: null, passAim: null, passControl: false, carrierId: null, lastToucherId: null, passPoint: null,
+    lastTouch: 0, seed: seed >>> 0 || 1, event: 'kick off', eventTime: 1.35, restartClock: 0, controlled: [6, TEAM_SIZE + 6], controlledSeats: [null, null, null, null], kickEvent: null, passTarget: null, passFrom: null, passStrikeAt: null, passAim: null, passControl: false, carrierId: null, lastToucherId: null, shotBlockRolls: {}, passPoint: null,
     switchAt: [-1, -1], switchWait: [0, 0], switchCandidate: [-1, -1], dribbleAt: [-1, -1], stealProtect: 0, stealWinnerId: null,
     rules: createRules(),
   };
@@ -395,6 +397,11 @@ function resolveBlocks(world: World, dt: number) {
     const nx = hitX / normalLength;
     const nz = hitZ / normalLength;
     if (ball.vx * nx + ball.vz * nz >= 0) continue;
+    if (lastToucher.action === 'kick') {
+      const rolls = world.shotBlockRolls ??= {};
+      if (rolls[player.id] === undefined) rolls[player.id] = rng(world) < SHOT_BLOCK_CHANCE;
+      if (!rolls[player.id]) continue;
+    }
     blocker = player;
     contactT = hitT;
     normalX = nx;
@@ -568,6 +575,7 @@ export function separatePlayers(players: Player[], dt: number, carrier?: Player,
 }
 
 export function kick(world: World, player: Player, action: Action, command: Command) {
+  world.shotBlockRolls = {};
   const multipliers = worldMultipliers(world, player.id);
   const d = teamDir(player.team, world.endsSwapped);
   const charge = clamp(command.power ?? 0.45, 0.1, 1);
@@ -845,7 +853,17 @@ function slideStep(world: World, player: Player, dt: number) {
 }
 
 function applyAction(world: World, player: Player, command: Command) {
-  if (!command.action || !command.pressed || player.cooldown > 0) return;
+  if (!command.action || !command.pressed) return;
+  if (player.cooldown > 0) {
+    const carrier = nearestCarrier(world);
+    const kickAction = command.action === 'pass' || command.action === 'through' || command.action === 'lob'
+      || command.action === 'shoot' || command.action === 'finesse';
+    if (kickAction && (carrier?.id === player.id || world.passTarget === player.id
+      || !carrier && distance(player, world.ball) <= 3)) {
+      player.buffer = { action: command.action, power: command.power ?? 0.45, aim: command.aim ?? command.move, t: KICK_BUFFER };
+    }
+    return;
+  }
   const capSpeed = () => {
     const speed = Math.hypot(player.vx, player.vz);
     const limit = 9 * worldMultipliers(world, player.id).speed;
