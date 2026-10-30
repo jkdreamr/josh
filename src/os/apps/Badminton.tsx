@@ -45,7 +45,21 @@ import {
   type ShotType,
   type Side,
 } from '../games/badminton';
-import { clampToHalf, olympicContactReady, PLAYER_GRAVITY, PLAYER_STEP, PLAYER_SWING_COOLDOWN_MS, RACKET_REACH, stepCpuBody, stepPlayerBody, type CpuMind } from '../games/badminton-cpu';
+import { CHARGE_MIN_MS, clampToHalf, olympicContactReady, PLAYER_GRAVITY, PLAYER_STEP, PLAYER_SWING_COOLDOWN_MS, RACKET_REACH, stepCpuBody, stepPlayerBody, type CpuMind } from '../games/badminton-cpu';
+import {
+  AGENT_STORAGE_KEY,
+  agentHome,
+  agentInsights,
+  agentStroke,
+  newAgentRally,
+  newBrain,
+  parseBrain,
+  planForIncoming,
+  recordRallyEnd,
+  recordReply,
+  type AgentBrain,
+  type AgentRally,
+} from '../games/badminton-agent';
 import { useOS, type AppProps } from '../types';
 import { countPlay } from '../stats';
 import { getAppGame } from '../arcade/apps';
@@ -115,8 +129,6 @@ const REACH = RACKET_REACH;
 const SWING_MS = 170;
 const SWING_DRAW_MS = 230;
 const GRAVITY = PLAYER_GRAVITY;
-/** A hold shorter than this is a tap: the press swing already played it. */
-const CHARGE_MIN_MS = 150;
 const SETTINGS_KEY = 'jk-badminton';
 const DEFAULT_SETTINGS: Settings = { mode: 'cpu', difficulty: 'normal', length: 'game', sound: true };
 
@@ -126,7 +138,25 @@ const KEYS: Record<'p1' | 'p2', Record<keyof Controls | 'hit', string[]>> = {
 };
 
 const LENGTH_LABEL: Record<MatchLength, string> = { quick: 'Quick to 11', game: 'Game to 21', match: 'Best of Three' };
-const DIFFICULTY_LABEL: Record<Difficulty, string> = { easy: 'Easy', normal: 'Normal', hard: 'Hard', pro: 'Pro', olympic: 'Olympic', impossible: 'Impossible', nirvaan: 'Nirvaan' };
+const DIFFICULTY_LABEL: Record<Difficulty, string> = { easy: 'Easy', normal: 'Normal', hard: 'Hard', pro: 'Pro', agent: 'Agent', olympic: 'Olympic', impossible: 'Impossible', nirvaan: 'Nirvaan' };
+
+function loadAgentBrain(): AgentBrain {
+  try {
+    const raw = localStorage.getItem(AGENT_STORAGE_KEY);
+    return raw ? parseBrain(JSON.parse(raw)) : newBrain();
+  } catch {
+    return newBrain();
+  }
+}
+
+function saveAgentBrain(brain: AgentBrain | null) {
+  try {
+    if (brain) localStorage.setItem(AGENT_STORAGE_KEY, JSON.stringify(brain));
+    else localStorage.removeItem(AGENT_STORAGE_KEY);
+  } catch {
+    /* storage unavailable: the Agent still learns for this session */
+  }
+}
 
 function loadSettings(): Settings {
   try {
@@ -188,6 +218,10 @@ export default function Badminton({ args }: AppProps) {
   const roleRef = useRef<Role>(null);
   /** Online, watching someone else's match: drawn like the guest's screen, with nobody on court called You. */
   const watchingRef = useRef(false);
+  /** What the Agent has learned about this player, kept on this device, and its record of the rally in play. */
+  const [initialBrain] = useState(loadAgentBrain);
+  const agentRef = useRef<{ brain: AgentBrain; rally: AgentRally }>({ brain: initialBrain, rally: newAgentRally() });
+  const [agentRallies, setAgentRallies] = useState(initialBrain.rallies);
   const [role, setRole] = useState<Role>(null);
   const [screen, setScreen] = useState<Screen>('menu');
   const [match, setMatch] = useState<MatchState>(() => newMatch('game'));
@@ -250,6 +284,8 @@ export default function Badminton({ args }: AppProps) {
   };
 
   const isCpu = useCallback((side: Side) => settingsRef.current.mode === 'cpu' && side === 'b', []);
+  /** The computer is the Agent, which learns from every rally against this player. */
+  const isLearning = useCallback(() => settingsRef.current.mode === 'cpu' && CPU_PROFILES[settingsRef.current.difficulty].learns === true, []);
   const netNames = useRef<Record<Side, string>>({ a: 'Host', b: 'Guest' });
   /** The side this screen plays online: the host is a, the guest is b. */
   const mySide = (): Side => (roleRef.current === 'guest' ? 'b' : 'a');
@@ -316,6 +352,13 @@ export default function Badminton({ args }: AppProps) {
   const finishRally = useCallback(
     (outcome: RallyOutcome) => {
       const sim = simRef.current;
+      if (isLearning()) {
+        const agent = agentRef.current;
+        recordRallyEnd(agent.brain, agent.rally, outcome.winner === 'b');
+        agent.rally = newAgentRally();
+        saveAgentBrain(agent.brain);
+        setAgentRallies(agent.brain.rallies);
+      }
       const nextStats = recordRally(statsRef.current, outcome);
       statsRef.current = nextStats;
       setStats(nextStats);
@@ -335,7 +378,7 @@ export default function Badminton({ args }: AppProps) {
       const humanWon = settingsRef.current.mode === 'two' || outcome.winner === mySide();
       audio().point(humanWon);
     },
-    [nameOf],
+    [isLearning, nameOf],
   );
 
   const strike = useCallback(
@@ -347,6 +390,16 @@ export default function Badminton({ args }: AppProps) {
       const power = options.power ?? HALF_SMASH_POWER;
       const heading = sim.flight ? sim.flight.heading : 0;
       sim.flight = createFlight(contact, plan.velocity, side, direction, false, heading);
+      if (isLearning()) {
+        const agent = agentRef.current;
+        if (side === 'b') {
+          agent.rally.lastAgentShot = plan.type;
+          sim.cpu.home = agentHome(agent.brain, plan.type);
+        } else {
+          recordReply(agent.brain, agent.rally, plan.type, Math.abs(plan.targetX));
+          planForIncoming(agent.brain, agent.rally, sim.flight, plan.type, sim.clock, sim.clock + CPU_PROFILES.agent.reactionMs);
+        }
+      }
       sim.trail = [];
       sim.rallyShots += 1;
       const speed = Math.hypot(plan.velocity.vx, plan.velocity.vy);
@@ -367,7 +420,7 @@ export default function Badminton({ args }: AppProps) {
       if (isCpu(opposite(side))) sim.cpu.reactAt = sim.clock + CPU_PROFILES[settingsRef.current.difficulty].reactionMs;
       audio().hit(plan.type, speed);
     },
-    [isCpu],
+    [isCpu, isLearning],
   );
 
   const launchServe = useCallback(
@@ -388,6 +441,15 @@ export default function Badminton({ args }: AppProps) {
         return;
       }
       sim.flight = createFlight(start, plan.velocity, side, direction, true);
+      if (isLearning()) {
+        const agent = agentRef.current;
+        if (side === 'b') {
+          agent.rally.lastAgentShot = plan.type;
+          sim.cpu.home = agentHome(agent.brain, plan.type);
+        } else {
+          planForIncoming(agent.brain, agent.rally, sim.flight, plan.type, sim.clock, sim.clock + CPU_PROFILES.agent.reactionMs);
+        }
+      }
       sim.trail = [];
       sim.phase = 'rally';
       sim.rallyStart = sim.clock;
@@ -399,7 +461,7 @@ export default function Badminton({ args }: AppProps) {
       setPhase('rally');
       audio().hit(plan.type, sim.lastShot.speed);
     },
-    [finishRally, isCpu],
+    [finishRally, isCpu, isLearning],
   );
 
   const continueFlow = useCallback(() => {
@@ -450,6 +512,12 @@ export default function Badminton({ args }: AppProps) {
     [continueFlow, launchServe],
   );
 
+  const forgetAgent = () => {
+    agentRef.current = { brain: newBrain(), rally: newAgentRally() };
+    saveAgentBrain(null);
+    setAgentRallies(0);
+  };
+
   const startMatch = useCallback(() => {
     countPlay('badminton');
     setMatchNo((n) => n + 1);
@@ -460,6 +528,7 @@ export default function Badminton({ args }: AppProps) {
     setMatch(state);
     setStats(fresh);
     simRef.current = newSim();
+    agentRef.current.rally = newAgentRally();
     controlsRef.current = { a: newControls(), b: newControls() };
     pointersRef.current.clear();
     setCall(null);
@@ -544,13 +613,19 @@ export default function Badminton({ args }: AppProps) {
     };
 
     const stepCpu = (sim: Sim, state: MatchState) => {
-      stepCpuBody(sim.athletes.b, sim.cpu, {
+      const athlete = sim.athletes.b;
+      const plan = isLearning() ? agentRef.current.rally.plan : null;
+      // The Agent winds up a full smash the way the player does: it holds from the planned moment until contact,
+      // and its feet slow while it holds.
+      if (plan && !plan.used && athlete.chargeStart === null && sim.phase === 'rally' && sim.flight?.hitter === 'a' && sim.clock >= plan.chargeAt) athlete.chargeStart = sim.clock;
+      stepCpuBody(athlete, sim.cpu, {
         clock: sim.clock,
         rallying: sim.phase === 'rally',
         flight: sim.flight,
         side: 'b',
         direction: directionOf('b', state),
         profile: CPU_PROFILES[settingsRef.current.difficulty],
+        charging: athlete.chargeStart !== null && sim.clock - athlete.chargeStart > CHARGE_MIN_MS,
       });
     };
 
@@ -569,10 +644,23 @@ export default function Badminton({ args }: AppProps) {
       const incoming = sim.lastShot?.type ?? null;
       if (isCpu(side)) {
         if (sim.clock < sim.cpu.reactAt || sim.cpuMissed) return;
-        const olympic = settingsRef.current.difficulty === 'olympic';
-        if (olympic && !olympicContactReady(athlete, flight, direction, sim.clock)) return;
-        athlete.swingStart = sim.clock - (olympic ? 0 : 70);
+        const humanBody = CPU_PROFILES[settingsRef.current.difficulty].humanBody === true;
+        if (humanBody && !olympicContactReady(athlete, flight, direction, sim.clock)) return;
+        athlete.swingStart = sim.clock - (humanBody ? 0 : 70);
         athlete.intent = shuttle.y >= 1.6 ? 'normal' : 'soft';
+        if (isLearning()) {
+          // Same odds of a fluff as Olympic; otherwise a stroke played by the player's rules.
+          if (Math.random() < 0.002) {
+            sim.cpuMissed = true;
+            return;
+          }
+          const held = athlete.chargeStart === null ? null : sim.clock - athlete.chargeStart;
+          athlete.chargeStart = null;
+          const stroke = agentStroke(agentRef.current.brain, agentRef.current.rally, contact, Math.abs(sim.athletes[opposite(side)].x), distance, smashPressure(incoming, flight.elapsed), held);
+          athlete.intent = stroke.intent;
+          strike(side, stroke.type, contact, stroke.accuracy, { power: stroke.power });
+          return;
+        }
         const reply = cpuReturn(contact, incoming, flight.elapsed, Math.abs(sim.athletes[opposite(side)].x), settingsRef.current.difficulty, Math.random, sim.lastShot?.power, distance);
         if (reply.kind === 'miss') {
           sim.cpuMissed = true;
@@ -812,7 +900,7 @@ export default function Badminton({ args }: AppProps) {
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [beginServe, finishRally, isCpu, launchServe, nameOf, strike]);
+  }, [beginServe, finishRally, isCpu, isLearning, launchServe, nameOf, strike]);
 
   // keyboard
   useEffect(() => {
@@ -1088,6 +1176,7 @@ export default function Badminton({ args }: AppProps) {
   const winnerTitle = winner ? (settings.mode === 'cpu' ? (winner === 'a' ? 'You Win' : 'Computer Wins') : nameOf(winner) === 'You' ? 'You Win' : `${nameOf(winner)} Wins`) : '';
   const margin = stats.a.points - stats.b.points;
   const rankBoard = settings.mode === 'cpu' && winner === 'a' && margin >= 1 ? boardFor(BADMINTON, settings.difficulty) : null;
+  const agentNotes = screen === 'summary' && settings.difficulty === 'agent' ? agentInsights(agentRef.current.brain) : [];
   const gameScores = match.history.map((game) => `${game[left]} to ${game[right]}`).join(', ');
 
   return (
@@ -1130,6 +1219,19 @@ export default function Badminton({ args }: AppProps) {
                 </button>
               ))}
             </div>
+            {settings.mode === 'cpu' && settings.difficulty === 'agent' && (
+              <div className="bd-agent-note">
+                <p className="bd-summary-note">
+                  Plays by your rules, with no faster feet or harder smashes, and learns how you play as it goes.{' '}
+                  {agentRallies ? `It has studied ${agentRallies} of your ${agentRallies === 1 ? 'rally' : 'rallies'} on this device.` : 'It has not seen you play yet.'}
+                </p>
+                {agentRallies > 0 && (
+                  <button type="button" className="gbtn gbtn-sm" onClick={forgetAgent}>
+                    Forget
+                  </button>
+                )}
+              </div>
+            )}
             {settings.mode === 'cpu' && settings.difficulty === 'nirvaan' && (
               <p className="bd-summary-note">Named after Alex's friend Nirvaan, who has played and beaten this game so many times.</p>
             )}
@@ -1385,6 +1487,20 @@ export default function Badminton({ args }: AppProps) {
           <p className="bd-summary-note">
             Longest rally {stats.longestRally} shots over {stats.rallies} {stats.rallies === 1 ? 'rally' : 'rallies'}.
           </p>
+          {settings.mode === 'cpu' && settings.difficulty === 'agent' && (
+            <div className="bd-agent-learned">
+              <h3>What Agent Has Learned</h3>
+              {agentNotes.length ? (
+                <ul>
+                  {agentNotes.map((note) => (
+                    <li key={note}>{note}</li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="bd-summary-note">Nothing certain yet. A few more rallies and it starts to read you.</p>
+              )}
+            </div>
+          )}
           {rankBoard && <AppBoard key={`${rankBoard.id}:${matchNo}`} board={rankBoard} score={margin} round={matchNo} />}
           {online ? (
             <div className="bd-summary-actions">

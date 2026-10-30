@@ -24,7 +24,7 @@ export type FlightStatus = 'flying' | 'landed' | 'fault';
 export type FlightFault = 'net' | 'out' | 'own-side' | 'short-service';
 export type MatchLength = 'quick' | 'game' | 'match';
 export type ServiceCourt = 'right' | 'left';
-export type Difficulty = 'easy' | 'normal' | 'hard' | 'pro' | 'olympic' | 'impossible' | 'nirvaan';
+export type Difficulty = 'easy' | 'normal' | 'hard' | 'pro' | 'agent' | 'olympic' | 'impossible' | 'nirvaan';
 
 export type Shuttle = Point2D & { vx: number; vy: number };
 
@@ -84,8 +84,10 @@ export type RallyOutcome = { winner: Side; cause: RallyCause; shots: number; sec
  * acceleration / predictionMs: footwork acceleration and time between intercept reads.
  * pressureResistance: fraction of smash pressure ignored for aim; smashPower overrides situational power.
  * punishNetRush: clear or lift over a net-rusher rather than smash from the back court.
+ * humanBody: moves, jumps, swings and charges by the player's rules (stepPlayerBody, olympicContactReady).
+ * learns: chooses strokes and smash power from what it has learned about the player (badminton-agent).
  */
-export type CpuProfile = { label: string; reactionMs: number; speed: number; accuracy: number; dropChance: number; tactics?: boolean; ruthless?: boolean; anticipates?: number; home?: number; unforcedMiss?: number; acceleration?: number; predictionMs?: number; pressureResistance?: number; smashPower?: number; punishNetRush?: boolean };
+export type CpuProfile = { label: string; reactionMs: number; speed: number; accuracy: number; dropChance: number; tactics?: boolean; ruthless?: boolean; anticipates?: number; home?: number; unforcedMiss?: number; acceleration?: number; predictionMs?: number; pressureResistance?: number; smashPower?: number; punishNetRush?: boolean; humanBody?: boolean; learns?: boolean };
 
 export const CPU_PROFILES: Record<Difficulty, CpuProfile> = {
   easy: { label: 'Easy', reactionMs: 260, speed: 3, accuracy: 0.72, dropChance: 0.15 },
@@ -93,7 +95,9 @@ export const CPU_PROFILES: Record<Difficulty, CpuProfile> = {
   hard: { label: 'Hard', reactionMs: 110, speed: 5, accuracy: 1, dropChance: 0.42 },
   // Quicker first step and feet than Hard, but no faster than a human runs (5.3 m/s) by much, and the same reach and jump.
   pro: { label: 'Pro', reactionMs: 80, speed: 5.6, accuracy: 1.12, dropChance: 0.5, tactics: true },
-  olympic: { label: 'Olympic', reactionMs: 20, speed: PLAYER_RUN_SPEED, accuracy: PLAYER_MAX_ACCURACY, dropChance: 0.7, tactics: true },
+  // A player's body and a player's reactions; it improves only by learning how you play.
+  agent: { label: 'Agent', reactionMs: 140, speed: PLAYER_RUN_SPEED, accuracy: PLAYER_MAX_ACCURACY, dropChance: 0.5, humanBody: true, learns: true },
+  olympic: { label: 'Olympic', reactionMs: 20, speed: PLAYER_RUN_SPEED, accuracy: PLAYER_MAX_ACCURACY, dropChance: 0.7, tactics: true, humanBody: true, home: 2.4 },
   // Superhuman on purpose: near-instant reads, faster feet than any player and the tightest aim, with the same flight, reach and jump.
   impossible: { label: 'Impossible', reactionMs: 15, speed: 6.2, accuracy: 1.15, dropChance: 0.7, tactics: true, ruthless: true, anticipates: 0.35, home: 2.4, unforcedMiss: 0.0015 },
   nirvaan: { label: 'Nirvaan', reactionMs: 1, speed: 16, accuracy: 1.15, dropChance: 0.7, tactics: true, ruthless: true, anticipates: 0.05, home: 2.4, unforcedMiss: 0.0003, acceleration: 200, predictionMs: 12, pressureResistance: 1, smashPower: 1, punishNetRush: true },
@@ -103,7 +107,7 @@ export const CPU_PROFILES: Record<Difficulty, CpuProfile> = {
  * How often the computer fails to get a strong smash back: miss is a whiff, block is a short block to the net.
  * Both scale with smashPressure, so a slow half smash rarely troubles anyone.
  */
-export const SMASH_DEFENSE: Record<Exclude<Difficulty, 'olympic'>, { miss: number; block: number }> = {
+export const SMASH_DEFENSE: Record<Exclude<Difficulty, 'olympic' | 'agent'>, { miss: number; block: number }> = {
   easy: { miss: 0.5, block: 0.32 },
   normal: { miss: 0.36, block: 0.32 },
   hard: { miss: 0.24, block: 0.3 },
@@ -723,10 +727,10 @@ export function cpuReturn(
   contactDistance = 0,
 ): CpuReturn {
   const profile = CPU_PROFILES[difficulty];
-  if (difficulty === 'olympic' && random() < 0.002) return { kind: 'miss' };
+  if (profile.humanBody && random() < 0.002) return { kind: 'miss' };
   if (profile.unforcedMiss && random() < profile.unforcedMiss) return { kind: 'miss' };
   const pressure = smashPressure(incoming, flightSeconds);
-  if (pressure > 0 && difficulty !== 'olympic') {
+  if (pressure > 0 && difficulty !== 'olympic' && difficulty !== 'agent') {
     const defense = SMASH_DEFENSE[difficulty];
     // A half smash beats the receiver half as often as the table says, a full one half again as often.
     const weight = 0.5 + smashCharge(incomingPower);
@@ -739,7 +743,7 @@ export function cpuReturn(
     }
   }
   const accuracy = pressuredAccuracy(profile.accuracy, pressure * (1 - (profile.pressureResistance ?? 0)));
-  if (difficulty === 'olympic') {
+  if (profile.humanBody) {
     const fromNet = Math.abs(contact.x);
     const opponentDeep = opponentDistanceFromNet > 3.5;
     const intent: Intent = contact.y >= SMASH_MIN_HEIGHT && fromNet < 3.5 ? 'power'
