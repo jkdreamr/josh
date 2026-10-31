@@ -126,37 +126,47 @@ function leafAtlas(THREE: Three) {
     g.rect(ox + 2, oy + 2, 252, 252);
     g.clip();
   };
-  // broad leaves
+  // broad leaves: a few twigs off a stem, each carrying small leaves, with sky showing between them
   clip(0, 0);
-  g.strokeStyle = 'rgb(70,52,36)';
-  g.lineWidth = 3;
-  for (let k = 0; k < 6; k++) {
+  const twig = (ox: number, oy: number, cx: number, cy: number, spread: number, n: number, hue0: number, hue1: number, size: number) => {
+    g.strokeStyle = 'rgb(66,50,36)';
+    g.lineWidth = 2.2;
     g.beginPath();
-    g.moveTo(128, 200);
-    g.lineTo(128 + (r() - 0.5) * 200, 128 + (r() - 0.5) * 200);
+    g.moveTo(ox, oy);
+    g.quadraticCurveTo((ox + cx) / 2 + (r() - 0.5) * 20, (oy + cy) / 2, cx, cy);
     g.stroke();
-  }
-  for (let i = 0; i < 300; i++) {
-    const a = r() * Math.PI * 2;
-    const d = Math.sqrt(r()) * 104 * (0.78 + 0.22 * Math.sin(a * 3 + 1));
-    const x = 128 + Math.cos(a) * d;
-    const y = 128 + Math.sin(a) * d;
-    const hue = 80 + r() * 32;
-    const light = 16 + r() * 16 + (d / 104) * 12 + (1 - y / 256) * 8;
-    g.fillStyle = `hsl(${hue},${36 + r() * 24}%,${light}%)`;
-    g.save();
-    g.translate(x, y);
-    g.rotate(r() * Math.PI * 2);
-    g.beginPath();
-    g.ellipse(0, 0, 7 + r() * 6, 3.5 + r() * 2.6, 0, 0, Math.PI * 2);
-    g.fill();
-    g.strokeStyle = `hsla(${hue},40%,${light + 14}%,0.45)`;
-    g.lineWidth = 0.8;
-    g.beginPath();
-    g.moveTo(-6, 0);
-    g.lineTo(6, 0);
-    g.stroke();
-    g.restore();
+    for (let i = 0; i < n; i++) {
+      const t = 0.35 + r() * 0.65;
+      const a = r() * Math.PI * 2;
+      const d = Math.sqrt(r()) * spread;
+      const x = ox + (cx - ox) * t + Math.cos(a) * d;
+      const y = oy + (cy - oy) * t + Math.sin(a) * d;
+      const hue = hue0 + r() * (hue1 - hue0);
+      // lighter toward the top and the outside, as the sky lights it
+      const light = 15 + r() * 15 + (1 - y / 256) * 10 + (d / spread) * 6;
+      g.fillStyle = `hsl(${hue},${34 + r() * 26}%,${light}%)`;
+      g.save();
+      g.translate(x, y);
+      g.rotate(Math.atan2(y - oy, x - ox) + (r() - 0.5) * 1.4);
+      g.beginPath();
+      const L = size * (0.75 + r() * 0.5);
+      g.moveTo(-L, 0);
+      g.quadraticCurveTo(0, -L * 0.55, L, 0);
+      g.quadraticCurveTo(0, L * 0.55, -L, 0);
+      g.fill();
+      g.strokeStyle = `hsla(${hue},40%,${light + 16}%,0.5)`;
+      g.lineWidth = 0.7;
+      g.beginPath();
+      g.moveTo(-L * 0.8, 0);
+      g.lineTo(L * 0.8, 0);
+      g.stroke();
+      g.restore();
+    }
+  };
+  for (let k = 0; k < 7; k++) {
+    const a = -Math.PI / 2 + (k / 6 - 0.5) * 2.6 + (r() - 0.5) * 0.3;
+    const len = 70 + r() * 38;
+    twig(128, 236, 128 + Math.cos(a) * len, 128 + 40 + Math.sin(a) * len, 26, 60, 78, 112, 8.5);
   }
   g.restore();
   // pine spray: a stem along x with needles
@@ -205,17 +215,12 @@ function leafAtlas(THREE: Three) {
   g.quadraticCurveTo(136, 380, 132, 262);
   g.stroke();
   g.restore();
-  // small round leaves
+  // small round leaves (birch, shrubs): the same twigs, finer and paler
   clip(256, 256);
-  for (let i = 0; i < 420; i++) {
-    const a = r() * Math.PI * 2;
-    const d = Math.sqrt(r()) * 106;
-    const x = 384 + Math.cos(a) * d;
-    const y = 384 + Math.sin(a) * d * 1.05;
-    g.fillStyle = `hsl(${70 + r() * 30},${40 + r() * 22}%,${22 + r() * 20 + (d / 106) * 8}%)`;
-    g.beginPath();
-    g.ellipse(x, y, 4 + r() * 3, 3 + r() * 2, r() * Math.PI, 0, Math.PI * 2);
-    g.fill();
+  for (let k = 0; k < 8; k++) {
+    const a = -Math.PI / 2 + (k / 7 - 0.5) * 2.8 + (r() - 0.5) * 0.3;
+    const len = 64 + r() * 40;
+    twig(384, 492, 384 + Math.cos(a) * len, 384 + 40 + Math.sin(a) * len, 22, 70, 66, 98, 6);
   }
   g.restore();
   const img = g.getImageData(0, 0, S, S);
@@ -267,35 +272,50 @@ function tree(kind: TreeKind, lite: boolean, r: Rng): [Acc, Acc] {
   const bc = lin(BARK[kind] ?? 0x4a3a2c);
   const seg = lite ? 5 : 8;
   const rnd = (a: number, b: number) => a + r() * (b - a);
-  const cards = (n: number, center: V3, rad: V3, size: [number, number], cell: number) => {
-    for (let i = 0; i < n; i++) {
-      const u = rnd(-1, 1);
-      const ph = rnd(0, Math.PI * 2);
-      const sq = Math.sqrt(1 - u * u);
-      const f = rnd(0.45, 1);
-      const dir: V3 = [Math.cos(ph) * sq, u, Math.sin(ph) * sq];
-      const c: V3 = [center[0] + dir[0] * rad[0] * f, center[1] + dir[1] * rad[1] * f, center[2] + dir[2] * rad[2] * f];
-      const nrm = norm(add(dir, [rnd(-0.6, 0.6), rnd(-0.3, 0.6), rnd(-0.6, 0.6)]));
-      const right = norm(cross(nrm, Math.abs(nrm[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0]));
-      const up = cross(right, nrm);
-      const s = rnd(size[0], size[1]) / 2;
-      leaf.card(c, mul(right, s), mul(up, s), CELL_RECT(cell), center, 0.5);
-    }
+  /** Leaf clusters round branch tips: smaller cards, deeper (darker) toward the crown's heart. */
+  const clusters = (tips: V3[], per: number, spread: number, size: [number, number], cell: number, center: V3, reach: number) => {
+    for (const tip of tips)
+      for (let i = 0; i < per; i++) {
+        const c: V3 = [tip[0] + rnd(-1, 1) * spread, tip[1] + rnd(-0.6, 1) * spread * 0.8, tip[2] + rnd(-1, 1) * spread];
+        const out = sub(c, center);
+        const depth = Math.min(1, Math.hypot(out[0], out[1] * 1.3, out[2]) / reach);
+        const nrm = norm(add(norm(out), [rnd(-0.7, 0.7), rnd(-0.2, 0.8), rnd(-0.7, 0.7)]));
+        const right = norm(cross(nrm, Math.abs(nrm[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0]));
+        const up = cross(right, nrm);
+        const s = rnd(size[0], size[1]) / 2;
+        const shade = 0.55 + 0.45 * depth;
+        leaf.card(c, mul(right, s), mul(up, s), CELL_RECT(cell), center, 0.5, [shade, shade * (0.98 + r() * 0.04), shade * 0.95]);
+      }
   };
   switch (kind) {
     case 'oak': {
       bark.tube([0, -0.3, 0], [0.2, 4.3, 0.1], 0.36, 0.2, seg, bc, 0, 0.25, 3);
-      if (!lite)
-        for (let k = 0; k < 4; k++) {
-          const a = (k / 4) * Math.PI * 2 + r();
-          bark.tube([0.15, 3.3 + k * 0.25, 0.05], [Math.cos(a) * 2.2, 5.4 + r(), Math.sin(a) * 2.2], 0.13, 0.04, 5, bc, 0.2, 0.5, 1);
-        }
-      cards(lite ? 8 : 20, [0.2, 5.9, 0.1], [3.1, 2.4, 3.1], [2.2, 3.1], 0);
+      // limbs spreading from the top of the trunk, each ending in a leafy cluster
+      const tips: V3[] = [];
+      const limbs = lite ? 5 : 7;
+      for (let k = 0; k < limbs; k++) {
+        const a = (k / limbs) * Math.PI * 2 + rnd(-0.3, 0.3);
+        const rad = rnd(1.6, 2.7);
+        const tip: V3 = [Math.cos(a) * rad + 0.2, rnd(5.2, 6.9), Math.sin(a) * rad + 0.1];
+        tips.push(tip);
+        if (!lite) bark.tube([0.15, 3.4 + k * 0.18, 0.05], [tip[0] * 0.8, tip[1] - 0.6, tip[2] * 0.8], 0.14, 0.04, 5, bc, 0.2, 0.5, 2, [0, 0.35, 0]);
+      }
+      tips.push([0.2, 7.2, 0.1], [0.4, 6.3, -0.6]);
+      clusters(tips, lite ? 3 : 8, 1.1, [1.35, 2.05], 0, [0.2, 5.6, 0.1], 3.2);
       break;
     }
     case 'birch': {
       bark.tube([0, -0.3, 0], [0.25, 9.5, 0], 0.18, 0.05, seg, bc, 0, 0.5, 6);
-      cards(lite ? 6 : 15, [0.15, 6.6, 0], [1.8, 3, 1.8], [1.4, 2], 3);
+      const tips: V3[] = [];
+      for (let k = 0; k < (lite ? 5 : 9); k++) {
+        const a = rnd(0, Math.PI * 2);
+        const y = rnd(4.4, 9.4);
+        const rad = 0.5 + (1 - (y - 4.6) / 4.6) * 1.2;
+        const tip: V3 = [Math.cos(a) * rad + 0.15, y, Math.sin(a) * rad];
+        tips.push(tip);
+        if (!lite) bark.tube([0.12, y - 1.1, 0], tip, 0.05, 0.015, 4, bc, 0.3, 0.6, 1);
+      }
+      clusters(tips, lite ? 3 : 7, 0.9, [1.1, 1.7], 3, [0.15, 6.8, 0], 2.4);
       break;
     }
     case 'pine':
@@ -375,7 +395,7 @@ function tree(kind: TreeKind, lite: boolean, r: Rng): [Acc, Acc] {
       break;
     }
     case 'shrub': {
-      cards(lite ? 4 : 9, [0, 0.55, 0], [1, 0.6, 1], [1, 1.5], r() < 0.5 ? 0 : 3);
+      clusters([[0.3, 0.6, 0.2], [-0.4, 0.55, -0.1], [0, 0.9, -0.3]], lite ? 2 : 4, 0.45, [0.8, 1.2], r() < 0.5 ? 0 : 3, [0, 0.5, 0], 1);
       break;
     }
   }
@@ -407,7 +427,7 @@ export function vegetation(THREE: Three, w: World, shared: Shared, opts: { grass
   const def = w.def;
   const atlas = leafAtlas(THREE);
   const tint = def.id === 'mesa' ? [1.12, 1.04, 0.78] : def.id === 'frost' ? [0.7, 0.82, 0.8] : def.id === 'isles' ? [1, 1.12, 0.82] : [1, 1.02, 0.92];
-  const leafMat = new THREE.MeshStandardMaterial({ map: atlas, alphaTest: 0.42, side: DOUBLE, roughness: 0.78, color: new THREE.Color(tint[0], tint[1], tint[2]) });
+  const leafMat = new THREE.MeshStandardMaterial({ map: atlas, alphaTest: 0.42, side: DOUBLE, roughness: 0.78, vertexColors: true, color: new THREE.Color(tint[0], tint[1], tint[2]) });
   patch(leafMat, shared, {
     key: 'dz-leaf',
     vertDecl: TREE_VERT,
@@ -585,6 +605,9 @@ export function vegetation(THREE: Three, w: World, shared: Shared, opts: { grass
 
   const grass = grassMesh(THREE, w, shared, opts.grass);
   if (grass) group.add(grass);
+  // pebbles and twigs wherever the grass is on (they are cheap, but the low tier keeps its budget for the basics)
+  const scatter = opts.grass > 0 ? [scatterMesh(THREE, shared, Math.round(900 + opts.grass * 0.008), 0, 11), scatterMesh(THREE, shared, Math.round(300 + opts.grass * 0.003), 1, 12)] : [];
+  for (const sm of scatter) if (sm) group.add(sm);
   return {
     group,
     grass,
@@ -714,6 +737,100 @@ void main() {
   gl_FragColor = vec4(dzFog(col, vWp), 1.0);
 }
 `;
+
+// Ground clutter: pebbles on dirt and rock, twigs where the grass thins, placed like the grass, on the GPU round the
+// camera. Small enough that a few thousand cost almost nothing, and they give bare ground its grain up close.
+const SCATTER_VERT = /* glsl */ `
+${COMMON}
+${GROUND_DECL}
+attribute vec2 aOff;
+attribute vec2 aRnd;
+uniform float uPatch;
+uniform float uKind;
+varying vec3 vWp;
+varying vec3 vCol;
+varying vec2 vBake;
+varying vec3 vN;
+void main() {
+  vec2 base = aOff + floor((cameraPosition.xz - aOff) / uPatch + 0.5) * uPatch;
+  float dist = length(base - cameraPosition.xz);
+  float fade = 1.0 - smoothstep(uPatch * 0.32, uPatch * 0.5, dist);
+  vec3 n = dzNormal(base);
+  float hg = dzHeight(base);
+  vec4 baked = dzBaked(base);
+  float gm;
+  vec4 L = dzLayers(vec3(base.x, hg, base.y), n, baked.a, gm);
+  float w = uKind < 0.5
+    ? (0.16 + 0.84 * max(L.z, max(L.x * 0.85, L.y * 0.35))) * (1.0 - L.w * 0.92)
+    : (0.25 + 0.75 * L.z) * (1.0 - L.w) * (1.0 - L.y) * (1.0 - L.x * 0.7);
+  float keep = step(aRnd.x, w) * step(uWater + 0.1, hg);
+  float s = (uKind < 0.5 ? 0.018 + 0.055 * aRnd.y * aRnd.y : 0.16 + 0.22 * aRnd.y) * fade * keep;
+  if (s < 0.004 || abs(base.x) > 511.0 || abs(base.y) > 511.0) {
+    gl_Position = vec4(0.0, 0.0, -2.0, 1.0);
+    return;
+  }
+  float ang = fract(aRnd.x * 91.7 + aRnd.y * 13.1) * 6.2832;
+  float c = cos(ang);
+  float sn = sin(ang);
+  vec3 p = position * vec3(s, s * (uKind < 0.5 ? 0.55 + 0.35 * fract(aRnd.y * 7.0) : 1.0), s);
+  p.xz = mat2(c, -sn, sn, c) * p.xz;
+  // lie along the slope: tip the local up toward the ground normal
+  vec3 t1 = normalize(cross(n, vec3(0.0, 0.0, 1.0)));
+  vec3 t2 = cross(t1, n);
+  vec3 wp = vec3(base.x, hg - (uKind < 0.5 ? s * 0.25 : 0.0), base.y) + t1 * p.x + n * p.y + t2 * p.z;
+  vWp = wp;
+  vN = normalize(t1 * normal.x + n * normal.y + t2 * normal.z);
+  float tone = 0.75 + 0.5 * fract(aRnd.y * 31.0);
+  vCol = (uKind < 0.5 ? mix(vec3(0.2, 0.19, 0.17), vec3(0.3, 0.26, 0.21), fract(aRnd.x * 17.0)) : vec3(0.2, 0.15, 0.1)) * tone;
+  vBake = vec2(baked.r * baked.b, baked.g);
+  gl_Position = projectionMatrix * viewMatrix * vec4(wp, 1.0);
+}
+`;
+const SCATTER_FRAG = /* glsl */ `
+${COMMON}
+varying vec3 vWp;
+varying vec3 vCol;
+varying vec2 vBake;
+varying vec3 vN;
+void main() {
+  float ndl = max(dot(normalize(vN), uSunDir), 0.0) * 0.7 + 0.15;
+  vec3 col = vCol * (uSunColor * ndl * vBake.x / 3.14159 + uAmbient * vBake.y * 0.7);
+  gl_FragColor = vec4(dzFog(col, vWp), 1.0);
+}
+`;
+
+function scatterMesh(THREE: Three, shared: Shared, count: number, kind: 0 | 1, seed: number) {
+  if (count <= 0) return null;
+  const patchSize = kind === 0 ? 22 : 30;
+  const g = new THREE.InstancedBufferGeometry();
+  // a pebble: a squashed octahedron with its top cut; a twig: a thin bent stick
+  const src = kind === 0 ? new THREE.OctahedronGeometry(1, 0) : new THREE.CylinderGeometry(0.012, 0.018, 1, 4, 2).rotateZ(Math.PI / 2);
+  if (kind === 1) {
+    const p = src.attributes.position as T.BufferAttribute;
+    for (let i = 0; i < p.count; i++) p.setY(i, p.getY(i) + 0.03 + Math.sin(p.getX(i) * 3) * 0.04);
+    src.computeVertexNormals();
+  }
+  g.setAttribute('position', src.attributes.position);
+  g.setAttribute('normal', src.attributes.normal);
+  if (src.index) g.setIndex(src.index);
+  const r = mulberry32(seed);
+  const off = new Float32Array(count * 2);
+  const rnd = new Float32Array(count * 2);
+  for (let i = 0; i < count; i++) {
+    off[i * 2] = r() * patchSize;
+    off[i * 2 + 1] = r() * patchSize;
+    rnd[i * 2] = r();
+    rnd[i * 2 + 1] = r();
+  }
+  g.setAttribute('aOff', new THREE.InstancedBufferAttribute(off, 2));
+  g.setAttribute('aRnd', new THREE.InstancedBufferAttribute(rnd, 2));
+  g.instanceCount = count;
+  g.boundingSphere = new THREE.Sphere(new THREE.Vector3(), 1e6);
+  const mat = new THREE.ShaderMaterial({ uniforms: { ...shared, uPatch: { value: patchSize }, uKind: { value: kind } }, vertexShader: SCATTER_VERT, fragmentShader: SCATTER_FRAG });
+  const m = new THREE.Mesh(g, mat);
+  m.frustumCulled = false;
+  return m;
+}
 
 function grassMesh(THREE: Three, w: World, shared: Shared, count: number) {
   const max = Math.max(count, 0);

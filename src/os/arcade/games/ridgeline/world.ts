@@ -203,7 +203,25 @@ class Frame {
 type Opening = { c: number; w: number; b: number; t: number };
 
 /** A wall along local x (from xa to xb, between z0 and z1) from y0 to y1 with door and window holes. */
-function wallX(f: Frame, xa: number, xb: number, z0: number, z1: number, y0: number, y1: number, holes: Opening[], part: Part, color: number) {
+/** Frames round a wall's openings, standing a little proud of both faces: jambs and a lintel, and a sill under a window. */
+function trims(f: Frame, alongX: boolean, holes: Opening[], t0: number, t1: number, y0: number, color: number) {
+  if (color < 0) return;
+  const box = (a0: number, ya: number, a1: number, yb: number, out: number) =>
+    alongX ? f.box(a0, ya, t0 - out, a1, yb, t1 + out, 'trim', color, false) : f.box(t0 - out, ya, a0, t1 + out, yb, a1, 'trim', color, false);
+  for (const o of holes) {
+    const a = o.c - o.w / 2;
+    const b = o.c + o.w / 2;
+    const door = o.b <= y0 + 0.05;
+    const bottom = door ? o.b : o.b - 0.02;
+    box(a - 0.08, bottom, a, o.t, 0.035);
+    box(b, bottom, b + 0.08, o.t, 0.035);
+    box(a - 0.1, o.t, b + 0.1, o.t + 0.11, 0.045);
+    if (!door) box(a - 0.12, o.b - 0.08, b + 0.12, o.b, 0.07);
+  }
+}
+
+function wallX(f: Frame, xa: number, xb: number, z0: number, z1: number, y0: number, y1: number, holes: Opening[], part: Part, color: number, trim = -1) {
+  trims(f, true, holes, z0, z1, y0, trim);
   let cur = xa;
   for (const o of [...holes].sort((a, b) => a.c - b.c)) {
     const a = o.c - o.w / 2;
@@ -218,7 +236,8 @@ function wallX(f: Frame, xa: number, xb: number, z0: number, z1: number, y0: num
 }
 
 /** The same along local z, between x0 and x1. */
-function wallZ(f: Frame, za: number, zb: number, x0: number, x1: number, y0: number, y1: number, holes: Opening[], part: Part, color: number) {
+function wallZ(f: Frame, za: number, zb: number, x0: number, x1: number, y0: number, y1: number, holes: Opening[], part: Part, color: number, trim = -1) {
+  trims(f, false, holes, x0, x1, y0, trim);
   let cur = za;
   for (const o of [...holes].sort((a, b) => a.c - b.c)) {
     const a = o.c - o.w / 2;
@@ -260,6 +279,17 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
   const trim = style === 'cabin' ? 0x3a2a1e : style === 'adobe' ? 0x6b4a2e : 0xd8d2c4;
 
   f.box(-hw, base, -hd, hw, floorTop, hd, 'floor', style === 'adobe' ? 0xa08466 : 0x8a6a4a);
+  // a plinth round the foot of the walls, a hand proud of them, so the house sits on the ground instead of in it
+  // (a ring under the walls only, so the floor inside stays the floor)
+  if (kind !== 'ruin') {
+    const pc = style === 'adobe' ? 0x8a7458 : 0x8d8a84;
+    const pt = y + 0.13;
+    const o = 0.06;
+    f.box(-hw - o, base, -hd - o, hw + o, pt, -hd + T, 'concrete', pc, false);
+    f.box(-hw - o, base, hd - T, hw + o, pt, hd + o, 'concrete', pc, false);
+    f.box(-hw - o, base, -hd + T, -hw + T, pt, hd - T, 'concrete', pc, false);
+    f.box(hw - T, base, -hd + T, hw + o, pt, hd - T, 'concrete', pc, false);
+  }
   const door = (cpos: number, wide = 1.3, tall = 2.3): Opening => ({ c: cpos, w: wide, b: base, t: y + tall });
   const win = (cpos: number, wide = 1.3): Opening => ({ c: cpos, w: wide, b: y + 1, t: y + 2.15 });
   const ruin = kind === 'ruin';
@@ -267,8 +297,8 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
 
   if (kind === 'barn') {
     const bd: Opening = { c: 0, w: 3.8, b: base, t: y + 4 };
-    wallX(f, -hw, hw, -hd, -hd + T, base, top, [bd], wallPart, wc);
-    wallX(f, -hw, hw, hd - T, hd, base, top, [{ ...bd }], wallPart, wc);
+    wallX(f, -hw, hw, -hd, -hd + T, base, top, [bd], wallPart, wc, trim);
+    wallX(f, -hw, hw, hd - T, hd, base, top, [{ ...bd }], wallPart, wc, trim);
     const hi: Opening[] = [-hd * 0.5, 0, hd * 0.5].map((z) => ({ c: z, w: 1.6, b: y + 2.6, t: y + 3.6 }));
     wallZ(f, -hd + T, hd - T, -hw, -hw + T, base, top, [...hi, door(hd * 0.25, 1.4)], wallPart, wc);
     wallZ(f, -hd + T, hd - T, hw - T, hw, base, top, hi, wallPart, wc);
@@ -294,10 +324,10 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
       zp.forEach(([a, b], i) => r() > 0.25 && f.box(-hw, base, a, -hw + T, wallTop(i + 2), b, 'wall', wc));
       zp.forEach(([a, b], i) => r() > 0.3 && f.box(hw - T, base, a, hw, wallTop(i), b, 'wall', wc));
     } else {
-      wallX(f, -hw, hw, -hd, -hd + T, base, top, frontHoles, wallPart, wc);
-      wallX(f, -hw, hw, hd - T, hd, base, top, backHoles, wallPart, wc);
-      wallZ(f, -hd + T, hd - T, -hw, -hw + T, base, top, sideA, wallPart, wc);
-      wallZ(f, -hd + T, hd - T, hw - T, hw, base, top, sideB, wallPart, wc);
+      wallX(f, -hw, hw, -hd, -hd + T, base, top, frontHoles, wallPart, wc, ruin ? -1 : trim);
+      wallX(f, -hw, hw, hd - T, hd, base, top, backHoles, wallPart, wc, ruin ? -1 : trim);
+      wallZ(f, -hd + T, hd - T, -hw, -hw + T, base, top, sideA, wallPart, wc, ruin ? -1 : trim);
+      wallZ(f, -hd + T, hd - T, hw - T, hw, base, top, sideB, wallPart, wc, ruin ? -1 : trim);
       // sills under the windows
       for (const o of frontHoles) if (o.b > y) f.box(o.c - o.w / 2 - 0.05, o.b - 0.08, -hd - 0.08, o.c + o.w / 2 + 0.05, o.b, -hd + 0.05, 'trim', trim, false);
       for (const o of backHoles) if (o.b > y) f.box(o.c - o.w / 2 - 0.05, o.b - 0.08, hd - 0.05, o.c + o.w / 2 + 0.05, o.b, hd + 0.08, 'trim', trim, false);
