@@ -17,12 +17,25 @@
 // host to stand the teammate up once it's done, and the host says when it stands. Pings go to everyone (only the team
 // shows them), and so do emotes and the team's calls (only the team shows a call): the host turns away an egg's that
 // come too quickly (see emoteReady) and passes on no more of them.
-import { AMMO_TYPES, MATS, MAT_SPECS, MAX_ARMOR, MAX_RARITY, MAX_SCOPE, MELEE, THROWS, WEAPONS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
-import { HALF, opens, topX } from './map.ts';
+//
+// Cars (see logic.ts Ride) move with their drivers' reports: a driver's egg sits at the wheel facing the way its car
+// does. An egg asks the host to get in ('vq'), and says when it got out (where it left its car, if it drove); the host
+// says who sits where ('vs') and when a car goes up ('vx'), and hits on cars go to it like hits on walls. Every
+// reliable report from the host lists the cars that aren't as they started (where, which way, their health and who
+// sits where), so a guest who missed the news (or synced late) has them too.
+//
+// When the host leaves mid-match the room makes someone else in it the host, and their game takes the match over (see
+// session.ts takeOver). So that it can, the host tells the guests likeliest to be next what each computer egg carries
+// (its kit), every guest keeps the last few seconds of what the host settled and hands it to the new host (who settles
+// whatever it hadn't heard of), and the host's reliable reports say how many hand-offs the match has had.
+import { AMMO_TYPES, BOOST, MATS, MAT_MAX, MAT_SPECS, MAX_ARMOR, MAX_PACK, MAX_RARITY, MAX_SCOPE, MELEE, MELEE_IDS, THROWS, THROW_IDS, USE_IDS, WEAPONS, WEAPON_IDS, damageOf, isMelee, isThrow, isWeapon, parseLoot, type LootDef, type ThrowId, type WeaponId } from './items.ts';
+import { DROP_BASE, HALF, opens, topX } from './map.ts';
 import { meta } from './meta.ts';
 import {
   CAUSES,
   CELL_B,
+  CRASH,
+  DOOR_OPENING,
   DOOR_R,
   DOOR_STATES,
   EMOTE_IDS,
@@ -31,10 +44,14 @@ import {
   LEVEL_H,
   MAX_FIGHTERS,
   MAX_LEVEL,
+  MAX_SEATS,
   MAX_TEAMS,
   PHASES,
   PIECE_KINDS,
+  RAM,
+  SLOT_THROW,
   TEAM_SIZE,
+  VAULT_TIME,
   addLoot,
   addWall,
   applyCalled,
@@ -45,14 +62,17 @@ import {
   applyPing,
   applyRevive,
   applyRevived,
+  applySeat,
   applyTook,
   breakGlass,
   callDrop,
   damageCrate,
   damageDoor,
+  damageRide,
   damageWall,
   fire,
   flagsOf,
+  freeSeat,
   grantTake,
   hasScope,
   held,
@@ -66,18 +86,23 @@ import {
   owned,
   removeWall,
   reviveEgg,
+  seatEgg,
   setDoor,
+  settleSeat,
   slabGap,
   toggleDoor,
+  wreckRide,
   type Cause,
   type Ev,
   type Fighter,
+  type Gun,
   type Held,
   type Level,
   type Match,
   type Mode,
   type Phase,
   type PieceKind,
+  type Ride,
   type Wall,
 } from './logic.ts';
 
@@ -102,7 +127,7 @@ export type NetEv =
   | { y: 'sw'; f: number }
   | { y: 'th'; f: number; k: ThrowId; x: number; z: number; lx: number; lz: number; ft: number; y0?: number; ly?: number }
   | { y: 'd'; f: number; to: number; d: number; w: Cause; x: number; z: number }
-  | { y: 'm'; f: number; k: 'wall' | 'crate' | 'door'; id: number; d: number }
+  | { y: 'm'; f: number; k: 'wall' | 'crate' | 'door' | 'car'; id: number; d: number }
   | { y: 'gl'; f: number; i: number }
   | { y: 'dq'; f: number; i: number }
   | { y: 'ds'; f: number; i: number; s: number }
@@ -123,14 +148,22 @@ export type NetEv =
   | { y: 'rq'; f: number; to: number }
   | { y: 'rvd'; f: number; by: number }
   | { y: 'pg'; f: number; x: number; z: number }
-  | { y: 'em'; f: number; k: number; a?: number; x?: number; z?: number };
+  | { y: 'em'; f: number; k: number; a?: number; x?: number; z?: number }
+  | { y: 'vq'; f: number; v: number; x?: number; z?: number; a?: number }
+  | { y: 'vs'; f: number; v: number; s: number; x: number; z: number; a: number }
+  | { y: 'vx'; v: number; f: number; x: number; z: number; a: number };
+
+/** A car as the host's reliable report has it (see rideNotes): which, where, which way, its health (0 gone up) and who sits where. */
+export type RideNote = { i: number; x: number; z: number; a: number; hp: number; seats: number[] };
 
 /** Events grouped by the seat they came from, in the order the host applied them. */
 export type Group = [origin: number, events: NetEv[]];
 
 export type Packet =
   | { k: 's'; round: number; state: State; watch: number; seq?: number }
-  | { k: 'S'; round: number; seed: number; time: number; level: Level; roster: number[] | null; states: [number, State][]; glass: number[] | null; doors: number[] | null; mode: Mode; teams: number[] | null }
+  | { k: 'S'; round: number; seed: number; time: number; level: Level; roster: number[] | null; states: [number, State][]; glass: number[] | null; doors: number[] | null; mode: Mode; teams: number[] | null; rides: RideNote[] | null; handoffs: number }
+  | { k: 'K'; round: number; kits: [number, Kit][] }
+  | { k: 'L'; round: number; events: NetEv[]; end: { winner: number; places: [number, number, number][] } | null }
   | { k: 'e'; round: number; groups: Group[] }
   | { k: 'end'; round: number; winner: number; places: [number, number, number][] }
   | { k: 'cfg'; round: number; bots: Bots; level: Level; mode: Mode; picks: number[] }
@@ -141,20 +174,28 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const int = (v: unknown): v is number => Number.isInteger(v);
 const fid = (v: unknown): v is number => int(v) && (v as number) >= 0 && (v as number) < MAX_FIGHTERS;
-/** Room seats: -1 for a computer egg. */
+/** Room seats: -1 for a computer egg, LEFT for someone who has left the match. */
 const SEATS = meta.online?.seats ?? 1;
-const seat = (v: unknown): v is number => int(v) && (v as number) >= -1 && (v as number) < SEATS;
+export const LEFT = -2;
+const seat = (v: unknown): v is number => int(v) && (v as number) >= LEFT && (v as number) < SEATS;
 const isCause = (v: unknown): v is Cause => CAUSES.includes(v as Cause);
 /**
- * The most one hit from another client can do: a legendary bullet or pellet, a swing, or a grenade right on top. The
- * rest (the storm, hot sauce, barrels, impulse eggs) each client works out for its own egg, so never arrives as a hit.
+ * The most one hit from another client can do: a legendary bullet or pellet, a swing, a grenade right on top, or a car
+ * running an egg over flat out. The rest (the storm, hot sauce, barrels, impulse eggs, a car going up) each client
+ * works out for its own egg, so never arrives as a hit.
  */
 export function hitCap(w: Cause) {
   if (isWeapon(w)) return Math.round(damageOf(w, MAX_RARITY));
   if (isMelee(w)) return MELEE[w].dmg;
   if (w === 'mirv') return Math.max(THROWS.mirv.dmg ?? 0, THROWS.mirv.split?.dmg ?? 0);
+  if (w === 'car') return RAM.max;
   return w === 'grenade' ? (THROWS.grenade.dmg ?? 0) : 0;
 }
+/** Cars by their place in the match's list: well past what an island has. */
+const MAX_RIDES = 64;
+const ride = (v: unknown): v is number => int(v) && (v as number) >= 0 && (v as number) < MAX_RIDES;
+/** A way to face, in radians (a little round the circle either way). */
+const angle = (v: unknown): v is number => num(v) && Math.abs(v) <= 7;
 /** Loot and wall ids: whole numbers well inside what JSON carries exactly. */
 const id = (v: unknown): v is number => int(v) && (v as number) >= 0 && (v as number) < 1e9;
 /** A point on the island. */
@@ -284,11 +325,13 @@ export const stateKey = (s: State) => packState(s).join();
 /**
  * The host's report of the eggs: the roster goes with every reliable one (null for the rest), which a guest needs to
  * join, and so do the broken windows (`broken`, by window) and the doors (`doors`, their states by door) once any
- * have changed, and in duos and squads the mode and everyone's team (`teams`, by fighter).
+ * have changed, in duos and squads the mode and everyone's team (`teams`, by fighter), and the cars that aren't as
+ * they started (`rides`, see rideNotes).
  */
-export const hostState = (round: number, seed: number, time: number, level: Level, roster: number[] | null, states: [number, State][], broken: boolean[] = [], doors: number[] = [], mode: Mode = 'solo', teams: number[] = []) => {
+export const hostState = (round: number, seed: number, time: number, level: Level, roster: number[] | null, states: [number, State][], broken: boolean[] = [], doors: number[] = [], mode: Mode = 'solo', teams: number[] = [], rides: Ride[] = [], handoffs = 0) => {
   const gl = roster ? packGlass(broken) : '';
   const dz = roster ? packDoors(doors) : '';
+  const vh = roster ? rideNotes(rides) : [];
   return {
     t: 'pk',
     r: round,
@@ -296,13 +339,45 @@ export const hostState = (round: number, seed: number, time: number, level: Leve
     sd: seed,
     tm: r2(time),
     lv: level,
+    // (once the match has changed hands, every report says how often: the roster is in the room's seats since then)
+    ...(handoffs ? { ho: handoffs } : {}),
     ...(roster ? { ro: roster } : {}),
     ...(roster && mode !== 'solo' ? { md: mode, te: teams } : {}),
     ...(gl ? { gl } : {}),
     ...(dz ? { dz } : {}),
+    ...(vh.length ? { vh } : {}),
     c: states.map(([f, s]) => [f, ...packState(s)]),
   };
 };
+
+/** Who sits in a car's seats as one whole number: each seat's fighter plus one (0 for nobody), a place each. */
+const SEAT_BASE = MAX_FIGHTERS + 1;
+export const packSeats = (seats: number[]) => seats.reduce((n, id, k) => n + (id + 1) * SEAT_BASE ** k, 0);
+export function unpackSeats(v: number) {
+  const out: number[] = [];
+  for (let k = 0, n = v; k < MAX_SEATS; k++, n = Math.floor(n / SEAT_BASE)) out.push((n % SEAT_BASE) - 1);
+  return out;
+}
+
+/**
+ * The cars that aren't as they started (someone has been in one, it's hurt or it has gone up), each as six whole
+ * numbers: its place in the list, where it is (tenths of a meter), the way it faces (hundredths of a radian), its
+ * health (0 once it's gone up) and who sits where (see packSeats).
+ */
+export const rideNotes = (rides: Ride[]) => rides.filter((c) => c.dead || c.at > -99 || c.hp < c.max).map((c) => [c.i, Math.round(c.x * 10), Math.round(c.z * 10), Math.round(c.a * 100), c.dead ? 0 : Math.max(1, Math.ceil(c.hp)), packSeats(c.seats)]);
+
+/** The cars a report lists, or null when the list isn't one. */
+export function parseRides(v: unknown): RideNote[] | null {
+  if (!Array.isArray(v) || v.length > MAX_RIDES) return null;
+  const out: RideNote[] = [];
+  for (const raw of v) {
+    if (!Array.isArray(raw) || raw.length !== 6 || !raw.every(int)) return null;
+    const [i, x, z, a, hp, seats] = raw as number[];
+    if (!ride(i) || !onLand(x / 10, z / 10) || !angle(a / 100) || hp < 0 || hp > 1000 || seats < 0 || seats >= SEAT_BASE ** MAX_SEATS) return null;
+    out.push({ i, x: x / 10, z: z / 10, a: a / 100, hp, seats: unpackSeats(seats) });
+  }
+  return out;
+}
 
 /** Each fighter's team as a roster's report has it, or null when it isn't one for this many fighters in this mode. */
 export function parseTeams(v: unknown, mode: Mode, n: number): number[] | null {
@@ -346,6 +421,176 @@ export function unpackGlass(v: unknown): number[] | null {
 }
 
 export const endOf = (round: number, winner: number, places: [number, number, number][]) => ({ t: 'pk', r: round, k: 'end', w: winner, pl: places });
+
+// -------------------------------------------------------------------------------------------------------------------
+// Hand-offs: what a guest needs to take the match over.
+
+/** The most hand-offs a match can have: everyone in a full room leaving in turn. */
+const MAX_HANDOFFS = SEATS;
+
+/** What a computer egg carries: all a new host needs, with what it reports, to run it (see adoptBots). */
+export type Kit = Pick<Fighter, 'guns' | 'melee' | 'slot' | 'pick' | 'throws' | 'ammo' | 'items' | 'boost' | 'pack' | 'wood' | 'stone' | 'metal' | 'mat' | 'dropSeq' | 'wallSeq'>;
+
+/**
+ * A kit as whole numbers: each gun (its place in WEAPON_IDS from 1, 0 for none, how rare, what's in its mag), the
+ * melee weapon, the slot in hand and the throwable picked, so many of each throwable, ammo and consumable, then the
+ * boost, the backpack, wood, stone and metal, the material picked, and how many drops and pieces it has numbered.
+ */
+export function kitOf(f: Fighter): number[] {
+  const gun = (g: Gun | null) => (g ? [WEAPON_IDS.indexOf(g.w) + 1, g.r, g.mag] : [0, 0, 0]);
+  return [
+    ...gun(f.guns[0]),
+    ...gun(f.guns[1]),
+    MELEE_IDS.indexOf(f.melee),
+    f.slot,
+    THROW_IDS.indexOf(f.pick),
+    ...THROW_IDS.map((k) => f.throws[k]),
+    ...AMMO_TYPES.map((a) => f.ammo[a]),
+    ...USE_IDS.map((u) => f.items[u]),
+    Math.round(f.boost),
+    f.pack,
+    f.wood,
+    f.stone,
+    f.metal,
+    f.mat,
+    f.dropSeq,
+    f.wallSeq,
+  ];
+}
+const KIT_LEN = 6 + 3 + THROW_IDS.length + AMMO_TYPES.length + USE_IDS.length + 8;
+
+/** A kit back, or null for anything no egg could carry. */
+export function parseKit(a: unknown): Kit | null {
+  if (!Array.isArray(a) || a.length !== KIT_LEN || !a.every((v) => int(v) && v >= 0 && v <= 1e6)) return null;
+  const v = a as number[];
+  let at = 0;
+  const take = () => v[at++];
+  const gun = (): Gun | null | undefined => {
+    const [w, r, mag] = [take(), take(), take()];
+    if (!w) return null;
+    return w <= WEAPON_IDS.length && r <= MAX_RARITY && mag <= 1000 ? { w: WEAPON_IDS[w - 1], r, mag } : undefined;
+  };
+  const guns = [gun(), gun()];
+  const [melee, slot, pick] = [take(), take(), take()];
+  const counts = <K extends string>(keys: readonly K[], max: number) => {
+    const out = {} as Record<K, number>;
+    for (const k of keys) out[k] = Math.min(max, take());
+    return out;
+  };
+  const throws = counts(THROW_IDS, 99);
+  const ammo = counts(AMMO_TYPES, 999);
+  const items = counts(USE_IDS, 99);
+  const [boost, pack, wood, stone, metal, mat, dropSeq, wallSeq] = v.slice(at);
+  if (guns[0] === undefined || guns[1] === undefined || melee >= MELEE_IDS.length || slot > SLOT_THROW || pick >= THROW_IDS.length || pack > MAX_PACK || mat >= MATS.length) return null;
+  return { guns: [guns[0], guns[1]], melee: MELEE_IDS[melee], slot, pick: THROW_IDS[pick], throws, ammo, items, boost: Math.min(BOOST.max, boost), pack, wood: Math.min(MAT_MAX, wood), stone: Math.min(MAT_MAX, stone), metal: Math.min(MAT_MAX, metal), mat, dropSeq, wallSeq };
+}
+
+/**
+ * Puts what a computer egg carried on it, as the host last said. Its drops and pieces number on a little past the last
+ * the host said (some may be on their way still), so none takes an id already used.
+ */
+export function putKit(f: Fighter, k: Kit) {
+  f.guns = [k.guns[0] && { ...k.guns[0] }, k.guns[1] && { ...k.guns[1] }];
+  f.melee = k.melee;
+  f.slot = k.slot;
+  f.pick = k.pick;
+  f.throws = { ...k.throws };
+  f.ammo = { ...k.ammo };
+  f.items = { ...k.items };
+  f.boost = k.boost;
+  f.pack = k.pack;
+  f.wood = k.wood;
+  f.stone = k.stone;
+  f.metal = k.metal;
+  f.mat = k.mat;
+  f.dropSeq = Math.max(f.dropSeq, k.dropSeq + 200);
+  f.wallSeq = Math.max(f.wallSeq, k.wallSeq + 200);
+}
+
+/** The host's word on what some computer eggs carry, for a guest who may be next to run the match. */
+export const kitsOf = (round: number, bots: Fighter[]) => ({ t: 'pk', r: round, k: 'K', b: bots.map((f) => [f.id, ...kitOf(f)]) });
+
+/** What the host settles (and every guest keeps a few seconds of, for a new host): see applySettled. */
+export const SETTLED: ReadonlySet<NetEv['y']> = new Set(['dr', 'tko', 'opd', 'wg', 'ds', 'fd', 'rvd', 'o', 'lv', 'gl', 'wl', 'we', 'vs', 'vx']);
+
+/**
+ * A guest's last few seconds of what the host settled (the result too, if it came), for a new host: as much of the
+ * newest as fits one packet.
+ */
+export function logOf(round: number, events: NetEv[], end: { winner: number; places: [number, number, number][] } | null, max = 6000) {
+  const e = end ? { e: { w: end.winner, pl: end.places } } : {};
+  let size = JSON.stringify(e).length + 40;
+  let from = events.length;
+  while (from > 0 && from > events.length - 400) {
+    const bytes = JSON.stringify(events[from - 1]).length + 1;
+    if (size + bytes > max) break;
+    size += bytes;
+    from--;
+  }
+  return { t: 'pk', r: round, k: 'L', g: events.slice(from), ...e };
+}
+
+/**
+ * What a host that has since left settled, as a guest heard it, applied by the new host (see takeOver) as a guest
+ * would have, once: whatever it hadn't heard of comes true here too. Only what was the old host's to say counts: a
+ * computer egg's drops and outs (everyone else's come from them), pickups (a computer egg keeps what its kit says it
+ * carried), chests and crates opened, pieces up and down, doors, called drops, revives, loot moved, glass, who sat
+ * where (see settleSeat) and cars gone up. True when it was news here, to pass on to everyone.
+ */
+export function applySettled(m: Match, e: NetEv): boolean {
+  const f = 'f' in e && e.f >= 0 ? m.fighters[e.f] : undefined;
+  switch (e.y) {
+    case 'dr':
+      if (m.fighters[e.by]?.seat !== -1 || Math.floor((e.id - DROP_BASE) / 100_000) !== e.by || m.loot.has(e.id) || m.gone.has(e.id)) return false;
+      addLoot(m, { id: e.id, def: e.it, x: e.x, z: e.z, by: e.by, at: m.time });
+      return true;
+    case 'tko':
+      if (!f || (m.gone.has(e.id) && !m.loot.has(e.id))) return false;
+      applyTook(m, e.f, e.id, e.it, f.kind === 'player');
+      return true;
+    case 'opd':
+      if (!m.map.containers[e.c] || m.opened[e.c]) return false;
+      openContainer(m, e.c, e.f, false);
+      return true;
+    case 'wg':
+      if (!m.walls.has(e.id)) return false;
+      removeWall(m, e.id, false);
+      return true;
+    case 'ds':
+      if (e.i >= m.doors.length || m.doors[e.i] === e.s) return false;
+      setDoor(m, e.i, e.s, e.f, false);
+      if (e.s === DOOR_OPENING) m.doorT[e.i] = Math.min(m.doorT[e.i], m.time + VAULT_TIME);
+      return true;
+    case 'fd':
+      return applyCalled(m, e.f, e.c, e.x, e.z, e.at, true);
+    case 'rvd':
+      return applyRevived(m, e.f, e.by, true);
+    case 'o':
+      if (!f || f.seat !== -1 || f.phase === 'out' || m.ended) return false;
+      applyOut(m, e.f, e.by, e.w);
+      return true;
+    case 'lv': {
+      const l = m.loot.get(e.id);
+      if (!l || (l.x === e.x && l.z === e.z)) return false;
+      moveLoot(m, e.id, e.x, e.z, false);
+      return true;
+    }
+    case 'gl':
+      return breakGlass(m, e.i, e.f, false);
+    case 'wl':
+      return applyNet(m, e);
+    case 'we': {
+      const w = m.walls.get(e.id);
+      return !!w && w.e !== e.e && applyEdit(m, e.f, e.id, e.e);
+    }
+    case 'vs':
+      return settleSeat(m, e.f, e.v, e.s, e.x, e.z, e.a);
+    case 'vx':
+      return wreckRide(m, e.v, e.f, false, e.x, e.z, e.a);
+    default:
+      return false;
+  }
+}
 
 /**
  * The host's picks for the next match, sent while the room waits so guests can see them: the bots, the mode, and in
@@ -416,6 +661,13 @@ export function toNet(e: Ev): NetEv | null {
       return { y: 'pg', f: e.f, x: e.x, z: e.z };
     case 'emote':
       return { y: 'em', f: e.f, k: EMOTE_IDS.indexOf(e.k), ...(e.a ? { a: AMMO_TYPES.indexOf(e.a) } : {}), ...(e.k === 'enemy' ? { x: e.x, z: e.z } : {}) };
+    case 'hop':
+      // getting out says where the car is left
+      return e.v >= 0 ? { y: 'vq', f: e.f, v: e.v } : { y: 'vq', f: e.f, v: -1, x: e.x, z: e.z, a: e.a };
+    case 'seat':
+      return { y: 'vs', f: e.f, v: e.v, s: e.s, x: e.x, z: e.z, a: e.a };
+    case 'wreck':
+      return { y: 'vx', v: e.v, f: e.f, x: e.x, z: e.z, a: e.a };
     default:
       return null;
   }
@@ -432,6 +684,8 @@ export function actorOf(e: NetEv) {
     case 'fd':
     case 'ds':
     case 'rvd':
+    case 'vs':
+    case 'vx':
       return -1;
     default:
       return e.f;
@@ -457,7 +711,7 @@ function parseEv(v: unknown): NetEv | null {
     case 'd':
       return fid(e.f) && fid(e.to) && num(e.d) && isCause(e.w) && e.d > 0 && e.d <= hitCap(e.w) && onLevel(e.x, e.z, SLACK) && num(e.z) ? { y: 'd', f: e.f, to: e.to, d: e.d, w: e.w, x: e.x, z: e.z } : null;
     case 'm':
-      return fid(e.f) && (e.k === 'wall' || e.k === 'crate' || e.k === 'door') && id(e.id) && num(e.d) && e.d > 0 && e.d <= 1000 ? { y: 'm', f: e.f, k: e.k, id: e.id, d: e.d } : null;
+      return fid(e.f) && (e.k === 'wall' || e.k === 'crate' || e.k === 'door' || e.k === 'car') && id(e.id) && (e.k !== 'car' || ride(e.id)) && num(e.d) && e.d > 0 && e.d <= 1000 ? { y: 'm', f: e.f, k: e.k, id: e.id, d: e.d } : null;
     case 'gl':
       return int(e.f) && e.f >= -1 && e.f < MAX_FIGHTERS && int(e.i) && e.i >= 0 && e.i < MAX_GLASS ? { y: 'gl', f: e.f, i: e.i } : null;
     case 'dq':
@@ -515,6 +769,15 @@ function parseEv(v: unknown): NetEv | null {
       if (k === 'enemy' ? !onLand(e.x, e.z) : e.x !== undefined || e.z !== undefined) return null;
       return { y: 'em', f: e.f, k: e.k, ...(e.a !== undefined ? { a: e.a as number } : {}), ...(k === 'enemy' ? { x: e.x as number, z: e.z as number } : {}) };
     }
+    case 'vq':
+      // in (a car), or out (with where its car is left, if it drove: all of it or none)
+      if (!fid(e.f) || !(e.v === -1 || ride(e.v))) return null;
+      if (e.x === undefined && e.z === undefined && e.a === undefined) return { y: 'vq', f: e.f, v: e.v };
+      return e.v === -1 && onLand(e.x, e.z) && angle(e.a) ? { y: 'vq', f: e.f, v: -1, x: e.x as number, z: e.z as number, a: e.a } : null;
+    case 'vs':
+      return fid(e.f) && (e.v === -1 ? e.s === -1 : ride(e.v) && int(e.s) && e.s >= 0 && e.s < MAX_SEATS) && onLand(e.x, e.z) && angle(e.a) ? { y: 'vs', f: e.f, v: e.v as number, s: e.s as number, x: e.x as number, z: e.z as number, a: e.a } : null;
+    case 'vx':
+      return ride(e.v) && int(e.f) && e.f >= -1 && e.f < MAX_FIGHTERS && onLand(e.x, e.z) && angle(e.a) ? { y: 'vx', v: e.v, f: e.f, x: e.x as number, z: e.z as number, a: e.a } : null;
     default:
       return null;
   }
@@ -555,7 +818,12 @@ export function applyNet(m: Match, e: NetEv): boolean {
     case 'm':
       if (e.k === 'wall') damageWall(m, e.id, e.d, true);
       else if (e.k === 'door') damageDoor(m, e.id, e.d, e.f, true);
-      else damageCrate(m, e.id, e.d, e.f, true);
+      else if (e.k === 'car') {
+        // a car's own driver hurting it: it crashed into something (the dust flies here too)
+        const c = m.rides[e.id];
+        if (c && !c.dead && c.seats[0] === e.f) m.events.push({ t: 'crash', v: e.id, x: c.x, z: c.z, d: CRASH.speed + e.d / CRASH.k, net: true });
+        damageRide(m, e.id, e.d, e.f, true);
+      } else damageCrate(m, e.id, e.d, e.f, true);
       return true;
     case 'gl':
       // passed on only the first time: glass that is already broken is old news
@@ -627,6 +895,20 @@ export function applyNet(m: Match, e: NetEv): boolean {
       return applyPing(m, e.f, e.x, e.z);
     case 'em':
       return applyEmote(m, e.f, EMOTE_IDS[e.k], e.a === undefined ? null : AMMO_TYPES[e.a], e.x ?? 0, e.z ?? 0);
+    case 'vq':
+      // only the host says who sits where (a guest's egg it sees a moment late, so a little farther off); it tells
+      // everyone itself
+      if (m.world && f && !owned(f)) {
+        if (e.v >= 0) seatEgg(m, e.f, e.v, 3);
+        else freeSeat(m, e.f, e.x, e.z, e.a);
+      }
+      return false;
+    case 'vs':
+      if (!m.world) applySeat(m, e.f, e.v, e.s, e.x, e.z, e.a);
+      return true;
+    case 'vx':
+      if (!m.world) wreckRide(m, e.v, e.f, false, e.x, e.z, e.a);
+      return true;
   }
 }
 
@@ -692,7 +974,27 @@ export function parsePacket(value: unknown): Packet | null {
       const s = unpackState(raw.slice(1));
       if (s) states.push([raw[0], s]);
     }
-    return { k: 'S', round, seed: p.sd, time: p.tm, level: p.lv, roster, states, glass, doors, mode, teams };
+    // a reliable report with no cars listed has them all as they started
+    const rides = p.vh === undefined ? (p.ro !== undefined ? [] : null) : parseRides(p.vh);
+    if (p.vh !== undefined && !rides) return null;
+    if (p.ho !== undefined && !(int(p.ho) && p.ho >= 0 && p.ho < MAX_HANDOFFS)) return null;
+    return { k: 'S', round, seed: p.sd, time: p.tm, level: p.lv, roster, states, glass, doors, mode, teams, rides, handoffs: (p.ho as number | undefined) ?? 0 };
+  }
+  if (p.k === 'K') {
+    if (!Array.isArray(p.b)) return null;
+    const kits: [number, Kit][] = [];
+    for (const raw of p.b.slice(0, MAX_FIGHTERS)) {
+      const kit = Array.isArray(raw) && fid(raw[0]) ? parseKit(raw.slice(1)) : null;
+      if (kit) kits.push([raw[0], kit]);
+    }
+    return { k: 'K', round, kits };
+  }
+  if (p.k === 'L') {
+    if (!Array.isArray(p.g)) return null;
+    const events = p.g.slice(0, 400).map(parseEv).filter((e): e is NetEv => !!e && SETTLED.has(e.y));
+    const end = p.e && typeof p.e === 'object' ? parsePacket({ ...p.e, t: 'pk', r: round, k: 'end' }) : null;
+    if (p.e !== undefined && end?.k !== 'end') return null;
+    return { k: 'L', round, events, end: end?.k === 'end' ? { winner: end.winner, places: end.places } : null };
   }
   if (p.k === 'e') {
     if (!Array.isArray(p.g)) return null;

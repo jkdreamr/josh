@@ -21,8 +21,9 @@ export type RoomPlayer = { seat: number; name: string };
  * pool: the quick-play pool it gathers for (see isPool), if any.
  * watch: the game can be watched (spectators see the host's game, take no seat and send nothing); watchable: the host
  * lets them (on unless the host turns it off).
+ * migrate: the game's round goes on when its host leaves, the new host's game running the rest (see handOffRound).
  */
-export type RoomState = { code?: string; game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[]; roundBots?: number; allowBots?: boolean; bots?: number; listed?: boolean; inLobby?: boolean; quick?: boolean; startAt?: number; pool?: string; watch?: boolean; watchable?: boolean };
+export type RoomState = { code?: string; game: string; seats: number; started: boolean; lateJoin?: boolean; round?: number; roster?: number[]; roundBots?: number; allowBots?: boolean; bots?: number; listed?: boolean; inLobby?: boolean; quick?: boolean; startAt?: number; pool?: string; watch?: boolean; watchable?: boolean; migrate?: boolean };
 export type ClientRoomMessage =
   | { t: 'start' }
   | { t: 'over'; round: number }
@@ -234,10 +235,31 @@ export const roundPlayable = (room: RoomState, people: number) => people + (room
 
 /**
  * Who takes over when the host leaves: the person in the lowest seat, the one who has been in the room longest unless
- * someone left and a newcomer took their seat. Null when nobody is left.
+ * someone left and a newcomer took their seat. With `prefer` (the seats playing a round that goes on), the lowest of
+ * those still here first, so the new host has the round to run. Null when nobody is left.
  */
-export function nextHost(players: RoomPlayer[]): RoomPlayer | null {
-  return players.reduce<RoomPlayer | null>((best, player) => (best === null || player.seat < best.seat ? player : best), null);
+export function nextHost(players: RoomPlayer[], prefer?: readonly number[]): RoomPlayer | null {
+  const lowest = (list: RoomPlayer[]) => list.reduce<RoomPlayer | null>((best, player) => (best === null || player.seat < best.seat ? player : best), null);
+  return (prefer && lowest(players.filter((player) => prefer.includes(player.seat)))) || lowest(players);
+}
+
+/**
+ * A round that goes on past a host hand-off (rooms with `migrate`): the person in seat `from` is the host now (seat 0)
+ * and the old host is gone, so the round's lineup and what each seat has said won it so far move to the new numbering.
+ * A word from the old host, and any naming it the winner, no longer counts.
+ */
+export function handOffRound(room: RoomState, reports: RoundReports, from: number) {
+  const seat = (s: number) => (s === from ? 0 : s);
+  if (room.roster) room.roster = room.roster.filter((s) => s !== 0).map(seat);
+  const said = reports[String(room.round ?? 0)];
+  if (!said) return;
+  const next: Record<string, number | number[] | null> = {};
+  for (const [key, winner] of Object.entries(said)) {
+    if (key === '0') continue;
+    const team = Array.isArray(winner) ? winner.filter((s) => s !== 0).map(seat) : null;
+    next[String(seat(Number(key)))] = team ? (team.length ? team : null) : winner === null || winner === 0 ? null : seat(winner);
+  }
+  reports[String(room.round ?? 0)] = next;
 }
 
 /** Someone who takes a seat mid-round sits that round out. */

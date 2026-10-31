@@ -10,7 +10,7 @@ import { BoardList, BoardScopeNote, useRoundBoard, validName } from './board';
 import { sfx, useMusicOn, useMuted } from './sfx';
 import { useBackgroundMusic } from './music';
 import { defineSetting, getSetting, isGameSetting, onSettingChange, setSetting, trackSettingChange, useSetting } from './settings';
-import { BotStepper, OnlinePanel, OnlineProvider, QuickPanel, ROOM_VISIBILITY, ROOM_WATCHERS, RoomCode, RoomRoster, VisibilityPicker, WatchPicker } from './online';
+import { BotStepper, OnlinePanel, OnlineProvider, QuickPanel, ROOM_VISIBILITY, ROOM_WATCHERS, RoomCode, RoomRoster, VisibilityPicker, WatchPicker, type HandOff } from './online';
 import { MAX_SEATS, botPlayers, canStartNext, handOffScores, handOffSeat, handOffSettled, nextOnlineRound, parseRacePacket, roundLeftVerdict, raceSeats, raceStandings, raceVerdict, RoundRouter, type RaceScores, type SettledRace } from './online-core';
 import { createRoom, quickRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import { countPlay } from '../../stats';
@@ -152,6 +152,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   /** The room connection dropped and the link is getting this player's seat back. */
   const [onlineReconnecting, setOnlineReconnecting] = useState(false);
   const [onlineHandoffs, setOnlineHandoffs] = useState(0);
+  const [handedOff, setHandedOff] = useState<HandOff[]>([]);
   const [onlineBusy, setOnlineBusy] = useState(false);
   const [onlineError, setOnlineError] = useState('');
   const [onlineInProgress, setOnlineInProgress] = useState(false);
@@ -199,6 +200,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const onlineModeRef = useRef(onlineMode);
   onlineModeRef.current = onlineMode;
   const race = !!meta.online?.race;
+  /** The game takes over a round its host leaves (see OnlineSpec migrate), so the round goes on. */
+  const migrates = !!meta.online?.migrate;
   /** The Start card's Play is quick play, and Play with Bots plays alone. */
   const phoneFirstOn = !compact && phoneFirst && !!ARCADE_API;
   const quickOn = !phoneFirstOn && !compact && !!meta.online?.quick && !!ARCADE_API;
@@ -382,6 +385,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     setOnlineRound(0);
     setOnlineTransport('relay');
     setOnlineReconnecting(false);
+    setHandedOff([]);
     const link = new RoomLink(code, nameOverride ?? onlineName, ARCADE_API, { watch });
     raceRef.current = { link, seat: null, round: 0, scores: {} };
     setRaceScores({});
@@ -463,8 +467,9 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       setRoomStarted(started);
       if (!onlineModeRef.current) setOnlineInProgress(started);
     });
-    // The host left and someone took over. Their game ran the round, so it's over; everyone stays in the room.
-    link.on('host', ({ from, seat, players }) => {
+    // The host left and someone took over. Their game ran the round, so it's over (unless the new host's game takes it
+    // over); everyone stays in the room.
+    link.on('host', ({ from, seat, players, started }) => {
       raceRef.current.seat = seat;
       // the room renumbered its seats: race scores and the round's lineup follow, so nobody's result moves to someone else
       roundSeatsRef.current = roundSeatsRef.current.map((s) => handOffSeat(s, from));
@@ -477,6 +482,14 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       // a finished race keeps its standings and names, now under the new seat numbers
       setRaceSettled((settled) => settled && handOffSettled(settled, from));
       setOnlineHandoffs((n) => n + 1);
+      if (migrates && onlineModeRef.current && started) {
+        // the round goes on, the new host's game running it (a room that ended it instead, with nobody from it left to
+        // run it or on a server from before, ends it here as for any game): a card already up on the new host holds the
+        // next round until its game says this one is over
+        setHandedOff((h) => [...h, { round: raceRef.current.round, from }]);
+        if (seat === 0) setResult((r) => (r && !r.wait ? { ...r, wait: 'The Match Goes On.' } : r));
+        return;
+      }
       // a card waiting on the round the old host ran waits no more
       setResult((r) => (r?.wait ? { ...r, wait: undefined } : r));
       if (onlineModeRef.current && statusRef.current === 'playing') {
@@ -570,7 +583,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       clearBots();
     });
     return link;
-  }, [applyRaceScores, botsSetting, clearBots, gameOver, meta.online?.seats, onlineName, phoneFirst, race, restart, router, start]);
+  }, [applyRaceScores, botsSetting, clearBots, gameOver, meta.online?.seats, migrates, onlineName, phoneFirst, race, restart, router, start]);
   connectRef.current = connectRoom;
   /** A spectator takes a seat: out of the room as a spectator and straight back in to play the next round. */
   const takeSeat = useCallback(() => {
@@ -942,6 +955,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       transport={onlineTransport}
       reconnecting={onlineReconnecting}
       handoffs={onlineHandoffs}
+      handedOff={handedOff}
       quick={quick}
       pool={pool}
       watching={watching}

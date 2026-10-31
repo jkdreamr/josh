@@ -1,9 +1,10 @@
 // One client's side of an online Scramble match: what it does with each message from the room, what it sends on its
 // regular tick, the events it queues and flushes, and when the match is over. Pure, so a whole room can be simulated
 // in a test; index.tsx connects it to the real room.
-import { FALL, FIGHTER_COLORS, MAX_FIGHTERS, MAX_TEAMS, TEAM_SIZE, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, ordinal, owned, step, teamCount, teamsLeft, viewAt, type Entrant, type Ev, type Fighter, type Level, type Match, type Mode } from './logic.ts';
-import { BUS_Y, stormEnd } from './map.ts';
-import { actorOf, applyNet, endOf, guestState, hostState, packEvents, parsePacket, pieceEv, placesOf, stateKey, stateOf, toNet, type NetEv, type State } from './net.ts';
+import { WEAPONS, isMelee, isWeapon } from './items.ts';
+import { DOOR_OPENING, FALL, FIGHTER_COLORS, MAX_FIGHTERS, MAX_TEAMS, TEAM_SIZE, VAULT_TIME, adoptBots, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, grantTake, ordinal, owned, seatEgg, step, syncRides, teamCount, teamsLeft, viewAt, type Entrant, type Ev, type Fighter, type Level, type Match, type Mode } from './logic.ts';
+import { BUS_Y, DROP_BASE, stormEnd } from './map.ts';
+import { LEFT, SETTLED, actorOf, applyNet, applySettled, endOf, guestState, hostState, kitsOf, logOf, packEvents, parsePacket, pieceEv, placesOf, putKit, stateKey, stateOf, toNet, type Kit, type NetEv, type Packet, type State } from './net.ts';
 
 /** How often queued events go out. State goes out on its own tick, about 15 times a second. */
 export const FLUSH = 0.05;
@@ -39,6 +40,26 @@ export const NEAR_GLIDE = 130;
 export const reachOf = (f: Fighter) => Math.max(f.phase === 'ground' ? NEAR : NEAR_GLIDE, viewAt(f) * 3 + 10);
 export const FAR_EVERY = 6;
 export const OUT_EVERY = 15;
+
+/**
+ * Taking the match over from a host that left (see takeOver). The host tells this many of the guests likeliest to be
+ * next (the lowest seats playing, as the room picks) what KITS computer eggs carry with each reliable report, round and
+ * round. Every guest keeps LOG_T seconds of what the host settled, for the next host. A new host holds pickups for
+ * HOLD_TAKES seconds at most, until its guests have said what they saw the old one settle, so nothing is handed out
+ * twice. A guest whose new host says nothing for HOST_GONE seconds (it couldn't take the match over) stops waiting.
+ */
+export const HEIRS = 3;
+export const KITS = 6;
+export const LOG_T = 2.5;
+const LOG_MAX = 200;
+export const HOLD_TAKES = 1.5;
+export const HOST_GONE = 15;
+/** A guest's own asks the old host may not have answered, from this many seconds back, go again to the new host. */
+const REASK = 1.5;
+/** A guest whose first report comes before this many of its ticks has only just synced, and hears what has been built. */
+const FRESH_TICKS = 45;
+/** What a client asks the host for: pickups, chests, doors and revives. */
+const ASKS: ReadonlySet<NetEv['y']> = new Set(['tk', 'op', 'dq', 'rq']);
 
 /** Who this client is in the room. */
 export type Me = { seat: number; isHost: boolean; round: number };
@@ -138,8 +159,9 @@ export const QUICK_LEVEL: Level = 'normal';
 export function guestMatch(players: Player[], mySeat: number, seed: number, level: Level, time: number, roster: number[], mode: Mode = 'solo', teams: number[] | null = null): Match {
   const names = botNames(seed);
   let b = 0;
+  // (someone who has left by the time we sync is nobody we know)
   const entrants: Entrant[] = roster.map((seat, i) => ({
-    name: seat >= 0 ? nameOf(players, seat) : names[b++],
+    name: seat === -1 ? names[b++] : seat === LEFT ? 'Someone' : nameOf(players, seat),
     color: FIGHTER_COLORS[i],
     kind: seat === mySeat ? 'player' : 'remote',
     seat,
@@ -191,6 +213,32 @@ export type Session = {
    */
   stamps: Map<number, number>;
   newest: number;
+  /** This client runs the match: the host it started on, or one it took over when the host left (see takeOver). */
+  host: boolean;
+  /**
+   * Host hand-offs the match has had that this client has followed (the roster is in the room's seats since the last),
+   * and on a guest, the hand-offs the newest host report counted: one more means a new host, on a clock of its own.
+   */
+  handoffs: number;
+  heardHandoffs: number;
+  /** A guest's: wall time of the newest report from the host (-1 before any) and of the last hand-off it followed. */
+  heardAt: number;
+  handAt: number;
+  /** A guest's: what each computer egg carries, as the host last said (to the guests likeliest to be next). */
+  kits: Map<number, Kit>;
+  /** A guest's: the last LOG_T seconds of what the host settled, with when (wall time), for a new host. */
+  log: [number, NetEv][];
+  /**
+   * A host's: wall time it took the match over (-1 for the host it started on), and the seats whose logs it has; a
+   * guest's: logs from the others that came before it took over (the room had made it the host a moment before).
+   */
+  tookAt: number;
+  logs: Set<number>;
+  heldLogs: [number, Extract<Packet, { k: 'L' }>][];
+  /** A host's: seats it has had a report from, the next computer egg whose kit goes out, and a report owed to everyone of every egg. */
+  told: Set<number>;
+  kitAt: number;
+  full: boolean;
 };
 
 /** How far back (ticks on the host, seconds on a guest) a report counts as overtaken; anything older is a fresh start. */
@@ -198,8 +246,44 @@ const OVERTAKEN = { ticks: 60, time: 4 };
 /** Whether a report stamped `at` is older than the last one (`last`) from the same place. */
 const overtaken = (at: number, last: number | undefined, window: number) => last !== undefined && at < last && last - at < window;
 
-export function newSession(synced: boolean, roster: number[] = []): Session {
-  return { synced, roster, states: new Map(), queue: [], flushT: 0, ticks: 0, end: null, endAt: -1, endSends: 0, reported: false, over: false, early: false, left: new Set(), heard: new Map(), firstTick: -1, lastTick: -1, watch: -1, watching: new Map(), sent: new Map(), fresh: new Set(), stamps: new Map(), newest: -Infinity };
+export function newSession(synced: boolean, roster: number[] = [], host = synced): Session {
+  return {
+    synced,
+    roster: [...roster],
+    states: new Map(),
+    queue: [],
+    flushT: 0,
+    ticks: 0,
+    end: null,
+    endAt: -1,
+    endSends: 0,
+    reported: false,
+    over: false,
+    early: false,
+    left: new Set(),
+    heard: new Map(),
+    firstTick: -1,
+    lastTick: -1,
+    watch: -1,
+    watching: new Map(),
+    sent: new Map(),
+    fresh: new Set(),
+    stamps: new Map(),
+    newest: -Infinity,
+    host,
+    handoffs: 0,
+    heardHandoffs: 0,
+    heardAt: -1,
+    handAt: -1,
+    kits: new Map(),
+    log: [],
+    tookAt: -1,
+    logs: new Set(),
+    heldLogs: [],
+    told: new Set(),
+    kitAt: 0,
+    full: false,
+  };
 }
 
 /** Builds a guest's match from the host's first state. */
@@ -221,19 +305,41 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
       if (p.seq === s.stamps.get(fid) || overtaken(p.seq, s.stamps.get(fid), OVERTAKEN.ticks)) return m;
       s.stamps.set(fid, p.seq);
     }
-    if (!s.heard.has(fid)) s.fresh.add(from);
+    // its first report to us, when it has only just synced: it may have missed pieces built before it was ready
+    if (!s.told.has(from)) {
+      s.told.add(from);
+      if ((p.seq ?? 0) < FRESH_TICKS) s.fresh.add(from);
+    }
     s.states.set(fid, p.state);
     s.heard.set(fid, clock);
     s.watching.set(fid, p.watch);
     applyState(m, f, p.state);
   } else if (p.k === 'S') {
     if (me.isHost || from !== 0) return m;
+    // another island: a new host that never heard of the match the old one set up has set one up afresh, and that is
+    // the match now (see index.tsx's syncHost)
+    if (s.synced && p.roster?.includes(me.seat) && p.seed !== m.seed) Object.assign(s, newSession(false));
     if (!s.synced) {
       if (!p.roster || !p.roster.includes(me.seat)) return m;
       m = join(p.seed, p.level, p.time, p.roster, p.mode, p.teams);
-      s.roster = p.roster;
+      s.roster = [...p.roster];
       s.synced = true;
+      s.handoffs = p.handoffs;
     }
+    s.heardAt = clock;
+    // a new host: its clock is its own, so nothing it says has been overtaken by what the last one said
+    if (p.handoffs !== s.heardHandoffs) {
+      s.heardHandoffs = p.handoffs;
+      s.newest = -Infinity;
+      s.stamps.clear();
+    }
+    // the eggs of people who have left the match are nobody's (in the room's seats as we have them)
+    if (p.roster && p.handoffs === s.handoffs && p.roster.length === s.roster.length)
+      for (let i = 0; i < p.roster.length; i++)
+        if (p.roster[i] === LEFT && s.roster[i] >= 0) {
+          s.roster[i] = LEFT;
+          if (m.fighters[i]) m.fighters[i].seat = LEFT;
+        }
     // keep our clock on the host's: the storm and the bus run on it (by the newest report, not one overtaken)
     const late = overtaken(p.time, s.newest, OVERTAKEN.time);
     if (!late) {
@@ -246,6 +352,8 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
       const f = m.fighters[fid];
       if (!f || f.kind !== 'remote' || overtaken(p.time, s.stamps.get(fid), OVERTAKEN.time)) continue;
       s.stamps.set(fid, p.time);
+      // (kept, for passing on should we end up running the match)
+      s.states.set(fid, st);
       applyState(m, f, st);
     }
     // the windows the host has broken: quietly, since any news of them has come and gone
@@ -257,6 +365,8 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
         const st = p.doors[i] ?? 0;
         if (m.doors[i] !== st && m.clock - m.doorAt[i] > 1) m.doors[i] = st;
       }
+    // and the cars that aren't as they started, the same way
+    if (p.rides && !late) syncRides(m, p.rides);
   } else if (p.k === 'e') {
     if (!s.synced || (!me.isHost && from !== 0)) return m;
     for (const [origin, evs] of p.groups) {
@@ -274,7 +384,9 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
           // the host has taken our egg out (we went quiet, or never landed): it is out here too
           applyOut(m, m.me, -1, 'left');
         }
-        if (applyNet(m, ev) && me.isHost) s.queue.push([from, ev]);
+        if (!applyNet(m, ev)) continue;
+        if (me.isHost) s.queue.push([from, ev]);
+        else if (SETTLED.has(ev.y)) keep(s, ev, clock);
       }
     }
   } else if (p.k === 'end') {
@@ -282,8 +394,37 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
     endMatch(m, p.winner, p.places);
     s.end = { winner: p.winner, places: p.places };
     s.endAt = clock;
+  } else if (p.k === 'K') {
+    // what the computer eggs carry, for the guests likeliest to run the match next
+    if (me.isHost || from !== 0 || !s.synced) return m;
+    for (const [fid, kit] of p.kits) if (m.fighters[fid]?.seat === -1) s.kits.set(fid, kit);
+  } else if (p.k === 'L') {
+    // a guest's word on what the host before us settled (one that comes just before we take over waits for it)
+    if (s.host) heardLog(s, m, me, from, p, clock);
+    else if (from !== 0 && s.synced && s.heldLogs.length < MAX_FIGHTERS) s.heldLogs.push([from, p]);
   }
   return m;
+}
+
+/** A guest's word on what the host before us settled: once from each, while we still wait to hear it. */
+function heardLog(s: Session, m: Match, me: Me, from: number, p: Extract<Packet, { k: 'L' }>, clock: number) {
+  if (s.tookAt < 0 || clock - s.tookAt > LOG_T * 2 || from === me.seat || s.logs.has(from) || !s.roster.includes(from)) return;
+  s.logs.add(from);
+  if (p.end && !s.end && !m.ended) {
+    endMatch(m, p.end.winner, p.end.places);
+    s.end = p.end;
+    s.endAt = clock;
+    s.endSends = 0;
+  }
+  for (const ev of p.events) if (applySettled(m, ev)) s.queue.push([me.seat, ev]);
+}
+
+/** Keeps something the host settled for a few seconds (see LOG_T), in case it leaves and someone here runs the match next. */
+function keep(s: Session, ev: NetEv, clock: number) {
+  s.log.push([clock, ev]);
+  let drop = 0;
+  while (drop < s.log.length && (s.log[drop][0] < clock - LOG_T || s.log.length - drop > LOG_MAX)) drop++;
+  if (drop) s.log.splice(0, drop);
 }
 
 /**
@@ -310,25 +451,52 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
   s.lastTick = clock;
   for (const seat of s.roster) if (seat >= 0 && !present.includes(seat)) s.left.add(seat);
   for (const f of m.fighters) {
+    // someone who has left: their egg is nobody's from now on (in the roster everyone hears, so whoever takes their
+    // seat sits the match out) and out, the old host's too after a hand-off
+    if (f.seat >= 0 && s.left.has(f.seat)) s.roster[f.id] = f.seat = LEFT;
+    if (f.seat === LEFT) {
+      if (f.phase !== 'out' && !m.ended) forfeit(m, f.id);
+      continue;
+    }
     if (f.seat < 0 || f.kind !== 'remote' || f.phase === 'out' || m.ended) continue;
     const quiet = clock - (s.heard.get(f.id) ?? s.firstTick + FIRST_GRACE) > STALE;
     const aloft = f.phase === 'bus' ? m.time > m.map.bus.off + DOWN_BY : f.phase === 'drop' && m.time > Math.max(f.dropAt, m.map.bus.off) + DOWN_BY;
-    if (s.left.has(f.seat) || quiet || aloft) forfeit(m, f.id);
+    if (quiet || aloft) forfeit(m, f.id);
   }
-  const states: (State | undefined)[] = m.fighters.map((f) => (owned(f) ? stateOf(f) : s.states.get(f.id)));
+  // pickups held since taking over go to whoever asked first, once every guest has said what it saw settled
+  if (m.held && (clock - s.tookAt > HOLD_TAKES || present.every((seat) => seat === me.seat || s.logs.has(seat) || !s.roster.includes(seat)))) {
+    const held = m.held;
+    m.held = null;
+    for (const [fid, id] of held) grantTake(m, fid, id, true);
+  }
+  // (an egg out that its owner never got to say so of, having left, is out in what everyone hears)
+  const states: (State | undefined)[] = m.fighters.map((f) => (owned(f) ? stateOf(f) : outOf(f, s.states.get(f.id))));
   const teams = m.mode === 'solo' ? [] : m.fighters.map((f) => f.team);
   const keys = states.map((st) => (st ? stateKey(st) : undefined));
   // each guest its own report (every reliable one with the roster); someone in the room but not in this match only
-  // hears the roster, to know to sit it out
+  // hears the roster, to know to sit it out. Just after taking over, everyone hears of every egg.
   const out: { d: object; fast: boolean; to?: number }[] = [];
+  const all = s.full && !fast;
   for (const seat of present) {
     if (seat === me.seat) continue;
     const g = m.fighters[s.roster.indexOf(seat)];
     if (!g && fast) continue;
     let sent = s.sent.get(seat);
     if (!sent) s.sent.set(seat, (sent = []));
-    const list = g ? statesFor(m, g, states, keys, sent, s.ticks, s.watching.get(g.id) ?? -1) : [];
-    out.push({ d: hostState(me.round, m.seed, m.time, m.level, fast ? null : s.roster, list, m.broken, m.doors, m.mode, teams), fast, to: seat });
+    const list = g ? statesFor(m, g, states, keys, sent, s.ticks, s.watching.get(g.id) ?? -1, all) : [];
+    out.push({ d: hostState(me.round, m.seed, m.time, m.level, fast ? null : s.roster, list, m.broken, m.doors, m.mode, teams, m.rides, s.handoffs), fast, to: seat });
+  }
+  if (all) s.full = false;
+  // what the computer eggs carry, a few at a time, for the guests likeliest to run the match should we leave
+  if (!fast) {
+    const heirs = present.filter((seat) => seat !== me.seat && s.roster.includes(seat)).sort((a, b) => a - b).slice(0, HEIRS);
+    const bots = m.fighters.filter((f) => f.seat === -1 && f.kind === 'bot' && f.phase !== 'out');
+    if (heirs.length && bots.length) {
+      const from = s.kitAt % bots.length;
+      const some = [...bots.slice(from, from + KITS), ...bots.slice(0, Math.max(0, from + KITS - bots.length))].slice(0, KITS);
+      s.kitAt = from + KITS;
+      for (const seat of heirs) out.push({ d: kitsOf(me.round, some), fast: false, to: seat });
+    }
   }
   // a guest that has only now started reporting may have missed pieces built before it was ready: here they all are
   for (const seat of s.fresh) if (present.includes(seat) && m.walls.size) for (const d of packEvents(me.round, [...m.walls.values()].filter((w) => w.dir >= 0).map((w): [number, NetEv] => [me.seat, pieceEv(w)]))) out.push({ d, fast: false, to: seat });
@@ -346,7 +514,7 @@ export function tick(s: Session, m: Match, me: Me, present: number[], clock: num
  * The states a guest whose egg is `g` (watching `watch`) hears about this tick, see NEAR: staggered so each tick
  * carries a share, and noted in `sent` (the guest's record of what it was last sent, which `keys` are compared with).
  */
-export function statesFor(m: Match, g: Fighter, states: (State | undefined)[], keys: (string | undefined)[], sent: (string | undefined)[], tick: number, watch: number): [number, State][] {
+export function statesFor(m: Match, g: Fighter, states: (State | undefined)[], keys: (string | undefined)[], sent: (string | undefined)[], tick: number, watch: number, all = false): [number, State][] {
   // whoever its own egg is out, the egg it watches (or, until it says, everyone)
   const at = g.phase === 'out' ? m.fighters[watch] : g;
   const near = at ? reachOf(at) : NEAR;
@@ -356,11 +524,124 @@ export function statesFor(m: Match, g: Fighter, states: (State | undefined)[], k
     if (!st || f === g) continue;
     const close = !at || (st.phase !== 'bus' && Math.abs(f.x - at.x) < near && Math.abs(f.z - at.z) < near);
     const due = (tick + f.id) % (st.phase === 'out' ? OUT_EVERY : FAR_EVERY) === 0;
-    if (!due && !(close && st.phase !== 'out' && sent[f.id] !== keys[f.id])) continue;
+    if (!all && !due && !(close && st.phase !== 'out' && sent[f.id] !== keys[f.id])) continue;
     list.push([f.id, st]);
     sent[f.id] = keys[f.id];
   }
   return list;
+}
+
+/** A report of someone else's egg that is out here (taken out for leaving or going quiet), saying so. */
+const outOf = (f: Fighter, st: State | undefined) => (st && f.phase === 'out' && st.phase !== 'out' ? { ...st, phase: 'out' as const } : st);
+
+/**
+ * The room has handed the host on to the person in seat `from`, seat 0 from now on: the roster and every egg's seat
+ * follow, and the old host's egg is nobody's (LEFT), for whoever runs the match next to take out.
+ */
+export function handOff(s: Session, m: Match, from: number, clock: number) {
+  const seat = (v: number) => (v === 0 ? LEFT : v === from ? 0 : v);
+  s.roster = s.roster.map(seat);
+  for (const f of m.fighters) f.seat = s.roster[f.id] ?? f.seat;
+  s.handoffs++;
+  s.handAt = clock;
+}
+
+/**
+ * What a guest tells a new host once it has followed a hand-off: the last few seconds of what the old host settled
+ * (and the result, if it came), and again its own asks the old host may never have answered.
+ */
+export function toNewHost(s: Session, m: Match, me: Me, clock: number): object[] {
+  if (!s.synced || s.host) return [];
+  const f = m.fighters[m.me];
+  if (f && f.phase === 'ground')
+    for (const [key, at] of f.pending) {
+      if (m.clock - at > REASK) continue;
+      // a pickup, a chest, or a seat in a car (doors aren't asked again: one asked twice would shut again)
+      const ev: NetEv | null = key >= 0 ? { y: 'tk', f: f.id, id: key } : key > -1_000_000 ? { y: 'op', f: f.id, c: -1 - key } : key <= -2_000_000 ? { y: 'vq', f: f.id, v: -2_000_000 - key } : null;
+      if (!ev) continue;
+      s.queue.push([me.seat, ev]);
+      f.pending.set(key, m.clock);
+    }
+  return [logOf(me.round, s.log.filter(([at]) => at >= clock - LOG_T).map(([, ev]) => ev), s.end)];
+}
+
+/**
+ * The host left and the room made this client the host: its game takes the match over from here, as seamlessly as it
+ * can. It runs the computer eggs (each with what the host last said it carries, else what it was seen holding), settles
+ * what the old host settled and the storm's end, and takes out the old host's egg. Everyone hears of every egg at once,
+ * and what it last heard the old host settle, in case they missed it. Asks of its own the old host never answered it
+ * answers itself, and pickups wait a moment (HOLD_TAKES) for every guest to say what it saw the old host settle, so
+ * nothing anyone already got goes to someone else too.
+ */
+export function takeOver(s: Session, m: Match, me: Me, present: number[], clock: number) {
+  if (!s.synced || s.host) return;
+  s.host = true;
+  m.role = 'host';
+  m.world = true;
+  // the old host's clock, as far as we heard it, carries on
+  if (s.newest > m.time) m.time = s.newest;
+  for (const f of m.fighters) {
+    if (f.seat !== -1 || f.kind !== 'remote' || f.phase === 'out') continue;
+    const kit = s.kits.get(f.id);
+    if (kit) putKit(f, kit);
+    else guessKit(f);
+    seqsPast(m, f);
+    s.states.delete(f.id);
+  }
+  adoptBots(m);
+  // a vault door grinding open that we only heard of in a report
+  for (const i of m.vaults) if (m.doors[i] === DOOR_OPENING && m.doorT[i] === Infinity) m.doorT[i] = m.time + VAULT_TIME;
+  // the guests, afresh: they report to us now
+  s.stamps.clear();
+  s.sent.clear();
+  s.left.clear();
+  s.watching.clear();
+  s.told.clear();
+  s.heard.clear();
+  for (const f of m.fighters) if (f.kind === 'remote' && f.seat >= 0) s.heard.set(f.id, clock);
+  s.firstTick = -1;
+  s.lastTick = -1;
+  s.full = true;
+  s.tookAt = clock;
+  s.logs.clear();
+  m.held = [];
+  if (s.end) s.endSends = 0;
+  // what we heard the old host settle goes to everyone, then whatever of ours was still to go; our own asks we answer
+  const asks = s.queue.filter(([, ev]) => ASKS.has(ev.y)).map(([, ev]) => ev);
+  s.queue = [...s.log.map(([, ev]): [number, NetEv] => [me.seat, ev]), ...s.queue.filter(([, ev]) => !ASKS.has(ev.y)).map(([, ev]): [number, NetEv] => [me.seat, ev])];
+  s.log = [];
+  const mine = m.fighters[m.me];
+  if (mine && mine.phase === 'ground')
+    for (const [key, at] of mine.pending) {
+      if (m.clock - at > REASK) continue;
+      if (key >= 0) asks.push({ y: 'tk', f: mine.id, id: key });
+      else if (key > -1_000_000) asks.push({ y: 'op', f: mine.id, c: -1 - key });
+      else if (key <= -2_000_000) seatEgg(m, mine.id, -2_000_000 - key);
+    }
+  if (mine) mine.pending.clear();
+  for (const ev of asks) applyNet(m, ev);
+  for (const [from, p] of s.heldLogs.splice(0)) heardLog(s, m, me, from, p, clock);
+}
+
+/** What a computer egg nobody told us the kit of carries: what it was seen holding, with a little ammo for it. */
+function guessKit(f: Fighter) {
+  const w = f.show.w;
+  if (w && isWeapon(w)) {
+    f.guns = [{ w, r: f.show.r, mag: WEAPONS[w].mag }, null];
+    f.slot = 0;
+    f.ammo[WEAPONS[w].ammo] = Math.max(f.ammo[WEAPONS[w].ammo], WEAPONS[w].mag * 3);
+  } else if (w && isMelee(w)) f.melee = w;
+}
+
+/** A computer egg's drops and pieces number on past every id of its we have seen, so none is used twice. */
+function seqsPast(m: Match, f: Fighter) {
+  const base = DROP_BASE + f.id * 100_000;
+  let drop = f.dropSeq;
+  for (const id of [...m.loot.keys(), ...m.gone]) if (id >= base && id < base + 100_000) drop = Math.max(drop, id - base + 1);
+  let wall = f.wallSeq;
+  for (const id of [...m.walls.keys(), ...m.goneWalls]) if (id >= f.id * 100_000 && id < (f.id + 1) * 100_000) wall = Math.max(wall, id - f.id * 100_000 + 1);
+  f.dropSeq = Math.max(f.dropSeq, drop + 50);
+  f.wallSeq = Math.max(f.wallSeq, wall + 50);
 }
 
 /** Queues something that happened here for the room, when anyone else needs to hear it. */
@@ -389,6 +670,8 @@ export function ending(s: Session, m: Match, me: Me, clock: number): 'report' | 
     s.endAt = clock;
   }
   if (s.end) return clock - s.endAt > END_PAUSE ? 'report' : null;
+  // a new host that has said nothing since it took over couldn't take the match over
+  if (!me.isHost && s.handAt >= 0 && clock - Math.max(s.heardAt, s.handAt) > HOST_GONE) return 'quiet';
   return m.time > stormEnd(m.map.storm) + 45 ? 'quiet' : null;
 }
 

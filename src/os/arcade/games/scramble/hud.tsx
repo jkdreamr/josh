@@ -785,9 +785,10 @@ export function IslandArt({ map }: { map: GameMap }) {
       )}
       {map.buildings.map((b, i) => b.doors.map((d, k) => <DoorMark key={`d${i}-${k}`} b={b} d={d} />))}
       {map.windows.length > 0 && <path d={windowMarks(map)} fill="#bfe6f5" />}
-      {map.cars.map((c, i) => (
-        <rect key={`c${i}`} x={c.x - c.hw} y={c.z - c.hd} width={c.hw * 2} height={c.hd * 2} rx="0.6" fill={c.truck ? '#4a4e55' : '#e4e7ec'} stroke="#2b2d33" strokeWidth="0.5" />
-      ))}
+      {/* (the old cars that stay put: those that can be driven are drawn where they are, over this) */}
+      {map.cars.map((c, i) =>
+        c.ride ? null : <rect key={`c${i}`} x={c.x - c.hw} y={c.z - c.hd} width={c.hw * 2} height={c.hd * 2} rx="0.6" fill="#8a7a68" stroke="#2b2d33" strokeWidth="0.5" />,
+      )}
       {map.fires.map((f, i) => (
         <circle key={`fi${i}`} cx={f.x} cy={f.z} r={CAMP.r * 0.7} fill="#ff8a2a" stroke="#ffd36a" strokeWidth="1" />
       ))}
@@ -1053,7 +1054,9 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dt>+, shield, coffee</dt>
               <dd>Heal, top up your shield, or drink a coffee. The right item is picked for you (a golden egg tart when you're nearly cracked, a smoothie after the minis)</dd>
               <dt>pick up</dt>
-              <dd>Shows up when you stand on something or next to a chest, a fridge, a locker or a door: tap it to pick up, open, or open and shut the door. By a knocked teammate it says revive: hold it down</dd>
+              <dd>Shows up when you stand on something or next to a chest, a fridge, a locker or a door: tap it to pick up, open, or open and shut the door. By a knocked teammate it says revive: hold it down. By a car it says drive (or ride): tap it to get in, and again to get out</dd>
+              <dt>driving</dt>
+              <dd>Drag the left thumb the way you want to go: the car turns and speeds up that way, and dragging back brakes, then backs up. Hold brake for the handbrake to slide round a corner. Riding with a teammate, aim and shoot with the right thumb as usual</dd>
               <dt>ping</dt>
               <dd>In duos and squads, the pin by the little map marks where you aim for your team, and so does a tap on the big map</dd>
               <dt>scopes</dt>
@@ -1078,7 +1081,9 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
               <dt>{EDIT_KEY}</dt>
               <dd>Edit the wall of yours you face: a doorway, then a window, then solid again</dd>
               <dt>E</dt>
-              <dd>Pick up, swap, open chests, fridges, lockers and supply drops, and open and shut doors. Hold it by a knocked teammate to revive them</dd>
+              <dd>Pick up, swap, open chests, fridges, lockers and supply drops, and open and shut doors. Hold it by a knocked teammate to revive them. By a car, get in (the wheel if it's free); in one, get out (a driver stops first)</dd>
+              <dt>driving</dt>
+              <dd>W A S D the way you want to go: the car turns and speeds up that way, and the way back brakes, then backs up. Hold Space for the handbrake, to slide round a corner. Riding with a teammate, aim and shoot with the mouse as usual</dd>
               <dt>{PING_KEY}, middle click</dt>
               <dd>In duos and squads, ping where the mouse points for your team (a click on the big map pings there too)</dd>
               <dt>{DROP_KEY}</dt>
@@ -1192,7 +1197,13 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
             <b>Farms.</b> A wooden fence rings the farmhouse and its field, with a gate in the middle of every side. Fences stop you walking, not bullets. The hay bales are cover that breaks when shot or smacked, and sometimes something falls out.
           </li>
           <li>
-            <b>Cars and trucks.</b> Parked in driveways, by the warehouses and the container yards. Solid cover: nothing gets through one.
+            <b>Cars and pickups.</b> Parked in driveways, by the warehouses and the container yards, and on the map. {touch ? 'Tap drive by one' : 'Press E by one'} to get in, at the wheel if nobody has it: a coupe seats two, a jeep and a pickup four (two up front, two in the back). Teammates can ride along, never an enemy. Cars are quickest on the roads, slower over the grass and slow through water, and the camera pulls back a little while you drive. Whoever drives does nothing else; passengers can shoot and throw out of the car and patch up, but not build or pick anything up.
+          </li>
+          <li>
+            <b>Crashes and run overs.</b> Hit a wall, a tree or a rock hard and the car takes damage (and smashes crates, barrels and walls that were built). Running an enemy over hurts them and knocks them flying, the faster the worse; teammates only get shoved aside.
+          </li>
+          <li>
+            <b>Wrecks.</b> A car stops bullets: a shot into one hurts the car, and a share of it goes through to whoever sits nearest. The bar over your health shows what your car has left. Under 30% it catches fire and burns down, then blows up, throwing everyone out, hurting anyone close and setting off barrels and cars nearby. There's no fuel to run out of. The rusty old cars never move: they're just cover.
           </li>
           <li>
             <b>Doors.</b> Every way in has a bright frame, a lamp, a porch and an awning sticking out from the roof, and shows as a light tab on the map. Most have a door, shut to begin with: {touch ? 'tap' : 'press E by'} it to open it (it swings away from you) or shut it again. A shut door stops eggs, bullets and the view; shoot or smash one enough and it comes off its hinges. Walk up to an open door, or line up with one, and the roof thins so you can peek in.
@@ -1374,7 +1385,7 @@ export function HowToPlay({ root, touch, onClose }: { root: HTMLElement | null; 
         <p>Play joins a match with whoever else is starting one in the mode you pick beside it (solo, duos or squads), like an .io game: it starts on its own about twenty seconds after the first egg comes in (sooner once twenty people are in), people go on teams together first, and computer eggs fill the teams and the island up to fifty. Arrive once one is under way and you go into the next. Play with Bots is you against forty-nine computer eggs (some of them your teammates in duos and squads), as sharp as you pick.</p>
         <p>Play with Friends makes a room of your own for up to twenty: the host picks the mode, and in duos and squads friends fill teams together in seat order until someone moves (the host can move anyone, everyone else themselves). The host adds computer eggs with Bots, then picks whether more fill the island up to fifty and how sharp they are. A team's win counts for everyone on it.</p>
         <p>Easy computer eggs are slow to spot you and miss most shots past thirty meters. Normal ones, the kind Play always brings, fight fair. Hard ones see farther, react quicker and aim well up close, but are never dead on far off. At every level they pace their fire and a pack of them takes turns, so none cracks you from full health in a second.</p>
-        <p>Cracked? Watch the rest, or press done watching for your result while the match plays on for everyone else. Whoever hosts runs the match, so they can play again (or start the next one, in a room of your own) once it is over; if the host leaves first, the match ends for everyone.</p>
+        <p>Cracked? Watch the rest, or press done watching for your result while the match plays on for everyone else. Whoever hosts runs the match: in a room of your own they start the next one once it is over. If the host leaves (or drops out) before the end, the match goes on: someone else still in it takes over running it, and a note says who.</p>
       </section>
     </Sheet>
   );
