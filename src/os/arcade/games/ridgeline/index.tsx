@@ -6,14 +6,16 @@ import { playEvents } from './audio.ts';
 import { useAssets } from './assets.ts';
 import { autoQuality, createView, flyover, type Quality, type View } from './gfx/view.ts';
 import { kitOf, paletteOf } from './gfx/soldiers.ts';
-import { Ammo, BannerView, BuyMenu, DeathPanel, Feed, Markers, Minimap, Reticle, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type FastHud, type FeedItem, type Hud, type MarkersApi, type MinimapApi } from './hud.tsx';
+import { Ammo, BannerView, BuyMenu, DeathPanel, Feed, Markers, Minimap, Reticle, RoyalePrompts, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi } from './hud.tsx';
 import { MAPS, MAP_IDS, type MapId } from './maps.ts';
-import { DEG, canShop, createMatch, currentGun, eyeY, finalScore, idleInput, owns, spreadOf, standings, step, type Actor, type Input, type Match, type ShopItem } from './match.ts';
+import { DEG, canShop, createMatch, currentGun, eyeY, finalScore, idleInput, lootNear, owns, spareOf, spreadOf, standings, step, viewDir, type Actor, type Input, type Match, type ShopItem } from './match.ts';
+import { HEAL, ROYALE_PLAYERS, ZONES, itemName, planeAt } from './royale.ts';
+import { floorAt } from './terrain.ts';
 import { WEAPONS, type WeaponId } from './weapons.ts';
 import { buildWorld, cacheWorld, cachedWorld, type World } from './world.ts';
 import './ridgeline.css';
 
-const MODE = defineSetting('ridgeline:mode', ['uplink', 'dm'] as const, 'uplink');
+const MODE = defineSetting('ridgeline:mode', ['royale', 'uplink', 'dm'] as const, 'royale');
 const MAP = defineSetting('ridgeline:map', ['random', 'vale', 'mesa', 'frost', 'isles'] as const, 'random');
 const LEVEL = defineSetting('ridgeline:bots', ['easy', 'normal', 'hard'] as const, 'normal');
 const QUALITY = defineSetting('ridgeline:quality', ['auto', 'low', 'medium', 'high', 'ultra'] as const, 'auto', { live: true });
@@ -21,6 +23,7 @@ const SENS = defineSetting('ridgeline:sens', ['0.5', '0.75', '1', '1.5', '2'] as
 const DMGUN = defineSetting('ridgeline:dmgun', ['kestrel', 'hornet', 'mauler', 'lancer', 'longbow'] as const, 'kestrel', { live: true });
 
 const modeOptions = [
+  ['royale', 'Royale 100'],
   ['uplink', 'Uplink 5v5'],
   ['dm', 'Deathmatch'],
 ] as const;
@@ -97,7 +100,10 @@ function Stage() {
   // Random picks a fresh map for each match; a set map always plays that map
   const key = mapSetting === 'random' ? `random:${shell.round}` : mapSetting;
   const mapId = useMemo<MapId>(() => (mapSetting === 'random' ? MAP_IDS[Math.floor(Math.random() * MAP_IDS.length)] : mapSetting), [key]);
-  return <Play key={mapId} mapId={mapId} />;
+  // a royale plays on the whole land, a different world from the uplink arena's
+  const [mode] = useSetting(MODE);
+  const royale = mode === 'royale';
+  return <Play key={`${mapId}:${royale ? 'royale' : 'arena'}`} mapId={mapId} royale={royale} />;
 }
 
 function myName() {
@@ -119,9 +125,12 @@ const wrapAngle = (a: number) => {
   return d;
 };
 
-type Touch = { stick: number | null; sx: number; sy: number; mx: number; mz: number; look: number | null; lx: number; ly: number; fire: number | null; fx: number; fy: number; ads: boolean; crouch: boolean; jump: boolean; reload: boolean; swap: boolean; frag: boolean; smoke: boolean };
+type Touch = { stick: number | null; sx: number; sy: number; mx: number; mz: number; look: number | null; lx: number; ly: number; fire: number | null; fx: number; fy: number; ads: boolean; crouch: boolean; jump: boolean; reload: boolean; swap: boolean; frag: boolean; smoke: boolean; use: boolean; heal: boolean };
 
-function Play({ mapId }: { mapId: MapId }) {
+/** Royale weapon keys 1, 2, 3: the two long guns, then the sidearm. */
+const ROYALE_SLOTS = [0, 2, 1] as const;
+
+function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
   const shell = useShell();
   const shellRef = useRef(shell);
   shellRef.current = shell;
@@ -135,7 +144,7 @@ function Play({ mapId }: { mapId: MapId }) {
   const settings = useRef({ mode, level, sens: Number(sens), dmGun });
   settings.current = { mode, level, sens: Number(sens), dmGun };
   const quality: Quality = qSetting === 'auto' ? autoQuality(shell.touch && !finePointer()) : qSetting;
-  const [world, setWorld] = useState<World | null>(() => cachedWorld(mapId));
+  const [world, setWorld] = useState<World | null>(() => cachedWorld(mapId, royale));
   const [glError, setGlError] = useState(false);
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<View | null>(null);
@@ -161,7 +170,7 @@ function Play({ mapId }: { mapId: MapId }) {
   // input state
   const look = useRef({ dx: 0, dy: 0 });
   const mouse = useRef({ fire: false, ads: false, wheel: 0 });
-  const touch = useRef<Touch>({ stick: null, sx: 0, sy: 0, mx: 0, mz: 0, look: null, lx: 0, ly: 0, fire: null, fx: 0, fy: 0, ads: false, crouch: false, jump: false, reload: false, swap: false, frag: false, smoke: false });
+  const touch = useRef<Touch>({ stick: null, sx: 0, sy: 0, mx: 0, mz: 0, look: null, lx: 0, ly: 0, fire: null, fx: 0, fy: 0, ads: false, crouch: false, jump: false, reload: false, swap: false, frag: false, smoke: false, use: false, heal: false });
   const unlockOnPurpose = useRef(false);
 
   // per match view state
@@ -189,7 +198,7 @@ function Play({ mapId }: { mapId: MapId }) {
       cacheWorld(w);
       setWorld(w);
     };
-    const fallback = () => window.setTimeout(() => alive && done(buildWorld(mapId)), 30);
+    const fallback = () => window.setTimeout(() => alive && done(buildWorld(mapId, royale)), 30);
     try {
       worker = new Worker(new URL('./gen.worker.ts', import.meta.url), { type: 'module' });
       worker.onmessage = (e: MessageEvent<World>) => done(e.data);
@@ -198,7 +207,7 @@ function Play({ mapId }: { mapId: MapId }) {
         worker = null;
         fallback();
       };
-      worker.postMessage(mapId);
+      worker.postMessage({ id: mapId, royale });
     } catch {
       fallback();
     }
@@ -206,7 +215,7 @@ function Play({ mapId }: { mapId: MapId }) {
       alive = false;
       worker?.terminate();
     };
-  }, [mapId, world]);
+  }, [mapId, royale, world]);
 
   // the view
   useEffect(() => {
@@ -241,7 +250,8 @@ function Play({ mapId }: { mapId: MapId }) {
     if (!world || (s.status !== 'playing' && s.status !== 'paused')) return matchRef.current?.m ?? null;
     if (!matchRef.current || matchRef.current.round !== s.round) {
       const st = settings.current;
-      const m = createMatch(world, st.mode, st.level, { name: myName(), dmPick: st.dmGun as WeaponId });
+      const mode = royale ? 'royale' : st.mode === 'royale' ? 'uplink' : st.mode;
+      const m = createMatch(world, mode, st.level, { name: myName(), dmPick: st.dmGun as WeaponId });
       matchRef.current = { m, round: s.round };
       camY.current = null;
       overAt.current = null;
@@ -259,7 +269,8 @@ function Play({ mapId }: { mapId: MapId }) {
           firstBuy.current = false;
           setBuyOpen(true);
         }
-      } else setBanner({ title: 'Deathmatch', sub: 'everyone for themselves. first to 25', tone: 'info', key: Date.now() });
+      } else if (m.mode === 'royale') setBanner({ title: 'Royale', sub: `${ROYALE_PLAYERS} players, one left standing. jump when you like`, tone: 'info', key: Date.now() });
+      else setBanner({ title: 'Deathmatch', sub: 'everyone for themselves. first to 25', tone: 'info', key: Date.now() });
     }
     return matchRef.current.m;
   }, [world]);
@@ -356,7 +367,7 @@ function Play({ mapId }: { mapId: MapId }) {
   /** The actor the camera looks out of: you, or a teammate you watch while you are out. */
   const watched = (m: Match) => {
     const you = m.actors[0];
-    if (you.alive || m.mode === 'dm') return you;
+    if (you.alive || m.mode !== 'uplink') return you;
     const mates = m.actors.filter((a) => a.alive && a.team === you.team && a !== you);
     if (!mates.length) return you;
     return mates[((spec.current % mates.length) + mates.length) % mates.length];
@@ -369,7 +380,14 @@ function Play({ mapId }: { mapId: MapId }) {
     const score = finalScore(m);
     const mapName = MAPS[mapId].name;
     const lvl = settings.current.level;
-    if (m.mode === 'uplink') {
+    if (m.mode === 'royale') {
+      const place = you.alive ? 1 : you.place;
+      shellRef.current.gameOver(score, {
+        title: place === 1 ? 'Last one standing' : `#${place} of ${m.actors.length}`,
+        detail: `${you.kills} ${you.kills === 1 ? 'kill' : 'kills'}, ${Math.round(you.damage)} damage on ${mapName}.`,
+        board: `royale-${lvl}`,
+      });
+    } else if (m.mode === 'uplink') {
       const won = m.winner === 0;
       shellRef.current.gameOver(score, {
         title: m.winner < 0 ? 'Draw' : won ? 'Victory' : 'Defeat',
@@ -420,19 +438,35 @@ function Play({ mapId }: { mapId: MapId }) {
         inp.reload = k.pressed('KeyR') || t.reload;
         inp.fire = (locked && mouse.current.fire) || t.fire !== null;
         inp.ads = (locked && mouse.current.ads) || t.ads;
-        if (k.pressed('Digit1')) inp.slot = 0;
-        if (k.pressed('Digit2')) inp.slot = 1;
-        if (mouse.current.wheel !== 0 || t.swap) inp.slot = you.slot === 0 ? 1 : 0;
-        if (k.pressed('Digit3', 'KeyG') || t.frag) inp.throw = 'frag';
-        if (k.pressed('Digit4', 'KeyQ') || t.smoke) inp.throw = 'smoke';
+        if (m.mode === 'royale') {
+          // 1 and 2 the long guns, 3 the sidearm; the wheel steps through what you carry
+          ROYALE_SLOTS.forEach((k2, i) => k.pressed(`Digit${i + 1}`) && (inp.slot = k2));
+          if (mouse.current.wheel !== 0 || t.swap) {
+            const have = ROYALE_SLOTS.filter((k2) => you.guns[k2]);
+            if (have.length > 1) {
+              const at = have.indexOf(you.slot as 0 | 1 | 2);
+              inp.slot = have[(at + (mouse.current.wheel < 0 ? -1 : 1) + have.length) % have.length];
+            }
+          }
+          if (k.pressed('Digit4', 'KeyG') || t.frag) inp.throw = 'frag';
+          if (k.pressed('Digit5', 'KeyQ') || t.smoke) inp.throw = 'smoke';
+          inp.use = k.pressed('KeyF', 'KeyE') || t.use;
+          inp.heal = k.pressed('KeyH') || t.heal;
+        } else {
+          if (k.pressed('Digit1')) inp.slot = 0;
+          if (k.pressed('Digit2')) inp.slot = 1;
+          if (mouse.current.wheel !== 0 || t.swap) inp.slot = you.slot === 0 ? 1 : 0;
+          if (k.pressed('Digit3', 'KeyG') || t.frag) inp.throw = 'frag';
+          if (k.pressed('Digit4', 'KeyQ') || t.smoke) inp.throw = 'smoke';
+        }
       }
       mouse.current.wheel = 0;
-      t.jump = t.reload = t.swap = t.frag = t.smoke = false;
+      t.jump = t.reload = t.swap = t.frag = t.smoke = t.use = t.heal = false;
       const p = pending.current;
       if (p.buy) inp.buy = p.buy;
       p.buy = null;
       setBoard(k.down('Tab'));
-      setBigMap(k.down('KeyM'));
+      if (!touchRef.current) setBigMap(k.down('KeyM'));
 
       step(m, dt, inp);
 
@@ -450,7 +484,7 @@ function Play({ mapId }: { mapId: MapId }) {
           const kk = e.k;
           const ka = m.actors[kk.killer];
           const va = m.actors[kk.victim];
-          const item: FeedItem = { id: ++feedId.current, killer: ka?.name ?? '?', victim: va.name, kc: ka ? nameColor(m, ka) : '#fff', vc: nameColor(m, va), w: kk.w === 'frag' ? 'Frag' : WEAPONS[kk.w].name, head: kk.head, mine: kk.killer === 0 || kk.victim === 0 };
+          const item: FeedItem = { id: ++feedId.current, killer: ka?.name ?? (kk.w === 'zone' ? 'The zone' : '?'), victim: va.name, kc: ka ? nameColor(m, ka) : '#e8743a', vc: nameColor(m, va), w: kk.w === 'frag' ? 'Frag' : kk.w === 'zone' ? 'Zone' : WEAPONS[kk.w].name, head: kk.head, mine: kk.killer === 0 || kk.victim === 0 };
           setFeed((f) => [...f.slice(-5), item]);
           if (kk.victim === 0) {
             deathLook.current = { yaw: you.yaw, pitch: you.pitch };
@@ -470,6 +504,10 @@ function Play({ mapId }: { mapId: MapId }) {
             if (m.mode === 'uplink') pushBanner(`Uplink ${m.world.sites[m.site].name} is live`, `${m.world.sites[m.site].town}. hold it or knock them all out`, 'info');
           }
         }
+        if (e.t === 'zone' && m.zone) {
+          if (e.shrinking) pushBanner('The zone is closing', 'get inside the white circle', 'loss');
+          else if (e.i < ZONES.length) pushBanner('Next zone marked', `it closes in ${Math.round(m.zone.t)} s. check the map`, 'info');
+        }
         if (e.t === 'round') {
           const won = e.winner === you.team;
           const why = e.why === 'cap' ? (won ? 'uplink held' : 'they held the uplink') : e.why === 'elim' ? (won ? 'all knocked out' : 'your team is out') : 'time ran out';
@@ -481,8 +519,9 @@ function Play({ mapId }: { mapId: MapId }) {
       if (m.phase === 'over') {
         if (overAt.current === null) {
           overAt.current = time.current;
-          const won = m.mode === 'uplink' ? m.winner === 0 : m.winner === 0;
-          pushBanner(m.mode === 'uplink' ? (m.winner < 0 ? 'Draw' : won ? 'Victory' : 'Defeat') : won ? 'You won' : `${m.actors[m.winner]?.name ?? ''} wins`, m.mode === 'uplink' ? `${m.score[0]} to ${m.score[1]}` : '', won ? 'win' : 'loss');
+          const won = m.winner === 0;
+          if (m.mode === 'royale') pushBanner(won ? 'Last one standing' : `#${you.place} of ${m.actors.length}`, `${you.kills} ${you.kills === 1 ? 'kill' : 'kills'}`, won ? 'win' : 'loss');
+          else pushBanner(m.mode === 'uplink' ? (m.winner < 0 ? 'Draw' : won ? 'Victory' : 'Defeat') : won ? 'You won' : `${m.actors[m.winner]?.name ?? ''} wins`, m.mode === 'uplink' ? `${m.score[0]} to ${m.score[1]}` : '', won ? 'win' : 'loss');
         }
         if (time.current - overAt.current > 3.2) finish(m);
       }
@@ -524,6 +563,17 @@ function Play({ mapId }: { mapId: MapId }) {
         eye.y = camY.current;
       }
       let hide = a.id;
+      // dropping in: a camera behind (the transport, or you), turned with the mouse
+      if (a === you && you.alive && you.drop) {
+        // just out of the door the camera eases in from the transport's distance, clear of its tail
+        const dist = you.drop === 1 ? 38 : you.drop === 2 ? 6.5 + 31.5 * Math.max(0, 1 - you.dropT / 1.6) : 8;
+        const d = viewDir(you.yaw, you.pitch);
+        const ty = you.body.y + (you.drop === 1 ? 2 : 1.2);
+        eye = { x: you.body.x - d.x * dist, y: ty - d.y * dist, z: you.body.z - d.z * dist, yaw: you.yaw, pitch: you.pitch };
+        eye.y = Math.max(eye.y, floorAt(m.world.terrain, eye.x, eye.z) + 1.5);
+        camY.current = null;
+        hide = -1;
+      }
       if (!you.alive && a === you) {
         // out with nobody to watch: turn toward who did it
         const killer = m.actors[you.killer];
@@ -539,7 +589,7 @@ function Play({ mapId }: { mapId: MapId }) {
         eye = { x: you.body.x, y: you.body.y + 0.5, z: you.body.z, yaw: dl.yaw, pitch: dl.pitch };
         hide = -1;
       }
-      const g = a.alive ? currentGun(a) : null;
+      const g = a.alive && !a.drop ? currentGun(a) : null;
       const wdef = g ? WEAPONS[g.id] : null;
       const zoom = wdef ? 1 + (wdef.zoom - 1) * a.ads : 1;
       const fov = (2 * Math.atan(Math.tan((baseV * DEG) / 2) / zoom)) / DEG;
@@ -599,7 +649,15 @@ function Play({ mapId }: { mapId: MapId }) {
           }
         mk.place(list);
       }
-      const ms = { x: a.body.x, z: a.body.z, yaw: eye.yaw, site: m.site, live: m.mode === 'uplink', mates: [] as { x: number; z: number }[], foes: [] as { x: number; z: number }[] };
+      const ms: MapState = { x: a.body.x, z: a.body.z, yaw: eye.yaw, site: m.site, live: m.mode === 'uplink', mates: [], foes: [] };
+      if (m.mode === 'royale' && m.zone) {
+        const z = m.zone;
+        ms.zone = { x: z.x, z: z.z, r: z.r, nx: z.nx, nz: z.nz, nr: z.nr };
+        if (m.plane) {
+          const at = planeAt(m.plane, m.time);
+          ms.plane = { ax: m.plane.ax, az: m.plane.az, bx: m.plane.bx, bz: m.plane.bz, x: at.x, z: at.z };
+        } else ms.plane = null;
+      }
       for (const o of m.actors) {
         if (o === a || !o.alive) continue;
         if (m.mode === 'uplink' && o.team === you.team) ms.mates.push({ x: o.body.x, z: o.body.z });
@@ -635,22 +693,56 @@ function Play({ mapId }: { mapId: MapId }) {
       hp: a.hp,
       armor: a.armor,
       credits: you.credits,
-      gun: g && w ? { name: w.name, mag: g.mag, reserve: g.reserve, max: w.mag, cls: w.cls } : null,
+      gun: g && w ? { name: w.name, mag: g.mag, reserve: m.mode === 'royale' ? spareOf(m, a, g) : g.reserve, max: w.mag, cls: w.cls } : null,
       slot: a.slot,
-      guns: [a.guns[0]?.id ?? null, a.guns[1]?.id ?? null],
+      guns: [a.guns[0]?.id ?? null, a.guns[1]?.id ?? null, a.guns[2]?.id ?? null],
       frags: a.frags,
       smokes: a.smokes,
       canBuy: canShop(m, you),
       alive: you.alive,
-      dead: !you.alive ? { by: killer && killer !== you ? killer.name : 'yourself', w: you.killedWith === 'frag' ? 'Frag' : you.killedWith ? WEAPONS[you.killedWith].name : '', head: you.killedHead, respawn: you.respawnT } : null,
+      dead: !you.alive ? { by: you.killedWith === 'zone' ? 'the zone' : killer && killer !== you ? killer.name : 'yourself', w: you.killedWith === 'frag' ? 'Frag' : you.killedWith === 'zone' ? 'out in the open too long' : you.killedWith ? WEAPONS[you.killedWith].name : '', head: you.killedHead, respawn: you.respawnT } : null,
       watching: !you.alive && a !== you ? a.name : null,
       feed: [],
       dm: m.mode === 'dm' ? { kills: you.kills, top: top === you ? (st[1]?.kills ?? 0) : top.kills, topName: top === you ? (st[1]?.name ?? '') : top.name, place: st.indexOf(you) + 1, total: m.actors.length } : null,
       scoped: !!w?.scope && a.alive && a.ads > 0.85,
       reload: a.reloadT > 0 && w ? 1 - a.reloadT / w.reload : 0,
-      rows: (m.mode === 'uplink' ? [...m.actors].sort((x, y) => x.team - y.team || y.cs - x.cs) : st).map((o) => ({ name: o.name, team: m.mode === 'uplink' ? o.team : -1, k: o.kills, d: o.deaths, a: o.assists, cs: Math.round(o.cs), credits: m.mode === 'uplink' && o.team === you.team ? o.credits : null, alive: o.alive, you: o === you })),
+      rows: (m.mode === 'uplink' ? [...m.actors].sort((x, y) => x.team - y.team || y.cs - x.cs) : m.mode === 'royale' ? royaleRows(m) : st).map((o) => ({ name: o.name, team: m.mode === 'uplink' ? o.team : -1, k: o.kills, d: o.deaths, a: o.assists, cs: Math.round(o.cs), credits: m.mode === 'uplink' && o.team === you.team ? o.credits : null, alive: o.alive, you: o === you })),
       owned,
+      royale: m.mode === 'royale' && m.zone ? royaleHud(m, you) : null,
     };
+  };
+
+  /** The royale part of the HUD. */
+  const royaleHud = (m: Match, you: Actor): NonNullable<Hud['royale']> => {
+    const z = m.zone!;
+    const out = Math.max(0, Math.hypot(you.body.x - z.x, you.body.z - z.z) - z.r);
+    const near = lootNear(m, you);
+    return {
+      alive: m.alive,
+      total: m.actors.length,
+      kills: you.kills,
+      zoneT: z.i >= ZONES.length ? -1 : z.t,
+      closing: z.shrinking,
+      outside: out,
+      dps: z.dps,
+      place: you.alive ? m.alive : you.place,
+      drop: you.drop,
+      vest: you.armor > 0 ? you.vest : 0,
+      helmet: you.helmet,
+      bandages: you.bandages,
+      kits: you.kits,
+      heal: you.healT > 0 && you.healKind ? 1 - you.healT / HEAL[you.healKind].time : 0,
+      healName: you.healKind ? HEAL[you.healKind].name : null,
+      pickup: near ? itemName(near, (id) => WEAPONS[id].name) : null,
+    };
+  };
+
+  /** Royale scoreboard: the most kills first (the living ahead), at most fifteen, and always you. */
+  const royaleRows = (m: Match) => {
+    const all = [...m.actors].sort((x, y) => y.kills - x.kills || Number(y.alive) - Number(x.alive) || y.damage - x.damage);
+    const top = all.slice(0, 15);
+    if (!top.includes(m.actors[0])) top.push(m.actors[0]);
+    return top;
   };
 
   // ---------------------------------------------------------------------------------------------------------------
@@ -800,7 +892,7 @@ function Play({ mapId }: { mapId: MapId }) {
       {loading && !glError && (
         <div className="g-ridgeline-loading">
           <b>{MAPS[mapId].name}</b>
-          <span>{!world ? 'shaping the land' : 'lighting the scene'}</span>
+          <span>{!world ? (royale ? 'shaping the whole land' : 'shaping the land') : !assets ? 'unpacking the gear' : 'lighting the scene'}</span>
           <i />
         </div>
       )}
@@ -817,6 +909,7 @@ function Play({ mapId }: { mapId: MapId }) {
           <Scope on={hud.scoped} />
           <BannerView b={banner} />
           <DeathPanel h={hud} touch={touchUi} />
+          <RoyalePrompts h={hud} touch={touchUi} />
           {hud.canBuy && !buyOpen && (
             <div className="g-ridgeline-hint">{touchUi ? 'tap Buy for guns and armor' : 'press B to buy'}</div>
           )}
@@ -854,6 +947,19 @@ function Play({ mapId }: { mapId: MapId }) {
               <button type="button" className="g-ridgeline-btn is-smoke" onPointerDown={tap((t) => (t.smoke = true))}>
                 Smoke
               </button>
+              {hud.royale && (
+                <>
+                  <button type="button" className="g-ridgeline-btn is-use" data-on={hud.royale.pickup ? '1' : '0'} onPointerDown={tap((t) => (t.use = true))}>
+                    Grab
+                  </button>
+                  <button type="button" className="g-ridgeline-btn is-heal" onPointerDown={tap((t) => (t.heal = true))}>
+                    Heal
+                  </button>
+                  <button type="button" className="g-ridgeline-btn is-map" onPointerDown={tap(() => setBigMap((b) => !b))}>
+                    Map
+                  </button>
+                </>
+              )}
               {hud.canBuy && (
                 <button type="button" className="g-ridgeline-btn is-buy" onPointerDown={tap(() => openBuy(!buyRef.current))}>
                   Buy

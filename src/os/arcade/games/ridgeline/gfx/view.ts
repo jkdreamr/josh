@@ -15,6 +15,7 @@ import { buildings, markers } from './props.ts';
 import { skyDome, skyEnv } from './sky.ts';
 import { disposeGuns, installRealGuns } from './guns.ts';
 import { modelOf, placedModels } from './models.ts';
+import { royaleFx } from './royale.ts';
 import { kitOf, paletteOf, soldiers } from './soldiers.ts';
 import { terrainMesh, terrainTextures, waterMesh } from './terrain.ts';
 import { vegetation } from './veg.ts';
@@ -29,14 +30,37 @@ export const QUALITY: Record<Quality, { dpr: number; scale: number; shadows: num
   ultra: { dpr: 2, scale: 1, shadows: 4096, extent: 70, grass: 110000, trees: 1, bloom: true, msaa: 4, step: 1, clouds: 5 },
 };
 
-/** A starting tier from the device; the governor fine tunes from there. */
+/** The GPU's name, where the browser tells it (lower case), else ''. */
+function gpuName() {
+  try {
+    const c = document.createElement('canvas');
+    const gl = (c.getContext('webgl2') ?? c.getContext('webgl')) as WebGLRenderingContext | null;
+    if (!gl) return '';
+    const ext = gl.getExtension('WEBGL_debug_renderer_info');
+    const name = String(ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)).toLowerCase();
+    gl.getExtension('WEBGL_lose_context')?.loseContext();
+    return name;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * A starting tier from the device: integrated and phone GPUs start low or medium (CPU cores say nothing about the GPU),
+ * dedicated ones high. The governor tunes from there, down to shedding grass and shadow work when it must.
+ */
 export function autoQuality(touch: boolean): Quality {
   if (typeof window === 'undefined') return 'medium';
   const small = Math.min(window.screen?.width ?? 1024, window.screen?.height ?? 768) < 600;
   if (touch && small) return 'low';
   if (touch) return 'medium';
+  const gpu = gpuName();
+  if (/swiftshader|llvmpipe|software|microsoft basic/.test(gpu)) return 'low';
+  if (/mali|adreno|powervr|apple gpu|videocore/.test(gpu)) return 'low';
+  if (/intel|uhd|iris|hd graphics/.test(gpu)) return 'medium';
+  if (/nvidia|geforce|rtx|gtx|quadro|radeon rx|radeon pro|apple m\d/.test(gpu)) return 'high';
   const cores = navigator.hardwareConcurrency ?? 4;
-  return cores <= 4 ? 'medium' : 'high';
+  return cores >= 8 && gpu ? 'high' : 'medium';
 }
 
 /** Render scale from frame times: slow windows step it down, quick ones step it back up (see Bed Wars' governor). */
@@ -50,6 +74,8 @@ class Governor {
   private win = 1.5;
   private trial: { from: number; mean: number } | null = null;
   private cap = 0;
+  /** Slow windows with nothing left to drop in resolution, less the quick ones: past a few, load gets shed. */
+  pressure = 0;
   constructor(max: number) {
     this.max = max;
     this.scale = max;
@@ -74,6 +100,8 @@ class Governor {
       }
     }
     if (this.cap && mean < this.cap * 0.8) this.cap = 0;
+    if (mean > 1 / 46 && this.scale <= this.min + 1e-3) this.pressure = Math.min(8, this.pressure + 1);
+    else if (mean < 1 / 57) this.pressure = Math.max(0, this.pressure - 0.5);
     const capped = this.cap > 0 && mean < this.cap * 1.15;
     if (mean > 1 / 52 && this.scale > this.min && !capped) {
       this.trial = { from: this.scale, mean };
@@ -176,7 +204,9 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
   const mark = markers(THREE, w);
   scene.add(mark.group);
   installRealGuns(THREE, assets);
-  const troops = soldiers(THREE, shared, Q.shadows > 0, modelOf(THREE, assets, 'soldier')?.parts[0] ?? null);
+  const troops = soldiers(THREE, shared, Q.shadows > 0, modelOf(THREE, assets, 'soldier')?.parts[0] ?? null, modelOf(THREE, assets, 'soldier-lod')?.parts[0] ?? null);
+  const royale = royaleFx(THREE, shared, assets, Q.shadows > 0);
+  scene.add(royale.group);
   scene.add(troops.group);
 
   // baked sun visibility and occlusion on the CPU, for the gun's lighting and the particles
@@ -246,18 +276,56 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
     return troops.muzzle(id, out);
   };
 
-  /** Warms every shader up so the first frames of a round do not stall on compiles. */
+  /**
+   * Warms every shader up so no frame in play stalls on a compile: hidden things are shown for it, a body in every kit
+   * and every first person gun is built, and one frame (shadows too) is drawn while the loading card still covers it.
+   */
   const warm = () => {
+    camera.position.set(0, 60, 0);
+    camera.rotation.set(-0.3, 0, 0, 'YXZ');
+    camera.updateMatrixWorld();
+    const unwarm = troops.prewarm(camera);
+    vm.prewarm('multicam');
+    const hidden: T.Object3D[] = [];
+    scene.traverse((o) => {
+      if (!o.visible) {
+        hidden.push(o);
+        o.visible = true;
+      }
+    });
     try {
       renderer.compile(scene, camera);
       renderer.compile(vm.scene, vm.camera);
+      renderer.render(scene, camera);
+      renderer.autoClear = false;
+      renderer.render(vm.scene, vm.camera);
     } catch {
       /* compile errors show up on the first render instead */
     }
+    renderer.autoClear = true;
+    for (const o of hidden) o.visible = false;
+    unwarm();
+    // every texture uploaded now, not the first time its object comes into view
+    const seen = new Set<T.Texture>();
+    const upload = (root: T.Object3D) =>
+      root.traverse((o) => {
+        const mats = (o as T.Mesh).material;
+        if (!mats) return;
+        for (const mat of Array.isArray(mats) ? mats : [mats])
+          for (const v of Object.values(mat as unknown as Record<string, unknown>))
+            if (v && (v as T.Texture).isTexture && !seen.has(v as T.Texture)) {
+              seen.add(v as T.Texture);
+              renderer.initTexture(v as T.Texture);
+            }
+      });
+    upload(scene);
+    upload(vm.scene);
   };
   warm();
 
   let fpsAvg = 60;
+  let shed = 0;
+  let frameNo = 0;
   const lastInfo = { calls: 0, triangles: 0 };
   return {
     canvas,
@@ -285,6 +353,16 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
       if (f.dt > 0) fpsAvg += (1 / Math.max(f.dt, 1 / 240) - fpsAvg) * 0.05;
       const pinned = import.meta.env.DEV && typeof window !== 'undefined' && (window as unknown as { __rlPin?: boolean }).__rlPin;
       if (!pinned && gov.frame(f.dt)) applySize();
+      // past the lowest resolution and still slow: shed grass, then shadow work, then bloom (and take them back later)
+      const level = Math.min(3, Math.floor(gov.pressure / 2));
+      if (level !== shed) {
+        shed = level;
+        veg.setGrass(Math.round(Q.grass * [1, 0.55, 0.3, 0][shed]));
+        renderer.shadowMap.autoUpdate = shed < 2;
+        post.setBloom(Q.bloom && shed < 3);
+      }
+      if (!renderer.shadowMap.autoUpdate && (frameNo & 1) === 0) renderer.shadowMap.needsUpdate = true;
+      frameNo++;
       shared.uTime.value = f.time;
       lastHide = f.hide;
       camera.position.set(f.eye.x, f.eye.y, f.eye.z);
@@ -314,7 +392,8 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
       }
       const m = f.m;
       if (m) {
-        troops.update(m, f.hide, m.time);
+        troops.update(m, f.hide, m.time, camera);
+        royale.update(m, camera, f.time);
         const you = me(m);
         mark.update({ site: m.site, live: m.mode === 'uplink' && (m.phase === 'live' || m.phase === 'buy'), barrier: m.mode === 'uplink' && m.phase === 'buy', fill: m.cap, team: you.team, time: f.time });
         fx.update(m, f.dt, camera, muzzleOf, f.hide);
@@ -367,6 +446,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
       veg.dispose();
       vm.dispose();
       troops.dispose();
+      royale.dispose();
       disposeGuns(THREE);
       post.dispose();
       env.dispose();
@@ -383,7 +463,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
 /** The flyover behind the start card: a slow circle high over the arena, looking in. */
 export function flyover(t: number, w: World) {
   const a = t * 0.045;
-  const r = ARENA * 0.95;
+  const r = Math.min(w.arena, ARENA * 1.4) * 0.95;
   const x = Math.sin(a) * r;
   const z = Math.cos(a) * r;
   const c = w.sites[1];

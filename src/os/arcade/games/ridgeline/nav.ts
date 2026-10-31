@@ -3,7 +3,7 @@
 import { clamp } from './noise.ts';
 import { blockedAt } from './physics.ts';
 import { floorAt, heightAt } from './terrain.ts';
-import { ARENA, type World } from './world.ts';
+import type { World } from './world.ts';
 
 export const NAV_CELL = 2;
 /** The most the ground may rise or fall between neighboring cells. */
@@ -11,6 +11,8 @@ const CLIMB = 1.5;
 
 export type Nav = {
   n: number;
+  /** Half the side covered (the world's arena). */
+  a: number;
   h: Float32Array;
   ok: Uint8Array;
   g: Float32Array;
@@ -20,6 +22,9 @@ export type Nav = {
   search: number;
   heap: Int32Array;
   hf: Float32Array;
+  /** Cells carved through doorways, and the exact point on the door's axis to walk through for each (x, z pairs). */
+  door: Int32Array;
+  doorPts: Float32Array;
 };
 
 const navs = new WeakMap<World, Nav>();
@@ -33,11 +38,13 @@ export function navOf(w: World): Nav {
   return nav;
 }
 
-const center = (i: number) => -ARENA + (i + 0.5) * NAV_CELL;
-export const navCell = (n: number, x: number) => clamp(Math.floor((x + ARENA) / NAV_CELL), 0, n - 1);
+const centerOf = (a: number, i: number) => -a + (i + 0.5) * NAV_CELL;
+const cellOf = (a: number, n: number, x: number) => clamp(Math.floor((x + a) / NAV_CELL), 0, n - 1);
 
 function build(w: World): Nav {
-  const n = Math.round((2 * ARENA) / NAV_CELL);
+  const A = w.arena;
+  const n = Math.round((2 * A) / NAV_CELL);
+  const center = (i: number) => centerOf(A, i);
   const t = w.terrain;
   const h = new Float32Array(n * n);
   const ok = new Uint8Array(n * n);
@@ -50,14 +57,31 @@ function build(w: World): Nav {
       const deep = t.hasWater && !t.ice && heightAt(t, x, z) < t.water - 1;
       ok[j * n + i] = !deep && !blockedAt(w, x, z, g, 0.7) ? 1 : 0;
     }
-  return { n, h, ok, g: new Float32Array(n * n), from: new Int32Array(n * n), seen: new Uint32Array(n * n), shut: new Uint32Array(n * n), search: 0, heap: new Int32Array(n * n * 8), hf: new Float32Array(n * n * 8) };
+  // a 2 m grid misses most doorways: carve a line of cells through each one, on the door's own axis
+  const door = new Int32Array(n * n).fill(-1);
+  const pts: number[] = [];
+  const D = w.doors;
+  for (let k = 0; k < D.length; k += 4) {
+    for (const t of [-1.6, -0.8, 0, 0.8, 1.6]) {
+      const x = D[k] + D[k + 2] * t;
+      const z = D[k + 1] + D[k + 3] * t;
+      if (Math.abs(x) >= A || Math.abs(z) >= A) continue;
+      const c = cellOf(A, n, z) * n + cellOf(A, n, x);
+      if (door[c] >= 0) continue;
+      ok[c] = 1;
+      h[c] = floorAt(w.terrain, x, z);
+      door[c] = pts.length / 2;
+      pts.push(x, z);
+    }
+  }
+  return { n, a: A, door, doorPts: new Float32Array(pts), h, ok, g: new Float32Array(n * n), from: new Int32Array(n * n), seen: new Uint32Array(n * n), shut: new Uint32Array(n * n), search: 0, heap: new Int32Array(n * n * 8), hf: new Float32Array(n * n * 8) };
 }
 
 /** Nearest walkable cell to a point, searching a few cells out. */
 function nearestOk(nav: Nav, x: number, z: number) {
   const n = nav.n;
-  const ci = navCell(n, x);
-  const cj = navCell(n, z);
+  const ci = cellOf(nav.a, n, x);
+  const cj = cellOf(nav.a, n, z);
   for (let r = 0; r <= 4; r++)
     for (let dj = -r; dj <= r; dj++)
       for (let di = -r; di <= r; di++) {
@@ -80,15 +104,19 @@ const NB: [number, number, number][] = [
   [-1, -1, Math.SQRT2],
 ];
 
+const NB_DI = Int8Array.from(NB.map((v) => v[0]));
+const NB_DJ = Int8Array.from(NB.map((v) => v[1]));
+const NB_COST = Float32Array.from(NB.map((v) => v[2]));
+
 /** Can a body walk straight from cell a to cell b (all cells under the line walkable, no cliff between)? */
 function walkLine(nav: Nav, ax: number, az: number, bx: number, bz: number) {
   const n = nav.n;
   const d = Math.hypot(bx - ax, bz - az);
   const steps = Math.ceil(d / (NAV_CELL * 0.5));
-  let prev = nav.h[navCell(n, az) * n + navCell(n, ax)];
+  let prev = nav.h[cellOf(nav.a, n, az) * n + cellOf(nav.a, n, ax)];
   for (let s = 1; s <= steps; s++) {
     const k = s / steps;
-    const c = navCell(n, az + (bz - az) * k) * n + navCell(n, ax + (bx - ax) * k);
+    const c = cellOf(nav.a, n, az + (bz - az) * k) * n + cellOf(nav.a, n, ax + (bx - ax) * k);
     if (!nav.ok[c]) return false;
     if (Math.abs(nav.h[c] - prev) > CLIMB * 0.75) return false;
     prev = nav.h[c];
@@ -169,16 +197,21 @@ export function findPath(w: World, sx: number, sz: number, gx: number, gz: numbe
     const ci = c % n;
     const cj = (c - ci) / n;
     const hc = nav.h[c];
-    for (const [di, dj, cost] of NB) {
+    const gc = nav.g[c];
+    const ok = nav.ok;
+    for (let q = 0; q < 8; q++) {
+      const di = NB_DI[q];
+      const dj = NB_DJ[q];
       const i = ci + di;
       const j = cj + dj;
       if (i < 0 || j < 0 || i >= n || j >= n) continue;
       const nc = j * n + i;
-      if (!nav.ok[nc] || nav.shut[nc] === id) continue;
-      if (di !== 0 && dj !== 0 && (!nav.ok[cj * n + i] || !nav.ok[j * n + ci])) continue;
+      if (!ok[nc] || nav.shut[nc] === id) continue;
+      if (q >= 4 && (!ok[cj * n + i] || !ok[j * n + ci])) continue;
+      const cost = NB_COST[q];
       const rise = Math.abs(nav.h[nc] - hc);
       if (rise > CLIMB * cost) continue;
-      const gNew = nav.g[c] + cost * NAV_CELL + rise * 1.5;
+      const gNew = gc + cost * NAV_CELL + rise * 1.5;
       if (nav.seen[nc] === id && gNew >= nav.g[nc]) continue;
       nav.seen[nc] = id;
       nav.g[nc] = gNew;
@@ -196,25 +229,33 @@ export function findPath(w: World, sx: number, sz: number, gx: number, gz: numbe
   let ax = sx;
   let az = sz;
   let k = 0;
+  const at = (c: number): [number, number] => {
+    const d = nav.door[c];
+    if (d >= 0) return [nav.doorPts[d * 2], nav.doorPts[d * 2 + 1]];
+    const ci = c % n;
+    return [centerOf(nav.a, ci), centerOf(nav.a, (c - ci) / n)];
+  };
   while (k < cells.length - 1) {
     let best = k + 1;
-    for (let m = cells.length - 1; m > k + 1; m--) {
-      const c = cells[m];
-      const ci = c % n;
-      if (walkLine(nav, ax, az, center(ci), center((c - ci) / n))) {
+    let limit = cells.length - 1;
+    for (let q = k + 1; q < cells.length; q++)
+      if (nav.door[cells[q]] >= 0) {
+        limit = q;
+        break;
+      }
+    for (let m = limit; m > k + 1; m--) {
+      const [px, pz] = at(cells[m]);
+      if (walkLine(nav, ax, az, px, pz)) {
         best = m;
         break;
       }
     }
-    const c = cells[best];
-    const ci = c % n;
-    ax = center(ci);
-    az = center((c - ci) / n);
+    [ax, az] = at(cells[best]);
     pts.push(ax, az);
     k = best;
   }
   // end on the exact goal when it is walkable, else on the middle of the nearest walkable cell
-  if (nav.ok[navCell(n, gz) * n + navCell(n, gx)]) {
+  if (nav.ok[cellOf(nav.a, n, gz) * n + cellOf(nav.a, n, gx)]) {
     pts[pts.length - 2] = gx;
     pts[pts.length - 1] = gz;
   }
@@ -224,7 +265,7 @@ export function findPath(w: World, sx: number, sz: number, gx: number, gz: numbe
 /** Is a point on walkable nav ground? */
 export function walkable(w: World, x: number, z: number) {
   const nav = navOf(w);
-  return nav.ok[navCell(nav.n, z) * nav.n + navCell(nav.n, x)] === 1;
+  return nav.ok[cellOf(nav.a, nav.n, z) * nav.n + cellOf(nav.a, nav.n, x)] === 1;
 }
 
 /** Distance (meters of walking) from every cell to one point, by Dijkstra over the same grid. Unreachable is Infinity. */
@@ -338,10 +379,10 @@ export function fieldStep(w: World, f: Field, x: number, z: number, look = 8): [
   for (let k = chain.length - 1; k > 0; k--) {
     const cc = chain[k];
     const ci = cc % n;
-    const px = center(ci);
-    const pz = center((cc - ci) / n);
+    const px = centerOf(nav.a, ci);
+    const pz = centerOf(nav.a, (cc - ci) / n);
     if (walkLine(nav, x, z, px, pz)) return [px, pz];
   }
   const ci = chain[0] % n;
-  return [center(ci), center((chain[0] - ci) / n)];
+  return [centerOf(nav.a, ci), centerOf(nav.a, (chain[0] - ci) / n)];
 }

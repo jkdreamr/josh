@@ -1,5 +1,6 @@
 // Sound on the arcade synth: gunshots by gun (a close crack and thump, a far rumble that arrives late at the speed of
-// sound), footsteps you can hear coming, hits, knockouts, reloads, grenades and the round cues.
+// sound), footsteps you can hear coming, hits, knockouts, reloads, grenades, the round cues, and a royale's pickups,
+// heals, jump, canopy and zone warnings.
 import { sfx } from '../../kit';
 import type { Ev, Match } from './match.ts';
 import { WEAPONS, type WeaponClass } from './weapons.ts';
@@ -79,14 +80,23 @@ export function boomSound(dist: number) {
 /** Plays what this frame's events sound like from where you are. */
 export function playEvents(m: Match, evs: Ev[], ex: number, ez: number, you: number) {
   const d = (x: number, z: number) => Math.hypot(x - ex, z - ez);
+  // a hundred players can fire a lot at once: a few distant shots a frame are enough to hear a fight
+  let far = 0;
+  let steps = 0;
   for (const e of evs) {
     switch (e.t) {
-      case 'shot':
-        shotSound(WEAPONS[e.w].cls, d(e.x, e.z), e.a === you);
+      case 'shot': {
+        const mine = e.a === you;
+        const dist = d(e.x, e.z);
+        if (!mine && dist > 25 && ++far > 4) break;
+        shotSound(WEAPONS[e.w].cls, dist, mine);
         break;
+      }
       case 'step': {
         const a = m.actors[e.a];
-        if (a) stepSound(d(a.body.x, a.body.z), e.a === you, e.loud, e.s);
+        if (!a) break;
+        const sd = d(a.body.x, a.body.z);
+        if (e.a === you || (sd < 26 && ++steps <= 3)) stepSound(sd, e.a === you, e.loud, e.s);
         break;
       }
       case 'hit':
@@ -138,6 +148,27 @@ export function playEvents(m: Match, evs: Ev[], ex: number, ez: number, you: num
       }
       case 'spawn':
         if (e.a === you) sfx.tone({ freq: 600, to: 900, dur: 0.12, type: 'triangle', vol: 0.08 });
+        break;
+      case 'pickup':
+        if (e.a === you) sfx.tone({ freq: e.item.kind === 'gun' ? 340 : 760, to: e.item.kind === 'gun' ? 220 : 980, dur: 0.06, type: 'triangle', vol: 0.07 });
+        break;
+      case 'heal':
+        if (e.a === you) sfx.tone({ freq: e.done ? 620 : 380, to: e.done ? 880 : 420, dur: e.done ? 0.18 : 0.08, type: 'sine', vol: 0.07 });
+        break;
+      case 'jumpout':
+        if (e.a === you) sfx.noise(0.9, 0.09, 0.5);
+        break;
+      case 'chute':
+        if (e.a === you) {
+          sfx.noise(0.18, 0.12);
+          sfx.tone({ freq: 140, to: 70, dur: 0.25, type: 'sine', vol: 0.1 });
+        }
+        break;
+      case 'zone':
+        if (e.shrinking) {
+          sfx.tone({ freq: 300, dur: 0.18, type: 'square', vol: 0.05 });
+          sfx.tone({ freq: 240, dur: 0.3, type: 'square', vol: 0.05, delay: 0.22 });
+        }
         break;
       default:
         break;

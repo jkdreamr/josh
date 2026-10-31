@@ -30,6 +30,7 @@ import pile from './models/pile.glb?url';
 import propane from './models/propane.glb?url';
 import rgd5 from './models/rgd5.glb?url';
 import shield from './models/shield.glb?url';
+import soldierLod from './models/soldier-lod.glb?url';
 import soldier from './models/soldier.glb?url';
 import ural from './models/ural.glb?url';
 import wire from './models/wire.glb?url';
@@ -38,6 +39,7 @@ import xd from './models/xd.glb?url';
 
 const URLS = {
   soldier,
+  'soldier-lod': soldierLod,
   xd,
   'xd-lite': xdLite,
   'beretta-lite': berettaLite,

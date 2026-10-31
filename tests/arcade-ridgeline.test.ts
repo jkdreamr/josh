@@ -6,7 +6,8 @@ import { fieldDist, fieldTo, findPath } from '../src/os/arcade/games/ridgeline/n
 import { STAND_H, blockedAt, clearLine, newHit, rayWorld, stepBody, type Body } from '../src/os/arcade/games/ridgeline/physics.ts';
 import { CELL, T_HALF, T_RES, generateTerrain, heightAt, rayTerrain } from '../src/os/arcade/games/ridgeline/terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul } from '../src/os/arcade/games/ridgeline/weapons.ts';
-import { ARENA, SITE_R, worldFor } from '../src/os/arcade/games/ridgeline/world.ts';
+import { ARENA, ROYALE_ARENA, SITE_R, worldFor } from '../src/os/arcade/games/ridgeline/world.ts';
+import { AMMO_MAX, AMMO_PACK, ROYALE_PLAYERS, VEST, ZONES } from '../src/os/arcade/games/ridgeline/royale.ts';
 import {
   BULLET_G,
   BUY_TIME,
@@ -16,6 +17,7 @@ import {
   canShop,
   createMatch,
   idleInput,
+  lootNear,
   startRound,
   step,
   type Input,
@@ -260,4 +262,93 @@ test('deathmatch respawns and ends at the kill target or the clock', () => {
   assert.ok(top >= DM_KILLS || m.clock >= 299, 'it ended for a reason');
   assert.ok(m.actors[m.winner].kills === top);
   assert.ok(BUY_TIME > 0);
+});
+
+test('a royale world covers the whole land, with loot on building floors and doorways the bots can walk through', () => {
+  const w = worldFor('vale', true);
+  assert.equal(w.arena, ROYALE_ARENA);
+  assert.ok(w.towns.length >= 12, `many towns (${w.towns.length})`);
+  assert.ok(w.loot.length / 3 > 300, `loot spots (${w.loot.length / 3})`);
+  assert.ok(w.doors.length / 4 > 60, `doors (${w.doors.length / 4})`);
+  // a path from outside a house to a loot spot inside it
+  const q = w.interiors.find((r) => r.x1 - r.x0 > 4 && r.z1 - r.z0 > 4 && Math.abs(r.x0) < 200 && Math.abs(r.z0) < 200)!;
+  const cx = (q.x0 + q.x1) / 2;
+  const cz = (q.z0 + q.z1) / 2;
+  const path = findPath(w, cx + 14, cz + 14, cx, cz, 20000);
+  assert.ok(path, 'a way into the building');
+  // the uplink world is still the small arena
+  assert.equal(worldFor('vale').arena, ARENA);
+});
+
+test('royale: pickups fill the slots, the ammo pool caps, vests give armor, and the zone hurts outside', () => {
+  const m = createMatch(worldFor('mesa', true), 'royale', 'normal', { seed: 11 });
+  const you = m.actors[0];
+  // land you somewhere flat inside the zone
+  you.drop = 0;
+  you.body.x = m.zone!.x;
+  you.body.z = m.zone!.z;
+  you.body.y = 200;
+  for (let i = 0; i < 600 && !you.body.onGround; i++) step(m, DT, idleInput());
+  const put = (kind: 'gun' | 'ammo' | 'vest', what: string, n: number) => {
+    m.loot.push({ id: m.loot.length, kind, what, n, x: you.body.x + 0.4, y: you.body.y + 0.02, z: you.body.z, live: true });
+    m.lootVer++;
+  };
+  const use = () => {
+    const inp = idleInput(you.yaw, you.pitch);
+    inp.use = true;
+    step(m, DT, inp);
+  };
+  put('gun', 'kestrel', WEAPONS.kestrel.mag);
+  assert.equal(lootNear(m, you)?.what, 'kestrel');
+  use();
+  assert.equal(you.guns[0]?.id, 'kestrel');
+  put('gun', 'lancer', WEAPONS.lancer.mag);
+  use();
+  assert.equal(you.guns[2]?.id, 'lancer', 'the second long gun takes the second slot');
+  for (let i = 0; i < 12; i++) {
+    put('ammo', 'rifle', AMMO_PACK.rifle);
+    use();
+  }
+  assert.equal(you.ammo.rifle, AMMO_MAX.rifle, 'ammo caps');
+  put('vest', '2', 1);
+  use();
+  assert.equal(you.armor, VEST[2]);
+  // out past the zone's edge it costs health every second (a small zone, so its edge is on the map)
+  m.zone!.r = 40;
+  m.zone!.fr = 40;
+  m.zone!.nr = 40;
+  you.body.x = m.zone!.x + m.zone!.r + 20;
+  you.body.y = 200;
+  const hp = you.hp;
+  for (let i = 0; i < 60 * 3; i++) step(m, DT, idleInput());
+  assert.ok(you.hp < hp, 'the zone hurt');
+  assert.ok(ZONES.length >= 5);
+});
+
+test('royale: a hundred drop in, loot, fight and the zone closes to one left standing', () => {
+  const m = createMatch(worldFor('vale', true), 'royale', 'normal', { seed: 7 });
+  assert.equal(m.actors.length, ROYALE_PLAYERS);
+  let picks = 0;
+  let kills = 0;
+  let shots = 0;
+  let landed = 0;
+  const step2 = 1 / 30;
+  while (m.phase !== 'over' && m.time < 900) {
+    // you stay in it to the end (unhurt) so the bots play the whole match out
+    m.actors[0].shield = 99;
+    m.actors[0].hp = 100;
+    step(m, step2, idleInput());
+    for (const e of m.events) {
+      if (e.t === 'pickup') picks++;
+      if (e.t === 'kill') kills++;
+      if (e.t === 'shot') shots++;
+      if (e.t === 'land') landed++;
+    }
+  }
+  assert.equal(m.phase, 'over');
+  assert.equal(m.alive, 1);
+  assert.ok(landed >= 95, `everyone came down (${landed})`);
+  assert.ok(picks > 150, `they looted (${picks})`);
+  assert.ok(shots > 300, `they fought (${shots} shots)`);
+  assert.equal(kills, ROYALE_PLAYERS - 1);
 });

@@ -5,8 +5,11 @@ import { MAPS, type MapDef, type MapId, type Style, type TreeKind } from './maps
 import { Noise2, clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
 import { CELL, T_HALF, T_RES, T_SIZE, flattenRect, generateTerrain, heightAt, meanHeight, normalAt, type Terrain } from './terrain.ts';
 
-/** Half the side of the square everyone plays in. */
+/** Half the side of the square everyone plays in (uplink and deathmatch). */
 export const ARENA = 160;
+const ARENA_CLASSIC = ARENA;
+/** The same for a royale: nearly all of the shaped land. */
+export const ROYALE_ARENA = 330;
 /** Uplink capture radius. */
 export const SITE_R = 9;
 /** Where a team waits out the buy phase. */
@@ -65,6 +68,14 @@ export type World = {
   /** RGBA per terrain vertex: sun visibility, ambient occlusion, far object shadow, bare ground. */
   light: Uint8Array;
   minimap: Minimap;
+  /** Half the side of the playable square. */
+  arena: number;
+  /** 1 on terrain vertices of the ground you can walk across (see walkRegion). */
+  region: Uint8Array;
+  /** Where loot can lie: x, y, z per spot (building floors first, then by cover). */
+  loot: Float32Array;
+  /** Doorways: center x, z and the wall's normal x, z per door, so the bots' paths can go through them. */
+  doors: Float32Array;
 };
 
 export const KIND = 1 << 22;
@@ -102,6 +113,10 @@ type Ctx = {
   colliders: Box[];
   /** Its own random stream for clutter, so the layout doesn't depend on it. */
   deco: Rng;
+  arena: number;
+  /** Loot spots, x, y, z each. */
+  loot: number[];
+  doors: number[];
 };
 
 const STYLE_WALLS: Record<Style, number[]> = {
@@ -173,6 +188,12 @@ class Frame {
     const r = this.rect(lx0, lz0, lx1, lz1);
     this.c.pieces.push({ x0: r.x0, y0, z0: r.z0, x1: r.x1, y1, z1: r.z1, part, color, solid });
   }
+  /** Notes a doorway at a local point with its wall's local normal. */
+  door(lx: number, lz: number, nlx: number, nlz: number) {
+    const [x, z] = this.xz(lx, lz);
+    const [ax, az] = this.xz(lx + nlx, lz + nlz);
+    this.c.doors.push(x, z, ax - x, az - z);
+  }
   gable(lx0: number, lz0: number, lx1: number, lz1: number, y: number, h: number, alongLocalX: boolean, color: number, wall: number) {
     const r = this.rect(lx0, lz0, lx1, lz1);
     this.c.gables.push({ ...r, y, h, alongX: (this.rot & 1) === 0 ? alongLocalX : !alongLocalX, color, wall });
@@ -187,6 +208,7 @@ function wallX(f: Frame, xa: number, xb: number, z0: number, z1: number, y0: num
   for (const o of [...holes].sort((a, b) => a.c - b.c)) {
     const a = o.c - o.w / 2;
     const b = o.c + o.w / 2;
+    if (o.b <= y0 + 0.05) f.door(o.c, (z0 + z1) / 2, 0, 1);
     if (a > cur) f.box(cur, y0, z0, a, y1, z1, part, color);
     if (o.b > y0) f.box(a, y0, z0, b, o.b, z1, part, color);
     if (o.t < y1) f.box(a, o.t, z0, b, y1, z1, part, color);
@@ -201,6 +223,7 @@ function wallZ(f: Frame, za: number, zb: number, x0: number, x1: number, y0: num
   for (const o of [...holes].sort((a, b) => a.c - b.c)) {
     const a = o.c - o.w / 2;
     const b = o.c + o.w / 2;
+    if (o.b <= y0 + 0.05) f.door((x0 + x1) / 2, o.c, 1, 0);
     if (a > cur) f.box(x0, y0, cur, x1, y1, a, part, color);
     if (o.b > y0) f.box(x0, y0, a, x1, o.b, b, part, color);
     if (o.t < y1) f.box(x0, o.t, a, x1, y1, b, part, color);
@@ -306,6 +329,12 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
     }
   }
   const rr = f.rect(-hw, -hd, hw, hd);
+  // loot on the floor, more in the bigger buildings
+  const spots = Math.min(7, 2 + Math.floor((w * d) / 16));
+  for (let k = 0; k < spots; k++) {
+    const [lx, lz] = f.xz((c.deco() - 0.5) * (w - 1.8), (c.deco() - 0.5) * (d - 1.8));
+    c.loot.push(lx, floorTop + 0.02, lz);
+  }
   if (!ruin) {
     c.interiors.push({ x0: rr.x0 + T, y0: y - 0.5, z0: rr.z0 + T, x1: rr.x1 - T, y1: top, z1: rr.z1 - T });
     c.blocks.push({ x0: rr.x0, y0: y, z0: rr.z0, x1: rr.x1, y1: top + (style === 'adobe' ? 0.8 : 1.2), z1: rr.z1 });
@@ -465,6 +494,11 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number) {
     f.box(-w / 2, y, -d / 2, w / 2, hi + 0.95, d / 2, 'sandbag', col);
     if (r() < 0.5) f.box(w / 2 - 0.8, y, d / 2, w / 2, hi + 0.95, d / 2 + 1.8, 'sandbag', col);
   }
+  // loot by the cover, on the side away from its middle
+  if (kind !== 'truck' && c.deco() < 0.5) {
+    const [lx, lz] = f.xz((c.deco() - 0.5) * (w - 0.8), (c.deco() < 0.5 ? -1 : 1) * (d / 2 + 0.7));
+    c.loot.push(lx, heightAt(c.t, lx, lz) + 0.02, lz);
+  }
   // odds and ends left behind cover
   if ((kind === 'sandbags' || kind === 'hesco' || kind === 'pile' || kind === 'container') && c.deco() < 0.45) {
     const n = 1 + Math.floor(c.deco() * 2);
@@ -478,10 +512,10 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number) {
  * The walkable ground inside the arena that hangs together: 1 on vertices of the biggest region you can walk across
  * without climbing a cliff or swimming deep water, 0 elsewhere. Spawns, uplinks and respawns only go on it.
  */
-export function walkRegion(t: Terrain): Uint8Array {
+export function walkRegion(t: Terrain, arena = ARENA): Uint8Array {
   const lab = new Int32Array(T_RES * T_RES).fill(-1);
-  const lo = Math.floor((T_HALF - ARENA) / CELL);
-  const hi = Math.ceil((T_HALF + ARENA) / CELL);
+  const lo = Math.floor((T_HALF - arena) / CELL);
+  const hi = Math.ceil((T_HALF + arena) / CELL);
   const ok = (k: number) => t.ice || t.h[k] > t.water - 1.1;
   const sizes: number[] = [];
   const queue = new Int32Array(T_RES * T_RES);
@@ -525,14 +559,14 @@ export function walkRegion(t: Terrain): Uint8Array {
 const onRegion = (region: Uint8Array, x: number, z: number) => region[Math.round((z + T_HALF) / CELL) * T_RES + Math.round((x + T_HALF) / CELL)] === 1;
 
 /** Best spot near (x, z) for a pad: dry, flat, reachable and inside the arena. `along` limits the search to one axis. */
-function findSpot(t: Terrain, region: Uint8Array, x: number, z: number, radius: number, along?: [number, number]) {
+function findSpot(t: Terrain, region: Uint8Array, x: number, z: number, radius: number, along?: [number, number], arena = ARENA) {
   let best = { x, z, score: Infinity };
   for (let a = -radius; a <= radius; a += 4)
     for (let b = -radius; b <= radius; b += 4) {
       if (along && Math.abs(a * along[0] + b * along[1]) > 6) continue;
       const px = x + a;
       const pz = z + b;
-      if (Math.abs(px) > ARENA - 20 || Math.abs(pz) > ARENA - 20) continue;
+      if (Math.abs(px) > arena - 20 || Math.abs(pz) > arena - 20) continue;
       if (!onRegion(region, px, pz)) continue;
       let lo = Infinity;
       let hi = -Infinity;
@@ -616,10 +650,12 @@ function buildGrid(boxes: Box[], trunks: Trunk[], rocks: RockCol[]): Grid {
 
 const SURFACE: Record<Part, Surface> = { wall: 'stone', trim: 'stone', roof: 'stone', floor: 'wood', wood: 'wood', metal: 'metal', sandbag: 'dirt', concrete: 'stone', hesco: 'dirt' };
 
-export function buildWorld(id: MapId): World {
+/** Builds a map: the uplink arena, or with `royale` the whole land, with many more towns, cover and loot. */
+export function buildWorld(id: MapId, royale = false): World {
   const def = MAPS[id];
   const t = generateTerrain(def);
-  const c: Ctx = { def, t, rng: mulberry32(def.seed * 7 + 3), n: new Noise2(def.seed + 99), pieces: [], gables: [], interiors: [], taken: [], pads: [], roadSegs: [], roads: [], blocks: [], vehicles: [], models: [], colliders: [], deco: mulberry32(def.seed * 13 + 5) };
+  const ARENA = royale ? ROYALE_ARENA : ARENA_CLASSIC;
+  const c: Ctx = { def, t, rng: mulberry32(def.seed * 7 + 3), n: new Noise2(def.seed + 99), pieces: [], gables: [], interiors: [], taken: [], pads: [], roadSegs: [], roads: [], blocks: [], vehicles: [], models: [], colliders: [], deco: mulberry32(def.seed * 13 + 5), arena: ARENA, loot: [], doors: [] };
   const r = c.rng;
 
   // the axis between the spawns
@@ -628,7 +664,7 @@ export function buildWorld(id: MapId): World {
   const uz = Math.sin(th);
   const vx = -uz;
   const vz = ux;
-  const region = walkRegion(t);
+  const region = walkRegion(t, ARENA);
   const spawnAt = [-1, 1].map((sgn) => findSpot(t, region, sgn * 120 * ux, sgn * 120 * uz, 24));
   const siteAt = [-1, 0, 1].map((k) => findSpot(t, region, k * 82 * vx, k * 82 * vz, 24, [ux, uz]));
 
@@ -672,9 +708,24 @@ export function buildWorld(id: MapId): World {
     const p = findSpot(t, region, sgn * 135 * vx, sgn * 135 * vz, 18, [ux, uz]);
     towns.push({ name: def.pois[sgn < 0 ? 3 : 4], x: p.x, z: p.z, site: -1 });
   }
+  if (royale) {
+    // a royale spreads towns over the whole land, each joined by a road to the nearest one already there
+    const names = ['Brook', 'Mill', 'Quarry', 'Pines', 'Harbor', 'Crossing', 'Depot', 'Farm', 'Outlook', 'Station'];
+    for (let k = 0, made = 0; k < 160 && made < 9; k++) {
+      const a = r() * Math.PI * 2;
+      const d = 130 + r() * 170;
+      const p = findSpot(t, region, Math.cos(a) * d, Math.sin(a) * d, 26, undefined, ARENA);
+      if (!Number.isFinite(p.score) || towns.some((q) => Math.hypot(q.x - p.x, q.z - p.z) < 85)) continue;
+      let near = towns[0];
+      for (const q of towns) if (Math.hypot(q.x - p.x, q.z - p.z) < Math.hypot(near.x - p.x, near.z - p.z)) near = q;
+      roadLine(c, near.x, near.z, p.x, p.z);
+      towns.push({ name: `${def.pois[k % def.pois.length]} ${names[made % names.length]}`, x: p.x, z: p.z, site: -2 });
+      made++;
+    }
+  }
   const kinds: Kind[] = ['house', 'house', 'house', 'shed', 'ruin', 'barn'];
   for (const town of towns) {
-    const want = town.site >= 0 ? 6 : 4;
+    const want = town.site >= 0 ? 6 : town.site === -2 ? 7 : 4;
     let placed = 0;
     for (let tries = 0; tries < 120 && placed < want; tries++) {
       const a = r() * Math.PI * 2;
@@ -684,7 +735,7 @@ export function buildWorld(id: MapId): World {
   }
   for (let k = 0; k < 3; k++) {
     const a = r() * Math.PI * 2;
-    const d = ARENA + 50 + r() * 120;
+    const d = ARENA_CLASSIC + 50 + r() * 120;
     const x = Math.cos(a) * d;
     const z = Math.sin(a) * d;
     if (heightAt(t, x, z) < t.water + 2) continue;
@@ -697,7 +748,7 @@ export function buildWorld(id: MapId): World {
     }
   }
   // lone buildings out in the open
-  for (let k = 0, placed = 0; k < 80 && placed < 7; k++)
+  for (let k = 0, placed = 0; k < (royale ? 400 : 80) && placed < (royale ? 30 : 7); k++)
     if (tryBuilding(c, r() < 0.5 ? 'ruin' : 'shed', (r() * 2 - 1) * (ARENA - 15), (r() * 2 - 1) * (ARENA - 15), ARENA - 4)) placed++;
 
   // cover: around the uplinks, at the spawns and across the lanes
@@ -728,7 +779,13 @@ export function buildWorld(id: MapId): World {
       const a = r() * Math.PI * 2;
       if (tryProp(c, 'container', s.x + Math.cos(a) * 19, s.z + Math.sin(a) * 19, ARENA - 3)) placed++;
     }
-  for (let k = 0, placed = 0; k < 400 && placed < 34; k++)
+  if (royale)
+    for (let k = 0, placed = 0; k < 400 && placed < 6; k++) {
+      const a = r() * Math.PI * 2;
+      const d = 60 + r() * 250;
+      if (tryProp(c, 'truck', Math.cos(a) * d, Math.sin(a) * d, ARENA - 4)) placed++;
+    }
+  for (let k = 0, placed = 0; k < (royale ? 1600 : 400) && placed < (royale ? 120 : 34); k++)
     if (tryProp(c, propKinds[Math.floor(r() * propKinds.length)], (r() * 2 - 1) * (ARENA - 8), (r() * 2 - 1) * (ARENA - 8), ARENA - 3)) placed++;
 
   // later pads blend into earlier ones at their edges: put every pad back exactly
@@ -842,6 +899,10 @@ export function buildWorld(id: MapId): World {
     models: c.models,
     light: new Uint8Array(0),
     minimap: { size: 0, span: 0, data: new Uint8ClampedArray(0) },
+    arena: ARENA,
+    region,
+    loot: new Float32Array(c.loot),
+    doors: new Float32Array(c.doors),
   };
   world.light = bakeLight(world, c.blocks);
   world.minimap = paintMinimap(world);
@@ -1042,6 +1103,7 @@ const mix3 = (a: [number, number, number], b: [number, number, number], k: numbe
 
 /** A top-down picture of the arena: ground colors with hill shading, water, roads, trees and roofs. */
 function paintMinimap(w: World): Minimap {
+  const ARENA = w.arena;
   const size = 256;
   const span = ARENA + 24;
   const data = new Uint8ClampedArray(size * size * 4);
@@ -1100,19 +1162,20 @@ function paintMinimap(w: World): Minimap {
   return { size, span, data };
 }
 
-const cache = new Map<MapId, World>();
+const cache = new Map<string, World>();
 /** The world for a map, built once per page. Rounds change nothing in it. */
-export function worldFor(id: MapId): World {
-  let w = cache.get(id);
+const keyOf = (id: MapId, royale: boolean) => (royale ? `${id}:royale` : id);
+export function worldFor(id: MapId, royale = false): World {
+  let w = cache.get(keyOf(id, royale));
   if (!w) {
-    w = buildWorld(id);
-    cache.set(id, w);
+    w = buildWorld(id, royale);
+    cache.set(keyOf(id, royale), w);
   }
   return w;
 }
 export function cacheWorld(w: World) {
-  cache.set(w.id, w);
+  cache.set(keyOf(w.id, w.arena > ARENA), w);
 }
-export function cachedWorld(id: MapId) {
-  return cache.get(id) ?? null;
+export function cachedWorld(id: MapId, royale = false) {
+  return cache.get(keyOf(id, royale)) ?? null;
 }

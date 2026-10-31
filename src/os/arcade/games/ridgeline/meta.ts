@@ -3,11 +3,14 @@ import type { GameMeta } from '../../types';
 export const meta: GameMeta = {
   id: 'ridgeline',
   title: 'Ridgeline',
-  blurb: 'Tactical 5v5 on big, realistic outdoor maps. Buy your loadout, take the uplink and win the round on one life. Real bullet drop, no powers, just aim.',
+  blurb: 'A hundred players drop onto big, realistic outdoor maps. Loot guns and armor, outlast the closing zone, be the last one standing. Also 5v5 Uplink and Deathmatch. Real bullet drop, no powers, just aim.',
   category: '3d',
   players: '1P',
-  controls: 'Click to capture the mouse. WASD move, Shift walk quietly, Space jump, C crouch, left click fire, right click aim, R reload, 1 2 guns, 3 frag, 4 smoke, B buy, Tab scores. On touch, drag the left side to move and the right side to look.',
+  controls: 'Click to capture the mouse. WASD move, Shift walk quietly, Space jump (and jump out, and open the canopy), C crouch, left click fire, right click aim, R reload, F pick up, H heal, M map, 1 2 3 guns, G frag, Q smoke, B buy (Uplink), Tab scores. On touch, drag the left side to move and the right side to look.',
   howTo: [
+    'Royale: a hundred players, you and 99 bots. Everyone starts aboard a transport crossing the map: jump out (Space) where you want to land, dive, and the canopy opens by itself.',
+    'Land empty handed and loot fast: guns, ammo for them, vests, helmets, bandages, med kits and grenades lie in the buildings and by cover. F picks up what is at your feet, H heals.',
+    'The zone closes in steps. Stay inside the white circle on the map: outside it you lose health every second, more each step. The last one standing wins.',
     'Uplink: your team of five against five bots. One life per round. The first team to win 7 rounds takes the match.',
     'Every round opens with a buy phase in your spawn. Spend credits on guns, armor, frags and smokes. Kills and rounds earn more, and a gun you survive with stays yours.',
     'One of three uplinks (A, B or C) goes live each round. Stand in it with no enemy inside to fill your bar. Fill it or knock out the other team to win the round.',
@@ -24,6 +27,6 @@ export const meta: GameMeta = {
     order: 'desc',
     max: 60_000,
     measure: 'Combat Score',
-    variants: { 'uplink-easy': 'Uplink, Easy', 'uplink-normal': 'Uplink, Normal', 'uplink-hard': 'Uplink, Hard', 'dm-easy': 'Deathmatch, Easy', 'dm-normal': 'Deathmatch, Normal', 'dm-hard': 'Deathmatch, Hard' },
+    variants: { 'royale-easy': 'Royale, Easy', 'royale-normal': 'Royale, Normal', 'royale-hard': 'Royale, Hard', 'uplink-easy': 'Uplink, Easy', 'uplink-normal': 'Uplink, Normal', 'uplink-hard': 'Uplink, Hard', 'dm-easy': 'Deathmatch, Easy', 'dm-normal': 'Deathmatch, Normal', 'dm-hard': 'Deathmatch, Hard' },
   },
 };

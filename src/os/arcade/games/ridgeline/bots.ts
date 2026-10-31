@@ -1,19 +1,23 @@
 // Computer players. Each one sees (field of view, line of sight, smoke), hears (shots and running footsteps), buys
 // with its credits, plays a role on the uplink, and aims like a person: a reaction delay, an error that settles, a
-// limited turn speed that has to fight the recoil, and (on harder levels) stopping before it shoots.
+// limited turn speed that has to fight the recoil, and (on harder levels) stopping before it shoots. In a royale they
+// pick a landing spot, jump when the transport passes it, loot what they need, heal up, and keep ahead of the zone.
 import {
   DEG,
   buy,
   canShop,
   currentGun,
   eyeY,
+  healPick,
   idleInput,
   isEnemy,
   owns,
   priceOf,
   smokeBlocks,
+  spareOf,
   spreadOf,
   viewDir,
+  wants,
   type Actor,
   type Input,
   type Match,
@@ -23,8 +27,9 @@ import { clamp, mulberry32, type Rng } from './noise.ts';
 import { fieldDist, fieldStep, fieldTo, findPath } from './nav.ts';
 import { blockedAt, clearLine } from './physics.ts';
 import { floorAt, heightAt } from './terrain.ts';
+import { planeAt } from './royale.ts';
 import { WEAPONS, type WeaponId } from './weapons.ts';
-import { ARENA, SITE_R } from './world.ts';
+import { SITE_R } from './world.ts';
 
 export type BotLevel = 'easy' | 'normal' | 'hard';
 type Role = 'entry' | 'support' | 'flank';
@@ -87,6 +92,12 @@ export type Brain = {
   /** Heading toward the last thing it heard, and how long to keep facing it. */
   listenA: number;
   waitT: number;
+  /** Royale: where it means to land, the loot it is going for, when to look for more, and a wish to heal. */
+  dropX: number;
+  dropZ: number;
+  loot: number;
+  lootT: number;
+  healNow: boolean;
 };
 
 const LEVELS: Record<BotLevel, { skill: number; react: number; turn: number }> = {
@@ -152,6 +163,11 @@ export function newBrain(level: BotLevel, seed: number): Brain {
     holdA: 0,
     listenA: 0,
     waitT: 0,
+    dropX: 0,
+    dropZ: 0,
+    loot: -1,
+    lootT: 0,
+    healNow: false,
   };
 }
 
@@ -211,10 +227,11 @@ function free(m: Match, a: Actor, ang: number, dist: number) {
   for (const d of [dist * 0.5, dist]) {
     const x = a.body.x + sx * d;
     const z = a.body.z + sz * d;
-    if (Math.abs(x) > ARENA - 1 || Math.abs(z) > ARENA - 1) return false;
+    if (Math.abs(x) > w.arena - 1 || Math.abs(z) > w.arena - 1) return false;
     const g = floorAt(t, x, z);
     if (g - y > 1.1 * (d / (dist * 0.5))) return false;
-    if (t.hasWater && !t.ice && heightAt(t, x, z) < t.water - 1.05) return false;
+    // deep water is out, except in a royale where swimming beats waiting for the zone
+    if (t.hasWater && !t.ice && heightAt(t, x, z) < t.water - 1.05 && m.mode !== 'royale') return false;
     if (blockedAt(w, x, z, Math.max(g, y))) return false;
     y = Math.max(g, y - 1);
   }
@@ -257,7 +274,7 @@ function route(m: Match, a: Actor, br: Brain) {
       return;
     } else {
       searches++;
-      br.path = findPath(m.world, a.body.x, a.body.z, br.goalX, br.goalZ, 3500);
+      br.path = findPath(m.world, a.body.x, a.body.z, br.goalX, br.goalZ, m.mode === 'royale' ? 2200 : 3500);
       if (!br.path) br.failT = 2;
       br.pathI = 0;
       br.pathGX = br.goalX;
@@ -274,7 +291,7 @@ function route(m: Match, a: Actor, br: Brain) {
     br.waitT = 0;
     if (m.mode === 'uplink') {
       const s = m.world.sites[m.site];
-      setGoal(br, s.x, s.z, `site${m.site}`);
+      setGoal(m, br, s.x, s.z, `site${m.site}`);
     } else br.wander = 0;
     br.repath = true;
     br.wpX = br.goalX;
@@ -298,9 +315,11 @@ function steer(m: Match, a: Actor, br: Brain) {
   const dx = br.wpX - a.body.x;
   const dz = br.wpZ - a.body.z;
   const want = Math.atan2(dx, dz);
+  // look only as far as the waypoint, so a doorway right ahead doesn't read as the wall beside it
+  const look = clamp(Math.hypot(dx, dz) - 0.2, 0.8, 2.6);
   for (const off of [0, 0.45, -0.45, 0.9, -0.9, 1.4, -1.4, 2, -2]) {
     const ang = want + off * (br.strafe > 0 ? 1 : -1);
-    if (free(m, a, ang, 2.6)) {
+    if (free(m, a, ang, look)) {
       br.heading = ang;
       return;
     }
@@ -308,9 +327,10 @@ function steer(m: Match, a: Actor, br: Brain) {
   br.heading = want + Math.PI * (br.rng() < 0.5 ? 0.6 : -0.6);
 }
 
-function setGoal(br: Brain, x: number, z: number, fieldKey = '') {
-  br.goalX = clamp(x, -ARENA + 3, ARENA - 3);
-  br.goalZ = clamp(z, -ARENA + 3, ARENA - 3);
+function setGoal(m: Match, br: Brain, x: number, z: number, fieldKey = '') {
+  const A = m.world.arena;
+  br.goalX = clamp(x, -A + 3, A - 3);
+  br.goalZ = clamp(z, -A + 3, A - 3);
   br.fieldKey = fieldKey;
 }
 
@@ -326,21 +346,26 @@ function perceive(m: Match, a: Actor, br: Brain) {
   const fw = viewDir(a.yaw, 0);
   let best = -1;
   let bestScore = Infinity;
+  // a royale bot still gearing up picks its fights: only close ones, or whoever shoots it
+  const geared = m.mode !== 'royale' || ((!!a.guns[0] || !!a.guns[2]) && (a.vest > 0 || a.helmet > 0));
+  const range = m.mode !== 'royale' ? 230 : geared ? 130 : a.guns[0] || a.guns[2] ? 45 : 28;
   for (const o of m.actors) {
-    if (!o.alive || !isEnemy(a, o)) continue;
+    if (!o.alive || !isEnemy(a, o) || o.drop === 1) continue;
     const dx = o.body.x - ex;
     const dz = o.body.z - ez;
     const d = Math.hypot(dx, dz);
-    if (d > 230) continue;
     const known = o.id === br.target || (a.hurtFrom === o.id && m.time - a.hurtT < 2);
+    if (d > (known ? 230 : range)) continue;
+    // the first while after landing goes on looting, not on picking fights
+    if (!known && m.mode === 'royale' && m.time - a.dropT < 22 && d > 7) continue;
     const facing = (dx * fw.x + dz * fw.z) / (d || 1);
     if (!known && facing < 0.34 && d > 5) continue;
     // far, crouched or still targets take longer to notice
     if (!known && d > 40) {
       const still = Math.hypot(o.body.vx, o.body.vz) < 1;
-      const p = (1.6 - d / 200) * (still ? 0.55 : 1) * (o.crouch > 0.5 ? 0.7 : 1) * (0.6 + br.skill * 0.6);
+      const p = (1.6 - d / 200) * (still ? 0.55 : 1) * (o.crouch > 0.5 ? 0.7 : 1) * (0.6 + br.skill * 0.6) * (m.mode === 'royale' ? 0.55 : 1);
       if (br.rng() > p) continue;
-    }
+    } else if (!known && m.mode === 'royale' && d > 6 && br.rng() > 0.3 + br.skill * 0.3) continue; // busy looting: takes a moment to notice
     const chest = o.body.y + o.body.height * 0.68;
     const head = o.body.y + o.body.height - 0.13;
     if (smokeBlocks(m, ex, ey, ez, o.body.x, chest, o.body.z)) continue;
@@ -358,7 +383,7 @@ function perceive(m: Match, a: Actor, br: Brain) {
       // a new target: the aim starts off by an error that shrinks as the bot settles
       const o = m.actors[best];
       const d = Math.hypot(o.body.x - ex, o.body.z - ez);
-      const e = (1 - br.skill) * 0.09 + 0.012 + d * 0.0002;
+      const e = ((1 - br.skill) * 0.09 + 0.012 + d * 0.0002) * (m.mode === 'royale' ? 1.5 : 1);
       br.errY = (br.rng() - 0.5) * 2 * e;
       br.errP = (br.rng() - 0.5) * e;
       br.seenFor = br.target >= 0 && m.time - br.lostAt < 0.8 ? br.react : 0;
@@ -384,19 +409,23 @@ function plan(m: Match, a: Actor, br: Brain) {
   const r = br.rng;
   // chase what we lost, for a while
   if (br.hasLast && m.time - br.lostAt < 5 && Math.hypot(br.lastX - a.body.x, br.lastZ - a.body.z) < 45) {
-    setGoal(br, br.lastX, br.lastZ);
+    setGoal(m, br, br.lastX, br.lastZ);
     return;
   }
   // a loud sound from an enemy
   for (const s of m.sounds) {
     if (s.team === a.team || s.who === a.id) continue;
     const d = Math.hypot(s.x - a.body.x, s.z - a.body.z);
-    if (d < s.range && d > 4 && r() < 0.5) {
+    if (d < s.range && d > 4 && r() < (m.mode === 'royale' ? (a.vest > 0 && (a.guns[0] || a.guns[2]) ? 0.3 : 0) : 0.5)) {
       br.listenA = Math.atan2(s.x - a.body.x, s.z - a.body.z);
-      if (m.mode === 'dm' || d < 30) setGoal(br, s.x, s.z);
+      if (m.mode === 'dm' || d < (m.mode === 'royale' ? 55 : 30)) setGoal(m, br, s.x, s.z);
       br.waitT = 0.6;
       return;
     }
+  }
+  if (m.mode === 'royale') {
+    planRoyale(m, a, br);
+    return;
   }
   if (m.mode === 'dm') {
     br.wander -= 0.25;
@@ -404,7 +433,7 @@ function plan(m: Match, a: Actor, br: Brain) {
       br.wander = 12 + r() * 10;
       const k = Math.floor(r() * Math.min(DM_HUBS, m.world.dmSpawns.length));
       const p = m.world.dmSpawns[k];
-      setGoal(br, p.x, p.z, `dm${k}`);
+      setGoal(m, br, p.x, p.z, `dm${k}`);
     }
     return;
   }
@@ -419,15 +448,15 @@ function plan(m: Match, a: Actor, br: Brain) {
       // guard the uplink from its edge, facing out toward the other spawn
       const sp = m.world.spawns[enemy];
       const out = Math.atan2(sp.x - s.x, sp.z - s.z) + (br.holdA - 0.5) * 1.6;
-      setGoal(br, s.x + Math.sin(out) * SITE_R * 0.75, s.z + Math.cos(out) * SITE_R * 0.75, `site${m.site}`);
-    } else setGoal(br, s.x + (br.holdA - 0.5) * SITE_R, s.z + (r() - 0.5) * SITE_R * 0.6, `site${m.site}`);
+      setGoal(m, br, s.x + Math.sin(out) * SITE_R * 0.75, s.z + Math.cos(out) * SITE_R * 0.75, `site${m.site}`);
+    } else setGoal(m, br, s.x + (br.holdA - 0.5) * SITE_R, s.z + (r() - 0.5) * SITE_R * 0.6, `site${m.site}`);
     br.via = false;
     return;
   }
   if (br.role === 'flank' && br.via) {
     if (Math.hypot(br.viaX - a.body.x, br.viaZ - a.body.z) < 6) br.via = false;
     else {
-      setGoal(br, br.viaX, br.viaZ);
+      setGoal(m, br, br.viaX, br.viaZ);
       return;
     }
   }
@@ -436,16 +465,159 @@ function plan(m: Match, a: Actor, br: Brain) {
     const lead = m.actors.filter((o) => o.alive && o.team === a.team && o.brain?.role === 'entry');
     const ahead = lead.some((o) => Math.hypot(s.x - o.body.x, s.z - o.body.z) < dSite - 12);
     if (!ahead && m.phaseT < 75) {
-      setGoal(br, s.x, s.z, `site${m.site}`);
+      setGoal(m, br, s.x, s.z, `site${m.site}`);
       return;
     }
     if (lead.length && ahead) {
       const o = lead[0];
-      setGoal(br, o.body.x - (s.x - o.body.x) * 0.2, o.body.z - (s.z - o.body.z) * 0.2);
+      setGoal(m, br, o.body.x - (s.x - o.body.x) * 0.2, o.body.z - (s.z - o.body.z) * 0.2);
       return;
     }
   }
-  setGoal(br, s.x, s.z, `site${m.site}`);
+  setGoal(m, br, s.x, s.z, `site${m.site}`);
+}
+
+/** Royale, nobody in sight: stay ahead of the zone, heal when hurt, gear up, else drift toward the middle of the zone. */
+function planRoyale(m: Match, a: Actor, br: Brain) {
+  const z = m.zone!;
+  const r = br.rng;
+  const b = a.body;
+  const dz = Math.hypot(b.x - z.x, b.z - z.z);
+  const dn = Math.hypot(b.x - z.nx, b.z - z.nz);
+  const late = z.shrinking || z.t < 22;
+  br.healNow = a.hp < 72 && !!healPick(a) && dz < z.r - 4;
+  // out of the zone (or soon to be): head in
+  if (dz > z.r - 6 || (late && dn > z.nr - 8 && z.nr > 0)) {
+    const tx = z.nr > 0 ? z.nx : z.x;
+    const tz = z.nr > 0 ? z.nz : z.z;
+    const rad = Math.max(0, (z.nr > 0 ? z.nr : z.r) * 0.45);
+    if (Math.hypot(br.goalX - tx, br.goalZ - tz) > rad + 4 || br.loot >= 0) {
+      const ang = r() * Math.PI * 2;
+      const k = Math.sqrt(r()) * rad;
+      setGoal(m, br, tx + Math.cos(ang) * k, tz + Math.sin(ang) * k);
+    }
+    br.loot = -1;
+    return;
+  }
+  if (br.healNow) {
+    setGoal(m, br, b.x, b.z);
+    return;
+  }
+  // the loot it is after still there and still wanted?
+  const cur = br.loot >= 0 ? m.loot[br.loot] : null;
+  if (cur && (!cur.live || !wants(a, cur))) br.loot = -1;
+  br.lootT -= br.think;
+  if (br.loot < 0 && br.lootT <= 0) {
+    br.lootT = 1.2 + r() * 0.8;
+    let best = -1;
+    let bestD = Infinity;
+    // guns count as much nearer while empty handed
+    const need = !a.guns[0] && !a.guns[2] ? 0.35 : 1;
+    for (const it of m.loot) {
+      if (!it.live) continue;
+      const d = Math.abs(it.x - b.x) + Math.abs(it.z - b.z);
+      if (d > 90) continue;
+      const dd = d * (it.kind === 'gun' ? need : 1);
+      if (dd >= bestD) continue;
+      if (Math.hypot(it.x - z.x, it.z - z.z) > z.r - 4 || !wants(a, it)) continue;
+      bestD = dd;
+      best = it.id;
+    }
+    br.loot = best;
+  }
+  if (br.loot >= 0) {
+    const it = m.loot[br.loot];
+    setGoal(m, br, it.x, it.z);
+    return;
+  }
+  // nothing to do: drift toward somewhere inside the next circle, a little at a time
+  br.wander -= 0.25;
+  if (br.wander <= 0 || Math.hypot(br.goalX - b.x, br.goalZ - b.z) < 4) {
+    br.wander = 8 + r() * 10;
+    const tx = z.nr > 0 ? z.nx : z.x;
+    const tz = z.nr > 0 ? z.nz : z.z;
+    const ang = r() * Math.PI * 2;
+    const k = Math.sqrt(r()) * Math.max(10, (z.nr > 0 ? z.nr : z.r) * 0.7);
+    const gx = tx + Math.cos(ang) * k;
+    const gz = tz + Math.sin(ang) * k;
+    const l = Math.hypot(gx - b.x, gz - b.z) || 1;
+    const step = Math.min(l, 50 + r() * 30);
+    setGoal(m, br, b.x + ((gx - b.x) / l) * step, b.z + ((gz - b.z) / l) * step);
+  }
+}
+
+/** Landing spots already picked in a match, counted per grid cell. */
+const dropClaims = new WeakMap<Match, Uint8Array>();
+
+/** Royale, still in the air: pick a spot, jump when the transport passes it, then dive and glide to it. */
+function dropInput(m: Match, a: Actor, br: Brain, inp: Input, dt: number) {
+  const r = br.rng;
+  if (br.reset) {
+    br.reset = false;
+    // a loot spot, the least crowded of a few: everyone spreads out instead of piling onto one roof
+    const L = m.world.loot;
+    const spots = L.length / 3;
+    // landings so far, counted on a coarse grid
+    const G = 24;
+    const gn = Math.ceil((2 * m.world.arena) / G) + 1;
+    let claims = dropClaims.get(m);
+    if (!claims) dropClaims.set(m, (claims = new Uint8Array(gn * gn)));
+    const cell = (x: number, z: number) => clamp(Math.floor((z + m.world.arena) / G), 0, gn - 1) * gn + clamp(Math.floor((x + m.world.arena) / G), 0, gn - 1);
+    const crowd = (x: number, z: number) => {
+      const c = cell(x, z);
+      const ci = c % gn;
+      const cj = (c - ci) / gn;
+      let n = 0;
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) {
+        const i = ci + di;
+        const j = cj + dj;
+        if (i >= 0 && j >= 0 && i < gn && j < gn) n += claims![j * gn + i] * (di || dj ? 1 : 3);
+      }
+      return n;
+    };
+    let bx = (r() - 0.5) * m.world.arena;
+    let bz = (r() - 0.5) * m.world.arena;
+    let bestScore = -Infinity;
+    // only spots within gliding reach of the flight line
+    const p = m.plane;
+    const reach = (x: number, z: number) => (p ? Math.abs((x - p.ax) * -(p.bz - p.az) + (z - p.az) * (p.bx - p.ax)) / p.len : 0);
+    for (let tries = 0; tries < (spots ? 40 : 0); tries++) {
+      const k = Math.floor(r() * spots) * 3;
+      if (reach(L[k], L[k + 2]) > 220 || L[k + 1] < m.world.terrain.water + 0.3) continue;
+      const score = -crowd(L[k], L[k + 2]) + r() * 1.5;
+      if (score > bestScore) {
+        bestScore = score;
+        bx = L[k];
+        bz = L[k + 2];
+      }
+    }
+    claims[cell(bx, bz)]++;
+    br.dropX = bx + (r() - 0.5) * 12;
+    br.dropZ = bz + (r() - 0.5) * 12;
+    br.loot = -1;
+    br.lootT = 0;
+  }
+  if (a.drop === 1) {
+    const p = m.plane;
+    if (!p) return inp;
+    // jump once the transport is about abeam of the spot; a spot too far off the line moves nearer it
+    const at = planeAt(p, m.time);
+    const ux = (p.bx - p.ax) / p.len;
+    const uz = (p.bz - p.az) / p.len;
+    const ahead = (br.dropX - at.x) * ux + (br.dropZ - at.z) * uz;
+    const side = Math.abs((br.dropX - at.x) * -uz + (br.dropZ - at.z) * ux);
+    if (ahead < 30 + side * 0.15) inp.jump = r() < dt * 4;
+    return inp;
+  }
+  // in the air: face the spot, dive at it, then glide down
+  const dx = br.dropX - a.body.x;
+  const dz = br.dropZ - a.body.z;
+  const d = Math.hypot(dx, dz);
+  const want = Math.atan2(-dx, -dz);
+  inp.yaw = a.yaw + clamp(angDiff(a.yaw, want), -dt * 3, dt * 3);
+  inp.pitch = a.drop === 2 ? -1.1 : -0.3;
+  inp.mz = d > 8 ? 1 : 0;
+  return inp;
 }
 
 function roundReset(m: Match, a: Actor, br: Brain) {
@@ -473,15 +645,16 @@ function roundReset(m: Match, a: Actor, br: Brain) {
     const mz = (s.z + sp.z) / 2;
     const l = Math.hypot(s.x - sp.x, s.z - sp.z) || 1;
     const side = br.rng() < 0.5 ? 1 : -1;
-    br.viaX = clamp(mx + (-(s.z - sp.z) / l) * 42 * side, -ARENA + 8, ARENA - 8);
-    br.viaZ = clamp(mz + ((s.x - sp.x) / l) * 42 * side, -ARENA + 8, ARENA - 8);
+    const A = m.world.arena;
+    br.viaX = clamp(mx + (-(s.z - sp.z) / l) * 42 * side, -A + 8, A - 8);
+    br.viaZ = clamp(mz + ((s.x - sp.x) / l) * 42 * side, -A + 8, A - 8);
     // a flank point is only worth it when it is reachable and not much of a detour
     const field = fieldTo(m.world, `site${m.site}`, s.x, s.z);
     const direct = fieldDist(m.world, field, sp.x, sp.z);
     const around = Math.hypot(br.viaX - sp.x, br.viaZ - sp.z) + fieldDist(m.world, field, br.viaX, br.viaZ);
     br.via = br.role === 'flank' && Number.isFinite(around) && around < direct * 1.5;
-    setGoal(br, s.x, s.z, `site${m.site}`);
-  } else setGoal(br, a.body.x, a.body.z);
+    setGoal(m, br, s.x, s.z, `site${m.site}`);
+  } else setGoal(m, br, a.body.x, a.body.z);
 }
 
 /** One frame of a bot's decisions, as the same input a player would give. */
@@ -492,6 +665,7 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     br.reset = m.mode === 'dm' ? true : br.reset;
     return inp;
   }
+  if (m.mode === 'royale' && a.drop) return dropInput(m, a, br, inp, dt);
   if (br.reset) roundReset(m, a, br);
   const r = br.rng;
   if (m.mode === 'uplink' && m.phase === 'buy') {
@@ -516,8 +690,11 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
   br.waitT -= dt;
   if (br.think <= 0) {
     br.think = 0.32 - br.skill * 0.2 + r() * 0.05;
+    // far from you in a royale nobody sees the difference: think half as often
+    if (m.mode === 'royale' && br.target < 0 && Math.hypot(a.body.x - m.actors[0].body.x, a.body.z - m.actors[0].body.z) > 160) br.think *= 2;
     perceive(m, a, br);
-    if (br.target < 0) plan(m, a, br);
+    // empty handed in a royale: keep looking for a gun even with someone in sight
+    if (br.target < 0 || (m.mode === 'royale' && !currentGun(a))) plan(m, a, br);
     route(m, a, br);
     if (br.detourT <= 0) steer(m, a, br);
     // stuck: walked under a second's worth less than half a meter while trying to move
@@ -535,18 +712,34 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
       br.posZ = a.body.z;
     }
   }
-  if (a.guns[0] && a.slot !== 0 && (a.guns[0].mag > 0 || a.guns[0].reserve > 0)) inp.slot = 0;
+  // a long gun with rounds beats the sidearm; a gun with nothing left gets swapped for one that has some
+  const loaded = (k: number) => !!a.guns[k] && (a.guns[k]!.mag > 0 || spareOf(m, a, a.guns[k]!) > 0);
+  if (a.slot === 1 || !loaded(a.slot)) {
+    const k = loaded(0) ? 0 : loaded(2) ? 2 : loaded(1) ? 1 : -1;
+    if (k >= 0 && k !== a.slot) inp.slot = k;
+  }
   const g = currentGun(a);
   const w = g ? WEAPONS[g.id] : WEAPONS.wren;
-  if (g && g.mag === 0 && g.reserve === 0 && m.mode === 'uplink') inp.slot = a.slot === 0 ? 1 : 0;
 
   const tgt = br.target >= 0 ? m.actors[br.target] : null;
+  // royale: pick up what it came for (or anything wanted at its feet), and heal in a quiet moment
+  if (m.mode === 'royale') {
+    const it = br.loot >= 0 ? m.loot[br.loot] : null;
+    if (it && it.live && Math.hypot(it.x - a.body.x, it.z - a.body.z) < 1.9) inp.use = true;
+    else if (!tgt)
+      for (const o of m.loot)
+        if (o.live && Math.abs(o.x - a.body.x) < 1.3 && Math.abs(o.z - a.body.z) < 1.3 && wants(a, o)) {
+          inp.use = true;
+          break;
+        }
+    if (!tgt && br.healNow && a.healT <= 0) inp.heal = true;
+  }
   let wantYaw = a.yaw;
   let wantPitch = 0;
   let moveAng = br.detourT > 0 ? br.detourA : br.heading;
   br.moving = true;
   let walk = false;
-  if (tgt && tgt.alive) {
+  if (tgt && tgt.alive && g) {
     br.seenFor += dt;
     const dx = tgt.body.x - a.body.x;
     const dz = tgt.body.z - a.body.z;
@@ -563,14 +756,14 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     wantYaw = Math.atan2(-ax, -az);
     wantPitch = Math.atan2(ay, Math.hypot(ax, az));
     // error settles, with a little jitter for the worse bots
-    const settle = 1.2 + br.skill * 4.5;
+    const settle = (1.2 + br.skill * 4.5) * (m.mode === 'royale' ? 0.55 : 1);
     br.errY *= Math.exp(-settle * dt);
     br.errP *= Math.exp(-settle * dt);
     br.errT -= dt;
     if (br.errT <= 0) {
       br.errT = 0.25 + r() * 0.3;
       const tv = Math.hypot(tgt.body.vx, tgt.body.vz);
-      const j = (1 - br.skill) * 0.01 + tv * 0.0015 * (1 - br.skill * 0.6);
+      const j = ((1 - br.skill) * 0.01 + tv * 0.0015 * (1 - br.skill * 0.6)) * (m.mode === 'royale' ? 1.8 : 1);
       br.errY += (r() - 0.5) * 2 * j;
       br.errP += (r() - 0.5) * j;
     }
@@ -586,7 +779,8 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     const toward = Math.atan2(dx, dz);
     const reach = REACH[g?.id ?? 'wren'];
     moveAng = toward + (Math.PI / 2) * br.strafe;
-    if (d > pref + 12) moveAng = toward + (d > reach ? 0.15 : 0.5) * br.strafe;
+    if (!g) moveAng = toward + Math.PI + 0.5 * br.strafe;
+    else if (d > pref + 12) moveAng = toward + (d > reach ? 0.15 : 0.5) * br.strafe;
     else if (d < pref * 0.5) moveAng = toward + Math.PI - 0.6 * br.strafe;
     if (!free(m, a, moveAng, 1.6)) moveAng = toward - (Math.PI / 2) * br.strafe;
     // ready to shoot?
@@ -624,7 +818,7 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     }
     if (g && g.mag === 0) inp.reload = true;
     // a frag at a target behind cover
-    if (m.mode === 'uplink' && a.frags > 0 && br.nadeT <= 0 && br.seenFor > 1 && d > 10 && d < 32 && br.skill > 0.3 && r() < 0.02) {
+    if (m.mode !== 'dm' && a.frags > 0 && br.nadeT <= 0 && br.seenFor > 1 && d > 10 && d < 32 && br.skill > 0.3 && r() < 0.02) {
       wantPitch += 0.25 + d * 0.004;
       inp.throw = 'frag';
       br.nadeT = 8;
@@ -633,8 +827,9 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     br.seenFor = 0;
     br.burst = 0;
     // reload in a quiet moment
-    if (g && g.mag < WEAPONS[g.id].mag * 0.5 && (g.reserve > 0 || m.mode === 'dm')) inp.reload = true;
-    const lostRecently = br.hasLast && m.time - br.lostAt < 4;
+    if (g && g.mag < WEAPONS[g.id].mag * 0.5 && spareOf(m, a, g) > 0) inp.reload = true;
+    // (empty handed there's nothing to hunt them with: keep running to the loot)
+    const lostRecently = br.hasLast && m.time - br.lostAt < 4 && !!g;
     if (lostRecently) {
       const ax = br.lastX - a.body.x;
       const az = br.lastZ - a.body.z;
@@ -656,7 +851,7 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
       wantYaw = yawOf(moveAng);
       wantPitch = -0.04;
       const gd = Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z);
-      if (gd < 2.2) {
+      if (gd < (m.mode === 'royale' ? 0.9 : 2.2)) {
         moveAng = NaN;
         const sp = m.mode === 'uplink' ? m.world.spawns[1 - a.team] : null;
         if (sp) wantYaw = Math.atan2(-(sp.x - a.body.x), -(sp.z - a.body.z)) + (br.holdA - 0.5) * 1.4;
@@ -682,7 +877,7 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     br.moving = false;
   } else {
     const gd = Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z);
-    if (!tgt && gd < 1.6 && br.detourT <= 0) br.moving = false;
+    if (!tgt && gd < (m.mode === 'royale' ? 0.9 : 1.6) && br.detourT <= 0) br.moving = false;
     else {
       const wx = Math.sin(moveAng);
       const wz = Math.cos(moveAng);
