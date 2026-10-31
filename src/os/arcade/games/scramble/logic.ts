@@ -775,10 +775,15 @@ export type Match = {
   locked: number[];
   /** The kill leader (the most kills, LEADER_MIN at least, and still in), or -1. */
   leader: number;
-  /** When each egg last called a supply drop with a flare (the host's record). */
+  /** When each egg last called a supply drop with a flare (the host's record, and every guest's, for a new host). */
   calls: Map<number, number>;
   /** The cars that can be driven (see Ride). */
   rides: Ride[];
+  /**
+   * Pickups asked of a new host while it waits to hear what its guests saw the old one settle (see session.ts
+   * takeOver), each egg and loot once, in the order asked; null the rest of the time.
+   */
+  held: [number, number][] | null;
   storm: StormNow;
   events: Ev[];
   rng: Rng;
@@ -1365,6 +1370,7 @@ export function createMatch(opts: { seed: number; role: Role; level: Level; entr
     leader: -1,
     calls: new Map(),
     rides: ridesOf(map),
+    held: null,
     storm: stormAt(map.storm, 0),
     events: [],
     rng: rng32((opts.seed * 31 + 7 + Math.max(0, opts.me)) >>> 0),
@@ -1383,21 +1389,23 @@ export function createMatch(opts: { seed: number; role: Role; level: Level; entr
   });
   for (let t = 0; t < m.teams.length; t++) m.teams[t] ??= [];
   for (const f of m.fighters) if (f.kind === 'bot') f.ai = newAi(m, f);
-  // computer eggs on a team drop together, where the first of them meant to, one after another
-  if (size > 1)
-    for (const ids of m.teams) {
-      const lead = ids.map((id) => m.fighters[id].ai).find((ai) => !!ai);
-      let k = 0;
-      for (const id of ids) {
-        const ai = m.fighters[id].ai;
-        if (!ai || !lead || ai === lead) continue;
-        k++;
-        ai.gx = lead.gx + DIR_X[k % 4] * 2.5;
-        ai.gz = lead.gz + DIR_Z[k % 4] * 2.5;
-        ai.jumpAt = Math.min(m.map.bus.off - 0.05, lead.jumpAt + k * 0.15);
-      }
-    }
+  dropTogether(m);
   return m;
+}
+
+/** Computer eggs on a team still on the bus drop together, where the first of them meant to, one after another. */
+function dropTogether(m: Match) {
+  if (TEAM_SIZE[m.mode] < 2) return;
+  for (const ids of m.teams) {
+    const aboard = ids.map((id) => m.fighters[id]).filter((f) => f.ai && f.phase === 'bus');
+    const lead = aboard[0]?.ai;
+    aboard.slice(1).forEach((f, i) => {
+      const ai = f.ai!;
+      ai.gx = lead!.gx + DIR_X[(i + 1) % 4] * 2.5;
+      ai.gz = lead!.gz + DIR_Z[(i + 1) % 4] * 2.5;
+      ai.jumpAt = Math.min(m.map.bus.off - 0.05, lead!.jumpAt + (i + 1) * 0.15);
+    });
+  }
 }
 
 /** The vault door each container is shut behind (one in a bank's vault), or -1. */
@@ -1417,6 +1425,67 @@ function lockedBy(map: GameMap) {
 /** Lets the computer play an egg this client owns (tests use it to stand in for people). */
 export function autopilot(m: Match, f: Fighter) {
   f.ai = newAi(m, f);
+}
+
+/**
+ * The computer eggs the host ran, taken over here when the host left (see session.ts takeOver): each plays on from
+ * where it was last heard of, with what it carries, and makes its plans afresh. Still on the bus, it jumps when it
+ * means to (soon, if that was meant to be already), its team with it; gliding, it keeps on the way it was going; on
+ * the ground, it picks what to do next at once.
+ */
+export function adoptBots(m: Match) {
+  for (const f of m.fighters) {
+    if (f.seat !== -1 || f.kind !== 'remote') continue;
+    if (f.phase === 'out') f.kind = 'bot';
+    else adopt(m, f);
+  }
+  dropTogether(m);
+}
+
+function adopt(m: Match, f: Fighter) {
+  const last = f.snaps[f.snaps.length - 1];
+  if (last && f.phase !== 'bus') {
+    f.x = last.x;
+    f.z = last.z;
+    f.y = last.y;
+    f.aim = last.aim;
+  }
+  const vx = last?.vx ?? 0;
+  const vz = last?.vz ?? 0;
+  f.kind = 'bot';
+  f.snaps = [];
+  f.ox = f.oz = f.oa = 0;
+  f.outSeen = -1;
+  f.vx = f.phase === 'drop' ? vx : 0;
+  f.vz = f.phase === 'drop' ? vz : 0;
+  f.input = noInput();
+  f.input.aim = f.aim;
+  f.on = -1;
+  f.fireT = 0.3;
+  f.burst = 0;
+  f.reloadT = 0;
+  f.reloadSlot = -1;
+  f.using = null;
+  f.useT = 0;
+  f.queued = null;
+  f.heat = 0;
+  f.spin = 0;
+  f.reviving = -1;
+  f.pending.clear();
+  const ai = newAi(m, f);
+  f.ai = ai;
+  ai.cheered = f.kills;
+  if (f.down) ai.cried = f.downAt;
+  if (f.phase === 'bus') ai.jumpAt = Math.min(m.map.bus.off - 0.05, Math.max(ai.jumpAt, m.time + m.rng() * 1.5));
+  else if (f.phase === 'drop') {
+    const t = Math.max(0, f.y) / FALL;
+    ai.gx = clamp(f.x + vx * t, -EDGE, EDGE);
+    ai.gz = clamp(f.z + vz * t, -EDGE, EDGE);
+  } else {
+    ai.goal = 'roam';
+    ai.gx = f.x;
+    ai.gz = f.z;
+  }
 }
 
 /** A match on this device: you and forty-nine computer players (in duos and squads, your teammates among them). */
@@ -2573,10 +2642,13 @@ export function applyRevive(m: Match, fid: number, to: number) {
   return true;
 }
 
-/** A knocked egg stands, on the host's word: ours gets its health back, anyone else's says so in its state. */
-export function applyRevived(m: Match, fid: number, by: number) {
+/**
+ * A knocked egg stands, on the host's word (`late`: a host that has since left, heard of by the new one): ours gets its
+ * health back, anyone else's says so in its state.
+ */
+export function applyRevived(m: Match, fid: number, by: number, late = false) {
   const f = m.fighters[fid];
-  if (m.world || !f || !f.down || f.phase === 'out') return false;
+  if ((m.world && !late) || !f || !f.down || f.phase === 'out') return false;
   standUp(m, f);
   emit(m, { t: 'revived', f: fid, by, net: true });
   return true;
@@ -3173,6 +3245,8 @@ export function setDoor(m: Match, i: number, s: number, by: number, announce: bo
   m.doors[i] = s;
   m.doorAt[i] = m.clock;
   if (s === DOOR_GONE) m.doorHp[i] = 0;
+  // (a guest keeps when a vault door will be open too, in case it ends up running the match)
+  if (s === DOOR_OPENING && m.doorT[i] === Infinity) m.doorT[i] = m.time + VAULT_TIME;
   for (const f of m.fighters) f.pending.delete(-1_000_000 - i);
   emit(m, announce ? { t: 'door', f: by, i, s } : { t: 'door', f: by, i, s, net: true });
 }
@@ -3317,12 +3391,15 @@ export function callDrop(m: Match, fid: number, x: number, z: number) {
   return id;
 }
 
-/** A supply drop the host has called, on its word. */
-export function applyCalled(m: Match, fid: number, id: number, x: number, z: number, at: number) {
+/** A supply drop the host has called, on its word (`late`: a host that has since left, heard of by the new one). */
+export function applyCalled(m: Match, fid: number, id: number, x: number, z: number, at: number, late = false) {
   const c = m.map.containers[id];
-  if (m.world || !c || !c.flare || c.at !== Infinity) return;
+  if ((m.world && !late) || !c || !c.flare || c.at !== Infinity) return false;
   placeDrop(m.map, c, x, z, at);
+  // (kept, so whoever runs the match next still holds that egg to one flare every ten seconds)
+  m.calls.set(fid, at - FLARE_WAIT);
   emit(m, { t: 'called', f: fid, c: id, x: c.x, z: c.z, at, net: true });
+  return true;
 }
 
 // -------------------------------------------------------------------------------------------------------------------
@@ -4061,11 +4138,15 @@ function requestOpen(m: Match, f: Fighter, c: number) {
   }
 }
 
-/** The host hands a pickup to whoever asked first. Returns false when it's already gone. */
+/** The host hands a pickup to whoever asked first. Returns false when it's already gone (or held for a moment). */
 export function grantTake(m: Match, fid: number, id: number, announce: boolean) {
   const l = m.loot.get(id);
   const f = m.fighters[fid];
   if (!l || !f || f.phase !== 'ground') return false;
+  if (m.held) {
+    if (!m.held.some(([a, b]) => a === fid && b === id)) m.held.push([fid, id]);
+    return false;
+  }
   takeLoot(m, id);
   m.gone.add(id);
   if (owned(f)) give(m, f, l.def, f.keyAsk === id);
@@ -4073,14 +4154,18 @@ export function grantTake(m: Match, fid: number, id: number, announce: boolean) 
   return true;
 }
 
-/** The host says someone got a pickup. If it's ours, it goes in our pockets. */
-export function applyTook(m: Match, fid: number, id: number, def: LootDef) {
+/**
+ * The host says someone got a pickup. If it's ours, it goes in our pockets (not when `pocket` is false: a computer egg
+ * a new host has taken over carries what it had when last heard of). News heard twice changes nothing.
+ */
+export function applyTook(m: Match, fid: number, id: number, def: LootDef, pocket = true) {
+  if (m.gone.has(id) && !m.loot.has(id)) return;
   takeLoot(m, id);
   m.gone.add(id);
   const f = m.fighters[fid];
   if (!f) return;
   f.pending.delete(id);
-  if (owned(f)) {
+  if (owned(f) && pocket) {
     if (f.phase === 'ground') give(m, f, def, f.keyAsk === id);
     // cracked while the host was saying yes: it goes back down where we fell, for anyone to pick up
     else dropItem(m, f, def, f.x, f.z);

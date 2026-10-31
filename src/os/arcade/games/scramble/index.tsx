@@ -68,7 +68,7 @@ import {
   type RideKind,
 } from './logic';
 import { configOf, parsePacket, teamAsk, type Bots } from './net';
-import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, frameTime, guestMatch, hostBots, hostMatch, namesOf, newSession, nextTeam, offscreen, pinTeam, receive, resultCard, share, stepIn, teamsFor, tick, winnersOf, type Session } from './session';
+import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, frameTime, guestMatch, handOff, hostBots, hostMatch, namesOf, newSession, nextTeam, offscreen, pinTeam, receive, resultCard, share, stepIn, takeOver, teamsFor, tick, toNewHost, winnersOf, type Session } from './session';
 import { ARMOR_NAMES, MATS, MAT_MAX, MELEE, PIECE_COST, RARITY_COLORS, SCOPES, THROW, THROWS, THROW_IDS, USES, USE_IDS, WEAPONS, ammoCap, isMelee, isThrow, isWeapon, legendary, lootName, reloadOf, type Ammo, type LootDef, type MeleeId, type ThrowId, type UseId, type WeaponId } from './items';
 import { DEEP, HALF, SUPPLY_FALL, basementAt, isDeep, placeAt, topX, type ContainerKind } from './map';
 import { AMMO_FILL, AmmoIcon, ArmorIcon, BasementArt, CrownIcon, DROP_KEY, EDIT_KEY, EMOTE_KEY, EditIcon, EggIcon, EmoteIcon, emoteText, GhillieIcon, HowToPlay, IslandArt, MAT_KEY, MatIcon, PIECE_KEYS, PIECE_NAMES, PING_KEY, PackIcon, PieceIcon, PingIcon, PlaceNames, SCOPE_KEY, ScopeIcon, USE_KEYS, UseIcon, WeaponIcon, keyCode } from './hud';
@@ -364,6 +364,9 @@ function Stage() {
   return <Play key={current.current.key} mode={current.current.mode} />;
 }
 
+/** The card for someone who joined just as a match was set up, and sits it out. */
+const SIT_OUT = { title: 'Sitting This One Out', detail: 'You Will Be in the Next Round.' };
+
 /** A stand-in while a guest waits for the host: the island with nobody on it. */
 const waitingMatch = (level: Level) => createMatch({ seed: 1, role: 'guest', level, entrants: [], me: -1 });
 
@@ -542,20 +545,27 @@ function Play({ mode }: { mode: StageMode }) {
   const view = useRef<View | null>(null);
   const match = useRef<Match | null>(null);
   const net = useRef<Session>(null as unknown as Session);
+  /**
+   * Sets up the match as its host: the room's bots, and with any of them, more to fill the island when the host wants
+   * it (quick play always does), in the mode quick play found (else the host's, with the teams as the room arranged
+   * them). The room's hand-offs this round so far are behind us: its seats are as they are now.
+   */
+  const setUp = (o: NonNullable<typeof online>) => {
+    const quick = o.quick;
+    const bots = hostBots(quick, o.bots.length, fill === 'fill');
+    const md: Mode = quick ? (isMode(o.pool) ? o.pool : 'solo') : teamMode;
+    const h = hostMatch(o.players, o.seat, randomSeed(), quick ? QUICK_LEVEL : level, bots, COUNTDOWN + HOST_LEAD, md, quick ? [] : lobbyPicks.current);
+    match.current = h.match;
+    // (the same session the room's handlers hold, afresh)
+    net.current = Object.assign(net.current ?? {}, newSession(true, h.roster));
+    net.current.handoffs = o.handedOff.filter((x) => x.round === o.round).length;
+  };
   net.current ??= newSession(!live || online!.isHost);
   if (!match.current) {
     if (mode === 'idle') match.current = soloMatch(randomSeed(), level);
     else if (!live) match.current = soloMatch(randomSeed(), level, 'you', FIGHTER_COLORS[0], teamMode);
-    else if (online!.isHost) {
-      // the room's bots, and with any of them, more to fill the island when the host wants it (quick play always does),
-      // in the mode quick play found (else the host's, with the teams as the room arranged them)
-      const quick = online!.quick;
-      const bots = hostBots(quick, online!.bots.length, fill === 'fill');
-      const md: Mode = quick ? (isMode(online!.pool) ? online!.pool : 'solo') : teamMode;
-      const h = hostMatch(online!.players, online!.seat, randomSeed(), quick ? QUICK_LEVEL : level, bots, COUNTDOWN + HOST_LEAD, md, quick ? [] : lobbyPicks.current);
-      match.current = h.match;
-      net.current.roster = h.roster;
-    } else match.current = waitingMatch(level);
+    else if (online!.isHost) setUp(online!);
+    else match.current = waitingMatch(level);
   }
   const [viewKey, setViewKey] = useState(0);
   const clock = useRef(0);
@@ -749,13 +759,14 @@ function Play({ mode }: { mode: StageMode }) {
   // -------------------------------------------------------------------------------------------------------------
   // Online: state about 15 times a second, events as they happen, the result from the host.
 
-  /** Whether this game runs the match (the host when it started), and the room's host hand-offs by then. */
+  /** Whether this game runs the match: the host when it started, or one that took it over when the host left. */
   const hosting = useRef(!!online?.isHost);
-  const handoffs = useRef(online?.handoffs ?? 0);
   /**
    * The result card for an online match. `report` once the host has called it; `early` when we are out and have seen
    * enough before the end: the match goes on for everyone else (the host's timer keeps running it), and the card
-   * keeps up with it until the result comes, which is still reported.
+   * keeps up with it until the result comes, which is still reported. In a room of our own, the host's Play Again
+   * waits for the end (it starts the next match for everyone); in quick play it never does (it finds another match,
+   * and someone else runs this one).
    */
   const finishOnline = (report: boolean, early = false) => {
     const n = net.current;
@@ -769,7 +780,7 @@ function Play({ mode }: { mode: StageMode }) {
       o.reportResult(o.round, winner ? winner.seat : null, m.mode !== 'solo' && winner ? people.map((f) => f.seat) : undefined);
     }
     if (n.over && !n.early) return;
-    const { won, ...card } = resultCard(m, early, hosting.current);
+    const { won, ...card } = resultCard(m, early, hosting.current && !o?.quick);
     n.early = early;
     if (n.over) {
       shellRef.current.updateOver(card);
@@ -782,17 +793,67 @@ function Play({ mode }: { mode: StageMode }) {
   const finishRef = useRef(finishOnline);
   finishRef.current = finishOnline;
 
+  /**
+   * Follows the room's host hand-offs this match: the roster follows each, and once the room has made us the host our
+   * game takes the match over (see takeOver), while a guest tells the new host what it heard the old one settle. A note
+   * says who runs the match now; nothing else changes on screen.
+   */
+  function syncHost() {
+    const o = onlineRef.current;
+    const n = net.current;
+    const m = match.current;
+    if (!o || !m) return;
+    const ours = o.handedOff.filter((h) => h.round === o.round);
+    if (ours.length <= n.handoffs) return;
+    if (!n.synced) {
+      n.handoffs = ours.length;
+      if (!o.isHost) return;
+      // made the host of a match we sat out: nothing to take over, nor to hold the next one for
+      if (shellRef.current.status === 'over') shellRef.current.updateOver(SIT_OUT);
+      else {
+        // the host left before its first report got to us: nobody has the match it set up, so we set it up afresh
+        // (anyone who did hear of it hears of this one and joins it instead)
+        setUp(o);
+        hosting.current = true;
+        lastStep.current = performance.now() / 1000;
+        setViewKey((x) => x + 1);
+        addFeed('you are now running the match', true);
+      }
+      return;
+    }
+    const now = performance.now() / 1000;
+    for (const h of ours.slice(n.handoffs)) handOff(n, m, h.from, now);
+    const me = { seat: o.seat, isHost: o.isHost, round: o.round };
+    if (o.isHost && !n.host) {
+      takeOver(n, m, me, o.players.map((p) => p.seat), now);
+      hosting.current = true;
+      // (a card up since we were done watching: our timer runs the match from now, not from when we stopped)
+      lastStep.current = now;
+      // a card already up: out early, it is the host's now; with the result in, the room may hear the match is over
+      if (n.over && n.early) finishRef.current(false, true);
+      else if (n.over) {
+        const card = resultCard(m, false, false);
+        shellRef.current.updateOver({ title: card.title, detail: card.detail });
+      }
+    } else if (!o.isHost) for (const d of toNewHost(n, m, me, now)) o.send(d);
+    const host = o.players.find((p) => p.seat === 0);
+    addFeed(o.isHost ? 'you are now running the match' : `${host?.name ?? 'someone else'} is now running the match`, o.isHost);
+  }
+  const syncRef = useRef(syncHost);
+  syncRef.current = syncHost;
+
   useEffect(() => {
     if (!live) return;
     const n = net.current;
     const off = onlineRef.current!.onMessage((from, d) => {
+      syncRef.current();
       const o = onlineRef.current;
       const m = match.current;
       if (!o || !m) return;
       // Left out of the host's match (joined just as it was set up): sit it out rather than wait for good.
       const packet = !n.synced && from === 0 ? parsePacket(d) : null;
       if (packet?.k === 'S' && packet.round === o.round && packet.roster && !packet.roster.includes(o.seat)) {
-        if (shellRef.current.status === 'playing') shellRef.current.gameOver(undefined, { title: 'Sitting This One Out', detail: 'You Will Be in the Next Round.' });
+        if (shellRef.current.status === 'playing') shellRef.current.gameOver(undefined, SIT_OUT);
         return;
       }
       const next = receive(n, m, { seat: o.seat, isHost: o.isHost, round: o.round }, from, d, (seed, lvl, time, roster, md, teams) => guestMatch(o.players, o.seat, seed, lvl, time, roster, md, teams), performance.now() / 1000);
@@ -802,21 +863,13 @@ function Play({ mode }: { mode: StageMode }) {
       }
     });
     const timer = window.setInterval(() => {
+      // the host left and someone took over (maybe us): the match goes on
+      syncRef.current();
       const o = onlineRef.current;
       const m = match.current;
       if (!o || !m) return;
       const me = { seat: o.seat, isHost: o.isHost, round: o.round };
       const now = performance.now() / 1000;
-      // the host left and someone took over: the match its game ran is over (the shell has said so), and a card that
-      // went up early stops waiting for it
-      if (o.handoffs !== handoffs.current) {
-        if (n.early) {
-          n.early = false;
-          const card = resultCard(m, false, false);
-          shellRef.current.updateOver({ title: card.title, detail: `${card.detail} The host left before the end.` });
-        }
-        return;
-      }
       // a hidden tab gets no frames, so the match carries on from here: our egg stands still but the storm still
       // bites and the glide still lands. A host keeps the computer eggs and everyone's pickups going, hidden or done
       // watching.

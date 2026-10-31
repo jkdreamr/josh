@@ -149,7 +149,7 @@ export const ONLINE_SPECS: Record<string, OnlineSpec> = {
   "pong": {"seats":2,"watch":true},
   "pool": {"seats":2},
   "run-3d": {"seats":4,"bots":true},
-  "scramble": {"seats":20,"lateJoin":true,"bots":true,"quick":true},
+  "scramble": {"seats":20,"lateJoin":true,"bots":true,"quick":true,"migrate":true},
   "slither": {"seats":8,"lateJoin":true,"bots":true,"quick":true},
   "snake": {"seats":4},
   "soccer": {"seats":4,"bots":true,"watch":true},

@@ -211,6 +211,59 @@ assert.equal((await hands[2].wait('start', (message) => message.round === 2)).pl
 pass('The new host starts the next round');
 for (const client of hands.slice(1)) client.socket.close();
 
+// A game whose new host takes the round over (Scramble): the round goes on, someone playing it takes over rather than
+// a latecomer sitting it out in a lower seat, and the win the people still in it agree on is recorded.
+const goCode = await createRoom('scramble', true);
+const goers = [];
+for (const name of ['GoAnn', 'GoBo', 'GoCy', 'GoEve']) {
+  const client = await connect(goCode, name, 4);
+  await client.wait('welcome');
+  goers.push(client);
+}
+goers[0].send({ t: 'start' });
+const goRound = (await Promise.all(goers.map((client) => client.wait('start'))))[0].round;
+goers[1].socket.close(1000, 'leave');
+await goers[0].wait('players', (message) => message.players.length === 3 && !message.players.some((player) => player.name === 'GoBo'));
+const goLate = await connect(goCode, 'GoDee', 4);
+assert.equal((await goLate.wait('welcome')).seat, 1, 'the latecomer takes the seat that came free');
+goers[0].socket.close(1000, 'leave');
+const goHand = await Promise.all([goers[2], goers[3], goLate].map((client) => client.wait('host')));
+assert.deepEqual(goHand.map((message) => [message.from, message.started, message.players.map((player) => `${player.seat}:${player.name}`).join(' ')]), Array(3).fill([2, true, '0:GoCy 1:GoDee 3:GoEve']));
+await new Promise((resolve) => setTimeout(resolve, 100));
+assert.equal((await openRooms('scramble')).find((room) => room.code === goCode)?.started, true, 'still playing');
+for (const client of [goers[2], goers[3]]) client.send({ t: 'result', round: goRound, winner: 0 });
+const goDeadline = Date.now() + 5000;
+let goWin = null;
+while (!goWin && Date.now() < goDeadline) {
+  goWin = (await (await fetch(`${api}/wins?game=scramble`)).json()).entries.find((entry) => entry.name === 'GoCy') ?? null;
+  if (!goWin) await new Promise((resolve) => setTimeout(resolve, 100));
+}
+assert.ok(goWin, 'the win the two still in the round agree on is recorded');
+pass('A round the new host takes over goes on, someone playing it hosts, and its result is recorded');
+for (const client of [goers[2], goers[3], goLate]) client.socket.close();
+
+// ...but with nobody from the round left to run it (only a latecomer sitting it out), it ends, bots or not.
+const endCode = await createRoom('scramble', true);
+const enders = [];
+for (const name of ['EndAnn', 'EndBo']) {
+  const client = await connect(endCode, name, 4);
+  await client.wait('welcome');
+  enders.push(client);
+}
+enders[0].send({ t: 'bots', n: 5 });
+await enders[1].wait('players', (message) => Array.isArray(message.bots) && message.bots.length === 5);
+enders[0].send({ t: 'start' });
+await enders[1].wait('start');
+const endLate = await connect(endCode, 'EndLate', 4);
+await endLate.wait('welcome');
+enders[1].socket.close(1000, 'leave');
+await endLate.wait('players', (message) => !message.players.some((player) => player.name === 'EndBo'));
+enders[0].socket.close(1000, 'leave');
+const endHand = await endLate.wait('host');
+assert.deepEqual([endHand.from, endHand.started], [2, false], 'the latecomer hosts the room, and the round is over');
+pass('A round nobody from it is left to run ends when its host leaves, so the latecomer starts the next');
+endLate.socket.close();
+
 const lightCode = await createRoom('lightcycles');
 const riders = [];
 for (let seat = 0; seat < 4; seat++) {

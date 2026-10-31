@@ -196,7 +196,7 @@ import {
 } from '../src/os/arcade/games/scramble/logic.ts';
 import { BLEED_T, CRAWL, DOWN_HP, F_DOWN, F_REVIVE, PING_T, REVIVE_HP, REVIVE_T, dropOut, forfeit, isMode, pingOf, reviveEgg, reviveShare, teamCount, type Mode } from '../src/os/arcade/games/scramble/logic.ts';
 import { ASK_T, EMOTE_GAP, EMOTE_IDS, EMOTE_SPAN, EMOTE_T, FACE_EMOTES, TEAM_EMOTES, ammoAsk, emoteOf, emoteReady, endMatch, isTeamEmote, type EmoteId, type LootItem } from '../src/os/arcade/games/scramble/logic.ts';
-import { actorOf, parseTeams, teamAsk } from '../src/os/arcade/games/scramble/net.ts';
+import { LEFT, actorOf, applySettled, kitOf, kitsOf, logOf, parseKit, parseTeams, putKit, teamAsk } from '../src/os/arcade/games/scramble/net.ts';
 import { BURN, CRASH, F_RIDE, RAM, RIDES, RIDE_VIEW, THROUGH, alight, angleDiff, board, burning, damageRide, makeRide, rideGap, rideNear, seatAt, seatFor, syncRides, wreckRide, type Ride, type RideKind } from '../src/os/arcade/games/scramble/logic.ts';
 import { packSeats, parseRides, rideNotes, unpackSeats } from '../src/os/arcade/games/scramble/net.ts';
 import { drivable } from '../src/os/arcade/games/scramble/map.ts';
@@ -1260,9 +1260,9 @@ test('packets survive the trip and anything malformed is turned away', () => {
   assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(guestState(4, s, 7)))), { k: 's', round: 4, state: s, watch: 7 });
   assert.equal(parsePacket({ ...guestState(4, s), v: MAX_FIGHTERS }), null);
   const host = parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, -2.5, 'hard', [0, 1, -1], [[0, s], [2, s]]))));
-  assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]], glass: null, doors: [], mode: 'solo', teams: null, rides: [] });
+  assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]], glass: null, doors: [], mode: 'solo', teams: null, rides: [], handoffs: 0 });
   // the roster only goes with some of the host's reports
-  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]], glass: null, doors: null, mode: 'solo', teams: null, rides: null });
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]], glass: null, doors: null, mode: 'solo', teams: null, rides: null, handoffs: 0 });
   assert.equal(parsePacket({ ...hostState(4, 99, 3, 'hard', null, []), ro: 'all' }), null);
   assert.deepEqual(parsePacket(endOf(4, 2, [[2, 1, 3], [0, 2, 1]])), { k: 'end', round: 4, winner: 2, places: [[2, 1, 3], [0, 2, 1]] });
   assert.deepEqual(parsePacket(configOf(4, 'none', 'easy')), { k: 'cfg', round: 4, bots: 'none', level: 'easy', mode: 'solo', picks: [] });
@@ -1512,10 +1512,14 @@ for (const [label, opts] of [
     }
     const gone = 'leave' in opts ? opts.leave.seat : 'stall' in opts ? opts.stall.seat : -1;
     if (gone >= 0) {
-      const egg = host.fighters.find((f) => f.seat === gone)!;
+      // (people's eggs go in seat order)
+      const egg = host.fighters[gone];
       assert.equal(egg.phase, 'out', 'the host took out the egg of someone who stopped playing');
       assert.equal(egg.outCause, 'left');
       assert.notEqual(live[0].s.end!.winner, egg.id);
+      // someone who left is nobody's seat any more, for everyone; someone gone quiet still holds theirs
+      if ('leave' in opts) for (const c of live) assert.equal(c.m!.fighters[gone].seat, LEFT, `seat ${c.seat}: the egg of someone who left is nobody's`);
+      else assert.equal(egg.seat, gone);
     }
   });
 }
@@ -1552,7 +1556,7 @@ for (const [label, opts] of [
     assert.deepEqual([...new Set(end.places.map(([, p]) => p))].sort((a, b) => a - b), Array.from({ length: teamCount(host) }, (_, i) => i + 1));
     if ('leave' in opts) {
       // out for leaving, unless it was cracked before
-      const egg = host.fighters.find((f) => f.seat === opts.leave.seat)!;
+      const egg = host.fighters[opts.leave.seat];
       assert.equal(egg.phase, 'out');
       assert.ok(egg.outCause === 'left' || egg.outAt < opts.leave.at + 1, `the egg of the one who left went out to ${egg.outCause} at ${egg.outAt.toFixed(0)} s`);
     }
@@ -3513,11 +3517,16 @@ test('the host tells each guest about the eggs near the one it watches whenever 
   const heard = new Map<number, number[]>();
   const rosters: number[] = [];
   const other: unknown[] = [];
+  const kits: (number | undefined)[] = [];
   for (let t = 0; t < 30; t++) {
     m.fighters[10].x += 0.5;
     for (const f of m.fighters) s.heard.set(f.id, 0);
     for (const out of tick(s, m, me, [0, 1, 2, 7], 1 + t * 0.066)) {
       const p = parsePacket(JSON.parse(JSON.stringify(out.d)));
+      if (p?.k === 'K') {
+        kits.push(out.to);
+        continue;
+      }
       assert.ok(p && p.k === 'S');
       if (out.to === 7) {
         other.push(p);
@@ -3537,6 +3546,7 @@ test('the host tells each guest about the eggs near the one it watches whenever 
   for (const f of m.fighters) if (f.id !== 1) assert.ok(n(f.id) >= 2, `every egg is heard of (${f.id})`);
   assert.deepEqual(rosters, [4, 9, 14, 19, 24, 29], 'the roster with every reliable report');
   assert.ok(other.length === 6 && other.every((p) => (p as { states: unknown[]; roster: number[] }).states.length === 0 && (p as { roster: number[] }).roster.length === MAX_FIGHTERS), 'someone not in the match only hears the roster');
+  assert.deepEqual(kits, [1, 2, 1, 2, 1, 2, 1, 2, 1, 2, 1, 2], 'what the computer eggs carry, with each reliable report, to the guests in the match next in line');
   // once its egg is out, the eggs near the one it watches
   g.phase = 'out';
   s.states.set(1, st(0, 0, 'out'));
@@ -4775,7 +4785,7 @@ test('quick play always fills the island to fifty at normal, whoever hosts and h
 });
 
 test('meta: twenty seats with late joining, bots and quick play, and a board per level', () => {
-  assert.deepEqual(meta.online, { seats: 20, lateJoin: true, bots: true, quick: true });
+  assert.deepEqual(meta.online, { seats: 20, lateJoin: true, bots: true, quick: true, migrate: true });
   assert.match(meta.controls, /Play joins the next match/);
   assert.match(meta.controls, /Play with Bots/);
   assert.deepEqual(Object.keys(meta.leaderboard!.variants!), [...LEVELS]);
@@ -7897,6 +7907,8 @@ test('online over a lossy link that reorders fast packets, no screen sees an egg
   let now = 0;
   let passed = 0;
   const post = (from: C, d: object, fast: boolean, only?: number) => {
+    // (nobody takes the match over here, so what the computer eggs carry needn't go)
+    if ((d as { k?: string }).k === 'K') return;
     const to = from.me.isHost ? clients.filter((c) => c !== from && (only === undefined || c.me.seat === only)) : [clients[0]];
     for (const c of to) {
       if (fast && rng() < 0.15) continue;
@@ -8578,4 +8590,693 @@ test('computer eggs shoot at whoever drives by, and the car takes it', () => {
   for (let t = 0; t < 4; t += DT) evs.push(...hold(m, me, Math.PI / 2, DT, 0.5));
   assert.ok(evs.some((e) => e.t === 'shot' && e.f === bot.id), 'it fired');
   assert.ok(car.hp < car.max, 'into the car');
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// The host leaves: the room hands host on to someone else in it, whose game takes the match over (see takeOver).
+
+import { adoptBots, owned } from '../src/os/arcade/games/scramble/logic.ts';
+import { HOLD_TAKES, HOST_GONE, LOG_T, handOff, takeOver, toNewHost } from '../src/os/arcade/games/scramble/session.ts';
+
+/** Someone in a room the host may leave: their seat at the start (0 the host it started with) and in the room now. */
+type Mover = {
+  start: number;
+  room: number;
+  me: Me;
+  s: Session;
+  m: Match | null;
+  inbox: { at: number; from: number; by: Mover; d: unknown }[];
+  gone: boolean;
+  call: 'report' | 'quiet' | null;
+  /** The seat each hand-off moved to seat 0, as the room told this client, and when its game next looks (a render on). */
+  hand: number[];
+  syncAt: number;
+  lastRel: number;
+};
+
+/**
+ * A room whose people leave as `leaves` says: at match time `at` (or the first moment `when` holds for the host's
+ * match), the people who started in `seats` go, one after another as the room hears it. Each time the host goes the
+ * room hands host on to the lowest seat left, and that person's game takes over a moment later (a render). Of what a
+ * leaving host still had on its way to each guest, a share `lose` never gets there (a direct link closing), and the
+ * rest gets there before the room's word of the hand-off. `hooks`
+ * run on whoever hosts at a match time (to knock an egg down, say). `heirOut`: the guest in seat 1 is cracked then
+ * and done watching. `joinAt`: someone new comes into the room then and takes the lowest free seat. Returns everyone,
+ * who got each piece of loot (to spot any handed out twice), and the computer eggs' spots after the first hand-off.
+ */
+function migrate(opts: { humans: number; seed: number; level?: Level; mode?: Mode; delay?: number; loss?: number; leaves: { at?: number; when?: (m: Match) => boolean; seats: number[] }[]; lose?: number; hooks?: { at: number; run: (m: Match) => void }[]; heirOut?: number; joinAt?: number }) {
+  const { humans, seed, level = 'normal', mode, delay = 0.06, loss = 0.08, lose = 0.5 } = opts;
+  const players: Player[] = Array.from({ length: humans }, (_, seat) => ({ seat, name: `P${seat + 1}` }));
+  const rng = rng32(seed * 13 + 5);
+  const lead = COUNTDOWN + 1.2;
+  const host = hostMatch(players, 0, seed, level, MAX_FIGHTERS, lead, mode);
+  const mover = (start: number, room: number): Mover => ({ start, room, me: { seat: room, isHost: room === 0, round: 1 }, s: newSession(room === 0, room === 0 ? host.roster : []), m: room === 0 ? host.match : null, inbox: [], gone: false, call: null, hand: [], syncAt: Infinity, lastRel: 0 });
+  const ps: Mover[] = players.map((p) => mover(p.seat, p.seat));
+  autopilot(host.match, host.match.fighters[host.match.me]);
+  const got = new Map<number, number[]>();
+  // what the computer eggs carried on the old host as it left, and on the new one as it took over
+  const kits: { before?: Map<number, string>; after?: Map<number, string> } = {};
+  let now = 0;
+  let handAt = -1;
+  const live = () => ps.filter((c) => !c.gone);
+  const hostNow = () => live().find((c) => c.room === 0);
+  const present = () => live().map((c) => c.room);
+  const named = () => live().map((c) => ({ seat: c.room, name: c.start < humans ? players[c.start].name : 'New' }));
+  const post = (from: Mover, d: object, fast: boolean, only?: number) => {
+    const to = from.room === 0 ? live().filter((c) => c !== from && (only === undefined || c.room === only)) : live().filter((c) => c.room === 0);
+    for (const c of to) {
+      if (fast && rng() < loss) continue;
+      // fast packets may pass each other; the rest keep their order
+      let at = now + delay * (0.6 + rng() * 0.8);
+      if (!fast) at = c.lastRel = Math.max(c.lastRel, at);
+      c.inbox.push({ at, from: from.room, by: from, d: JSON.parse(JSON.stringify(d)) });
+      c.inbox.sort((a, b) => a.at - b.at);
+    }
+  };
+  const join = (c: Mover) => (sd: number, lv: Level, time: number, roster: number[], md: Mode, teams: number[] | null) => {
+    const m = guestMatch(named(), c.me.seat, sd, lv, time, roster, md, teams);
+    if (m.fighters[m.me]) autopilot(m, m.fighters[m.me]);
+    return m;
+  };
+  // what the room does when someone goes: when it's the host, the lowest seat still here is the host now
+  const leave = (start: number) => {
+    const c = ps[start];
+    if (!c || c.gone) return;
+    c.gone = true;
+    if (c.room !== 0) return;
+    // the room's word comes after everything the host sent on its socket, and a direct link closes with the hand-off:
+    // what was still on its way gets there first, or never
+    for (const o of live()) {
+      o.inbox = o.inbox.filter((msg) => msg.by !== c || rng() >= lose);
+      for (const msg of o.inbox) if (msg.by === c) msg.at = now;
+      o.inbox.sort((a, b) => a.at - b.at);
+    }
+    const next = live().sort((a, b) => a.room - b.room)[0];
+    if (!next) return;
+    const from = next.room;
+    if (handAt < 0) {
+      handAt = now;
+      kits.before = new Map(c.m!.fighters.filter((f) => f.seat === -1 && f.phase !== 'out').map((f) => [f.id, kitOf(f).join()]));
+    }
+    for (const o of live()) {
+      if (o.room === from) o.room = 0;
+      o.hand.push(from);
+      o.syncAt = Math.min(o.syncAt, now + 0.01 + rng() * 0.07);
+    }
+  };
+  // as the game's syncHost does, once the room's word has reached it
+  const sync = (c: Mover) => {
+    if (now < c.syncAt) return;
+    c.syncAt = Infinity;
+    c.me = { seat: c.room, isHost: c.room === 0, round: 1 };
+    if (c.hand.length <= c.s.handoffs) return;
+    if (!c.m || !c.s.synced) {
+      // the host left before its first report got here: as the host it is now, it sets the match up afresh
+      if (c.me.isHost) {
+        const fresh = hostMatch(named(), 0, seed + 1000, level, MAX_FIGHTERS, lead, mode);
+        c.m = fresh.match;
+        Object.assign(c.s, newSession(true, fresh.roster));
+        autopilot(c.m, c.m.fighters[c.m.me]);
+      }
+      c.s.handoffs = c.hand.length;
+      return;
+    }
+    for (const from of c.hand.slice(c.s.handoffs)) handOff(c.s, c.m, from, now);
+    if (c.me.isHost) {
+      takeOver(c.s, c.m, c.me, present(), now);
+      kits.after ??= new Map(c.m.fighters.filter((f) => f.seat === -1 && f.phase !== 'out').map((f) => [f.id, kitOf(f).join()]));
+    } else for (const d of toNewHost(c.s, c.m, c.me, now)) post(c, d, false);
+  };
+  const handle = (c: Mover, e: Ev) => {
+    const m = c.m!;
+    // what went into whose pockets: the host's word on an egg it runs, or a guest's own egg on the host's word
+    if (e.t === 'took' && ((e.net && e.f === m.me) || (!e.net && owned(m.fighters[e.f])))) got.set(e.id, [...(got.get(e.id) ?? []), e.f]);
+    share(c.s, e, c.me.seat);
+  };
+  const leaves = opts.leaves.map((l) => ({ ...l, done: false }));
+  const hooks = (opts.hooks ?? []).map((h) => ({ ...h, done: false }));
+  const moves: { at: number; spots: Map<number, { x: number; z: number }> }[] = [];
+  const limit = stormEnd(host.match.map.storm) + 40 + lead;
+  let tickAt = 0;
+  let joined = false;
+  while (now < limit) {
+    now += DT;
+    const hm = hostNow()?.m;
+    for (const l of leaves)
+      if (!l.done && hm && (l.at !== undefined ? hm.time >= l.at : l.when!(hm))) {
+        l.done = true;
+        l.seats.forEach(leave);
+      }
+    for (const k of hooks)
+      if (!k.done && hm && hm.time >= k.at) {
+        k.done = true;
+        k.run(hm);
+      }
+    if (opts.joinAt !== undefined && !joined && hm && hm.time >= opts.joinAt) {
+      joined = true;
+      const taken = present();
+      let seat = 0;
+      while (taken.includes(seat)) seat++;
+      ps.push(mover(ps.length, seat));
+    }
+    // where the computer eggs are a little after the first hand-off, and ten seconds on
+    const auth = hostNow();
+    if (handAt >= 0 && auth?.s.host && moves.length < 2 && now >= handAt + 2 + moves.length * 10) moves.push({ at: auth.m!.time, spots: new Map(auth.m!.fighters.filter((f) => f.seat === -1 && f.phase === 'ground' && !f.down).map((f) => [f.id, { x: f.x, z: f.z }])) });
+    for (const c of live()) {
+      sync(c);
+      while (c.inbox.length && c.inbox[0].at <= now) {
+        const msg = c.inbox.shift()!;
+        sync(c);
+        c.m = receive(c.s, c.m ?? createMatch({ seed: 1, role: 'guest', level: 'normal', entrants: [], me: -1 }), c.me, msg.from, msg.d, join(c), now);
+      }
+      if (!c.s.synced || !c.m) continue;
+      if (opts.heirOut !== undefined && c.start === 1 && !c.s.over && c.m.time > opts.heirOut) {
+        const egg = c.m.fighters[c.m.me];
+        if (egg.phase === 'ground') hurt(c.m, egg, 999, -1, 'storm', true);
+        if (egg.phase === 'out') c.s.over = c.s.early = true;
+      }
+      if (c.s.over) {
+        // done watching: nothing draws the match here any more (a host's timer runs it, below)
+        const call = ending(c.s, c.m, c.me, now);
+        if (call) {
+          c.call ??= call;
+          c.s.reported = true;
+          c.s.early = false;
+        }
+        continue;
+      }
+      step(c.m, DT);
+      for (const e of c.m.events.splice(0)) handle(c, e);
+      for (const p of flush(c.s, 1, DT)) post(c, p, false);
+      c.call ??= ending(c.s, c.m, c.me, now);
+    }
+    if (now >= tickAt) {
+      tickAt += TICK_MS / 1000;
+      for (const c of live()) {
+        if (!c.m) continue;
+        sync(c);
+        if (offscreen(c.s, c.me, false, !c.s.over)) {
+          // (as catchUp does, but watching what is handed out)
+          for (let t = DT; t <= TICK_MS / 1000 + 1e-6; t += DT) {
+            step(c.m, DT);
+            for (const e of c.m.events.splice(0)) handle(c, e);
+          }
+          for (const p of flush(c.s, 1, FLUSH)) post(c, p, false);
+        }
+        const mine = c.m.fighters[c.m.me];
+        if (mine?.phase === 'out') c.s.watch = c.m.fighters[mine.by]?.phase === 'ground' ? mine.by : (c.m.fighters.find((f) => f.phase !== 'out')?.id ?? c.m.me);
+        for (const out of tick(c.s, c.m, c.me, present(), now)) post(c, out.d, out.fast, out.to);
+      }
+    }
+    if (live().every((c) => c.call || (c.start >= humans && !c.s.synced))) break;
+  }
+  // let everything in flight land
+  for (let i = 0; i < 60; i++) {
+    now += DT;
+    for (const c of live()) {
+      while (c.inbox.length && c.inbox[0].at <= now) {
+        const msg = c.inbox.shift()!;
+        if (c.m) c.m = receive(c.s, c.m, c.me, msg.from, msg.d, join(c), now);
+      }
+      if (!c.m || !c.s.synced) continue;
+      for (const e of c.m.events.splice(0)) handle(c, e);
+      for (const p of flush(c.s, 1, FLUSH)) post(c, p, false);
+    }
+  }
+  return { ps, got, kits, moves, handAt: handAt - lead };
+}
+
+/**
+ * What every room the host left must show at the end: everyone still in it heard the result called and agrees on it,
+ * and on who is out, who sits where, what lies on the ground, what is open and what stands; nothing went to two eggs
+ * (a crate the old host broke as it left, with the news lost on the way to everyone, the new host may break again:
+ * its loot is the same, so nobody gets anything twice); the egg of each person who left is out and nobody's,
+ * everywhere; and the computer eggs played on.
+ */
+function agreeAfter(res: ReturnType<typeof migrate>, label: string, leftSeats: number[]) {
+  const live = res.ps.filter((c) => !c.gone && c.s.synced);
+  const auth = live.find((c) => c.room === 0)!;
+  assert.ok(auth, `${label}: someone hosts`);
+  const h = auth.m!;
+  assert.ok(auth.s.host && h.world && h.role === 'host', `${label}: the new host runs the match`);
+  assert.ok(h.ended, `${label}: the match ended`);
+  for (const c of live) {
+    const m = c.m!;
+    assert.equal(c.call, 'report', `${label}: seat ${c.start} heard the end called`);
+    assert.equal(JSON.stringify(c.s.end), JSON.stringify(auth.s.end), `${label}: seat ${c.start} has the one result`);
+    assert.deepEqual(m.fighters.map((f) => f.phase === 'out'), h.fighters.map((f) => f.phase === 'out'), `${label}: seat ${c.start} has the same eggs out`);
+    assert.deepEqual(m.fighters.map((f) => f.seat), h.fighters.map((f) => f.seat), `${label}: seat ${c.start} has everyone in the same seats`);
+    assert.deepEqual([...m.loot.keys()].sort((a, b) => a - b), [...h.loot.keys()].sort((a, b) => a - b), `${label}: seat ${c.start} has the same loot on the ground`);
+    assert.deepEqual(m.opened, h.opened, `${label}: seat ${c.start} has the same chests and crates open`);
+    assert.deepEqual([...m.walls.keys()].sort((a, b) => a - b), [...h.walls.keys()].sort((a, b) => a - b), `${label}: seat ${c.start} has the same pieces standing`);
+    for (const seat of leftSeats) {
+      const egg = m.fighters[seat];
+      assert.equal(egg.phase, 'out', `${label}: seat ${c.start} has the egg of seat ${seat}, who left, out`);
+      assert.equal(egg.seat, LEFT, `${label}: and nobody's`);
+    }
+  }
+  for (const [id, fs] of res.got) assert.equal(fs.length, 1, `${label}: loot ${id} went to ${fs.join(' and ')}`);
+  // the computer eggs carry on with the guns, melee weapon and backpack they had (the new host heard of them from the
+  // old one), all but those that changed them at the last moment
+  const { before, after } = res.kits;
+  const what = (kit: string | undefined) => kit?.split(',').filter((_, i) => [0, 1, 3, 4, 6, 3 + 6 + THROW_IDS.length + AMMO_TYPES.length + USE_IDS.length + 1].includes(i)).join();
+  const kept = [...before!].filter(([id, kit]) => what(after!.get(id)) === what(kit)).length;
+  assert.ok(kept >= before!.size * 0.8, `${label}: ${kept} of ${before!.size} computer eggs kept what they carried`);
+  // the computer eggs carried on: moving about after the hand-off, and cracking eggs long after it
+  assert.equal(res.moves.length, 2, `${label}: the match went on ten seconds past the hand-off`);
+  const [a, b] = res.moves;
+  const still = [...a.spots].filter(([id, p]) => {
+    const q = b.spots.get(id);
+    return q && Math.hypot(q.x - p.x, q.z - p.z) < 1;
+  }).length;
+  assert.ok(still <= Math.max(2, a.spots.size * 0.25), `${label}: ${still} of ${a.spots.size} computer eggs never moved after the hand-off`);
+  assert.ok(h.fighters.some((f) => f.phase === 'out' && f.outAt > res.handAt + 8 && f.by >= 0 && h.fighters[f.by].seat === -1), `${label}: a computer egg cracked another well after the hand-off`);
+  return { live, auth, h };
+}
+
+test('the host leaves on the bus: the next person runs the match, the computer eggs jump and play on, and everyone agrees at the end', () => {
+  const res = migrate({ humans: 4, seed: 31, leaves: [{ at: 1.5, seats: [0] }] });
+  const { auth, h } = agreeAfter(res, 'on the bus', [0]);
+  assert.equal(auth.start, 1, 'the lowest seat took over');
+  assert.ok(res.handAt < h.map.bus.off, 'it was handed on with eggs still on the bus');
+});
+
+test('the host leaves in the countdown, before anyone is on the bus: the match goes on the same', () => {
+  const res = migrate({ humans: 4, seed: 41, leaves: [{ at: -2, seats: [0] }] });
+  const { auth, h } = agreeAfter(res, 'countdown', [0]);
+  assert.equal(auth.start, 1);
+  assert.ok(res.handAt < h.map.bus.on, 'it was handed on before the bus set off');
+});
+
+test('the host leaves before its first report gets out: the next person sets the match up afresh and everyone plays it to the end', () => {
+  const res = migrate({ humans: 4, seed: 42, leaves: [{ at: -Infinity, seats: [0] }] });
+  const live = res.ps.filter((c) => !c.gone);
+  const auth = live.find((c) => c.room === 0)!;
+  assert.equal(auth.start, 1);
+  const h = auth.m!;
+  assert.ok(auth.s.host && h.ended, 'the new host ran its own match to the end');
+  assert.equal(h.fighters.filter((f) => f.seat >= 0).length, 3, 'with the three still in the room');
+  for (const c of live) {
+    assert.ok(c.s.synced && c.m!.seed === h.seed, `seat ${c.start} plays the new host's match`);
+    assert.equal(c.call, 'report', `seat ${c.start} heard the end called`);
+    assert.equal(JSON.stringify(c.s.end), JSON.stringify(auth.s.end), `seat ${c.start} has the one result`);
+  }
+  assert.ok(h.fighters.filter((f) => f.seat === -1 && f.phase === 'out' && f.by >= 0).length > 10, 'the computer eggs played');
+});
+
+test('a guest that heard of the old host\'s match joins the one a new host set up afresh, and nobody else\'s report moves it', () => {
+  const { players, h, gs, g } = hostAndGuest(3, 4, 9);
+  const fresh = hostMatch(players.filter((p) => p.seat !== 0).map((p) => ({ seat: p.seat === 1 ? 0 : p.seat, name: p.name })), 0, 77, 'normal', 4, 3);
+  const fs = newSession(true, fresh.roster);
+  fs.handoffs = 1;
+  // the new host's report of another island, to the guest now in seat 2... once without it in the match: nothing moves
+  const me: Me = { seat: 2, isHost: false, round: 1 };
+  gs.handoffs = 1;
+  const other = JSON.parse(JSON.stringify(hostState(1, 77, 0, 'normal', [0, 5, -1], [], [], [], 'solo', [], [], 1)));
+  assert.equal(receive(gs, g, me, 0, other, () => assert.fail('no join'), 1), g);
+  assert.equal(gs.synced, true);
+  const report = reliableTo(fs, fresh.match, [0, 2], 2, 1);
+  const joined = receive(gs, g, me, 0, report, (sd, lv, t, ro, md, te) => guestMatch(players, 2, sd, lv, t, ro, md, te), 2);
+  assert.notEqual(joined, g, 'a new match');
+  assert.equal(joined.seed, 77);
+  assert.ok(gs.synced && gs.handoffs === 1 && gs.roster.join() === fresh.roster.join(), 'in step with the new host');
+  assert.equal(h.seed, 9);
+});
+
+test('the host leaves early in the fight, with lag and lost packets: the match goes on and ends the same for everyone', () => {
+  const res = migrate({ humans: 4, seed: 32, level: 'hard', delay: 0.08, loss: 0.15, leaves: [{ at: 25, seats: [0] }] });
+  agreeAfter(res, 'early fight', [0]);
+});
+
+test('the host leaves mid-match with what it settled still on its way to everyone: nothing is handed out twice and everyone agrees', () => {
+  const res = migrate({ humans: 5, seed: 33, lose: 0.6, leaves: [{ at: 60, seats: [0] }] });
+  const { auth } = agreeAfter(res, 'mid-match', [0]);
+  assert.ok(auth.s.logs.size >= 3, `every guest said what it saw (${auth.s.logs.size})`);
+});
+
+test('the host leaves in the endgame, and right after calling the end: the result stands for everyone', () => {
+  const late = migrate({ humans: 4, seed: 34, leaves: [{ when: (m) => m.time > 30 && aliveCount(m) <= 4, seats: [0] }] });
+  const live = late.ps.filter((c) => !c.gone);
+  const ends = live.map((c) => JSON.stringify(c.s.end));
+  assert.ok(live.every((c) => c.call === 'report'), 'everyone heard the end called');
+  assert.ok(ends.every((e) => e === ends[0]), 'one result');
+  const called = migrate({ humans: 4, seed: 35, leaves: [{ when: (m) => m.ended, seats: [0] }] });
+  const after = called.ps.filter((c) => !c.gone);
+  const said = after.map((c) => JSON.stringify(c.s.end));
+  assert.ok(after.every((c) => c.call === 'report'), 'everyone still heard it called');
+  assert.ok(said.every((e) => e === said[0]), 'one result');
+});
+
+test('the new host leaves too, and three leave at once with the host among them: the next one each time runs it', () => {
+  const twice = migrate({ humans: 4, seed: 36, leaves: [{ at: 40, seats: [0] }, { at: 41, seats: [1] }] });
+  const a = agreeAfter(twice, 'twice', [0, 1]);
+  assert.equal(a.auth.start, 2);
+  assert.equal(a.auth.s.handoffs, 2);
+  const three = migrate({ humans: 6, seed: 37, leaves: [{ at: 35, seats: [2, 0, 1] }] });
+  const b = agreeAfter(three, 'three at once', [0, 1, 2]);
+  assert.equal(b.auth.start, 3, 'the lowest seat left');
+  for (const c of b.live) assert.equal(c.s.handoffs, 2, 'two hand-offs, followed in turn');
+});
+
+test('the one who takes over is already out and done watching: its timer runs the rest, and its card still reports the end', () => {
+  const res = migrate({ humans: 4, seed: 38, heirOut: 15, leaves: [{ at: 45, seats: [0] }] });
+  const { auth } = agreeAfter(res, 'heir out', [0]);
+  assert.equal(auth.start, 1);
+  assert.equal(auth.m!.fighters[auth.m!.me].phase, 'out');
+  assert.ok(auth.s.over && auth.s.reported, 'it reported the result from its card');
+});
+
+test('squads: the host leaves with a computer teammate knocked down and its own egg knocked: the knocks play out the same for everyone', () => {
+  let bot = -1;
+  const knock = (m: Match) => {
+    // the host's computer teammate, and the host's own egg, knocked down where they stand
+    const mate = m.fighters.find((f) => f.team === m.fighters[0].team && f.seat === -1 && f.phase === 'ground');
+    if (mate) {
+      bot = mate.id;
+      hurt(m, mate, mate.hp + mate.shield + 1, -1, 'storm', true);
+    }
+    const egg = m.fighters[0];
+    if (egg.phase === 'ground') hurt(m, egg, egg.hp + egg.shield + 1, -1, 'storm', true);
+  };
+  const res = migrate({ humans: 3, seed: 39, mode: 'squads', hooks: [{ at: 50, run: knock }], leaves: [{ at: 51, seats: [0] }] });
+  const { live, h } = agreeAfter(res, 'squads knock', [0]);
+  assert.ok(bot >= 0, 'a computer teammate was knocked');
+  for (const c of live) assert.equal(c.m!.fighters[bot].phase === 'out', h.fighters[bot].phase === 'out', 'the same end to its knock for everyone');
+});
+
+test('someone joining after the host left sits the match out, and the match goes on', () => {
+  const res = migrate({ humans: 3, seed: 40, leaves: [{ at: 30, seats: [0] }], joinAt: 40 });
+  agreeAfter(res, 'late joiner', [0]);
+  const late = res.ps[3];
+  assert.ok(late && !late.gone, 'they came in');
+  assert.equal(late.room, 1, 'into the seat the new host moved out of');
+  assert.equal(late.s.synced, false, 'and sat the match out');
+});
+
+/** The host's next reliable report to seat `to` (one tick in five is), ticking on from `t`. */
+function reliableTo(hs: Session, h: Match, present: number[], to: number, t: number) {
+  for (let i = 0; i < 5; i++) {
+    const out = tick(hs, h, { seat: 0, isHost: true, round: 1 }, present, t + i * 0.066).find((o) => o.to === to && !o.fast && (o.d as { k: string }).k === 'S');
+    if (out) return JSON.parse(JSON.stringify(out.d));
+  }
+  throw new Error('no reliable report');
+}
+
+/** A host and one guest (in seat 1) of a room of `n` people (seats 0 to n - 1) with `bots` computer eggs, the guest synced from the host's report. */
+function hostAndGuest(n = 3, bots = 4, seed = 9, mode: Mode = 'solo') {
+  const players: Player[] = Array.from({ length: n }, (_, seat) => ({ seat, name: `P${seat}` }));
+  const h = hostMatch(players, 0, seed, 'normal', bots, 0, mode);
+  const hs = newSession(true, h.roster);
+  const gs = newSession(false);
+  const join = (sd: number, lv: Level, time: number, roster: number[], md: Mode, teams: number[] | null) => guestMatch(players, 1, sd, lv, time, roster, md, teams);
+  const g = receive(gs, createMatch({ seed: 1, role: 'guest', level: 'normal', entrants: [], me: -1 }), { seat: 1, isHost: false, round: 1 }, 0, reliableTo(hs, h.match, players.map((p) => p.seat), 1, 0), join, 0);
+  return { players, h: h.match, hs, g, gs };
+}
+
+test('a computer egg\'s kit makes the trip whole, and nothing an egg could not carry gets through', () => {
+  const { h } = hostAndGuest();
+  const f = h.fighters[3];
+  f.guns = [{ w: 'rifle', r: 3, mag: 17 }, { w: 'sniper', r: 4, mag: 2 }];
+  f.melee = 'pan';
+  f.slot = 1;
+  f.pick = 'stun';
+  f.throws.stun = 2;
+  f.throws.grenade = 3;
+  f.ammo.heavy = 90;
+  f.items.medkit = 2;
+  f.boost = 40;
+  f.pack = 2;
+  f.wood = 120;
+  f.metal = 45;
+  f.mat = 2;
+  f.dropSeq = 12;
+  f.wallSeq = 30;
+  const p = parsePacket(JSON.parse(JSON.stringify(kitsOf(5, [f]))));
+  assert.ok(p && p.k === 'K' && p.kits.length === 1 && p.kits[0][0] === 3);
+  const back = h.fighters[4];
+  putKit(back, p.kits[0][1]);
+  assert.deepEqual(back.guns, f.guns);
+  assert.deepEqual([back.melee, back.slot, back.pick, back.throws, back.ammo, back.items, back.boost, back.pack, back.wood, back.stone, back.metal, back.mat], [f.melee, f.slot, f.pick, f.throws, f.ammo, f.items, f.boost, f.pack, f.wood, f.stone, f.metal, f.mat]);
+  assert.ok(back.dropSeq > 12 && back.wallSeq > 30, 'its drops and pieces number on past the ones on their way');
+  const kit = kitOf(f);
+  for (const [i, v] of [[0, WEAPON_IDS.length + 1], [1, MAX_RARITY + 1], [6, MELEE_IDS.length], [7, 4], [8, THROW_IDS.length], [kit.length - 3, MATS.length], [3, -1], [5, 1.5]] as const) {
+    const bad = [...kit];
+    bad[i] = v;
+    assert.equal(parseKit(bad), null, `field ${i} at ${v}`);
+  }
+  assert.equal(parseKit(kit.slice(1)), null, 'one short');
+  assert.equal(parseKit([...kit, 0]), null, 'one over');
+  assert.deepEqual(parsePacket({ t: 'pk', r: 5, k: 'K', b: [[MAX_FIGHTERS, ...kit], [2, ...kit.slice(1)], 'x', [1, ...kit]] }), { k: 'K', round: 5, kits: [[1, parseKit(kit)!]] }, 'only the good ones');
+});
+
+test('reports carry the hand-offs a match has had and nobody\'s seats, and a guest\'s log of what the host settled stays in one packet', () => {
+  const s = stateOf(quiet().fighters[0]);
+  const p = parsePacket(JSON.parse(JSON.stringify(hostState(2, 5, 30, 'normal', [LEFT, 0, 2, -1], [[1, s]], [], [], 'solo', [], [], 1))));
+  assert.ok(p && p.k === 'S' && p.handoffs === 1 && p.roster![0] === LEFT);
+  assert.equal(parsePacket({ ...hostState(2, 5, 30, 'normal', [LEFT - 1, 0], []) }), null, 'no seat below nobody\'s');
+  assert.equal(parsePacket({ ...hostState(2, 5, 30, 'normal', [0, 1], []), ho: -1 }), null);
+  assert.equal(parsePacket({ ...hostState(2, 5, 30, 'normal', [0, 1], []), ho: 1.5 }), null);
+  assert.ok(parsePacket(hostState(2, 5, 30, 'normal', [LEFT, LEFT, 0], [])), 'any number may have left');
+  // the log: only what a host settles, the newest of it that fits, and the result if it came
+  const evs: NetEv[] = [];
+  for (let i = 0; i < 300; i++) evs.push({ y: 'dr', id: DROP_BASE + 3 * 100_000 + i, x: 1, z: 2, by: 3, it: { kind: 'gun', w: 'sniper', r: 4, mag: 3 } });
+  evs.push({ y: 's', f: 1, w: 'smg', r: 0, x: 0, z: 0, a: 0, s: 1, k: 1 }, { y: 'tko', f: 2, id: 77, it: { kind: 'ammo', a: 'light', n: 30 } });
+  const log = logOf(3, evs, { winner: 2, places: [[2, 1, 4], [1, 2, 0]] });
+  assert.ok(JSON.stringify(log).length < 7000, 'one packet');
+  const back = parsePacket(JSON.parse(JSON.stringify(log)));
+  assert.ok(back && back.k === 'L');
+  assert.deepEqual(back.events.at(-1), evs.at(-1), 'the newest kept');
+  assert.ok(back.events.every((e) => e.y !== 's'), 'a shot is nobody\'s to settle');
+  assert.deepEqual(back.end, { winner: 2, places: [[2, 1, 4], [1, 2, 0]] });
+  assert.equal(parsePacket({ ...log, e: { w: 'x', pl: [] } }), null, 'a result that is no result');
+  assert.equal(parsePacket({ ...log, e: { k: 'L', g: [] } }), null);
+});
+
+test('a new host takes the old host\'s word once: a pickup goes in nobody\'s pocket twice, and only what was the host\'s to say counts', () => {
+  const { h } = hostAndGuest(3, 4);
+  const m = h;
+  m.role = 'host';
+  const bot = m.fighters[3];
+  const me = m.fighters[0];
+  for (const f of m.fighters) land(f, f.id * 3, 0);
+  const id = [...m.loot.keys()][0];
+  const def = m.loot.get(id)!.def;
+  // our own egg's pickup the old host granted, which we never heard of: it goes in our pockets, once
+  const pockets = () => [...kitOf(me), me.helmet, me.vest, me.scopes, me.ghillie].join();
+  const had = pockets();
+  assert.equal(applySettled(m, { y: 'tko', f: 0, id, it: def }), true);
+  assert.ok(!m.loot.has(id) && m.gone.has(id));
+  const got = pockets();
+  assert.notEqual(got, had, 'ours');
+  assert.equal(applySettled(m, { y: 'tko', f: 0, id, it: def }), false, 'heard twice, nothing changes');
+  assert.equal(pockets(), got);
+  // a computer egg's pickup: it carries what its kit says, so the loot only goes from the ground
+  const id2 = [...m.loot.keys()][0];
+  const kit = kitOf(bot).join();
+  assert.equal(applySettled(m, { y: 'tko', f: 3, id: id2, it: m.loot.get(id2)!.def }), true);
+  assert.equal(kitOf(bot).join(), kit);
+  assert.ok(!m.loot.has(id2));
+  // a computer egg's drop, in its own range; not someone else's, nor one out of range
+  const drop = (by: number, n: number): NetEv => ({ y: 'dr', id: DROP_BASE + by * 100_000 + n, x: 3, z: 1, by, it: { kind: 'use', w: 'bandage', n: 2 } });
+  assert.equal(applySettled(m, drop(3, 4)), true);
+  assert.equal(applySettled(m, drop(3, 4)), false, 'once');
+  assert.equal(applySettled(m, drop(1, 4)), false, 'a person\'s drops come from them');
+  assert.equal(applySettled(m, { ...drop(3, 5), id: DROP_BASE + 4 * 100_000 } as NetEv), false, 'out of its range');
+  // outs: only a computer egg's
+  assert.equal(applySettled(m, { y: 'o', f: 1, by: 3, w: 'smg' }), false, 'a person says so themselves');
+  assert.equal(applySettled(m, { y: 'o', f: 4, by: 3, w: 'smg' }), true);
+  assert.equal(m.fighters[4].phase, 'out');
+  assert.equal(m.fighters[3].kills, 1);
+  assert.equal(applySettled(m, { y: 'o', f: 4, by: 3, w: 'smg' }), false);
+  assert.equal(m.fighters[3].kills, 1, 'counted once');
+  // a chest, a door and a vault door, a called drop, glass: each once
+  const c = m.map.containers.findIndex((x) => x.kind === 'chest');
+  assert.equal(applySettled(m, { y: 'opd', c, f: 2 }), true);
+  assert.equal(applySettled(m, { y: 'opd', c, f: 2 }), false);
+  const vault = m.vaults[0];
+  if (vault !== undefined) {
+    m.time = 40;
+    assert.equal(applySettled(m, { y: 'ds', f: 2, i: vault, s: DOOR_OPENING }), true);
+    assert.ok(m.doorT[vault] <= 40 + VAULT_TIME, 'and it opens in its time, here too');
+  }
+  const flare = m.map.flares[0];
+  assert.equal(applySettled(m, { y: 'fd', f: 2, c: flare, x: 0, z: 0, at: 70 }), true);
+  assert.equal(m.map.containers[flare].at, 70);
+  assert.equal(m.calls.get(2), 70 - FLARE_WAIT, 'that egg waits for its next flare here too');
+  assert.equal(applySettled(m, { y: 'fd', f: 2, c: flare, x: 9, z: 9, at: 80 }), false);
+  assert.equal(applySettled(m, { y: 'gl', f: 2, i: 0 }), m.broken.length > 0);
+  assert.equal(applySettled(m, { y: 'gl', f: 2, i: 0 }), false);
+  assert.equal(applySettled(m, { y: 's', f: 2, w: 'smg', r: 0, x: 0, z: 0, a: 0, s: 1, k: 1 }), false, 'a shot is not the host\'s to say');
+});
+
+test('a hand-off moves the new host to seat 0 and makes the old host\'s egg nobody\'s, in turn for several', () => {
+  const { h, hs, g, gs } = hostAndGuest(4, 2);
+  assert.deepEqual(gs.roster, [0, 1, 2, 3, -1, -1]);
+  assert.deepEqual(hs.roster, gs.roster);
+  handOff(gs, g, 2, 10);
+  assert.deepEqual(gs.roster, [LEFT, 1, 0, 3, -1, -1]);
+  assert.deepEqual(g.fighters.map((f) => f.seat), gs.roster);
+  handOff(gs, g, 3, 11);
+  assert.deepEqual(gs.roster, [LEFT, 1, LEFT, 0, -1, -1]);
+  assert.equal(gs.handoffs, 2);
+  // the host that started it gets the same from a report of the same two hand-offs
+  assert.equal(hs.roster.length, 6);
+  assert.equal(h.fighters.length, 6);
+});
+
+test('the new host runs the computer eggs with the kits it was told of, adopts the rest from what they held, and holds pickups until its guests have said what they saw', () => {
+  const { h, hs, g, gs } = hostAndGuest(3, 4);
+  for (const f of h.fighters) land(f, -40 + f.id * 8, 10);
+  h.time = 30;
+  const bot = h.fighters[3];
+  bot.guns = [{ w: 'shotgun', r: 2, mag: 5 }, null];
+  bot.slot = 0;
+  bot.ammo.shells = 24;
+  bot.dropSeq = 7;
+  // what the old host told this guest, and how the eggs stood
+  for (let t = 0; t < 12; t++) for (const out of tick(hs, h, { seat: 0, isHost: true, round: 1 }, [0, 1, 2], 0.5 + t * 0.066)) if (out.to === 1) receive(gs, g, { seat: 1, isHost: false, round: 1 }, 0, JSON.parse(JSON.stringify(out.d)), () => g, 0.5 + t * 0.066);
+  assert.equal(gs.kits.size, 4, 'heard of every computer egg\'s kit');
+  // one the guest never heard the kit of: what it was seen holding
+  gs.kits.delete(4);
+  g.fighters[4].show = { w: 'smg', r: 1, flags: 0 };
+  g.gone.add(DROP_BASE + 3 * 100_000 + 40);
+  // a vault door it only heard was opening, and an ask of its own the old host never answered
+  if (g.vaults.length) g.doors[g.vaults[0]] = DOOR_OPENING;
+  const me = g.fighters[1];
+  land(me, 1, 1);
+  const near = [...g.loot.values()][0];
+  me.pending.set(near.id, g.clock);
+  handOff(gs, g, 1, 20);
+  const nm: Me = { seat: 0, isHost: true, round: 1 };
+  takeOver(gs, g, nm, [0, 2], 20);
+  assert.ok(gs.host && g.world && g.role === 'host');
+  assert.deepEqual(g.fighters[3].guns, [{ w: 'shotgun', r: 2, mag: 5 }, null]);
+  assert.equal(g.fighters[3].ammo.shells, 24);
+  assert.ok(g.fighters[3].dropSeq > 40, 'its drops number on past every one of its we have seen');
+  assert.equal(g.fighters[4].guns[0]?.w, 'smg', 'one we had no kit for carries what it held');
+  assert.ok(g.fighters[4].ammo[WEAPONS.smg.ammo] > 0);
+  assert.ok(g.fighters.slice(3).every((f) => f.kind === 'bot' && f.ai), 'every computer egg ours to run');
+  if (g.vaults.length) assert.ok(g.doorT[g.vaults[0]] < Infinity, 'the vault door opens in its time');
+  // our own ask is held with the rest, until every guest has said what it saw (or a moment has passed)
+  assert.ok(g.loot.has(near.id) && g.held!.some(([f, id]) => f === 1 && id === near.id));
+  tick(gs, g, nm, [0, 2], 20.1);
+  assert.ok(g.held, 'still waiting on seat 2');
+  receive(gs, g, nm, 2, JSON.parse(JSON.stringify(logOf(1, [], null))), () => g, 20.2);
+  const out = tick(gs, g, nm, [0, 2], 20.3);
+  assert.equal(g.held, null, 'everyone has said');
+  assert.ok(!g.loot.has(near.id), 'and the first to ask got it');
+  // the old host's egg goes out for leaving, and everyone hears of every egg at once, with the hand-off counted
+  assert.equal(g.fighters[0].phase, 'out');
+  assert.equal(g.fighters[0].outCause, 'left');
+  const s = out.map((o) => parsePacket(o.d)).find((p) => p?.k === 'S');
+  assert.ok(s && s.k === 'S' && s.handoffs === 1);
+});
+
+test('a new host with nobody to hear from waits a moment at most before handing out pickups', () => {
+  const { g, gs } = hostAndGuest(3, 2);
+  for (const f of g.fighters) land(f, f.id * 5, 0);
+  g.time = 20;
+  handOff(gs, g, 1, 5);
+  const me: Me = { seat: 0, isHost: true, round: 1 };
+  takeOver(gs, g, me, [0, 2], 5);
+  const id = [...g.loot.keys()][0];
+  applyNet(g, { y: 'tk', f: 2, id });
+  applyNet(g, { y: 'tk', f: 1, id });
+  assert.ok(g.loot.has(id), 'held');
+  tick(gs, g, me, [0, 2], 5 + HOLD_TAKES / 2);
+  assert.ok(g.loot.has(id));
+  tick(gs, g, me, [0, 2], 5 + HOLD_TAKES + 0.1);
+  assert.ok(!g.loot.has(id));
+  assert.ok(g.events.some((e) => e.t === 'took' && e.f === 2 && e.id === id && !e.net), 'to the first who asked');
+});
+
+test('a guest follows a new host: a fresh clock, nobody\'s seats only once it has followed the hand-off, its log and its asks to the new host', () => {
+  const { players, h, hs } = hostAndGuest(3, 2);
+  h.time = 50;
+  // the guest in seat 2 this time
+  const gm: Me = { seat: 2, isHost: false, round: 1 };
+  const s2 = newSession(false);
+  let g2 = createMatch({ seed: 1, role: 'guest', level: 'normal', entrants: [], me: -1 });
+  g2 = receive(s2, g2, gm, 0, reliableTo(hs, h, [0, 1, 2], 2, 1), (sd, lv, t, ro, md, te) => guestMatch(players, 2, sd, lv, t, ro, md, te), 1);
+  assert.ok(s2.synced && g2.fighters[g2.me].seat === 2);
+  // it heard the old host settle something, and asked it for a pickup
+  receive(s2, g2, gm, 0, packEvents(1, [[0, { y: 'opd', c: 0, f: 3 }]])[0], () => g2, 2);
+  assert.equal(s2.log.length, 1);
+  const mine = g2.fighters[g2.me];
+  land(mine, 8, 0);
+  const id = [...g2.loot.keys()][0];
+  mine.pending.set(id, g2.clock);
+  // the new host's report comes in before this guest has followed the hand-off: its clock, but not yet its seats
+  s2.newest = 52;
+  const report = hostState(1, h.seed, 50.5, 'normal', [LEFT, 0, 2, -1, -1], [[3, stateOf(h.fighters[3])]], [], [], 'solo', [], [], 1);
+  receive(s2, g2, gm, 0, JSON.parse(JSON.stringify(report)), () => g2, 3);
+  assert.equal(s2.heardHandoffs, 1);
+  assert.equal(s2.newest, 50.5, 'its clock is the new host\'s, though behind the old one\'s');
+  assert.deepEqual(s2.roster, [0, 1, 2, -1, -1], 'seats wait for the hand-off');
+  handOff(s2, g2, 1, 3.1);
+  assert.deepEqual(s2.roster, [LEFT, 0, 2, -1, -1]);
+  const said = toNewHost(s2, g2, gm, 3.1).map((d) => parsePacket(JSON.parse(JSON.stringify(d))));
+  assert.ok(said.length === 1 && said[0]?.k === 'L' && said[0].events.length === 1, 'what it heard the old host settle');
+  assert.deepEqual(s2.queue.at(-1), [2, { y: 'tk', f: mine.id, id }], 'and its pickup again');
+  // a report of nobody's seat, now in step with ours
+  receive(s2, g2, gm, 0, JSON.parse(JSON.stringify(hostState(1, h.seed, 51, 'normal', [LEFT, 0, 2, LEFT, -1], [], [], [], 'solo', [], [], 1))), () => g2, 3.2);
+  assert.equal(s2.roster[3], -1, 'a computer egg is never anybody who left');
+  // a new host that never says a word: the guest stops waiting
+  assert.equal(ending(s2, g2, gm, 3.2 + HOST_GONE - 1), null);
+  assert.equal(ending(s2, g2, gm, 3.2 + HOST_GONE + 1), 'quiet');
+});
+
+test('the new host keeps a guest\'s log that came just before it took over, takes each guest\'s once, and nobody else\'s', () => {
+  const { g, gs } = hostAndGuest(4, 2);
+  for (const f of g.fighters) land(f, f.id * 4, 0);
+  g.time = 30;
+  const c = g.map.containers.findIndex((x) => x.kind === 'chest');
+  const log = (cc: number) => JSON.parse(JSON.stringify(logOf(1, [{ y: 'opd', c: cc, f: 4 }], null)));
+  // the room has made us the host, but our game hasn't taken over yet
+  receive(gs, g, { seat: 1, isHost: false, round: 1 }, 2, log(c), () => g, 10);
+  assert.equal(g.opened[c], false);
+  handOff(gs, g, 1, 10);
+  const me: Me = { seat: 0, isHost: true, round: 1 };
+  takeOver(gs, g, me, [0, 2, 3], 10.05);
+  assert.equal(g.opened[c], true, 'heard once we took over');
+  assert.ok(gs.queue.some(([, e]) => e.y === 'opd' && e.c === c), 'and passed on');
+  const c2 = g.map.containers.findIndex((x, i) => x.kind === 'chest' && i !== c);
+  receive(gs, g, me, 2, log(c2), () => g, 10.1);
+  assert.equal(g.opened[c2], false, 'one log from each');
+  receive(gs, g, me, 9, log(c2), () => g, 10.1);
+  assert.equal(g.opened[c2], false, 'nor from anyone not in the match');
+  receive(gs, g, me, 3, log(c2), () => g, 10.1 + LOG_T * 2 + 1);
+  assert.equal(g.opened[c2], false, 'nor long after');
+});
+
+test('computer eggs taken over play on: off the bus when they meant to (teams together), on along a glide, choosing afresh on the ground', () => {
+  const { g } = hostAndGuest(2, 6, 9, 'duos');
+  g.time = 2;
+  for (const f of g.fighters.slice(2)) f.kind = 'remote';
+  const glider = g.fighters[3];
+  glider.phase = 'drop';
+  glider.y = 30;
+  glider.snaps = [{ at: 0, x: 10, z: 20, y: 30, aim: 0, vx: 13, vz: 0 }];
+  const walker = g.fighters[4];
+  land(walker, -5, 5);
+  adoptBots(g);
+  assert.ok(g.fighters.slice(2).every((f) => f.kind === 'bot' && f.ai));
+  assert.ok(glider.ai!.gx > 10 + 13 * 2, 'gliding on the way it was going');
+  assert.equal(walker.ai!.goal, 'roam');
+  const aboard = g.fighters.filter((f) => f.phase === 'bus' && f.ai);
+  for (const f of aboard) assert.ok(f.ai!.jumpAt >= g.time && f.ai!.jumpAt < g.map.bus.off, 'jumps while the bus is over the island');
+  // computer teammates on the bus drop together
+  for (const ids of g.teams) {
+    const mates = ids.map((id) => g.fighters[id]).filter((f) => f.phase === 'bus' && f.ai);
+    if (mates.length > 1) assert.ok(Math.hypot(mates[0].ai!.gx - mates[1].ai!.gx, mates[0].ai!.gz - mates[1].ai!.gz) < 6, 'side by side');
+  }
+});
+
+test('a guest that syncs after someone left knows them as nobody, and the bots keep their names', () => {
+  const players = [{ seat: 1, name: 'B' }];
+  const m = guestMatch(players, 1, 7, 'normal', 0, [LEFT, 1, -1, -1]);
+  const names = botNames(7);
+  assert.deepEqual(m.fighters.map((f) => f.name), ['Someone', 'B', names[0], names[1]]);
+  assert.equal(m.fighters[0].kind, 'remote');
+  assert.equal(m.fighters[0].seat, LEFT);
 });
