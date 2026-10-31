@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, LEVEL_NAMES, Segmented, defineSetting, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
-import { assignTeams, createWorld, movePlayer, soloRoster, step, takeoverDeparted, type GameEvent, type Input, type Level, type Mode, type Player, type PlayerConfig, type World } from './logic.ts';
+import { PLAYER_R, assignTeams, collideObstacles, createWorld, movePlayer, soloRoster, step, takeoverDeparted, type GameEvent, type Input, type Level, type Mode, type PlayerConfig, type World } from './logic.ts';
 import { makeMemory, think, type BotMemory } from './bots.ts';
-import { endPacket, eventsFromNet, eventsToNet, inputPacket, parsePacket, startPacket, statePacket, unpackPlayer, type EndPacket, type NetEvent, type StatePacket, type StartPacket } from './net.ts';
+import { endPacket, eventsFromNet, eventsToNet, inputPacket, ownMoveOf, parsePacket, startPacket, statePacket, unpackPlayer, type EndPacket, type NetEvent, type OwnMove, type StatePacket, type StartPacket } from './net.ts';
 import { createFx, drawGame, fxEvents, fxStep, makeView, screenToField, type Fx, type View } from './render.ts';
 import { meta } from './meta';
 import './the-axe.css';
@@ -12,7 +12,12 @@ type LevelName = (typeof LEVEL_NAMES)[number];
 type PlayMode = 'cpu' | '2p';
 type StageMode = 'idle' | 'solo' | 'online';
 type Stick = { pointer: number; player: number; ox: number; oy: number; x: number; y: number };
-type Snapshot = { at: number; players: Player[] };
+/** Where everyone was at a moment of the host's game (seconds on its clock). */
+type Snapshot = { t: number; at: { x: number; y: number }[] };
+/** A guest draws other players this far behind the host's newest word on them, so there is nearly always a pair of snapshots to ease between. */
+const INTERP_S = 0.1;
+/** The fastest a player can go (sprinting in a tree costume, as the tree), with room to spare, for checking a guest's word. */
+const TOP_SPEED = 8.5 * 1.55 * 1.35 * 1.06 * 1.15;
 
 const MODE = defineSetting<Mode>('the-axe:mode', ['classic', 'big', 'tree'], 'classic');
 const PLAY = defineSetting<PlayMode>('the-axe:play', ['cpu', '2p'], 'cpu');
@@ -208,6 +213,13 @@ function Play({ mode }: { mode: StageMode }) {
   const remoteInput = useRef(new Map<number, Input>());
   const remoteSeq = useRef(new Map<number, number>());
   const snapshots = useRef<Snapshot[]>([]);
+  /** Guest: the local clock minus the host's, as low as it has been lately (the least delayed packet). */
+  const hostOffset = useRef<number | null>(null);
+  /** Guest: whether the host takes this guest's word on where it is (hosts that send warps do). */
+  const ownMoves = useRef(false);
+  /** Host: when it last took each guest's word on where it is (performance.now() ms). */
+  const movedAt = useRef(new Map<number, number>());
+  const wasJailed = useRef(new Set<number>());
   const eventLog = useRef<{ at: number; row: NetEvent }[]>([]);
   const eventId = useRef(0);
   const seenEventIds = useRef(new Set<number>());
@@ -215,7 +227,9 @@ function Play({ mode }: { mode: StageMode }) {
   const lastSprint = useRef<boolean | null>(null);
   const latestInput = useRef<Input>(emptyInput());
   const lastSimWall = useRef(performance.now() / 1000);
+  /** Sixtieths of a second since this round's game began here, off the wall clock (the host stamps its states with it). */
   const tick = useRef(0);
+  const tickBase = useRef(performance.now());
   const stateSendCount = useRef(0);
   const lastStateTick = useRef(-1);
   const phaseCount = useRef(4);
@@ -295,6 +309,8 @@ function Play({ mode }: { mode: StageMode }) {
         if (!player || player.ai !== null || packet.q <= (remoteSeq.current.get(from) ?? -1)) return;
         remoteSeq.current.set(from, packet.q);
         remoteInput.current.set(from, { x: packet.x / 100, y: packet.y / 100, sprint: packet.s });
+        const own = ownMoveOf(packet);
+        if (own) takeOwnMove(player.id, own);
         return;
       }
       if (from !== 0) return;
@@ -319,6 +335,7 @@ function Play({ mode }: { mode: StageMode }) {
           memories.current = next.players.map(() => makeMemory());
           lastStateTick.current = -1;
           snapshots.current = [];
+          hostOffset.current = null;
         } else {
           const bySeat = new Map(packet.roster.map(([seat, team, ai]) => [seat, { team: team as 0 | 1, ai }]));
           const names = new Map(online.players.map((player) => [player.seat, player.name.toLowerCase()]));
@@ -352,20 +369,49 @@ function Play({ mode }: { mode: StageMode }) {
     lastStateTick.current = packet.n;
     const ownId = onlineRef.current?.watching ? -1 : myId();
     const parsed = packet.p.map((row) => unpackPlayer(row)!);
+    // A newer host takes this guest's word on where it is: the guest keeps moving itself, and only takes the host's
+    // position when the game moved it (a tag, a new point: its warp went up), while jailed, or between points.
+    ownMoves.current = !!packet.wp;
     for (let i = 0; i < current.players.length; i++) {
       const p = current.players[i];
       const next = parsed[i];
-      const oldX = p.x;
-      const oldY = p.y;
-      p.x = i === ownId ? (Math.hypot(next.x - oldX, next.y - oldY) > 2.5 ? next.x : oldX + (next.x - oldX) * 0.25) : next.x;
-      p.y = i === ownId ? (Math.hypot(next.x - oldX, next.y - oldY) > 2.5 ? next.y : oldY + (next.y - oldY) * 0.25) : next.y;
-      p.vx = next.vx; p.vy = next.vy; p.face = next.face; p.stamina = next.stamina;
+      const warp = packet.wp?.[i] ?? p.warp;
+      if (i === ownId) {
+        if (!packet.wp) {
+          // (an older host: ease toward its word, jumping when far out)
+          const far = Math.hypot(next.x - p.x, next.y - p.y) > 2.5;
+          p.x = far ? next.x : p.x + (next.x - p.x) * 0.25;
+          p.y = far ? next.y : p.y + (next.y - p.y) * 0.25;
+          p.vx = next.vx; p.vy = next.vy; p.stamina = next.stamina;
+        } else if (warp !== p.warp || next.jailed || packet.ph !== 'play') {
+          p.x = next.x; p.y = next.y; p.vx = next.vx; p.vy = next.vy; p.face = next.face;
+          if (warp !== p.warp || packet.ph !== 'play') p.stamina = next.stamina;
+        }
+      } else {
+        p.x = next.x; p.y = next.y; p.vx = next.vx; p.vy = next.vy; p.face = next.face; p.stamina = next.stamina;
+        p.sprinting = next.sprinting;
+      }
+      p.warp = warp;
       p.jailed = next.jailed; p.safe = next.safe; p.immuneT = next.immune ? 0.5 : 0;
       p.stunT = next.stunned ? 0.5 : 0; p.boostT = next.boost ? 0.5 : 0;
-      p.sprinting = next.sprinting; p.ai = next.ai ? levelRef.current : null;
+      p.ai = next.ai ? levelRef.current : null;
     }
-    snapshots.current.push({ at: performance.now(), players: current.players.map((p) => ({ ...p })) });
-    if (snapshots.current.length > 3) snapshots.current.splice(0, snapshots.current.length - 3);
+    const hostT = packet.n / 60;
+    const offset = performance.now() / 1000 - hostT;
+    // the least delayed packet sets the clock; it drifts up slowly so a slower connection is followed too
+    hostOffset.current = hostOffset.current === null || offset < hostOffset.current ? offset : hostOffset.current + (offset - hostOffset.current) * 0.02;
+    snapshots.current.push({ t: hostT, at: current.players.map((p) => ({ x: p.x, y: p.y })) });
+    if (snapshots.current.length > 12) snapshots.current.splice(0, snapshots.current.length - 12);
+    if (packet.jb !== undefined) {
+      const jailT = packet.jb / 100;
+      // the jails opened (the clock went round) on the host: the guest's own cheer, and nobody left inside
+      if (current.mode !== 'tree' && packet.ph === 'play' && jailT > current.jailT + 1 && current.jailT < 1.5) {
+        const freed = parsed.filter((next, i) => !next.jailed && wasJailed.current.has(i)).length;
+        if (freed) handleEvents([{ type: 'jailbreak', count: freed }], current);
+      }
+      current.jailT = jailT;
+    }
+    wasJailed.current = new Set(parsed.flatMap((next, i) => next.jailed ? [i] : []));
     current.phase = packet.ph; current.phaseT = packet.pt / 100; current.clock = packet.ck / 100;
     current.overtime = packet.ot === 1; current.score = [...packet.sc]; current.tree = packet.tr;
     current.treeScore = packet.ts.map((score) => score / 10);
@@ -390,6 +436,52 @@ function Play({ mode }: { mode: StageMode }) {
       seenEventIds.current = new Set(keep);
     }
     if (fresh.length) handleEvents(eventsFromNet(fresh), current);
+  }
+
+  /**
+   * Host: a guest's word on where its player is. Taken while that player is free in play and nothing has moved it since
+   * (its warp matches), held to how far anyone could have run since the last word, and kept out of hedges and walls.
+   */
+  function takeOwnMove(id: number, own: OwnMove) {
+    const current = worldRef.current;
+    const player = current?.players[id];
+    if (!current || !player || player.ai !== null || player.jailed || current.phase !== 'play' || own.warp !== player.warp) return;
+    const now = performance.now();
+    const since = Math.min(1, (now - (movedAt.current.get(player.seat) ?? now - 1000)) / 1000);
+    movedAt.current.set(player.seat, now);
+    const dx = own.x - player.x;
+    const dy = own.y - player.y;
+    const far = Math.hypot(dx, dy);
+    const reach = TOP_SPEED * Math.max(0.05, since) + 1;
+    const k = far > reach ? reach / far : 1;
+    player.x += dx * k;
+    player.y += dy * k;
+    player.vx = own.vx;
+    player.vy = own.vy;
+    if (Math.hypot(own.vx, own.vy) > 0.5) player.face = Math.atan2(own.vy, own.vx);
+    collideObstacles(player, current.mode);
+  }
+
+  /** Guest: its own player, moved here, is pushed out of anyone it runs into (as the host would). */
+  function bumpOthers(current: World, id: number) {
+    const me = current.players[id];
+    for (const other of current.players) {
+      if (other.id === id || other.jailed) continue;
+      const dx = me.x - other.x;
+      const dy = me.y - other.y;
+      const d = Math.hypot(dx, dy);
+      const overlap = PLAYER_R * 2 - d;
+      if (overlap <= 0 || d < 1e-6) continue;
+      me.x += dx / d * overlap;
+      me.y += dy / d * overlap;
+    }
+    collideObstacles(me, current.mode);
+  }
+
+  function ownMove(): OwnMove | undefined {
+    const player = worldRef.current?.players[myId()];
+    if (!ownMoves.current || !player) return undefined;
+    return { x: player.x, y: player.y, vx: player.vx, vy: player.vy, warp: player.warp };
   }
 
   function readInput(playerId: number): Input {
@@ -454,6 +546,10 @@ function Play({ mode }: { mode: StageMode }) {
         sfx.tone({ freq: 520, to: 740, dur: 0.14, type: 'triangle', vol: 0.12 });
       } else if (event.type === 'capture') sfx.play('win');
       else if (event.type === 'free') { sfx.play('select'); sfx.play('select'); }
+      else if (event.type === 'jailbreak') {
+        sfx.play('select');
+        sfx.tone({ freq: 330, to: 660, dur: 0.22, type: 'square', vol: 0.1 });
+      }
       else if (event.type === 'pickup') sfx.play('blip');
       else if (event.type === 'overtime') {
         sfx.play('tick');
@@ -502,8 +598,10 @@ function Play({ mode }: { mode: StageMode }) {
     if (!current || shellRef.current.status !== 'playing') return;
     const o = onlineRef.current;
     const authoritative = !onlineGame || o?.isHost === true;
+    // online, the host keeps to the wall clock: a slow frame is caught up rather than played in slow motion for everyone
+    if (onlineGame && authoritative) dt = Math.min(0.25, Math.max(dt, performance.now() / 1000 - lastSimWall.current));
     updateDt.current = dt;
-    tick.current += Math.max(1, Math.round(dt * 60));
+    tick.current = Math.max(tick.current, Math.round((performance.now() - tickBase.current) * 0.06));
     if (toastT.current > 0) {
       toastT.current = Math.max(0, toastT.current - dt);
       if (!toastT.current) setToast('');
@@ -514,10 +612,14 @@ function Play({ mode }: { mode: StageMode }) {
         const input = readInput(id);
         latestInput.current = input;
         const player = current.players[id];
-        if (player && !player.jailed) movePlayer(player, input, dt, current);
+        // the guest moves itself straight away; the host only steps in when the game moves it (see applyState)
+        if (player && !player.jailed && current.phase === 'play') {
+          movePlayer(player, input, dt, current);
+          if (ownMoves.current) bumpOthers(current, id);
+        }
         if (lastSprint.current === null || lastSprint.current !== input.sprint) {
           const seq = inputSeq.current++;
-          o.send(inputPacket(o.round, input, seq), { fast: false });
+          o.send(inputPacket(o.round, input, seq, ownMove()), { fast: false });
         }
         lastSprint.current = input.sprint;
       }
@@ -552,19 +654,34 @@ function Play({ mode }: { mode: StageMode }) {
     viewRef.current = view;
     fxStep(fx.current!, updateDt.current);
     const display: World = { ...current, players: current.players.map((p) => ({ ...p })) };
-    if (onlineGame && !onlineRef.current?.isHost && snapshots.current.length >= 2) {
-      const now = performance.now() - 100;
-      const older = snapshots.current[snapshots.current.length - 2];
-      const newer = snapshots.current[snapshots.current.length - 1];
-      const alpha = Math.max(0, Math.min(1, (now - older.at) / Math.max(1, newer.at - older.at)));
+    const snaps = snapshots.current;
+    if (onlineGame && !onlineRef.current?.isHost && snaps.length >= 2 && hostOffset.current !== null) {
+      // everyone else, eased between the two snapshots either side of a moment just behind the host's newest word
+      const at = performance.now() / 1000 - hostOffset.current - INTERP_S;
+      let older = snaps[0];
+      let newer = snaps[1];
+      for (let i = 1; i < snaps.length; i++) {
+        older = snaps[i - 1];
+        newer = snaps[i];
+        if (newer.t >= at) break;
+      }
+      const span = Math.max(1e-3, newer.t - older.t);
+      // (past the newest snapshot, carried on a little way at its speed rather than stopping dead)
+      const alpha = Math.max(0, Math.min(1 + 0.1 / span, (at - older.t) / span));
+      const ownId = onlineRef.current?.watching ? -1 : myId();
       for (let id = 0; id < display.players.length; id++) {
-        if (id === myId()) continue;
-        const from = older.players[id];
-        const to = newer.players[id];
-        if (!from || !to) continue;
+        if (id === ownId) continue;
+        const from = older.at[id];
+        const to = newer.at[id];
+        if (!from || !to || Math.hypot(to.x - from.x, to.y - from.y) > 4) continue;
         display.players[id].x = from.x + (to.x - from.x) * alpha;
         display.players[id].y = from.y + (to.y - from.y) * alpha;
       }
+      // a carried axe goes where its carrier is drawn
+      display.axes = current.axes.map((axe) => {
+        const carrier = display.players[axe.carrier];
+        return carrier ? { ...axe, x: carrier.x, y: carrier.y } : axe;
+      });
     }
     const banner = !synced.current && onlineGame ? 'waiting for the round'
       : current.phase === 'count' ? String(Math.max(1, Math.ceil(current.phaseT)))
@@ -613,7 +730,7 @@ function Play({ mode }: { mode: StageMode }) {
         }
       } else if (!online.watching && synced.current && shellRef.current.status === 'playing') {
         const input = latestInput.current;
-        online.send(inputPacket(online.round, input, inputSeq.current++), { fast: true });
+        online.send(inputPacket(online.round, input, inputSeq.current++, ownMove()), { fast: true });
       }
     }, 50);
     return () => window.clearInterval(timer);

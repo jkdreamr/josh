@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { assignRoles, makeMemory, think } from '../src/os/arcade/games/the-axe/bots.ts';
 import {
-  CAPS_TO_WIN, FIELD, MATCH_TIME, STEP, assignTeams, createWorld, jailRect, movePlayer,
+  CAPS_TO_WIN, FIELD, JAILBREAK_GRACE, JAILBREAK_TIME, MATCH_TIME, STEP, assignTeams, createWorld, jailRect, movePlayer,
   soloRoster, step, takeoverDeparted, type GameEvent, type Input, type Level, type Mode, type PlayerConfig, type World,
 } from '../src/os/arcade/games/the-axe/logic.ts';
 import {
-  endPacket, eventsFromNet, eventsToNet, inputPacket, packPlayer, parsePacket,
-  startPacket, statePacket, unpackPlayer,
+  endPacket, eventsFromNet, eventsToNet, inputPacket, ownMoveOf, packPlayer, parsePacket,
+  startPacket, statePacket, unpackPlayer, type InputPacket,
 } from '../src/os/arcade/games/the-axe/net.ts';
 
 const names = ['palm', 'quad', 'bixby', 'scout', 'pepper', 'rally', 'sprout', 'nugget', 'zip', 'mocha'];
@@ -317,67 +317,149 @@ test('bots receive attack, defense, jailbreak, carry, and tree roles', () => {
   assert.equal(takeover.players[0].ai, 2);
 });
 
-test('defenders guard, attackers screen, and other attackers use decoy lanes', () => {
-  const roster = configs(5).map((player) => ({ ...player, ai: 1 as Level }));
-  const defense = playing('classic', roster);
-  Object.assign(defense.players[0], { x: 9, y: 12 });
-  Object.assign(defense.players[2], { x: 9, y: 23 });
-  Object.assign(defense.players[4], { x: 25, y: 6 });
-  Object.assign(defense.players[6], { x: 25, y: 17 });
-  Object.assign(defense.players[8], { x: 25, y: 28 });
-  Object.assign(defense.players[1], { x: 20, y: 12, vx: -4, vy: 0, carrying: 0 });
-  defense.axes[0].carrier = 1;
-  defense.axes[0].x = 20;
-  defense.axes[0].y = 12;
-  const chaserMemory = makeMemory();
-  const guardMemory = makeMemory();
-  think(defense, 0, chaserMemory, () => 0.2, STEP);
-  think(defense, 2, guardMemory, () => 0.2, STEP);
-  assert.ok(Math.abs(chaserMemory.target.x - 20.48) < 1e-9);
-  assert.equal(guardMemory.target.x, 11);
-  assert.ok(guardMemory.target.y > 19 && guardMemory.target.y < 22);
-
-  const escort = playing('classic', roster);
-  Object.assign(escort.players[0], { x: 40, y: 17, carrying: 1 });
-  Object.assign(escort.players[1], { x: 42, y: 17 });
-  escort.axes[1].carrier = 0;
-  escort.axes[1].x = 40;
-  escort.axes[1].y = 17;
-  const escortRole = assignRoles(escort, 0);
-  const escortId = [...escortRole].find(([, role]) => role === 'attack')![0];
-  const escortMemory = makeMemory();
-  think(escort, escortId, escortMemory, () => 0.2, STEP);
-  assert.ok(Math.abs(escortMemory.target.x - 41.5) < 1e-9);
-  assert.ok(Math.abs(escortMemory.target.y - 17) < 1e-9);
-
-  const decoys = playing('classic', roster);
-  Object.assign(decoys.players[0], { x: 40, y: 17 });
-  Object.assign(decoys.players[2], { x: 40, y: 6 });
-  Object.assign(decoys.players[4], { x: 9, y: 17 });
-  Object.assign(decoys.players[6], { x: 9, y: 6 });
-  Object.assign(decoys.players[8], { x: 9, y: 28 });
-  const attackRoles = assignRoles(decoys, 0);
-  const attackIds = [...attackRoles].filter(([, role]) => role === 'attack').map(([id]) => id);
-  const memories = new Map(attackIds.map((id) => [id, makeMemory()]));
-  for (const id of attackIds) think(decoys, id, memories.get(id)!, () => 0.2, STEP);
-  assert.ok(attackIds.some((id) => memories.get(id)!.target.x === 57 && memories.get(id)!.target.y === 17));
-  const decoyTargets = attackIds.map((id) => memories.get(id)!.target).filter((target) => target.x === 35);
-  assert.ok(decoyTargets.some((target) => target.y === 17 || target.y === 28));
-
-  const carrierWorld = playing('classic', roster);
-  Object.assign(carrierWorld.players[0], { x: 40, y: 17, carrying: 1 });
-  Object.assign(carrierWorld.players[1], { x: 20, y: 17 });
-  for (const enemy of carrierWorld.players.filter((player) => player.team === 1 && player.id !== 1)) {
-    Object.assign(enemy, { x: 55, y: enemy.id % 2 ? 6 : 28 });
+test('defenders lead a fleeing carrier and stay on their own half', () => {
+  const roster = configs(3).map((player) => ({ ...player, ai: 1 as Level }));
+  const world = playing('classic', roster);
+  // a cal player has stanford's axe at x 20, running for home
+  Object.assign(world.players[1], { x: 20, y: 12, vx: 7, vy: 0, carrying: 0 });
+  world.axes[0].carrier = 1;
+  Object.assign(world.axes[0], { x: 20, y: 12 });
+  for (const id of [0, 2, 4]) Object.assign(world.players[id], { x: 10 + id, y: 12 + id });
+  const chasers = [0, 2, 4].map((id) => {
+    const memory = makeMemory();
+    think(world, id, memory, () => 0.5, STEP);
+    return memory;
+  });
+  const after = chasers.filter((memory) => memory.targetId === 1);
+  assert.ok(after.length >= 2, 'the carrier gets more than one chaser');
+  for (const memory of after) {
+    assert.ok(memory.target.x > 20, 'aims ahead of the carrier, not behind it');
+    assert.ok(memory.target.x < FIELD.MID, 'never chases past the midline');
   }
-  carrierWorld.axes[1].carrier = 0;
-  carrierWorld.axes[1].x = 40;
-  carrierWorld.axes[1].y = 17;
-  const carrierMemory = makeMemory();
-  think(carrierWorld, 0, carrierMemory, () => 0.2, STEP);
-  assert.ok([6, 28].includes(carrierMemory.carryLane));
-  assert.equal(carrierMemory.target.x, 3);
-  assert.equal(carrierMemory.target.y, carrierMemory.carryLane);
+});
+
+test('an escort steps between the carrier and the nearest chaser', () => {
+  const roster = configs(3).map((player) => ({ ...player, ai: 1 as Level }));
+  const world = playing('classic', roster);
+  Object.assign(world.players[0], { x: 40, y: 17, carrying: 1 });
+  world.axes[1].carrier = 0;
+  Object.assign(world.axes[1], { x: 40, y: 17 });
+  Object.assign(world.players[1], { x: 46, y: 17 });
+  Object.assign(world.players[3], { x: 55, y: 4 });
+  Object.assign(world.players[5], { x: 55, y: 30 });
+  Object.assign(world.players[2], { x: 38, y: 20 });
+  Object.assign(world.players[4], { x: 20, y: 30 });
+  const roles = assignRoles(world, 0);
+  const escort = [...roles].find(([, role]) => role === 'attack')![0];
+  const memory = makeMemory();
+  think(world, escort, memory, () => 0.5, STEP);
+  assert.ok(memory.target.x > 40 && memory.target.x < 46, `escort target ${memory.target.x}`);
+  assert.ok(Math.abs(memory.target.y - 17) < 1);
+});
+
+test('attackers wait on their own side until there is an opening, then run for the axe', () => {
+  const roster = configs(1).map((player) => ({ ...player, ai: 2 as Level }));
+  const guarded = playing('classic', roster);
+  Object.assign(guarded.players[0], { x: 28, y: 17, stamina: 1 });
+  Object.assign(guarded.players[1], { x: 52, y: 17 });
+  const waiting = makeMemory();
+  think(guarded, 0, waiting, () => 0.5, STEP);
+  assert.ok(waiting.target.x < FIELD.MID, `waits at x ${waiting.target.x}`);
+
+  const open = playing('classic', roster);
+  Object.assign(open.players[0], { x: 28, y: 17, stamina: 1 });
+  // (their only player is in jail: the way is clear)
+  Object.assign(open.players[1], { jailed: true, jailSlot: 0 });
+  const running = makeMemory();
+  think(open, 0, running, () => 0.5, STEP);
+  assert.equal(running.committed, true);
+  assert.ok(running.target.x > FIELD.MID);
+});
+
+test('a carrier takes the lane furthest from the chasers', () => {
+  const roster = configs(5).map((player) => ({ ...player, ai: 1 as Level }));
+  const world = playing('classic', roster);
+  Object.assign(world.players[0], { x: 48, y: 17, carrying: 1 });
+  world.axes[1].carrier = 0;
+  Object.assign(world.axes[1], { x: 48, y: 17 });
+  Object.assign(world.players[1], { x: 36, y: 17 });
+  for (const enemy of world.players.filter((player) => player.team === 1 && player.id !== 1)) {
+    Object.assign(enemy, { x: 55, y: enemy.id % 4 === 1 ? 6 : 28 });
+  }
+  const memory = makeMemory();
+  think(world, 0, memory, () => 0.5, STEP);
+  assert.equal(memory.role, 'carry');
+  assert.notEqual(memory.lane, 17);
+  // dodging: it heads homeward, away from the chaser in the middle lane
+  assert.ok(memory.dir.x < 0.2);
+});
+
+test('the jails open every 15 seconds, and escapees can be tagged after a short head start', () => {
+  const world = playing();
+  const prisoner = world.players[1];
+  Object.assign(prisoner, { jailed: true, jailSlot: 0 });
+  world.jailT = STEP * 1.5;
+  const events = tick(world, world.players.map(() => idle), 2);
+  assert.ok(events.some((event) => event.type === 'jailbreak' && event.count === 1));
+  assert.equal(prisoner.jailed, false);
+  assert.equal(prisoner.safe, false, 'not walked home safely: they have to run');
+  assert.ok(prisoner.immuneT > 0 && prisoner.immuneT <= JAILBREAK_GRACE);
+  assert.ok(world.jailT > JAILBREAK_TIME - 0.1);
+
+  // a stanford defender right next to them: nothing during the head start, a tag after it
+  Object.assign(world.players[0], { x: prisoner.x + 1.2, y: prisoner.y, vx: 0, vy: 0 });
+  tick(world, world.players.map(() => idle), 10);
+  assert.equal(prisoner.jailed, false);
+  tick(world, world.players.map(() => idle), Math.ceil(JAILBREAK_GRACE / STEP));
+  assert.equal(prisoner.jailed, true);
+
+  // the clock runs down whether or not anyone is inside, and resets each point
+  const empty = playing();
+  empty.jailT = STEP / 2;
+  assert.ok(!tick(empty).some((event) => event.type === 'jailbreak'));
+  assert.ok(empty.jailT > JAILBREAK_TIME - 0.1);
+  const tree = playing('tree');
+  tick(tree, tree.players.map(() => idle), 60);
+  assert.equal(tree.jailT, JAILBREAK_TIME);
+});
+
+test('a player warps when the game moves them: tagged into jail, or lined up for a point', () => {
+  const world = playing();
+  const before = world.players[1].warp;
+  near(world, 0, 24.2, 5, 1, 25.7, 5);
+  tick(world);
+  assert.equal(world.players[1].jailed, true);
+  assert.equal(world.players[1].warp, before + 1);
+  const lined = createWorld(configs(), 'classic', 3);
+  assert.ok(lined.players.every((player) => player.warp === 1));
+});
+
+test('guests send their own moves, and old and new packets both parse', () => {
+  const world = playing('classic', configs(2));
+  const own = { x: 12.34, y: 5.67, vx: -3.2, vy: 1.1, warp: 4 };
+  const input = inputPacket(3, { x: 1, y: 0, sprint: true }, 9, own);
+  const parsed = parsePacket(input);
+  assert.ok(parsed && parsed.k === 'i');
+  assert.deepEqual(ownMoveOf(parsed), own);
+  const old = inputPacket(3, { x: 1, y: 0, sprint: true }, 9);
+  assert.equal(ownMoveOf(parsePacket(old) as InputPacket), null);
+  assert.equal(parsePacket({ ...input, px: undefined }), null, 'half an own move is no own move');
+  assert.equal(parsePacket({ ...input, py: 9000 }), null);
+
+  world.jailT = 7.25;
+  world.players[2].warp = 6;
+  const state = statePacket(3, 100, world, []);
+  const back = parsePacket(state);
+  assert.ok(back && back.k === 'S');
+  assert.equal(back.jb, 725);
+  assert.equal(back.wp?.[2], 6);
+  const { wp: _wp, jb: _jb, ...older } = state;
+  assert.ok(parsePacket(older), 'a host a version behind still parses');
+  assert.equal(parsePacket({ ...state, wp: [1] }), null);
+  assert.equal(parsePacket({ ...state, jb: JAILBREAK_TIME * 100 + 1 }), null);
+  // the timed jailbreak never goes on the wire, and the ids stay in a row around it
+  const rows = eventsToNet([{ type: 'jailbreak', count: 2 }, { type: 'overtime' }], 5);
+  assert.deepEqual(rows, [[5, 9, 0, 0, 0]]);
 });
 
 test('same seed and same inputs produce identical worlds', () => {
