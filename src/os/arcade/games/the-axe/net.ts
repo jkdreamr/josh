@@ -1,4 +1,4 @@
-import type { GameEvent, Mode, Phase, Player, World } from './logic.ts';
+import { JAILBREAK_TIME, type GameEvent, type Mode, type Phase, type Player, type World } from './logic.ts';
 
 export type NetEvent = [number, number, number, number, number];
 export type PackedPlayer = {
@@ -6,7 +6,15 @@ export type PackedPlayer = {
   flags: number; jailed: boolean; safe: boolean; immune: boolean; stunned: boolean;
   boost: boolean; sprinting: boolean; ai: boolean;
 };
-export type InputPacket = { t: 'the-axe'; r: number; k: 'i'; x: number; y: number; s: boolean; q: number };
+/**
+ * A guest's stick, plus (newer guests) where its own player is: a guest moves itself, and the host takes its word for
+ * it unless the game has moved that player since (w, the player's warp, is behind).
+ */
+export type InputPacket = {
+  t: 'the-axe'; r: number; k: 'i'; x: number; y: number; s: boolean; q: number;
+  px?: number; py?: number; vx?: number; vy?: number; w?: number;
+};
+export type OwnMove = { x: number; y: number; vx: number; vy: number; warp: number };
 export type StartPacket = {
   t: 'the-axe'; r: number; k: 'start'; mode: Mode; seed: number; lv: number;
   roster: [number, number, number][];
@@ -15,6 +23,8 @@ export type StatePacket = {
   t: 'the-axe'; r: number; k: 'S'; n: number; ph: Phase; pt: number; ck: number; ot: 0 | 1;
   sc: [number, number]; tr: number; ts: number[]; ax: [number, number, number][];
   pk: [number, number, number, number][]; p: number[][]; ev: NetEvent[];
+  /** Newer hosts: each player's warp, and the jailbreak clock (centiseconds). */
+  wp?: number[]; jb?: number;
 };
 export type EndPacket = {
   t: 'the-axe'; r: number; k: 'end'; mode: Mode; sc: [number, number];
@@ -63,8 +73,14 @@ export function unpackPlayer(value: unknown): PackedPlayer | null {
   };
 }
 
+type Sent = Exclude<GameEvent, { type: 'jailbreak' }>;
+
+/**
+ * Events as the host sends them, numbered on from firstId. The timed jailbreak stays off the wire (guests see it in the
+ * state's jailbreak clock), so a guest a version behind never meets an event it doesn't know.
+ */
 export function eventsToNet(events: GameEvent[], firstId = 0): NetEvent[] {
-  return events.map((event, index) => {
+  return events.filter((event): event is Sent => event.type !== 'jailbreak').map((event, index) => {
     const id = firstId + index;
     switch (event.type) {
       case 'tag': return [id, 0, event.by, event.who, encodeCoordinate(event.x, event.y)];
@@ -101,14 +117,30 @@ export function eventsFromNet(events: NetEvent[]): GameEvent[] {
   return result;
 }
 
-export function inputPacket(round: number, input: { x: number; y: number; sprint: boolean }, seq: number): InputPacket {
+const clamp = (n: number, min: number, max: number) => Math.max(min, Math.min(max, Math.round(n)));
+
+export function inputPacket(round: number, input: { x: number; y: number; sprint: boolean }, seq: number, own?: OwnMove): InputPacket {
   const length = Math.hypot(input.x, input.y);
   const scale = length > 1 ? 1 / length : 1;
-  return {
+  const packet: InputPacket = {
     t: 'the-axe', r: round, k: 'i',
     x: Math.round(input.x * scale * 100), y: Math.round(input.y * scale * 100),
     s: input.sprint, q: seq,
   };
+  if (own) {
+    packet.px = clamp(own.x * 100, 0, 6000);
+    packet.py = clamp(own.y * 100, 0, 3400);
+    packet.vx = clamp(own.vx * 100, -3000, 3000);
+    packet.vy = clamp(own.vy * 100, -3000, 3000);
+    packet.w = clamp(own.warp, 0, 1_000_000_000);
+  }
+  return packet;
+}
+
+/** Where a guest says its own player is, if its packet says. */
+export function ownMoveOf(packet: InputPacket): OwnMove | null {
+  if (packet.px === undefined || packet.py === undefined || packet.vx === undefined || packet.vy === undefined || packet.w === undefined) return null;
+  return { x: packet.px / 100, y: packet.py / 100, vx: packet.vx / 100, vy: packet.vy / 100, warp: packet.w };
 }
 
 export function startPacket(round: number, mode: Mode, seed: number, level: number, roster: { seat: number; team: 0 | 1; ai: boolean }[]): StartPacket {
@@ -127,6 +159,8 @@ export function statePacket(round: number, tick: number, world: World, events: N
     ax: world.axes.map((a) => [Math.round(a.x * 100), Math.round(a.y * 100), a.carrier]),
     pk: world.pickups.map((p) => [p.id, kindIndex[p.kind], Math.round(p.x * 100), Math.round(p.y * 100)]),
     p: world.players.slice(0, 10).map(packPlayer), ev: events.slice(-60),
+    wp: world.players.slice(0, 10).map((p) => p.warp),
+    jb: Math.round(Math.max(0, Math.min(JAILBREAK_TIME, world.jailT)) * 100),
   };
 }
 
@@ -162,6 +196,11 @@ export function parsePacket(value: unknown): AxePacket | null {
   if (value.k === 'i') {
     if (!integer(value.q, 0, 1_000_000_000) || !integer(value.x, -100, 100) || !integer(value.y, -100, 100)
       || typeof value.s !== 'boolean' || Math.hypot(value.x as number, value.y as number) > 101) return null;
+    const own = [value.px, value.py, value.vx, value.vy, value.w];
+    if (own.some((n) => n !== undefined)) {
+      if (!integer(value.px, 0, 6000) || !integer(value.py, 0, 3400) || !integer(value.vx, -3000, 3000)
+        || !integer(value.vy, -3000, 3000) || !integer(value.w, 0, 1_000_000_000)) return null;
+    }
     return value as unknown as InputPacket;
   }
   if (value.k === 'start') {
@@ -191,6 +230,9 @@ export function parsePacket(value: unknown): AxePacket | null {
         || !integer(pickup[2], 0, 6000) || !integer(pickup[3], 0, 3400)) return null;
     }
     for (const packed of value.p) if (!unpackPlayer(packed)) return null;
+    if (value.wp !== undefined && (!Array.isArray(value.wp) || value.wp.length !== value.p.length
+      || !value.wp.every((n) => integer(n, 0, 1_000_000_000)))) return null;
+    if (value.jb !== undefined && !integer(value.jb, 0, JAILBREAK_TIME * 100)) return null;
     return value as unknown as StatePacket;
   }
   if (value.k === 'end') {

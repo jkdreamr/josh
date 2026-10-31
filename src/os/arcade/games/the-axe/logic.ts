@@ -11,6 +11,8 @@ export type Player = {
   jailed: boolean; jailSlot: number; immuneT: number;
   safe: boolean; safeT: number; stunT: number; boostT: number;
   carrying: number; tags: number; caps: number; frees: number;
+  /** Bumped whenever the game moves the player itself (a tag sends them to jail, a new point lines everyone up). */
+  warp: number;
 };
 export type Axe = { owner: 0 | 1 | -1; homeX: number; homeY: number; x: number; y: number; carrier: number };
 export type Pickup = { id: number; kind: 'drum' | 'costume'; x: number; y: number };
@@ -18,6 +20,7 @@ export type Phase = 'count' | 'play' | 'scored' | 'over';
 export type GameEvent =
   | { type: 'tag'; by: number; who: number; x: number; y: number }
   | { type: 'free'; by: number; count: number; team: 0 | 1 }
+  | { type: 'jailbreak'; count: number }
   | { type: 'steal'; who: number; axe: number }
   | { type: 'drop'; axe: number; x: number; y: number }
   | { type: 'capture'; who: number; team: 0 | 1 }
@@ -30,6 +33,8 @@ export type World = {
   mode: Mode; seed: number; rng: () => number;
   players: Player[]; axes: Axe[]; pickups: Pickup[]; nextPickupId: number; pickupT: number;
   phase: Phase; phaseT: number; clock: number; overtime: boolean;
+  /** Seconds until both jails swing open on their own. */
+  jailT: number;
   score: [number, number]; treeScore: number[]; tree: number;
   winner: 0 | 1 | null; winnerId: number; time: number; acc: number;
 };
@@ -47,6 +52,9 @@ export const CAPS_TO_WIN = 3;
 export const MATCH_TIME = 240;
 export const TREE_TIME = 120;
 export const STEP = 1 / 60;
+/** Every this many seconds both jails open; whoever walks out can be tagged again after a short head start. */
+export const JAILBREAK_TIME = 15;
+export const JAILBREAK_GRACE = 1;
 export const OBSTACLES: Obstacle[] = [
   { kind: 'fountain', shape: 'circle', x: 30, y: 17, r: 2.4 },
   { kind: 'hedge', shape: 'rect', x: 22, y: 4, w: 1.4, h: 7 },
@@ -79,7 +87,7 @@ function playerFrom(config: PlayerConfig, id: number): Player {
     stamina: 1, sprinting: false, restT: 0,
     jailed: false, jailSlot: -1, immuneT: 1,
     safe: false, safeT: 0, stunT: 0, boostT: 0, carrying: -1,
-    tags: 0, caps: 0, frees: 0,
+    tags: 0, caps: 0, frees: 0, warp: 0,
   };
 }
 
@@ -93,7 +101,7 @@ export function createWorld(configs: PlayerConfig[], mode: Mode, seed: number): 
   const world: World = {
     mode, seed, rng, players,
     axes: [], pickups: [], nextPickupId: 0, pickupT: 8,
-    phase: 'count', phaseT: 3, clock: mode === 'tree' ? TREE_TIME : MATCH_TIME, overtime: false,
+    phase: 'count', phaseT: 3, clock: mode === 'tree' ? TREE_TIME : MATCH_TIME, overtime: false, jailT: JAILBREAK_TIME,
     score: [0, 0], treeScore: players.map(() => 0),
     tree: -1, winner: null, winnerId: -1, time: 0, acc: 0,
   };
@@ -126,6 +134,7 @@ export function spawnAll(world: World) {
     player.jailed = false; player.jailSlot = -1; player.safe = false; player.safeT = 0;
     player.immuneT = world.mode === 'tree' && player.id === world.tree ? 2 : 1;
     player.stunT = 0; player.boostT = 0; player.carrying = -1;
+    player.warp++;
   }
   if (world.mode === 'classic') {
     world.axes = [
@@ -137,6 +146,7 @@ export function spawnAll(world: World) {
   } else world.axes = [];
   world.pickups = [];
   world.pickupT = 8;
+  world.jailT = JAILBREAK_TIME;
 }
 
 function boundedInput(input: Input | undefined): Input {
@@ -294,6 +304,7 @@ function tagAndFree(world: World, events: GameEvent[]) {
       target.vx = 0; target.vy = 0; target.sprinting = false;
       const spot = jailPosition(tagger.team, target.jailSlot);
       target.x = spot.x; target.y = spot.y;
+      target.warp++;
       tagger.tags++;
       if (target.carrying >= 0) sendHome(world, target.carrying, events, { x: tagX, y: tagY });
       events.push({ type: 'tag', by: tagger.id, who: target.id, x: tagX, y: tagY });
@@ -320,6 +331,22 @@ function tagAndFree(world: World, events: GameEvent[]) {
     rescuer.frees++;
     events.push({ type: 'free', by: rescuer.id, count: captives.length, team: rescuer.team });
   }
+}
+
+/** The jails open on a timer: everyone inside walks out, unprotected once their head start runs out. */
+function timedJailbreak(world: World, events: GameEvent[]) {
+  if (world.mode === 'tree') return;
+  world.jailT -= STEP;
+  if (world.jailT > 0) return;
+  world.jailT = JAILBREAK_TIME;
+  const captives = world.players.filter((p) => p.jailed);
+  if (!captives.length) return;
+  for (const captive of captives) {
+    captive.jailed = false;
+    captive.jailSlot = -1;
+    captive.immuneT = Math.max(captive.immuneT, JAILBREAK_GRACE);
+  }
+  events.push({ type: 'jailbreak', count: captives.length });
 }
 
 function separatePlayers(players: Player[], mode: Mode) {
@@ -475,6 +502,7 @@ function simulate(world: World, inputs: Input[], events: GameEvent[]) {
 
   for (const player of world.players) movePlayer(player, inputs[player.id] ?? emptyInput(), STEP, world);
   tagAndFree(world, events);
+  timedJailbreak(world, events);
   separatePlayers(world.players, world.mode);
   grabAndScore(world, events);
   pickupsStep(world, STEP, events);

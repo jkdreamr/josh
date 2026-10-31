@@ -1,0 +1,1011 @@
+/* Ridgeline: a clean tactical HUD. Angled dark plates, a condensed display face for numbers, team blue against red. */
+@font-face {
+  font-family: 'Big Shoulders Display';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/big-shoulders-display.woff2') format('woff2');
+}
+
+.g-ridgeline {
+  --g-ridgeline-you: #7cc6ff;
+  --g-ridgeline-them: #ff7a5c;
+  --g-ridgeline-gold: #ffd56a;
+  --g-ridgeline-plate: rgba(12, 16, 22, 0.62);
+  --g-ridgeline-line: rgba(255, 255, 255, 0.14);
+  --g-ridgeline-display: 'Big Shoulders Display', 'Bricolage Grotesque', Inter, system-ui, sans-serif;
+}
+.g-ridgeline .g-ridgeline-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  background: #0d1117;
+  container: g-ridgeline-stage / size;
+}
+.g-ridgeline .g-ridgeline-host {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  cursor: crosshair;
+}
+.g-ridgeline .g-ridgeline-setup {
+  display: grid;
+  gap: 8px;
+}
+.g-ridgeline .g-ridgeline-note {
+  margin: -2px 0 2px;
+  font-size: 12px;
+  line-height: 1.35;
+  opacity: 0.75;
+}
+
+.g-ridgeline .g-ridgeline-loading {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 6px;
+  color: #fff;
+  text-align: center;
+  padding: 16px;
+  background: radial-gradient(circle at 50% 45%, #1d2733, #0b0f14 70%);
+}
+.g-ridgeline .g-ridgeline-loading b {
+  font-family: var(--g-ridgeline-display);
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.g-ridgeline .g-ridgeline-loading span {
+  font-size: 13px;
+  opacity: 0.7;
+}
+.g-ridgeline .g-ridgeline-loading i {
+  width: 120px;
+  height: 3px;
+  margin-top: 8px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 200% 100%;
+  animation: g-ridgeline-load 1.1s linear infinite;
+}
+@keyframes g-ridgeline-load {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+.g-ridgeline .g-ridgeline-hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  color: #fff;
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* the round bar */
+.g-ridgeline .g-ridgeline-top {
+  position: absolute;
+  top: 10px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: stretch;
+  gap: 4px;
+}
+.g-ridgeline .g-ridgeline-score {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  min-width: 72px;
+  padding: 4px 14px 5px;
+  background: var(--g-ridgeline-plate);
+  clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
+}
+.g-ridgeline .g-ridgeline-score.is-them {
+  clip-path: polygon(0 0, calc(100% - 10px) 0, 100% 100%, 10px 100%);
+}
+.g-ridgeline .g-ridgeline-score b {
+  font-family: var(--g-ridgeline-display);
+  font-size: 30px;
+  line-height: 1;
+  font-weight: 800;
+}
+.g-ridgeline .g-ridgeline-score.is-you b {
+  color: var(--g-ridgeline-you);
+}
+.g-ridgeline .g-ridgeline-score.is-them b {
+  color: var(--g-ridgeline-them);
+}
+.g-ridgeline .g-ridgeline-score small {
+  font-size: 10px;
+  opacity: 0.8;
+  max-width: 90px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.g-ridgeline .g-ridgeline-pips {
+  display: flex;
+  gap: 3px;
+  margin-top: 4px;
+}
+.g-ridgeline .g-ridgeline-pips i {
+  width: 9px;
+  height: 4px;
+  border-radius: 1px;
+  background: rgba(255, 255, 255, 0.18);
+}
+.g-ridgeline .g-ridgeline-score.is-you .g-ridgeline-pips i.is-on {
+  background: var(--g-ridgeline-you);
+}
+.g-ridgeline .g-ridgeline-score.is-them .g-ridgeline-pips i.is-on {
+  background: var(--g-ridgeline-them);
+}
+.g-ridgeline .g-ridgeline-clock {
+  display: grid;
+  justify-items: center;
+  min-width: 112px;
+  padding: 4px 10px 6px;
+  background: rgba(12, 16, 22, 0.78);
+}
+.g-ridgeline .g-ridgeline-clock b {
+  font-family: var(--g-ridgeline-display);
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1.05;
+}
+.g-ridgeline .g-ridgeline-clock small {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.75;
+}
+.g-ridgeline .g-ridgeline-cap {
+  position: relative;
+  width: 112px;
+  height: 18px;
+  margin-top: 5px;
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  grid-template-rows: 1fr 1fr;
+  column-gap: 5px;
+  row-gap: 2px;
+  align-items: center;
+}
+.g-ridgeline .g-ridgeline-capLetter {
+  grid-row: 1 / 3;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  font-weight: 800;
+  font-size: 11px;
+  color: #111;
+  background: var(--g-ridgeline-gold);
+  transform: rotate(45deg) scale(0.78);
+}
+.g-ridgeline .g-ridgeline-capBar {
+  height: 4px;
+  border-radius: 2px;
+  min-width: 2px;
+  background: var(--g-ridgeline-you);
+  transition: width 0.12s linear;
+}
+.g-ridgeline .g-ridgeline-capBar.is-them {
+  background: var(--g-ridgeline-them);
+}
+.g-ridgeline .g-ridgeline-cap em {
+  position: absolute;
+  top: 22px;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  font-style: normal;
+  font-size: 11px;
+  color: var(--g-ridgeline-gold);
+}
+.g-ridgeline .g-ridgeline-cap[data-contest='1'] .g-ridgeline-capLetter {
+  animation: g-ridgeline-pulse 0.5s ease-in-out infinite alternate;
+}
+@keyframes g-ridgeline-pulse {
+  to {
+    background: #fff;
+  }
+}
+
+/* minimap */
+.g-ridgeline .g-ridgeline-minimap {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  width: 168px;
+  height: 168px;
+  border-radius: 50%;
+  border: 2px solid rgba(255, 255, 255, 0.28);
+  background: rgba(0, 0, 0, 0.35);
+  box-shadow: 0 2px 12px rgba(0, 0, 0, 0.35);
+}
+.g-ridgeline .g-ridgeline-bigmapWrap {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+.g-ridgeline .g-ridgeline-bigmap {
+  width: min(78cqh, 78cqw);
+  height: min(78cqh, 78cqw);
+  border: 2px solid rgba(255, 255, 255, 0.3);
+  border-radius: 6px;
+}
+
+/* kill feed */
+.g-ridgeline .g-ridgeline-feed {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  justify-items: end;
+  gap: 3px;
+  font-size: 12px;
+}
+.g-ridgeline .g-ridgeline-feed > div {
+  display: flex;
+  gap: 7px;
+  align-items: baseline;
+  padding: 3px 9px;
+  background: var(--g-ridgeline-plate);
+  border-radius: 3px;
+  animation: g-ridgeline-feed 7s forwards;
+}
+.g-ridgeline .g-ridgeline-feed > div.is-mine {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+}
+.g-ridgeline .g-ridgeline-feedW {
+  font-size: 11px;
+  opacity: 0.8;
+}
+@keyframes g-ridgeline-feed {
+  0% {
+    opacity: 0;
+    transform: translateX(10px);
+  }
+  4% {
+    opacity: 1;
+    transform: none;
+  }
+  85% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* health and armor */
+.g-ridgeline .g-ridgeline-vitals {
+  position: absolute;
+  left: 14px;
+  bottom: 14px;
+  display: flex;
+  align-items: flex-end;
+  gap: 12px;
+}
+.g-ridgeline .g-ridgeline-hp {
+  display: grid;
+  gap: 3px;
+}
+.g-ridgeline .g-ridgeline-hp b {
+  font-family: var(--g-ridgeline-display);
+  font-size: 44px;
+  line-height: 0.9;
+  font-weight: 800;
+}
+.g-ridgeline .g-ridgeline-hpBar {
+  width: 150px;
+  height: 5px;
+  background: rgba(255, 255, 255, 0.18);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.g-ridgeline .g-ridgeline-hpBar i {
+  display: block;
+  height: 100%;
+  background: #f2f4f6;
+  transition: width 0.15s;
+}
+.g-ridgeline .g-ridgeline-hpBar i.is-low {
+  background: #ff5a4a;
+}
+.g-ridgeline .g-ridgeline-armor {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding-bottom: 6px;
+  opacity: 0.35;
+}
+.g-ridgeline .g-ridgeline-armor[data-on='1'] {
+  opacity: 1;
+}
+.g-ridgeline .g-ridgeline-armor svg {
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: #b8d4ff;
+  stroke-width: 2;
+}
+.g-ridgeline .g-ridgeline-armor b {
+  font-family: var(--g-ridgeline-display);
+  font-size: 24px;
+  font-weight: 700;
+}
+.g-ridgeline .g-ridgeline-credits {
+  padding-bottom: 7px;
+  font-family: var(--g-ridgeline-display);
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--g-ridgeline-gold);
+}
+.g-ridgeline .g-ridgeline-credits span {
+  margin-right: 3px;
+  opacity: 0.8;
+}
+
+/* ammo */
+.g-ridgeline .g-ridgeline-ammo {
+  position: absolute;
+  right: 14px;
+  bottom: 14px;
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+}
+.g-ridgeline .g-ridgeline-mag {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+.g-ridgeline .g-ridgeline-mag b {
+  font-family: var(--g-ridgeline-display);
+  font-size: 44px;
+  line-height: 0.9;
+  font-weight: 800;
+}
+.g-ridgeline .g-ridgeline-mag b.is-low {
+  color: #ff7a5c;
+}
+.g-ridgeline .g-ridgeline-mag span {
+  font-family: var(--g-ridgeline-display);
+  font-size: 22px;
+  opacity: 0.7;
+}
+.g-ridgeline .g-ridgeline-gunName {
+  font-size: 12px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+.g-ridgeline .g-ridgeline-reload {
+  width: 120px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.g-ridgeline .g-ridgeline-reload i {
+  display: block;
+  height: 100%;
+  background: var(--g-ridgeline-gold);
+}
+.g-ridgeline .g-ridgeline-slots {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 11px;
+}
+.g-ridgeline .g-ridgeline-slots span {
+  padding: 2px 6px;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.35);
+  opacity: 0.7;
+  white-space: nowrap;
+}
+.g-ridgeline .g-ridgeline-slots span.is-on {
+  opacity: 1;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.55);
+}
+.g-ridgeline .g-ridgeline-slots span[data-empty='1'] {
+  opacity: 0.3;
+}
+.g-ridgeline .g-ridgeline-slots kbd {
+  margin-right: 4px;
+  font: inherit;
+  font-weight: 700;
+  opacity: 0.6;
+}
+
+/* crosshair, hit marker, damage arcs */
+.g-ridgeline .g-ridgeline-cross {
+  --gap: 4px;
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  transition: opacity 0.08s;
+}
+.g-ridgeline .g-ridgeline-cross i {
+  position: absolute;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+}
+.g-ridgeline .g-ridgeline-cross .is-t,
+.g-ridgeline .g-ridgeline-cross .is-b {
+  width: 2px;
+  height: 7px;
+  left: -1px;
+}
+.g-ridgeline .g-ridgeline-cross .is-l,
+.g-ridgeline .g-ridgeline-cross .is-r {
+  width: 7px;
+  height: 2px;
+  top: -1px;
+}
+.g-ridgeline .g-ridgeline-cross .is-t {
+  bottom: var(--gap);
+}
+.g-ridgeline .g-ridgeline-cross .is-b {
+  top: var(--gap);
+}
+.g-ridgeline .g-ridgeline-cross .is-l {
+  right: var(--gap);
+}
+.g-ridgeline .g-ridgeline-cross .is-r {
+  left: var(--gap);
+}
+.g-ridgeline .g-ridgeline-cross b {
+  position: absolute;
+  left: -1px;
+  top: -1px;
+  width: 2px;
+  height: 2px;
+  background: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+.g-ridgeline .g-ridgeline-cross.is-ring::after {
+  content: '';
+  position: absolute;
+  left: calc(-1 * var(--gap));
+  top: calc(-1 * var(--gap));
+  width: calc(2 * var(--gap));
+  height: calc(2 * var(--gap));
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  border-radius: 50%;
+}
+.g-ridgeline .g-ridgeline-hit {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  transition: opacity 0.12s;
+}
+.g-ridgeline .g-ridgeline-hit i {
+  position: absolute;
+  left: -1px;
+  top: 6px;
+  width: 2px;
+  height: 7px;
+  background: #fff;
+  transform-origin: 1px -6px;
+}
+.g-ridgeline .g-ridgeline-hit i:nth-child(1) {
+  transform: rotate(45deg);
+}
+.g-ridgeline .g-ridgeline-hit i:nth-child(2) {
+  transform: rotate(135deg);
+}
+.g-ridgeline .g-ridgeline-hit i:nth-child(3) {
+  transform: rotate(225deg);
+}
+.g-ridgeline .g-ridgeline-hit i:nth-child(4) {
+  transform: rotate(315deg);
+}
+.g-ridgeline .g-ridgeline-hit[data-kind='head'] i {
+  background: var(--g-ridgeline-gold);
+}
+.g-ridgeline .g-ridgeline-hit[data-kind='kill'] i {
+  background: #ff4a3a;
+  height: 10px;
+}
+.g-ridgeline .g-ridgeline-arcs {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+}
+.g-ridgeline .g-ridgeline-arcs i {
+  position: absolute;
+  left: -40px;
+  top: -130px;
+  width: 80px;
+  height: 22px;
+  border-top: 4px solid rgba(255, 60, 40, 0.85);
+  border-radius: 50% 50% 0 0;
+  transform-origin: 40px 130px;
+}
+
+/* screen markers */
+.g-ridgeline .g-ridgeline-marks {
+  position: absolute;
+  inset: 0;
+}
+.g-ridgeline .g-ridgeline-mark {
+  position: absolute;
+  left: 0;
+  top: 0;
+  display: grid;
+  justify-items: center;
+  margin: -12px 0 0 -40px;
+  width: 80px;
+  will-change: transform;
+}
+.g-ridgeline .g-ridgeline-mark.is-site b {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  color: #111;
+  font-size: 12px;
+  font-weight: 800;
+  text-shadow: none;
+  background: var(--g-ridgeline-gold);
+  clip-path: polygon(50% 0, 100% 50%, 50% 100%, 0 50%);
+}
+.g-ridgeline .g-ridgeline-mark small {
+  font-size: 10px;
+  opacity: 0.85;
+}
+.g-ridgeline .g-ridgeline-mark.is-mate b {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--g-ridgeline-you);
+}
+.g-ridgeline .g-ridgeline-mark.is-mate small {
+  display: none;
+}
+
+/* banners */
+.g-ridgeline .g-ridgeline-banner {
+  position: absolute;
+  top: 26%;
+  left: 50%;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 8px 40px 10px;
+  transform: translateX(-50%);
+  background: linear-gradient(90deg, transparent, rgba(10, 14, 20, 0.7) 20%, rgba(10, 14, 20, 0.7) 80%, transparent);
+  animation: g-ridgeline-banner 3.2s ease forwards;
+  white-space: nowrap;
+}
+.g-ridgeline .g-ridgeline-banner b {
+  font-family: var(--g-ridgeline-display);
+  font-size: 40px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+.g-ridgeline .g-ridgeline-banner small {
+  font-size: 13px;
+  opacity: 0.85;
+}
+.g-ridgeline .g-ridgeline-banner.is-win b {
+  color: var(--g-ridgeline-you);
+}
+.g-ridgeline .g-ridgeline-banner.is-loss b {
+  color: var(--g-ridgeline-them);
+}
+@keyframes g-ridgeline-banner {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(1.08);
+  }
+  8% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* hints and the knocked out panel */
+.g-ridgeline .g-ridgeline-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 18%;
+  transform: translateX(-50%);
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  background: var(--g-ridgeline-plate);
+}
+.g-ridgeline .g-ridgeline-hint.is-center {
+  bottom: auto;
+  top: calc(50% + 28px);
+}
+.g-ridgeline .g-ridgeline-dead {
+  position: absolute;
+  left: 50%;
+  bottom: 22%;
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  padding: 10px 26px;
+  background: var(--g-ridgeline-plate);
+  border-radius: 6px;
+}
+.g-ridgeline .g-ridgeline-dead small {
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+.g-ridgeline .g-ridgeline-dead b {
+  font-family: var(--g-ridgeline-display);
+  font-size: 28px;
+  color: var(--g-ridgeline-them);
+}
+.g-ridgeline .g-ridgeline-dead em {
+  margin-top: 4px;
+  font-style: normal;
+  font-size: 12px;
+  opacity: 0.8;
+}
+
+/* scope */
+.g-ridgeline .g-ridgeline-scope {
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(circle at 50% 50%, transparent 0, transparent min(42cqh, 42cqw), #000 calc(min(42cqh, 42cqw) + 1px));
+}
+.g-ridgeline .g-ridgeline-scopeLens {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(84cqh, 84cqw);
+  height: min(84cqh, 84cqw);
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.85);
+}
+.g-ridgeline .g-ridgeline-scopeLens i {
+  position: absolute;
+  background: rgba(0, 0, 0, 0.85);
+}
+.g-ridgeline .g-ridgeline-scopeLens .is-h {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+}
+.g-ridgeline .g-ridgeline-scopeLens .is-v {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+}
+
+/* buy menu */
+.g-ridgeline .g-ridgeline-buy {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(720px, calc(100% - 24px));
+  max-height: calc(100% - 120px);
+  overflow: auto;
+  padding: 14px 16px;
+  pointer-events: auto;
+  background: rgba(10, 14, 20, 0.88);
+  border: 1px solid var(--g-ridgeline-line);
+  border-radius: 8px;
+  text-shadow: none;
+  backdrop-filter: blur(6px);
+}
+.g-ridgeline .g-ridgeline-buyHead {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 10px;
+}
+.g-ridgeline .g-ridgeline-buyHead > b {
+  font-family: var(--g-ridgeline-display);
+  font-size: 26px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.g-ridgeline .g-ridgeline-buyCredits {
+  font-family: var(--g-ridgeline-display);
+  font-size: 22px;
+  color: var(--g-ridgeline-gold);
+}
+.g-ridgeline .g-ridgeline-buyTime {
+  margin-left: auto;
+  font-size: 13px;
+  opacity: 0.75;
+}
+.g-ridgeline .g-ridgeline-x {
+  width: 40px;
+  height: 40px;
+  border: 0;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 16px;
+  background: rgba(255, 255, 255, 0.1);
+  cursor: pointer;
+}
+.g-ridgeline .g-ridgeline-buyGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+.g-ridgeline .g-ridgeline-buyGrid section {
+  display: grid;
+  gap: 6px;
+  align-content: start;
+}
+.g-ridgeline .g-ridgeline-buyGrid h4 {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  opacity: 0.6;
+}
+.g-ridgeline .g-ridgeline-buyGrid button {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 1px 8px;
+  min-height: 44px;
+  padding: 7px 10px;
+  text-align: left;
+  color: #fff;
+  border: 1px solid var(--g-ridgeline-line);
+  border-radius: 5px;
+  background: rgba(255, 255, 255, 0.05);
+  cursor: pointer;
+  font: inherit;
+}
+.g-ridgeline .g-ridgeline-buyGrid button:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 70%, #fff);
+}
+.g-ridgeline .g-ridgeline-buyGrid button:disabled {
+  cursor: default;
+  opacity: 0.4;
+}
+.g-ridgeline .g-ridgeline-buyGrid button.is-owned {
+  opacity: 0.75;
+  border-color: rgba(124, 198, 255, 0.6);
+}
+.g-ridgeline .g-ridgeline-buyGrid button b {
+  font-size: 14px;
+}
+.g-ridgeline .g-ridgeline-buyGrid button span {
+  grid-column: 1;
+  font-size: 11px;
+  opacity: 0.65;
+}
+.g-ridgeline .g-ridgeline-buyGrid button em {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  font-style: normal;
+  font-weight: 700;
+  color: var(--g-ridgeline-gold);
+}
+.g-ridgeline .g-ridgeline-buyNote {
+  margin: 10px 0 0;
+  font-size: 11px;
+  opacity: 0.6;
+}
+
+/* scoreboard */
+.g-ridgeline .g-ridgeline-board {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  display: grid;
+  gap: 10px;
+  width: min(560px, calc(100% - 24px));
+  padding: 12px;
+  background: rgba(10, 14, 20, 0.86);
+  border-radius: 8px;
+  text-shadow: none;
+}
+.g-ridgeline .g-ridgeline-board table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.g-ridgeline .g-ridgeline-board th {
+  font-size: 11px;
+  font-weight: 600;
+  text-align: right;
+  opacity: 0.6;
+  padding: 3px 6px;
+}
+.g-ridgeline .g-ridgeline-board th:first-child,
+.g-ridgeline .g-ridgeline-board td:first-child {
+  text-align: left;
+}
+.g-ridgeline .g-ridgeline-board td {
+  padding: 4px 6px;
+  text-align: right;
+  border-top: 1px solid var(--g-ridgeline-line);
+}
+.g-ridgeline .g-ridgeline-board table.is-you td:first-child {
+  color: var(--g-ridgeline-you);
+}
+.g-ridgeline .g-ridgeline-board table.is-them td:first-child {
+  color: var(--g-ridgeline-them);
+}
+.g-ridgeline .g-ridgeline-board tr.is-you td {
+  background: rgba(255, 255, 255, 0.08);
+}
+.g-ridgeline .g-ridgeline-board tr.is-dead td {
+  opacity: 0.45;
+}
+
+/* touch pad */
+.g-ridgeline .g-ridgeline-pad {
+  position: absolute;
+  right: 12px;
+  bottom: 96px;
+  width: 230px;
+  height: 230px;
+  pointer-events: none;
+}
+.g-ridgeline .g-ridgeline-pad button {
+  position: absolute;
+  pointer-events: auto;
+  touch-action: none;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  color: #fff;
+  font: 600 11px/1 system-ui, sans-serif;
+  background: rgba(10, 14, 20, 0.45);
+  border-radius: 50%;
+  -webkit-tap-highlight-color: transparent;
+}
+.g-ridgeline .g-ridgeline-fire {
+  right: 0;
+  bottom: 0;
+  width: 86px;
+  height: 86px;
+  font-size: 14px !important;
+  background: color-mix(in srgb, var(--accent) 55%, rgba(10, 14, 20, 0.4)) !important;
+}
+.g-ridgeline .g-ridgeline-btn {
+  width: 50px;
+  height: 50px;
+}
+.g-ridgeline .g-ridgeline-btn[data-on='1'] {
+  background: rgba(124, 198, 255, 0.5);
+}
+.g-ridgeline .g-ridgeline-btn.is-aim {
+  right: 96px;
+  bottom: 18px;
+}
+.g-ridgeline .g-ridgeline-btn.is-jump {
+  right: 18px;
+  bottom: 96px;
+}
+.g-ridgeline .g-ridgeline-btn.is-crouch {
+  right: 150px;
+  bottom: 0;
+}
+.g-ridgeline .g-ridgeline-btn.is-reload {
+  right: 84px;
+  bottom: 84px;
+}
+.g-ridgeline .g-ridgeline-btn.is-swap {
+  right: 0;
+  bottom: 156px;
+}
+.g-ridgeline .g-ridgeline-btn.is-frag {
+  right: 138px;
+  bottom: 66px;
+}
+.g-ridgeline .g-ridgeline-btn.is-smoke {
+  right: 66px;
+  bottom: 140px;
+}
+.g-ridgeline .g-ridgeline-btn.is-buy {
+  right: 170px;
+  bottom: 140px;
+  border-radius: 8px;
+  background: rgba(255, 213, 106, 0.5);
+}
+
+/* small windows and phones */
+@container g-ridgeline-stage (max-width: 640px) {
+  .g-ridgeline .g-ridgeline-minimap {
+    width: 104px;
+    height: 104px;
+  }
+  .g-ridgeline .g-ridgeline-score {
+    min-width: 54px;
+    padding: 3px 10px 4px;
+  }
+  .g-ridgeline .g-ridgeline-score b {
+    font-size: 22px;
+  }
+  .g-ridgeline .g-ridgeline-clock {
+    min-width: 92px;
+  }
+  .g-ridgeline .g-ridgeline-clock b {
+    font-size: 20px;
+  }
+  .g-ridgeline .g-ridgeline-cap {
+    width: 92px;
+  }
+  .g-ridgeline .g-ridgeline-feed {
+    top: auto;
+    bottom: 120px;
+    right: 8px;
+    font-size: 11px;
+  }
+  .g-ridgeline .g-ridgeline-hp b,
+  .g-ridgeline .g-ridgeline-mag b {
+    font-size: 32px;
+  }
+  .g-ridgeline .g-ridgeline-hpBar {
+    width: 100px;
+  }
+  .g-ridgeline .g-ridgeline-slots {
+    display: none;
+  }
+  .g-ridgeline .g-ridgeline-banner b {
+    font-size: 28px;
+  }
+  .g-ridgeline .g-ridgeline-buyGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .g-ridgeline .g-ridgeline-pad {
+    bottom: 70px;
+  }
+}
+@container g-ridgeline-stage (max-height: 480px) {
+  .g-ridgeline .g-ridgeline-pad {
+    bottom: 12px;
+    right: 100px;
+  }
+  .g-ridgeline .g-ridgeline-banner {
+    top: 18%;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-ridgeline .g-ridgeline-loading i {
+    animation: none;
+  }
+}

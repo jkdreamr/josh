@@ -10,6 +10,7 @@ export const meta: GameMeta = {
   howTo: [
     'grab the other team’s axe from their end zone and bring it back to your own.',
     'tag enemies only on your half. tagged players go to jail, and a teammate can free everyone there.',
+    'every 15 seconds both jails open on their own. escapees get a one second head start, then they can be tagged again.',
     'axe carriers move slower and cannot sprint. freed players walk home safely.',
     'first team to three captures wins, or lead when four minutes end. a tie goes to golden capture.',
     'play big game with one neutral axe, or tree tag where the tree keeps score.',
