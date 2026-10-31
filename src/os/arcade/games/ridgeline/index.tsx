@@ -3,6 +3,7 @@ import { GameShell, Segmented, defineSetting, useGameLoop, useKeys, useSetting, 
 import type { GameProps } from '../../types';
 import { meta } from './meta';
 import { playEvents } from './audio.ts';
+import { useAssets } from './assets.ts';
 import { autoQuality, createView, flyover, type Quality, type View } from './gfx/view.ts';
 import { kitOf, paletteOf } from './gfx/soldiers.ts';
 import { Ammo, BannerView, BuyMenu, DeathPanel, Feed, Markers, Minimap, Reticle, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type FastHud, type FeedItem, type Hud, type MarkersApi, type MinimapApi } from './hud.tsx';
@@ -125,6 +126,7 @@ function Play({ mapId }: { mapId: MapId }) {
   const shellRef = useRef(shell);
   shellRef.current = shell;
   const THREE = useThree();
+  const assets = useAssets();
   const [mode] = useSetting(MODE);
   const [level] = useSetting(LEVEL);
   const [qSetting] = useSetting(QUALITY);
@@ -209,8 +211,8 @@ function Play({ mapId }: { mapId: MapId }) {
   // the view
   useEffect(() => {
     const host = hostRef.current;
-    if (!THREE || !world || !host) return;
-    const view = createView(THREE, host, world, quality);
+    if (!THREE || !world || !host || !assets) return;
+    const view = createView(THREE, host, world, quality, assets);
     if (!view) {
       setGlError(true);
       return;
@@ -231,7 +233,7 @@ function Play({ mapId }: { mapId: MapId }) {
       viewRef.current = null;
       setReady(false);
     };
-  }, [THREE, world, quality]);
+  }, [THREE, world, quality, assets]);
 
   // a new match for each round of the shell (Play, Restart, Play Again)
   const ensureMatch = useCallback(() => {

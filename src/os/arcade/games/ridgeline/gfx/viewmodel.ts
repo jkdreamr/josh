@@ -1,4 +1,4 @@
-// The first person view: the real gun models from guns.ts held in gloved hands (palm, fingers wrapped round the grip,
+// The first person view: the gun models from guns.ts held in gloved hands (palm, fingers wrapped round the grip,
 // the index finger along the trigger guard, armored knuckles, a cuff) in camouflage sleeves, with sway, walk bob,
 // recoil, aiming down sights, reloads and swaps. It renders in its own pass after the world so it never clips into
 // walls, lit by the same sky and darkened when you stand in shade.
@@ -195,7 +195,7 @@ export function viewModel(THREE: Three, sunDir: [number, number, number], sunCol
   const v = new THREE.Vector3();
   const v2 = new THREE.Vector3();
   /** Where each elbow sits relative to its wrist, in camera space: below and back, off the bottom of the screen. */
-  const elbowOff = [new THREE.Vector3(0.07, -0.2, 0.16), new THREE.Vector3(-0.09, -0.21, 0.14)];
+  const elbowOff = [new THREE.Vector3(0.07, -0.2, 0.16), new THREE.Vector3(-0.2, -0.21, 0.1)];
   const elbowOffPistol = [new THREE.Vector3(0.06, -0.19, 0.15), new THREE.Vector3(-0.07, -0.19, 0.15)];
   const q = new THREE.Quaternion();
   const zAxis = new THREE.Vector3(0, 0, 1);
@@ -236,8 +236,8 @@ export function viewModel(THREE: Three, sunDir: [number, number, number], sunCol
       bobT += dt * (1 + st.speed * 7);
       const ads = st.ads * st.ads * (3 - 2 * st.ads);
       const still = 1 - ads * 0.85;
-      const hip = pistol ? [0.13, -0.11 - spec.sight, -0.36] : [0.165, -0.15 - spec.sight, -0.34];
-      const aim = pistol ? [0, -spec.sight, -0.33] : [0, -spec.sight, -0.21];
+      const hip = pistol ? [0.13, -0.11 - spec.sight, -0.36] : [0.15, -0.125 - spec.sight, -0.36];
+      const aim = pistol ? [0, -spec.sight, -0.33] : [0, -spec.sight, -0.24];
       const bobX = Math.sin(st.phase * 2.2) * 0.012 * st.speed * still;
       const bobY = -Math.abs(Math.cos(st.phase * 2.2)) * 0.012 * st.speed * still + Math.sin(bobT * 0.9) * 0.002 * still;
       const drop = Math.sin(Math.min(1, st.reload) * Math.PI);
@@ -261,7 +261,7 @@ export function viewModel(THREE: Three, sunDir: [number, number, number], sunCol
       if (!arms) return;
       // gloves sit on the grip and the handguard (both on the grip for a pistol), sleeves reach back off screen
       // the support hand: on a vertical grip as on the firing grip, else clamped round the side of the handguard
-      const vertical = cur === 'kestrel';
+      const vertical = !!spec.vertical;
       const hands = [spec.grip, pistol ? [spec.grip[0] - 0.008, spec.grip[1] - 0.008, spec.grip[2] + 0.004] : vertical ? spec.fore : [spec.fore[0] - 0.006, spec.fore[1] + 0.022, spec.fore[2]]];
       const tilt = [pistol || WEAPONS[cur].cls !== 'shotgun' ? -0.3 : -0.1, pistol ? -0.25 : vertical ? 0 : -Math.PI / 2];
       arms.meshes.forEach((a, i) => {

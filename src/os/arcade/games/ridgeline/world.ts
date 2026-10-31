@@ -27,6 +27,10 @@ export type Tree = { kind: TreeKind; x: number; y: number; z: number; s: number;
 export type Rock = { x: number; y: number; z: number; s: number; rot: number; v: number; flat: number };
 export type Site = { id: number; name: string; town: string; x: number; y: number; z: number };
 export type Slot = { x: number; z: number; yaw: number };
+export type Vehicle = { x: number; y: number; z: number; rot: number; kind: number };
+/** A placed model; cover also carries its box (across, up, along) for a plain stand-in if the model is missing. */
+export type Placed = { key: ModelKey; x: number; y: number; z: number; yaw: number; size?: [number, number, number] };
+export type ModelKey = 'barricade' | 'pile' | 'wire' | 'dumpsters' | 'fence-base' | 'fence-half' | 'fence-wood' | 'fence-wheel' | 'jerry' | 'gas' | 'propane' | 'helmet' | 'shield' | 'cup' | 'pan';
 export type Spawn = { x: number; y: number; z: number; yaw: number; slots: Slot[] };
 export type Town = { name: string; x: number; z: number; site: number };
 /** Uniform grid over the terrain: start[c]..start[c+1] index items, which encode kind * KIND + index. */
@@ -54,8 +58,10 @@ export type World = {
   towns: Town[];
   /** Road polylines as flat x, z pairs. */
   roads: number[][];
-  /** Armored trucks parked as cover: position and quarter turns. */
-  vehicles: { x: number; y: number; z: number; rot: number }[];
+  /** Trucks parked as cover: position, quarter turns and which (0 armored rescue truck, 1 Ural, 2 BTR). */
+  vehicles: Vehicle[];
+  /** Real models standing in the world (cover drawn by a model, and clutter): which, where, facing. */
+  models: Placed[];
   /** RGBA per terrain vertex: sun visibility, ambient occlusion, far object shadow, bare ground. */
   light: Uint8Array;
   minimap: Minimap;
@@ -90,9 +96,12 @@ type Ctx = {
   roads: number[][];
   /** Buildings, for the baked shadows: footprint plus top. */
   blocks: Rect3[];
-  vehicles: { x: number; y: number; z: number; rot: number }[];
-  /** Colliders with no drawn box of their own (the trucks). */
+  vehicles: Vehicle[];
+  models: Placed[];
+  /** Colliders with no drawn box of their own (the trucks and model cover). */
   colliders: Box[];
+  /** Its own random stream for clutter, so the layout doesn't depend on it. */
+  deco: Rng;
 };
 
 const STYLE_WALLS: Record<Style, number[]> = {
@@ -357,13 +366,42 @@ function tryBuilding(c: Ctx, kind: Kind, x: number, z: number, bound: number) {
   return true;
 }
 
-type PropKind = 'container' | 'crates' | 'sandbags' | 'barrier' | 'truck' | 'hesco';
+type PropKind = 'container' | 'crates' | 'sandbags' | 'barrier' | 'truck' | 'hesco' | 'pile' | 'wire' | 'dumpsters' | 'fence';
+
+/** Footprint (across, along) of each kind of cover. */
+const PROP_SIZE: Record<Exclude<PropKind, 'hesco'>, [number, number]> = {
+  container: [6.06, 2.44],
+  crates: [2.4, 1.2],
+  sandbags: [3.2, 0.8],
+  truck: [2.5, 6.5],
+  barrier: [2.4, 0.72],
+  pile: [2.44, 2.34],
+  wire: [5.16, 1.4],
+  dumpsters: [5.55, 2.6],
+  fence: [3, 0.54],
+};
+/** Cover drawn by a real model: its collider height and surface. */
+const MODEL_COVER: Partial<Record<PropKind, { h: number; s: Surface }>> = {
+  barrier: { h: 1.05, s: 'stone' },
+  pile: { h: 1.95, s: 'wood' },
+  wire: { h: 1.45, s: 'wood' },
+  dumpsters: { h: 1.35, s: 'metal' },
+  fence: { h: 2.3, s: 'stone' },
+};
+const CLUTTER: ModelKey[] = ['jerry', 'gas', 'propane', 'helmet', 'shield', 'jerry', 'propane', 'cup', 'pan'];
+const FENCES: ModelKey[] = ['fence-base', 'fence-half', 'fence-wood', 'fence-wheel'];
+
+/** A piece of clutter on the ground at local (lx, lz) of a frame, facing a random way. */
+function clutter(c: Ctx, f: Frame, lx: number, lz: number, key?: ModelKey, y?: number) {
+  const [x, z] = f.xz(lx, lz);
+  c.models.push({ key: key ?? CLUTTER[Math.floor(c.deco() * CLUTTER.length)], x, y: y ?? heightAt(c.t, x, z), z, yaw: c.deco() * Math.PI * 2 });
+}
 
 function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number) {
   const r = c.rng;
   const rot = Math.floor(r() * 4);
   const units = kind === 'hesco' ? 3 + Math.floor(r() * 3) : 1;
-  const [w, d] = kind === 'container' ? [6.06, 2.44] : kind === 'crates' ? [2.4, 1.2] : kind === 'sandbags' ? [3.2, 0.8] : kind === 'truck' ? [2.5, 6.5] : kind === 'hesco' ? [units * 1.06, 1.06] : [3, 0.5];
+  const [w, d] = kind === 'hesco' ? [units * 1.06, 1.06] : PROP_SIZE[kind];
   const hx = (rot & 1 ? d : w) / 2;
   const hz = (rot & 1 ? w : d) / 2;
   if (Math.abs(x) + hx > bound || Math.abs(z) + hz > bound) return false;
@@ -381,7 +419,7 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number) {
     lo = Math.min(lo, h);
     hi = Math.max(hi, h);
   }
-  if (hi - lo > (kind === 'container' ? 2.2 : kind === 'truck' ? 1.4 : 1.2) || lo < c.t.water + 0.3) return false;
+  if (hi - lo > (kind === 'container' ? 2.2 : kind === 'truck' ? 1.4 : MODEL_COVER[kind] ? 0.7 : 1.2) || lo < c.t.water + 0.3) return false;
   const f = new Frame(c, x, z, rot);
   let y = lo - 0.15;
   if (kind === 'container') {
@@ -398,8 +436,10 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number) {
     c.pads.push({ x, z, hx: hx + 0.6, hz: hz + 0.6, y });
     const rr = f.rect(-1.2, -3.2, 1.2, 3.12);
     c.colliders.push({ x0: rr.x0, y0: y + 0.2, z0: rr.z0, x1: rr.x1, y1: y + 2.84, z1: rr.z1, s: 'metal' });
-    c.vehicles.push({ x, y, z, rot });
+    c.vehicles.push({ x, y, z, rot, kind: c.vehicles.length % 3 });
     c.blocks.push({ x0: rr.x0, y0: y, z0: rr.z0, x1: rr.x1, y1: y + 2.9, z1: rr.z1 });
+    // fuel cans by the side
+    if (c.deco() < 0.7) clutter(c, f, 1.75, (c.deco() - 0.5) * 3, 'jerry');
   } else if (kind === 'hesco') {
     // a wall of wire mesh baskets filled with earth
     const col = c.def.style === 'cabin' ? 0xb9b4a6 : c.def.style === 'adobe' ? 0xbca47e : 0xa89c7c;
@@ -410,12 +450,25 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number) {
     c.blocks.push({ x0: x - hx, y0: y, z0: z - hz, x1: x + hx, y1: hi + 1.35, z1: z + hz });
   } else if (kind === 'crates') {
     crates(c, f, -0.6, 0, y + 0.15);
+    if (c.deco() < 0.35) clutter(c, f, -0.6, 0, c.deco() < 0.5 ? 'cup' : 'helmet', y + 1.25);
+  } else if (MODEL_COVER[kind]) {
+    // cover drawn by a model: a collider box, a block for the baked shadows, and the model on the ground
+    const mc = MODEL_COVER[kind]!;
+    y = lo - 0.05;
+    const rr = f.rect(-w / 2, -d / 2, w / 2, d / 2);
+    c.colliders.push({ x0: rr.x0, y0: y, z0: rr.z0, x1: rr.x1, y1: y + mc.h, z1: rr.z1, s: mc.s });
+    c.blocks.push({ x0: rr.x0, y0: y, z0: rr.z0, x1: rr.x1, y1: y + mc.h, z1: rr.z1 });
+    const key: ModelKey = kind === 'fence' ? FENCES[Math.floor(c.deco() * FENCES.length)] : kind === 'barrier' ? 'barricade' : (kind as 'pile' | 'wire' | 'dumpsters');
+    c.models.push({ key, x, y, z, yaw: (-rot * Math.PI) / 2, size: [w, mc.h, d] });
   } else if (kind === 'sandbags') {
     const col = c.def.style === 'cabin' ? 0xcfcfc6 : 0xb3a07a;
     f.box(-w / 2, y, -d / 2, w / 2, hi + 0.95, d / 2, 'sandbag', col);
     if (r() < 0.5) f.box(w / 2 - 0.8, y, d / 2, w / 2, hi + 0.95, d / 2 + 1.8, 'sandbag', col);
-  } else {
-    f.box(-w / 2, y, -d / 2, w / 2, hi + 1.05, d / 2, 'concrete', 0x9a9890);
+  }
+  // odds and ends left behind cover
+  if ((kind === 'sandbags' || kind === 'hesco' || kind === 'pile' || kind === 'container') && c.deco() < 0.45) {
+    const n = 1 + Math.floor(c.deco() * 2);
+    for (let k = 0; k < n; k++) clutter(c, f, (c.deco() - 0.5) * (w - 0.6), (c.deco() < 0.5 ? -1 : 1) * (d / 2 + 0.45 + c.deco() * 0.3));
   }
   c.taken.push({ x0: x - hx - 0.5, z0: z - hz - 0.5, x1: x + hx + 0.5, z1: z + hz + 0.5 });
   return true;
@@ -566,7 +619,7 @@ const SURFACE: Record<Part, Surface> = { wall: 'stone', trim: 'stone', roof: 'st
 export function buildWorld(id: MapId): World {
   const def = MAPS[id];
   const t = generateTerrain(def);
-  const c: Ctx = { def, t, rng: mulberry32(def.seed * 7 + 3), n: new Noise2(def.seed + 99), pieces: [], gables: [], interiors: [], taken: [], pads: [], roadSegs: [], roads: [], blocks: [], vehicles: [], colliders: [] };
+  const c: Ctx = { def, t, rng: mulberry32(def.seed * 7 + 3), n: new Noise2(def.seed + 99), pieces: [], gables: [], interiors: [], taken: [], pads: [], roadSegs: [], roads: [], blocks: [], vehicles: [], models: [], colliders: [], deco: mulberry32(def.seed * 13 + 5) };
   const r = c.rng;
 
   // the axis between the spawns
@@ -648,7 +701,7 @@ export function buildWorld(id: MapId): World {
     if (tryBuilding(c, r() < 0.5 ? 'ruin' : 'shed', (r() * 2 - 1) * (ARENA - 15), (r() * 2 - 1) * (ARENA - 15), ARENA - 4)) placed++;
 
   // cover: around the uplinks, at the spawns and across the lanes
-  const propKinds: PropKind[] = ['container', 'crates', 'sandbags', 'hesco', 'barrier', 'crates', 'hesco'];
+  const propKinds: PropKind[] = ['container', 'crates', 'sandbags', 'hesco', 'barrier', 'pile', 'hesco', 'wire', 'dumpsters', 'fence', 'barrier', 'pile'];
   // an armored truck by each spawn and one at the middle uplink, then HESCO walls round every uplink
   for (const s of spawns)
     for (let k = 0, placed = 0; k < 60 && placed < 1; k++) {
@@ -786,6 +839,7 @@ export function buildWorld(id: MapId): World {
     towns,
     roads: c.roads,
     vehicles: c.vehicles,
+    models: c.models,
     light: new Uint8Array(0),
     minimap: { size: 0, span: 0, data: new Uint8ClampedArray(0) },
   };

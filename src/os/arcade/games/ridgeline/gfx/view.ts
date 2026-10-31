@@ -1,6 +1,7 @@
 // Puts the whole picture together: renderer, scene, sky light, sun shadows that follow you (snapped to the shadow
 // map's texels so their edges never crawl), the soldiers, effects and viewmodel, and the post chain. A governor watches
 // the frame time and trims the render scale before frames drop, then raises it again when there is room.
+import type { Assets } from '../assets.ts';
 import type { Match } from '../match.ts';
 import { me } from '../match.ts';
 import { clamp } from '../noise.ts';
@@ -12,7 +13,8 @@ import { effects, type Fx } from './fx.ts';
 import { Post } from './post.ts';
 import { buildings, markers } from './props.ts';
 import { skyDome, skyEnv } from './sky.ts';
-import { disposeGuns } from './guns.ts';
+import { disposeGuns, installRealGuns } from './guns.ts';
+import { modelOf, placedModels } from './models.ts';
 import { kitOf, paletteOf, soldiers } from './soldiers.ts';
 import { terrainMesh, terrainTextures, waterMesh } from './terrain.ts';
 import { vegetation } from './veg.ts';
@@ -118,7 +120,7 @@ export type View = {
   dispose(): void;
 };
 
-export function createView(THREE: Three, host: HTMLElement, w: World, quality: Quality): View | null {
+export function createView(THREE: Three, host: HTMLElement, w: World, quality: Quality, assets: Assets): View | null {
   const Q = QUALITY[quality];
   let renderer: T.WebGLRenderer;
   try {
@@ -169,10 +171,12 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
   const veg = vegetation(THREE, w, shared, { grass: Q.grass, treeFrac: Q.trees, shadows: Q.shadows > 0 });
   scene.add(veg.group);
   scene.add(buildings(THREE, w, shared, Q.shadows > 0));
-  scene.add(vehicles(THREE, w, shared, Q.shadows > 0));
+  scene.add(vehicles(THREE, w, shared, Q.shadows > 0, assets));
+  scene.add(placedModels(THREE, w, shared, Q.shadows > 0, assets));
   const mark = markers(THREE, w);
   scene.add(mark.group);
-  const troops = soldiers(THREE, shared, Q.shadows > 0);
+  installRealGuns(THREE, assets);
+  const troops = soldiers(THREE, shared, Q.shadows > 0, modelOf(THREE, assets, 'soldier')?.parts[0] ?? null);
   scene.add(troops.group);
 
   // baked sun visibility and occlusion on the CPU, for the gun's lighting and the particles
@@ -181,7 +185,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
     const j = clamp(Math.round((z + T_HALF) / 2), 0, T_RES - 1);
     return w.light[(j * T_RES + i) * 4 + ch] / 255;
   };
-  const fx: Fx = effects(THREE, w, shared, (x, z) => bakedAt(x, z, 0) * bakedAt(x, z, 2));
+  const fx: Fx = effects(THREE, w, shared, (x, z) => bakedAt(x, z, 0) * bakedAt(x, z, 2), [modelOf(THREE, assets, 'm67')?.parts[0] ?? null, modelOf(THREE, assets, 'rgd5')?.parts[0] ?? null]);
   scene.add(fx.group);
 
   const sunDir = new THREE.Vector3(...w.sun);

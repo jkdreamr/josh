@@ -14,6 +14,7 @@ export const meta: GameMeta = {
     'Guns are only accurate when you stand still. Running throws your shots wide, so stop, then shoot. Crouch and aim down sights for tighter groups, and pull down against the recoil when you spray.',
     'Bullets take time to fly and drop over distance: aim a touch high and lead moving targets far away. Headshots hit hardest, and armor soaks up part of every hit until it breaks.',
     'Deathmatch: everyone for themselves, any gun you like, quick respawns. First to 25 knockouts wins.',
+    '3D models from Sketchfab, CC BY 4.0: soldier by ItsKrish7; M4A1, AK-47 and M67 by Nneako; MP5 by Rotuma; Desert Eagle by ELIZION; XD-MOD2 by Orshia 3D; Px4 Storm by Vlasov Daniil; RGD-5 by _Alexandr; Ural 4320 by Brout; BTR-80 and frying pan by GameDev Nick; barricade by Arthur.Zim; crate pile by Blender3D; barbed wire by Mehdi Shahsavan; dumpsters by bazz4r; fences by Erroratten; jerry cans by Liam3D; gas bottles by Gamefruit; propane tank by Oliver Triplett; helmet by Sergeydesign09; shield by sanyaork; cup by Kozlov Maksim. AWP by MKoegler3D, CC BY-NC 4.0.',
   ],
   accent: '#c8473b',
   glyph: 'M2 19l6-8 4 5 3-4 7 7zM17 2v5M14.5 4.5h5',

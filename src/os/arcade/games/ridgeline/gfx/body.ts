@@ -357,13 +357,114 @@ export function soldierGeometry(THREE: Three, o: Outfit) {
   return g;
 }
 
+/**
+ * How a body is built and holds a gun: its joints in the bind pose, where a long gun's butt and a pistol's grip sit
+ * (chest space), how far the shoulders turn behind a long gun (positive brings the left shoulder forward), the rest roll
+ * of the thighs and arms (positive spreads them), and the turns that take each bind pose hand onto a firing grip, under
+ * a handguard and round the firing hand on a pistol (quaternions).
+ */
+export type Build = {
+  joints: V3[];
+  butt: V3;
+  pistol: V3;
+  twist: number;
+  splay: number;
+  armRest: number;
+  /** Where the wrist goes relative to the grip, the handguard and (support hand) a pistol's grip, in gun space. */
+  gripAt: V3;
+  foreAt: V3;
+  cupAt: V3;
+  grip?: [number, number, number, number];
+  fore?: [number, number, number, number];
+  cup?: [number, number, number, number];
+};
+
+/** The lofted soldier: hands modeled round a grip already. */
+export const LOFT_BUILD: Build = { joints: JOINT, butt: [0.115, 0.16, -0.05], pistol: [0.03, 0.17, -0.44], twist: 0, splay: 0.03, armRest: 0.12, gripAt: [0.024, 0.02, 0], foreAt: [-0.022, 0.015, 0], cupAt: [-0.03, 0.015, 0] };
+
+/** Quaternion turning the frame (a, b, a x b) onto (a2, b2, a2 x b2): a hand's finger and palm directions. */
+function turn(a: V3, b: V3, a2: V3, b2: V3): [number, number, number, number] {
+  const n = (v: V3): V3 => {
+    const l = Math.hypot(v[0], v[1], v[2]);
+    return [v[0] / l, v[1] / l, v[2] / l];
+  };
+  const cross = (u: V3, v: V3): V3 => [u[1] * v[2] - u[2] * v[1], u[2] * v[0] - u[0] * v[2], u[0] * v[1] - u[1] * v[0]];
+  const fr = (x: V3, y: V3) => {
+    const u = n(x);
+    const c = n(cross(u, y));
+    return [u, cross(c, u), c];
+  };
+  const [u0, v0, w0] = fr(a, b);
+  const [u1, v1, w1] = fr(a2, b2);
+  // R = F1 * F0^T, then to a quaternion
+  const m = [0, 1, 2].map((r) => [0, 1, 2].map((c) => u1[r] * u0[c] + v1[r] * v0[c] + w1[r] * w0[c]));
+  const tr = m[0][0] + m[1][1] + m[2][2];
+  if (tr > 0) {
+    const s = Math.sqrt(tr + 1) * 2;
+    return [(m[2][1] - m[1][2]) / s, (m[0][2] - m[2][0]) / s, (m[1][0] - m[0][1]) / s, s / 4];
+  }
+  if (m[0][0] > m[1][1] && m[0][0] > m[2][2]) {
+    const s = Math.sqrt(1 + m[0][0] - m[1][1] - m[2][2]) * 2;
+    return [s / 4, (m[0][1] + m[1][0]) / s, (m[0][2] + m[2][0]) / s, (m[2][1] - m[1][2]) / s];
+  }
+  if (m[1][1] > m[2][2]) {
+    const s = Math.sqrt(1 + m[1][1] - m[0][0] - m[2][2]) * 2;
+    return [(m[0][1] + m[1][0]) / s, s / 4, (m[1][2] + m[2][1]) / s, (m[0][2] - m[2][0]) / s];
+  }
+  const s = Math.sqrt(1 + m[2][2] - m[0][0] - m[1][1]) * 2;
+  return [(m[0][2] + m[2][0]) / s, (m[1][2] + m[2][1]) / s, s / 4, (m[1][0] - m[0][1]) / s];
+}
+
+/**
+ * The real soldier model (models/soldier.glb), skinned to these joints by the bake: it stands in a loose A pose, arms
+ * hanging out from a bulky plate carrier, fingers down and palms in.
+ */
+export const SOLDIER_BUILD: Build = {
+  joints: [
+    [0, 0, 0],
+    [0, 0.95, 0.01],
+    [0, 1.12, 0],
+    [0, 1.32, -0.01],
+    [0, 1.52, -0.04],
+    [0, 1.6, -0.08],
+    [0.07, 1.44, 0],
+    [0.25, 1.42, 0.03],
+    [0.39, 1.17, 0.06],
+    [0.445, 0.93, -0.06],
+    [-0.07, 1.44, 0],
+    [-0.25, 1.42, 0.03],
+    [-0.39, 1.17, 0.06],
+    [-0.445, 0.93, -0.06],
+    [0.11, 0.93, 0.01],
+    [0.245, 0.54, -0.05],
+    [0.33, 0.12, 0.05],
+    [-0.11, 0.93, 0.01],
+    [-0.245, 0.54, -0.05],
+    [-0.33, 0.12, 0.05],
+  ],
+  butt: [0.16, 0.12, -0.17],
+  pistol: [0.03, 0.13, -0.5],
+  twist: 0.5,
+  splay: -0.13,
+  armRest: -0.2,
+  gripAt: [0.03, 0.035, 0.065],
+  foreAt: [-0.045, -0.035, 0.06],
+  cupAt: [-0.035, 0, 0.07],
+  // firing hand: fingers from hanging down to forward along the grip, palm still facing in
+  grip: turn([0, -0.9, -0.4], [-1, 0, 0], [0, -0.35, -0.94], [-1, 0, 0]),
+  // support hand: palm up under the handguard, fingers forward and across
+  fore: turn([0, -0.9, -0.4], [1, 0, 0], [0.55, 0.1, -0.83], [0, 1, 0]),
+  // support hand on a pistol: wrapped round the firing hand from the left
+  cup: turn([0, -0.9, -0.4], [1, 0, 0], [0.35, -0.45, -0.82], [1, 0.2, 0]),
+};
+
 /** A skeleton in the bind pose. */
-export function skeleton(THREE: Three) {
-  const bones = JOINT.map(() => new THREE.Bone());
+export function skeleton(THREE: Three, joints: V3[] = JOINT) {
+  const bones = joints.map(() => new THREE.Bone());
   bones.forEach((b, i) => {
     const p = PARENT[i];
-    const j = JOINT[i];
-    const pj = p >= 0 ? JOINT[p] : [0, 0, 0];
+    const j = joints[i];
+    const pj = p >= 0 ? joints[p] : [0, 0, 0];
     b.position.set(j[0] - pj[0], j[1] - pj[1], j[2] - pj[2]);
     if (p >= 0) bones[p].add(b);
   });
@@ -384,7 +485,8 @@ export type Pose = {
 };
 
 /** Poses one soldier's bones (the gun group, a child of the chest bone, is placed too). */
-export function makePoser(THREE: Three) {
+export function makePoser(THREE: Three, build: Build = LOFT_BUILD) {
+  const JOINT = build.joints;
   const v = () => new THREE.Vector3();
   const q = () => new THREE.Quaternion();
   const S = v();
@@ -447,18 +549,25 @@ export function makePoser(THREE: Three) {
   const poleL = new THREE.Vector3(-0.8, -1, 0.2);
   const target = v();
   const handQ = q();
+  const qYaw = q();
+  const yAxis = new THREE.Vector3(0, 1, 0);
+  const offset = (o?: [number, number, number, number]) => (o ? new THREE.Quaternion(o[0], o[1], o[2], o[3]) : new THREE.Quaternion());
+  const gripQ = offset(build.grip);
+  const foreQ = offset(build.fore);
+  const cupQ = offset(build.cup);
+  const hipY = JOINT[BONE.hips];
   return (bones: T.Bone[], gunGroup: T.Object3D | null, p: Pose) => {
     for (const b of bones) b.quaternion.identity();
     const hipsB = bones[BONE.hips];
-    hipsB.position.set(0, JOINT[BONE.hips][1], 0);
+    hipsB.position.set(hipY[0], hipY[1], hipY[2]);
     if (p.dead) {
       // limp: arms out, knees a little bent
-      bones[BONE.armR].rotation.set(0.3, 0, 1.1);
-      bones[BONE.armL].rotation.set(0.3, 0, -1.1);
+      bones[BONE.armR].rotation.set(0.3, 0, 1.1 + build.armRest - 0.12);
+      bones[BONE.armL].rotation.set(0.3, 0, -1.1 - build.armRest + 0.12);
       bones[BONE.foreR].rotation.set(0.4, 0, 0);
       bones[BONE.foreL].rotation.set(0.2, 0, 0);
-      bones[BONE.thighR].rotation.set(0.1, 0, 0.12);
-      bones[BONE.thighL].rotation.set(-0.05, 0, -0.1);
+      bones[BONE.thighR].rotation.set(0.1, 0, 0.12 + build.splay);
+      bones[BONE.thighL].rotation.set(-0.05, 0, -0.1 - build.splay);
       bones[BONE.shinR].rotation.set(-0.3, 0, 0);
       bones[BONE.shinL].rotation.set(-0.15, 0, 0);
       bones[BONE.head].rotation.set(0.3, 0.4, 0);
@@ -475,24 +584,27 @@ export function makePoser(THREE: Three) {
     bones[BONE.hips].rotation.y = Math.sin(ph) * 0.06 * sp;
     const spineX = p.pitch * 0.25 + p.crouch * 0.2;
     const chestX = p.pitch * 0.15;
+    // behind a long gun the shoulders blade (left one forward), the head turns back to the aim
+    const twist = p.gun && !p.pistol ? build.twist : 0;
     bones[BONE.spine].rotation.x = spineX;
-    bones[BONE.spine].rotation.y = -Math.sin(ph) * 0.05 * sp;
+    bones[BONE.spine].rotation.y = -Math.sin(ph) * 0.05 * sp - twist * 0.5;
     bones[BONE.chest].rotation.x = chestX;
+    bones[BONE.chest].rotation.y = -twist * 0.5;
     const bodyPitch = hipLean + spineX + chestX;
-    bones[BONE.neck].rotation.x = (p.pitch - bodyPitch) * 0.45;
-    bones[BONE.head].rotation.x = (p.pitch - bodyPitch) * 0.55;
+    bones[BONE.neck].rotation.set((p.pitch - bodyPitch) * 0.45, twist * 0.45, 0);
+    bones[BONE.head].rotation.set((p.pitch - bodyPitch) * 0.55, twist * 0.55, 0);
     // legs: a walk cycle, bent for a crouch, tucked in the air
     for (const side of [1, -1]) {
       const s = Math.sin(ph + (side > 0 ? 0 : Math.PI));
       const swing = s * 0.55 * sp + p.crouch * 1.05 + air * 0.4 - hipLean;
       const knee = Math.max(0, -Math.cos(ph + (side > 0 ? 0 : Math.PI))) * 0.95 * sp + p.crouch * 1.85 + air * 0.75;
-      bones[side > 0 ? BONE.thighR : BONE.thighL].rotation.set(swing, 0, side * 0.03);
+      bones[side > 0 ? BONE.thighR : BONE.thighL].rotation.set(swing, 0, side * build.splay);
       bones[side > 0 ? BONE.shinR : BONE.shinL].rotation.x = -knee;
       bones[side > 0 ? BONE.footR : BONE.footL].rotation.x = knee - swing - hipLean * 0.5;
     }
     if (!gunGroup || !p.gun) {
-      bones[BONE.armR].rotation.set(0.15, 0, 0.12);
-      bones[BONE.armL].rotation.set(0.15, 0, -0.12);
+      bones[BONE.armR].rotation.set(0.15, 0, build.armRest);
+      bones[BONE.armL].rotation.set(0.15, 0, -build.armRest);
       return;
     }
     // the gun shouldered (or held out, for a pistol) along the aim, then both hands onto it
@@ -500,19 +612,24 @@ export function makePoser(THREE: Three) {
     gunGroup.visible = true;
     const gunPitch = p.pitch - bodyPitch;
     qGun.setFromAxisAngle(xAxis, gunPitch);
+    if (twist) qGun.premultiply(qYaw.setFromAxisAngle(yAxis, twist));
     gunGroup.quaternion.copy(qGun);
     if (p.pistol) {
-      target.set(0.03, 0.17, -0.44);
+      target.set(build.pistol[0], build.pistol[1], build.pistol[2]);
       tmp.set(g.grip[0], g.grip[1], g.grip[2]).applyQuaternion(qGun);
     } else {
-      target.set(0.115, 0.16, -0.05);
+      target.set(build.butt[0], build.butt[1], build.butt[2]);
       tmp.set(g.butt[0], g.butt[1], g.butt[2]).applyQuaternion(qGun);
     }
     gunGroup.position.copy(target).sub(tmp);
-    handQ.copy(qGun);
-    target.set(g.grip[0] + 0.024, g.grip[1] + 0.02, g.grip[2]).applyQuaternion(qGun).add(gunGroup.position);
+    const a = build.gripAt;
+    handQ.copy(qGun).multiply(gripQ);
+    target.set(g.grip[0] + a[0], g.grip[1] + a[1], g.grip[2] + a[2]).applyQuaternion(qGun).add(gunGroup.position);
     reach(bones, 1, target, poleR, handQ);
-    target.set(g.fore[0] - (p.pistol ? 0.03 : 0.022), g.fore[1] + 0.015, g.fore[2]).applyQuaternion(qGun).add(gunGroup.position);
+    const f = p.pistol ? build.cupAt : build.foreAt;
+    const at = p.pistol ? g.grip : g.fore;
+    handQ.copy(qGun).multiply(p.pistol ? cupQ : foreQ);
+    target.set(at[0] + f[0], at[1] + f[1], at[2] + f[2]).applyQuaternion(qGun).add(gunGroup.position);
     reach(bones, -1, target, poleL, handQ);
   };
 }

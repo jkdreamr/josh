@@ -4,6 +4,7 @@ import type { Match } from '../match.ts';
 import type { Surface, World } from '../world.ts';
 import { mulberry32 } from '../noise.ts';
 import { ADDITIVE, COMMON, DOUBLE, NORMAL_BLEND, lin, type Shared, type T, type Three } from './common.ts';
+import { worldMaterial, type Part } from './models.ts';
 
 const PVERT = /* glsl */ `
 attribute vec3 iPos;
@@ -267,7 +268,7 @@ export type Fx = {
   smokeAt(x: number, y: number, z: number, m: Match): number;
 };
 
-export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: number, z: number) => number): Fx {
+export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: number, z: number) => number, frags: (Part | null)[] = []): Fx {
   const group = new THREE.Group();
   const alpha = new Particles(THREE, shared, 2200, false);
   const add = new Particles(THREE, shared, 900, true);
@@ -324,9 +325,14 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
   const dscale = new THREE.Vector3();
 
   // grenades in the air
+  // a frag is the real M67 (the other side throws RGD-5s) when they have loaded
   const fragGeo = new THREE.SphereGeometry(0.055, 10, 8);
   const smokeGeo = new THREE.CylinderGeometry(0.035, 0.035, 0.14, 10);
   const nadeMat = new THREE.MeshStandardMaterial({ color: 0x3a4430, roughness: 0.6, metalness: 0.3 });
+  const fragLook = [0, 1].map((k) => {
+    const f = frags[k] ?? frags[0];
+    return f ? { geo: f.geo, mat: worldMaterial(THREE, f.mat, shared) } : { geo: fragGeo, mat: nadeMat };
+  });
   const smokeMat = new THREE.MeshStandardMaterial({ color: 0x8a8f94, roughness: 0.5, metalness: 0.4 });
   const nades = Array.from({ length: 8 }, () => {
     const mesh: T.Mesh<T.BufferGeometry, T.Material> = new THREE.Mesh(fragGeo, nadeMat);
@@ -483,8 +489,9 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
         const g = m.nades[i];
         mesh.visible = !!g;
         if (!g) return;
-        mesh.geometry = g.kind === 'frag' ? fragGeo : smokeGeo;
-        mesh.material = g.kind === 'frag' ? nadeMat : smokeMat;
+        const look = fragLook[m.mode === 'uplink' ? (m.actors[g.owner]?.team ?? 0) : g.owner % 2];
+        mesh.geometry = g.kind === 'frag' ? look.geo : smokeGeo;
+        mesh.material = g.kind === 'frag' ? look.mat : smokeMat;
         mesh.position.set(g.x, g.y, g.z);
         mesh.rotation.set(g.spin, g.spin * 0.7, 0);
       });

@@ -2,9 +2,11 @@
 // beveled edges, lathe turned barrels, muzzle devices and scopes, Picatinny rails with their teeth, M-LOK slots, a
 // holographic sight you can look through. One model per gun, shared by the first person view and every soldier.
 // Built in gun space: forward is -z, up is +y, the origin sits on the bore line above the trigger.
+import type { Assets, AssetKey } from '../assets.ts';
 import type { WeaponId } from '../weapons.ts';
 import { lin, roundBox, type T, type Three } from './common.ts';
 import { GUN_LOOK, type GunMat } from './gear.ts';
+import { bakeModel, type Part } from './models.ts';
 
 type Pt = [number, number] | ['q', number, number, number, number];
 
@@ -20,6 +22,10 @@ export type GunModel = {
   muzzle: [number, number, number];
   /** Where the butt meets the shoulder (third person hold). */
   butt: [number, number, number];
+  /** The support hand holds a vertical grip (else it cups the handguard from below). */
+  vertical?: boolean;
+  /** A real model: its parts for the first person view, and one vertex colored geometry for other soldiers' hands. */
+  real?: { fp: Part[]; lite: T.BufferGeometry | null };
 };
 
 /** Collects parts per material, in (side s, up u, forward f) coordinates. */
@@ -369,18 +375,75 @@ function bulwark(b: Builder): Omit<GunModel, 'id' | 'geos'> {
 
 const BUILDERS: Record<WeaponId, (b: Builder) => Omit<GunModel, 'id' | 'geos'>> = { wren, bulwark, hornet, mauler, kestrel, lancer, longbow };
 
-const cache = new WeakMap<Three, Map<WeaponId, GunModel>>();
+type V3 = [number, number, number];
+/**
+ * The real guns: which model files, and the points on them in the file's own coordinates (the bake leaves them centered,
+ * forward -z): the origin on the bore line above the trigger, the sight line height above it, the hand points (the grip
+ * point is the center of the firing hand round the grip, the fore point sits under the handguard's axis), the muzzle and
+ * the butt. An optic is added where the real gun has none. The "-b" models are the other side's version of a gun.
+ */
+type RealSpec = { fp?: AssetKey; lite: AssetKey; origin: V3; sight: number; grip: V3; fore: V3; muzzle: V3; butt: V3; optic?: (b: Builder) => number };
+const REAL: Partial<Record<string, RealSpec>> = {
+  wren: { fp: 'xd', lite: 'xd-lite', origin: [0, 0.049, -0.005], sight: 0.028, grip: [0, -0.035, 0.05], fore: [0, -0.04, 0.045], muzzle: [0, 0.049, -0.09], butt: [0, -0.06, 0.08] },
+  'wren-b': { lite: 'beretta-lite', origin: [0, 0.042, -0.01], sight: 0.028, grip: [0, -0.035, 0.04], fore: [0, -0.04, 0.035], muzzle: [0, 0.042, -0.085], butt: [0, -0.06, 0.07] },
+  bulwark: { fp: 'deagle', lite: 'deagle-lite', origin: [0, 0.055, 0], sight: 0.022, grip: [0, -0.035, 0.065], fore: [0, -0.04, 0.06], muzzle: [0, 0.059, -0.135], butt: [0, -0.07, 0.1] },
+  hornet: { fp: 'mp5', lite: 'mp5-lite', origin: [0, 0.05, 0], sight: 0.072, grip: [0, -0.045, 0.06], fore: [0, 0.025, -0.2], muzzle: [0, 0.053, -0.34], butt: [0, 0.02, 0.34] },
+  kestrel: { fp: 'm4', lite: 'm4-lite', origin: [0, 0.09, 0.05], sight: 0, grip: [0, -0.025, 0.135], fore: [0, 0.071, -0.17], muzzle: [0, 0.09, -0.42], butt: [0, 0.04, 0.42], optic: (b) => holo(b, 0, 0.034) },
+  'kestrel-b': { lite: 'ak-lite', origin: [0, 0.075, 0.08], sight: 0.04, grip: [0, -0.025, 0.165], fore: [0, 0.058, -0.17], muzzle: [0, 0.075, -0.44], butt: [0, 0.05, 0.44] },
+  lancer: { fp: 'm4', lite: 'm4-lite', origin: [0, 0.09, 0.05], sight: 0, grip: [0, -0.025, 0.135], fore: [0, 0.071, -0.17], muzzle: [0, 0.09, -0.42], butt: [0, 0.04, 0.42], optic: (b) => scope(b, -0.12, 0.16, 0.034, 0.021) },
+  longbow: { fp: 'awp', lite: 'awp-lite', origin: [0, 0.06, 0.28], sight: 0.048, grip: [0, -0.04, 0.37], fore: [0, 0.023, 0.1], muzzle: [0, 0.06, -0.6], butt: [0, 0, 0.6] },
+};
 
-/** The model for a gun, built once per three.js instance and shared. */
-export function gunModel(THREE: Three, id: WeaponId): GunModel {
+const cache = new WeakMap<Three, Map<string, GunModel>>();
+const realSrc = new WeakMap<Three, Assets>();
+
+/** Uses the loaded real models for every gun that has one (the procedural ones stay for the rest). */
+export function installRealGuns(THREE: Three, assets: Assets) {
+  disposeGuns(THREE);
+  realSrc.set(THREE, assets);
+}
+
+const sub = (a: V3, o: V3): V3 => [a[0] - o[0], a[1] - o[1], a[2] - o[2]];
+
+function realModel(THREE: Three, id: WeaponId, spec: RealSpec, assets: Assets): GunModel | null {
+  const liteSrc = assets[spec.lite];
+  const fpSrc = spec.fp ? assets[spec.fp] : undefined;
+  if (!liteSrc && !fpSrc) return null;
+  const o = spec.origin;
+  const shift = new THREE.Matrix4().makeTranslation(-o[0], -o[1], -o[2]);
+  const fp = fpSrc ? bakeModel(THREE, fpSrc, shift).parts : [];
+  const liteParts = liteSrc ? bakeModel(THREE, liteSrc, shift).parts : [];
+  for (const p of liteParts.slice(1)) p.geo.dispose();
+  const b = new Builder(THREE);
+  const sight = spec.optic ? spec.optic(b) : spec.sight;
+  return {
+    id,
+    geos: b.build(),
+    sight,
+    grip: sub(spec.grip, o),
+    fore: sub(spec.fore, o),
+    muzzle: sub(spec.muzzle, o),
+    butt: sub(spec.butt, o),
+    real: { fp, lite: liteParts[0]?.geo ?? null },
+  };
+}
+
+/** The model for a gun (side 1 carries the other side's version where there is one), built once per three.js instance. */
+export function gunModel(THREE: Three, id: WeaponId, side = 0): GunModel {
   let byId = cache.get(THREE);
   if (!byId) cache.set(THREE, (byId = new Map()));
-  let m = byId.get(id);
+  const assets = realSrc.get(THREE);
+  const key = side && REAL[`${id}-b`] && assets?.[REAL[`${id}-b`]!.lite] ? `${id}-b` : id;
+  let m = byId.get(key);
   if (!m) {
-    const b = new Builder(THREE);
-    const meta = BUILDERS[id](b);
-    m = { id, geos: b.build(), ...meta };
-    byId.set(id, m);
+    const spec = REAL[key];
+    m = (spec && assets && realModel(THREE, id, spec, assets)) || undefined;
+    if (!m) {
+      const b = new Builder(THREE);
+      const meta = BUILDERS[id](b);
+      m = { id, geos: b.build(), ...meta, vertical: id === 'kestrel' };
+    }
+    byId.set(key, m);
   }
   return m;
 }
@@ -395,6 +458,11 @@ export function gunMesh(THREE: Three, model: GunModel, mats: Record<GunMat, T.Ma
     if (mat === 'lens') mesh.renderOrder = 4;
     g.add(mesh);
   }
+  for (const p of model.real?.fp ?? []) {
+    const mesh = new THREE.Mesh(p.geo, p.mat);
+    mesh.castShadow = shadows;
+    g.add(mesh);
+  }
   return g;
 }
 
@@ -405,6 +473,7 @@ const liteCache = new WeakMap<GunModel, T.BufferGeometry>();
  * soldiers' hands: a single draw call each, which is all a gun across the field needs.
  */
 export function gunLiteGeometry(THREE: Three, model: GunModel) {
+  if (model.real?.lite) return model.real.lite;
   let g = liteCache.get(model);
   if (g) return g;
   const parts = (Object.entries(model.geos) as [GunMat, T.BufferGeometry][]).filter(([m]) => m !== 'lens' && m !== 'dot' && m !== 'glass');
@@ -436,6 +505,8 @@ export function disposeGuns(THREE: Three) {
   if (!byId) return;
   for (const m of byId.values()) {
     for (const g of Object.values(m.geos)) g?.dispose();
+    for (const p of m.real?.fp ?? []) p.geo.dispose();
+    m.real?.lite?.dispose();
     liteCache.get(m)?.dispose();
     liteCache.delete(m);
   }

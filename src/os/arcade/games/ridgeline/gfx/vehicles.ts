@@ -1,8 +1,11 @@
 // An armored tactical truck in the style of the police and military rescue vehicles on duty today: a steel monocoque
 // hull with a raked windshield of thick ballistic glass, small armored side windows with gun ports, a roof hatch and
 // light bar, a push bumper, running boards, rear doors and big off road wheels. Drawn instanced, one call a material.
+// Alongside it, from real models: a Ural 4320 army truck and a BTR-80 armored personnel carrier.
+import type { Assets } from '../assets.ts';
 import type { World } from '../world.ts';
 import { lin, patch, roundBox, type Shared, type T, type Three } from './common.ts';
+import { instanced, modelOf } from './models.ts';
 
 type Mat = 'paint' | 'steel' | 'rubber' | 'glass' | 'light' | 'red';
 
@@ -122,9 +125,19 @@ function truckParts(THREE: Three) {
 
 const PAINT: Record<string, number> = { vale: 0x3f4434, mesa: 0x9c8664, frost: 0x2b2e31, isles: 0x2f3337 };
 
-export function vehicles(THREE: Three, w: World, shared: Shared, shadows: boolean) {
+export function vehicles(THREE: Three, w: World, shared: Shared, shadows: boolean, assets: Assets) {
   const group = new THREE.Group();
-  if (!w.vehicles.length) return group;
+  const yAxis = new THREE.Vector3(0, 1, 0);
+  const real = [null, modelOf(THREE, assets, 'ural'), modelOf(THREE, assets, 'btr')];
+  for (const k of [1, 2]) {
+    const model = real[k];
+    if (!model) continue;
+    const at = w.vehicles.filter((v) => v.kind === k).map((v) => new THREE.Matrix4().makeRotationAxis(yAxis, (v.rot * Math.PI) / 2).setPosition(v.x, v.y + 0.02, v.z));
+    group.add(instanced(THREE, model, at, shared, shadows).group);
+    if (!at.length) for (const p of model.parts) p.geo.dispose();
+  }
+  const list = w.vehicles.filter((v) => !real[v.kind]);
+  if (!list.length) return group;
   const geos = truckParts(THREE);
   const look: Record<Mat, { color: number; rough: number; metal: number; emissive?: number }> = {
     paint: { color: PAINT[w.id] ?? 0x2b2e31, rough: 0.62, metal: 0.35 },
@@ -150,8 +163,8 @@ export function vehicles(THREE: Three, w: World, shared: Shared, shadows: boolea
       fragDecl: 'varying vec3 vOP;',
       albedo: m === 'paint' ? 'diffuseColor.rgb *= 0.86 + 0.18 * dzNoise(vOP.xy * 9.0 + vOP.zz * 5.0) - 0.12 * smoothstep(1.2, 0.7, vOP.y);' : '',
     });
-    const mesh = new THREE.InstancedMesh(geo, mat, w.vehicles.length);
-    w.vehicles.forEach((v, i) => {
+    const mesh = new THREE.InstancedMesh(geo, mat, list.length);
+    list.forEach((v, i) => {
       q.setFromAxisAngle(up, (v.rot * Math.PI) / 2);
       p.set(v.x, v.y, v.z);
       m4.compose(p, q, one);
