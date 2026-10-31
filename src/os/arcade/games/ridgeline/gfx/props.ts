@@ -146,6 +146,41 @@ const PAINTS: Record<string, Paint> = {
       h.fillRect(0, S / 2, S, 2);
     },
   },
+  hesco: {
+    size: 1.06,
+    draw(g, h, r) {
+      // geotextile liner behind a welded wire grid
+      g.fillStyle = 'rgb(214,204,180)';
+      g.fillRect(0, 0, S, S);
+      noiseFill(g, r, 214, 26, 64, 0.35);
+      noiseFill(h, r, 110, 30, 128);
+      for (let k = 0; k < 6; k++) {
+        g.fillStyle = `rgba(90,80,60,${0.06 + r() * 0.08})`;
+        g.beginPath();
+        g.ellipse(r() * S, r() * S, 20 + r() * 40, 10 + r() * 30, r() * 3, 0, Math.PI * 2);
+        g.fill();
+      }
+      const cells = 14;
+      const step = S / cells;
+      g.strokeStyle = 'rgba(60,60,58,0.95)';
+      h.strokeStyle = 'rgb(250,250,250)';
+      g.lineWidth = 2.2;
+      h.lineWidth = 3;
+      for (let i = 0; i <= cells; i++) {
+        const p = i * step;
+        for (const c of [g, h]) {
+          c.beginPath();
+          c.moveTo(p, 0);
+          c.lineTo(p, S);
+          c.moveTo(0, p);
+          c.lineTo(S, p);
+          c.stroke();
+        }
+      }
+      g.fillStyle = 'rgba(40,40,40,0.9)';
+      for (let i = 0; i <= cells; i += cells / 2) g.fillRect(i * step - 3, 0, 6, S);
+    },
+  },
   sandbag: {
     size: 1.6,
     draw(g, h, r) {
@@ -223,6 +258,7 @@ const PART_LOOK: Record<Part, { paint: string; rough: number; metal: number }> =
   metal: { paint: 'metal', rough: 0.5, metal: 0.45 },
   sandbag: { paint: 'sandbag', rough: 1, metal: 0 },
   concrete: { paint: 'concrete', rough: 0.9, metal: 0 },
+  hesco: { paint: 'hesco', rough: 0.95, metal: 0 },
 };
 
 class Builder {

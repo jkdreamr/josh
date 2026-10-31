@@ -4,7 +4,7 @@ import type { GameProps } from '../../types';
 import { meta } from './meta';
 import { playEvents } from './audio.ts';
 import { autoQuality, createView, flyover, type Quality, type View } from './gfx/view.ts';
-import { paletteOf } from './gfx/soldiers.ts';
+import { kitOf, paletteOf } from './gfx/soldiers.ts';
 import { Ammo, BannerView, BuyMenu, DeathPanel, Feed, Markers, Minimap, Reticle, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type FastHud, type FeedItem, type Hud, type MarkersApi, type MinimapApi } from './hud.tsx';
 import { MAPS, MAP_IDS, type MapId } from './maps.ts';
 import { DEG, canShop, createMatch, currentGun, eyeY, finalScore, idleInput, owns, spreadOf, standings, step, type Actor, type Input, type Match, type ShopItem } from './match.ts';
@@ -562,7 +562,7 @@ function Play({ mapId }: { mapId: MapId }) {
               dPitch,
               sun: 1,
               ambient: 1,
-              sleeve: m.mode === 'uplink' ? (a.team === 0 ? 0x3d4c5e : 0x7a6a4c) : paletteOf(m, a).shirt,
+              kit: kitOf(m, a),
             }
           : null;
       view.render({ m, dt, time: time.current, eye, fov, hide, vm: vmState, fired, damage: damageFx.current, low: a.alive ? Math.max(0, (35 - a.hp) / 35) : 0, flash: flashFx.current });
@@ -570,7 +570,7 @@ function Play({ mapId }: { mapId: MapId }) {
       const fh = fast.current;
       if (fh) {
         const spreadPx = wdef ? (Math.tan(spreadOf(a) * DEG) / Math.tan((fov * DEG) / 2)) * ((host?.clientHeight ?? 600) / 2) : 0;
-        fh.set(spreadPx, a.alive && !scoped && !buyRef.current);
+        fh.set(spreadPx, a.alive && !scoped && a.ads < 0.6 && !buyRef.current);
         fh.tick(dt);
       }
       const mk = marks.current;

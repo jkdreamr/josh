@@ -12,9 +12,11 @@ import { effects, type Fx } from './fx.ts';
 import { Post } from './post.ts';
 import { buildings, markers } from './props.ts';
 import { skyDome, skyEnv } from './sky.ts';
-import { paletteOf, soldiers } from './soldiers.ts';
+import { disposeGuns } from './guns.ts';
+import { kitOf, paletteOf, soldiers } from './soldiers.ts';
 import { terrainMesh, terrainTextures, waterMesh } from './terrain.ts';
 import { vegetation } from './veg.ts';
+import { vehicles } from './vehicles.ts';
 import { viewModel, type ViewState } from './viewmodel.ts';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
@@ -167,9 +169,10 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
   const veg = vegetation(THREE, w, shared, { grass: Q.grass, treeFrac: Q.trees, shadows: Q.shadows > 0 });
   scene.add(veg.group);
   scene.add(buildings(THREE, w, shared, Q.shadows > 0));
+  scene.add(vehicles(THREE, w, shared, Q.shadows > 0));
   const mark = markers(THREE, w);
   scene.add(mark.group);
-  const troops = soldiers(THREE, shared, 10, Q.shadows > 0);
+  const troops = soldiers(THREE, shared, Q.shadows > 0);
   scene.add(troops.group);
 
   // baked sun visibility and occlusion on the CPU, for the gun's lighting and the particles
@@ -359,6 +362,8 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
       canvas.removeEventListener('webglcontextrestored', onRestored);
       veg.dispose();
       vm.dispose();
+      troops.dispose();
+      disposeGuns(THREE);
       post.dispose();
       env.dispose();
       disposeTree(scene);
@@ -384,4 +389,4 @@ export function flyover(t: number, w: World) {
   return { x, y, z, yaw: Math.atan2(-dx, -dz), pitch: -0.2 };
 }
 
-export { paletteOf };
+export { kitOf, paletteOf };

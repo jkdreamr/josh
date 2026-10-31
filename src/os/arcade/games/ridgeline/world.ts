@@ -13,7 +13,7 @@ export const SITE_R = 9;
 export const SPAWN_R = 15;
 
 export type Surface = 'stone' | 'wood' | 'metal' | 'dirt' | 'sand' | 'snow' | 'leaf' | 'water';
-export type Part = 'wall' | 'trim' | 'roof' | 'floor' | 'wood' | 'metal' | 'sandbag' | 'concrete';
+export type Part = 'wall' | 'trim' | 'roof' | 'floor' | 'wood' | 'metal' | 'sandbag' | 'concrete' | 'hesco';
 
 /** A drawn box (and a collider unless solid is false). */
 export type Piece = { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; part: Part; color: number; solid: boolean };
@@ -54,6 +54,8 @@ export type World = {
   towns: Town[];
   /** Road polylines as flat x, z pairs. */
   roads: number[][];
+  /** Armored trucks parked as cover: position and quarter turns. */
+  vehicles: { x: number; y: number; z: number; rot: number }[];
   /** RGBA per terrain vertex: sun visibility, ambient occlusion, far object shadow, bare ground. */
   light: Uint8Array;
   minimap: Minimap;
@@ -88,6 +90,9 @@ type Ctx = {
   roads: number[][];
   /** Buildings, for the baked shadows: footprint plus top. */
   blocks: Rect3[];
+  vehicles: { x: number; y: number; z: number; rot: number }[];
+  /** Colliders with no drawn box of their own (the trucks). */
+  colliders: Box[];
 };
 
 const STYLE_WALLS: Record<Style, number[]> = {
@@ -352,12 +357,13 @@ function tryBuilding(c: Ctx, kind: Kind, x: number, z: number, bound: number) {
   return true;
 }
 
-type PropKind = 'container' | 'crates' | 'sandbags' | 'barrier';
+type PropKind = 'container' | 'crates' | 'sandbags' | 'barrier' | 'truck' | 'hesco';
 
 function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number) {
   const r = c.rng;
   const rot = Math.floor(r() * 4);
-  const [w, d] = kind === 'container' ? [6.06, 2.44] : kind === 'crates' ? [2.4, 1.2] : kind === 'sandbags' ? [3.2, 0.8] : [3, 0.5];
+  const units = kind === 'hesco' ? 3 + Math.floor(r() * 3) : 1;
+  const [w, d] = kind === 'container' ? [6.06, 2.44] : kind === 'crates' ? [2.4, 1.2] : kind === 'sandbags' ? [3.2, 0.8] : kind === 'truck' ? [2.5, 6.5] : kind === 'hesco' ? [units * 1.06, 1.06] : [3, 0.5];
   const hx = (rot & 1 ? d : w) / 2;
   const hz = (rot & 1 ? w : d) / 2;
   if (Math.abs(x) + hx > bound || Math.abs(z) + hz > bound) return false;
@@ -375,7 +381,7 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number) {
     lo = Math.min(lo, h);
     hi = Math.max(hi, h);
   }
-  if (hi - lo > (kind === 'container' ? 2.2 : 1.2) || lo < c.t.water + 0.3) return false;
+  if (hi - lo > (kind === 'container' ? 2.2 : kind === 'truck' ? 1.4 : 1.2) || lo < c.t.water + 0.3) return false;
   const f = new Frame(c, x, z, rot);
   let y = lo - 0.15;
   if (kind === 'container') {
@@ -385,6 +391,23 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number) {
     f.box(-w / 2, y - 0.2, -d / 2, w / 2, y + 2.59, d / 2, 'metal', pick(r, CONTAINER_COLORS));
     if (r() < 0.25) f.box(-w / 2, y + 2.59, -d / 2, w / 2, y + 2.59 + 2.79, d / 2, 'metal', pick(r, CONTAINER_COLORS));
     c.blocks.push({ x0: x - hx, y0: y, z0: z - hz, x1: x + hx, y1: y + 2.6, z1: z + hz });
+  } else if (kind === 'truck') {
+    // parked on a leveled pad; the body is drawn by the renderer, the hull collides as one box
+    y = meanHeight(c.t, x, z, hx, hz);
+    flattenRect(c.t, x, z, hx + 0.6, hz + 0.6, y, 4);
+    c.pads.push({ x, z, hx: hx + 0.6, hz: hz + 0.6, y });
+    const rr = f.rect(-1.2, -3.2, 1.2, 3.12);
+    c.colliders.push({ x0: rr.x0, y0: y + 0.2, z0: rr.z0, x1: rr.x1, y1: y + 2.84, z1: rr.z1, s: 'metal' });
+    c.vehicles.push({ x, y, z, rot });
+    c.blocks.push({ x0: rr.x0, y0: y, z0: rr.z0, x1: rr.x1, y1: y + 2.9, z1: rr.z1 });
+  } else if (kind === 'hesco') {
+    // a wall of wire mesh baskets filled with earth
+    const col = c.def.style === 'cabin' ? 0xb9b4a6 : c.def.style === 'adobe' ? 0xbca47e : 0xa89c7c;
+    for (let k = 0; k < units; k++) {
+      const lx = -w / 2 + 0.53 + k * 1.06;
+      f.box(lx - 0.52, y, -0.52, lx + 0.52, hi + 1.35, 0.52, 'hesco', col);
+    }
+    c.blocks.push({ x0: x - hx, y0: y, z0: z - hz, x1: x + hx, y1: hi + 1.35, z1: z + hz });
   } else if (kind === 'crates') {
     crates(c, f, -0.6, 0, y + 0.15);
   } else if (kind === 'sandbags') {
@@ -538,12 +561,12 @@ function buildGrid(boxes: Box[], trunks: Trunk[], rocks: RockCol[]): Grid {
   return { n, size, start, items };
 }
 
-const SURFACE: Record<Part, Surface> = { wall: 'stone', trim: 'stone', roof: 'stone', floor: 'wood', wood: 'wood', metal: 'metal', sandbag: 'dirt', concrete: 'stone' };
+const SURFACE: Record<Part, Surface> = { wall: 'stone', trim: 'stone', roof: 'stone', floor: 'wood', wood: 'wood', metal: 'metal', sandbag: 'dirt', concrete: 'stone', hesco: 'dirt' };
 
 export function buildWorld(id: MapId): World {
   const def = MAPS[id];
   const t = generateTerrain(def);
-  const c: Ctx = { def, t, rng: mulberry32(def.seed * 7 + 3), n: new Noise2(def.seed + 99), pieces: [], gables: [], interiors: [], taken: [], pads: [], roadSegs: [], roads: [], blocks: [] };
+  const c: Ctx = { def, t, rng: mulberry32(def.seed * 7 + 3), n: new Noise2(def.seed + 99), pieces: [], gables: [], interiors: [], taken: [], pads: [], roadSegs: [], roads: [], blocks: [], vehicles: [], colliders: [] };
   const r = c.rng;
 
   // the axis between the spawns
@@ -625,9 +648,24 @@ export function buildWorld(id: MapId): World {
     if (tryBuilding(c, r() < 0.5 ? 'ruin' : 'shed', (r() * 2 - 1) * (ARENA - 15), (r() * 2 - 1) * (ARENA - 15), ARENA - 4)) placed++;
 
   // cover: around the uplinks, at the spawns and across the lanes
-  const propKinds: PropKind[] = ['container', 'crates', 'sandbags', 'sandbags', 'barrier', 'crates'];
+  const propKinds: PropKind[] = ['container', 'crates', 'sandbags', 'hesco', 'barrier', 'crates', 'hesco'];
+  // an armored truck by each spawn and one at the middle uplink, then HESCO walls round every uplink
+  for (const s of spawns)
+    for (let k = 0, placed = 0; k < 60 && placed < 1; k++) {
+      const a = r() * Math.PI * 2;
+      if (tryProp(c, 'truck', s.x + Math.cos(a) * 20, s.z + Math.sin(a) * 20, ARENA - 4)) placed++;
+    }
+  for (let k = 0, placed = 0; k < 60 && placed < 1; k++) {
+    const a = r() * Math.PI * 2;
+    if (tryProp(c, 'truck', sites[1].x + Math.cos(a) * 16, sites[1].z + Math.sin(a) * 16, ARENA - 4)) placed++;
+  }
   for (const s of sites)
-    for (let k = 0, placed = 0; k < 60 && placed < 6; k++) {
+    for (let k = 0, placed = 0; k < 40 && placed < 2; k++) {
+      const a = r() * Math.PI * 2;
+      if (tryProp(c, 'hesco', s.x + Math.cos(a) * (12 + r() * 6), s.z + Math.sin(a) * (12 + r() * 6), ARENA - 3)) placed++;
+    }
+  for (const s of sites)
+    for (let k = 0, placed = 0; k < 60 && placed < 5; k++) {
       const a = r() * Math.PI * 2;
       const d = 11 + r() * 16;
       if (tryProp(c, propKinds[Math.floor(r() * propKinds.length)], s.x + Math.cos(a) * d, s.z + Math.sin(a) * d, ARENA - 3)) placed++;
@@ -646,6 +684,7 @@ export function buildWorld(id: MapId): World {
   for (const s of sites) s.y = heightAt(t, s.x, s.z);
 
   const boxes: Box[] = c.pieces.filter((p) => p.solid).map((p) => ({ x0: p.x0, y0: p.y0, z0: p.z0, x1: p.x1, y1: p.y1, z1: p.z1, s: p.part === 'wall' && def.style === 'cabin' ? 'wood' : SURFACE[p.part] }));
+  boxes.push(...c.colliders);
 
   // trees and rocks, kept off roads, pads and buildings
   const trees: Tree[] = [];
@@ -746,6 +785,7 @@ export function buildWorld(id: MapId): World {
     dmSpawns,
     towns,
     roads: c.roads,
+    vehicles: c.vehicles,
     light: new Uint8Array(0),
     minimap: { size: 0, span: 0, data: new Uint8ClampedArray(0) },
   };

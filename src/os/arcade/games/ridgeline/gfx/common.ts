@@ -275,9 +275,10 @@ export function patch(mat: T.Material, shared: Shared, o: PatchOpts) {
 }
 
 /** A box w x h x d with its edges rounded over a share of its smallest side, so light rolls off them softly. */
-export function roundBox(THREE: Three, w: number, h: number, d: number, share = 0.28) {
+export function roundBox(THREE: Three, w: number, h: number, d: number, share = 0.28, seg = 3) {
+  if (share <= 0) return new THREE.BoxGeometry(w, h, d);
   const r = Math.min(w, h, d) * share;
-  const g = new THREE.BoxGeometry(w, h, d, 4, 4, 4);
+  const g = new THREE.BoxGeometry(w, h, d, seg, seg, seg);
   const p = g.attributes.position as T.BufferAttribute;
   const hx = w / 2 - r;
   const hy = h / 2 - r;
