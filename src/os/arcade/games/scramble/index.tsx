@@ -1175,7 +1175,8 @@ function Play({ mode }: { mode: StageMode }) {
 
   function addFeed(text: string, mine: boolean) {
     const id = Date.now() + Math.random();
-    setFeed((f) => [...f.slice(-4), { id, text, mine, until: clock.current + 6 }]);
+    // (once, should React run this more than once)
+    setFeed((f) => (f.some((x) => x.id === id) ? f : [...f.slice(-4), { id, text, mine, until: clock.current + 6 }]));
   }
 
   /** A hit mark over where our shot landed (red when it cracked the egg). */
