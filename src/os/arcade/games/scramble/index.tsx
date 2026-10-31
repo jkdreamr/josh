@@ -54,6 +54,7 @@ import {
   emoteOf,
   emoteReady,
   isTeamEmote,
+  burning,
   type Cause,
   type EmoteId,
   type Ev,
@@ -64,6 +65,7 @@ import {
   type Match,
   type Mode,
   type Plan,
+  type RideKind,
 } from './logic';
 import { configOf, parsePacket, teamAsk, type Bots } from './net';
 import { FLUSH, QUICK_LEVEL, TICK_MS, catchUp, ending, flush, frameTime, guestMatch, hostBots, hostMatch, namesOf, newSession, nextTeam, offscreen, pinTeam, receive, resultCard, share, stepIn, teamsFor, tick, winnersOf, type Session } from './session';
@@ -123,6 +125,8 @@ const WHEEL_GAP = 140;
 const LABELS = 5;
 /** How tall a loot name is on screen, with a little gap. */
 const LABEL_H = 20;
+/** What the cars are called. */
+const RIDE_NAMES: Record<RideKind, string> = { coupe: 'coupe', jeep: 'jeep', truck: 'pickup' };
 /** What the interact key says it will open. */
 const OPEN_TEXT: Partial<Record<ContainerKind, string>> = { supply: 'open supply drop', fridge: 'open the fridge', drawer: 'open the drawers', books: 'search the bookshelf', locker: 'open the locker', safe: 'open the safe', deposit: 'open the deposit box' };
 /** The color a piece of loot's name shows in: its rarity's (or its level's), gold for the best. */
@@ -441,14 +445,21 @@ type Hud = {
   deep: number;
   /** The emotes up that the egg we see sees: who, what, the ammo asked for and when, `;` apart. */
   emotes: string;
+  /**
+   * The car the egg we see sits in: what it's called, its health (percent), whether it burns, the seat it has (0
+   * drives), and who sits in each seat ('' nobody, 'you', or a teammate's color). Null on foot.
+   */
+  car: { name: string; hp: number; burning: boolean; seat: number; seats: string[] } | null;
+  /** Where the cars that can be driven are, roughly, so the maps are drawn again as they move. */
+  cars: string;
 };
 /** A teammate on the team panel, with its number and how far off it is (to 5 m). */
 type Mate = { id: number; name: string; color: string; n: number; far: number; hp: number; shield: number; down: boolean; out: boolean; revive: number };
-const deep = new Set<keyof Hud>(['slots', 'toss', 'items', 'mats', 'leader', 'mates', 'down', 'me', 'help']);
+const deep = new Set<keyof Hud>(['slots', 'toss', 'items', 'mats', 'leader', 'mates', 'down', 'me', 'help', 'car']);
 /** Where the arrow for an egg goes on a map drawn `k` as big as the whole island. */
 const arrowAt = (f: Fighter, k: number) => `translate(${topX(f.x).toFixed(1)} ${f.z.toFixed(1)}) rotate(${((-f.aim * 180) / Math.PI + 180).toFixed(0)}) scale(${k})`;
 const sameHud = (a: Hud, b: Hud) => (Object.keys(a) as (keyof Hud)[]).every((k) => (deep.has(k) ? JSON.stringify(a[k]) === JSON.stringify(b[k]) : a[k] === b[k]));
-const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, mats: null, mat: 0, piece: 'wall', edit: false, high: 0, items: null, scope: 0, scopes: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, hidden: false, ghillie: false, leader: null, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, watchMate: false, out: null, mine: false, teams: 0, mates: null, me: null, help: null, down: null, marks: '', reviving: false, reviveColor: null, deep: -1, emotes: '' });
+const blankHud = (): Hud => ({ phase: 'none', alive: 0, total: 0, kills: 0, hp: 100, shield: 0, boost: 0, slot: SLOT_MELEE, slots: [null, null], melee: 'spatula', toss: null, mag: 0, reserve: 0, ammo: null, mats: null, mat: 0, piece: 'wall', edit: false, high: 0, items: null, scope: 0, scopes: 0, pack: 0, helmet: 0, vest: 0, busy: -1, busyText: '', storm: '', shrinking: false, outside: false, low: false, warm: false, hidden: false, ghillie: false, leader: null, arrive: null, where: null, banner: null, prompt: null, jump: false, watching: null, watchMate: false, out: null, mine: false, teams: 0, mates: null, me: null, help: null, down: null, marks: '', reviving: false, reviveColor: null, deep: -1, emotes: '', car: null, cars: '' });
 
 type Stick = { id: number; ox: number; oy: number; x: number; y: number };
 /** A kill feed line; it fades out at `until` on the game clock (so a paused game keeps it up). */
@@ -505,6 +516,8 @@ function causeName(w: Cause) {
   if (w === 'grenade' || w === 'barrel') return withA(w);
   if (w === 'mirv') return withA('MIRV grenade');
   if (w === 'impulse') return withA('impulse egg');
+  if (w === 'car') return 'a car';
+  if (w === 'wreck') return 'a car going up';
   if (isMelee(w)) return withA(MELEE[w].name);
   return withA(WEAPONS[w].name);
 }
@@ -565,6 +578,8 @@ function Play({ mode }: { mode: StageMode }) {
   const mouse = useRef({ x: 0, y: 0, inside: false, down: false, clicked: false, ping: false });
   /** The pick up button held down on a touch screen (to revive), and a long press on a slot or an item (to drop it). */
   const holding = useRef(false);
+  /** The brake button held down, driving on a touchscreen. */
+  const braking = useRef(false);
   const press = useRef<number | null>(null);
   const taps = useRef<Taps>(noTaps());
   /** The emote wheel while it's up, and the slice picked on it. */
@@ -933,11 +948,13 @@ function Play({ mode }: { mode: StageMode }) {
     if (t.mat) inp.mat = t.mat;
     if (keys.pressed(keyCode(EDIT_KEY)) || t.edit) inp.edit = true;
     const space = keys.pressed('Space');
+    // in a car, Space (or the brake button) held down is the handbrake, and nothing builds
+    inp.brake = me.ride >= 0 && (keys.down('Space') || braking.current);
     if (me.phase === 'bus') {
       if (space || t.jump || mouse.current.clicked || inp.interact || t.build) inp.jump = true;
-    } else if (space || t.build) inp.build = true;
+    } else if ((space || t.build) && me.ride < 0) inp.build = true;
     // the blueprint of what the build key makes shows a moment after any of them (and while Space is held)
-    if (me.phase === 'ground') {
+    if (me.phase === 'ground' && me.ride < 0) {
       if (inp.piece || inp.mat || inp.build || keys.down('Space')) preview.current = { until: clock.current + PREVIEW, what: inp.piece ?? me.piece };
       if (inp.edit) preview.current = { until: clock.current + EDIT_PREVIEW, what: 'edit' };
     }
@@ -1400,6 +1417,28 @@ function Play({ mode }: { mode: StageMode }) {
         if (k <= 0) break;
         sfx.tone({ freq: 90, to: 260, dur: 0.3, type: 'sine', vol: 0.14 * k });
         sfx.noise(0.25, 0.12 * k);
+        break;
+      }
+      case 'seat':
+        // the door, in or out
+        if (e.f === m.me) {
+          sfx.noise(0.07, 0.14);
+          sfx.tone({ freq: 190, to: 110, dur: 0.09, type: 'square', vol: 0.07 });
+        }
+        break;
+      case 'crash': {
+        // a crunch, as loud as it was hard
+        const k = Math.min(1, e.d / 20) * (m.fighters[m.me]?.ride === e.v ? 1 : near(e.x, e.z));
+        if (k <= 0.05) break;
+        sfx.noise(0.18, 0.25 * k);
+        sfx.tone({ freq: 140, to: 60, dur: 0.18, type: 'sawtooth', vol: 0.1 * k });
+        if (m.fighters[m.me]?.ride === e.v) buzz(40);
+        break;
+      }
+      case 'wreck': {
+        // a deeper rumble under the bang (see boom)
+        const k = Math.max(0.15, near(e.x, e.z));
+        sfx.tone({ freq: 70, to: 30, dur: 0.7, type: 'sawtooth', vol: 0.12 * k });
         break;
       }
       case 'called':
@@ -1916,7 +1955,10 @@ function Play({ mode }: { mode: StageMode }) {
       const p = prompt(m, me);
       reviving = !!p && 'revive' in p;
       if (p && 'revive' in p) reviveColor = mateColor(m, m.fighters[p.revive]);
-      if (p && 'chest' in p) {
+      if (p && 'ride' in p) {
+        const kind = RIDE_NAMES[m.rides[p.ride].kind];
+        promptText = p.seat < 0 ? (me.sit === 0 ? 'stop and get out' : 'get out') : p.seat === 0 ? `drive the ${kind}` : `ride in the ${kind}`;
+      } else if (p && 'chest' in p) {
         const c = m.map.containers[p.chest];
         promptText = OPEN_TEXT[c.kind] ?? (c.gold ? 'open the golden chest' : 'open chest');
       } else if (p && 'door' in p) {
@@ -1952,6 +1994,12 @@ function Play({ mode }: { mode: StageMode }) {
     const reviver = focus.down ? revivedBy(m, focus) : undefined;
     const marks = teamsOn ? teamOf(m, focus.team).map((o) => `${Math.round(o.x / 2)},${Math.round(o.z / 2)},${o.down ? 1 : 0},${pingOf(m, o) ? `${o.pingX},${o.pingZ}` : ''}`).join(';') : '';
     const gw = g ? WEAPONS[g.w] : null;
+    // the car the egg we see sits in, and who sits where in it
+    const ride = focus.ride >= 0 && focus.phase === 'ground' ? m.rides[focus.ride] : undefined;
+    const car = ride
+      ? { name: RIDE_NAMES[ride.kind], hp: Math.max(0, Math.ceil((ride.hp / ride.max) * 100)), burning: burning(ride), seat: focus.sit, seats: ride.seats.map((id) => (id < 0 || !m.fighters[id] ? '' : id === focus.id ? 'you' : teamsOn ? mateColor(m, m.fighters[id]) : '#fff')) }
+      : null;
+    const cars = m.rides.map((c) => (c.dead ? 'x' : `${Math.round(c.x / 2)},${Math.round(c.z / 2)},${Math.round(c.a * 4)}`)).join(';');
     // the emotes the egg we see sees over eggs
     const emotes = m.fighters
       .filter((o) => {
@@ -2016,6 +2064,8 @@ function Play({ mode }: { mode: StageMode }) {
       reviveColor,
       deep: focus.phase === 'ground' ? basementAt(m.map, focus.x, focus.z) : -1,
       emotes,
+      car,
+      cars,
     };
     setHud((prev) => (sameHud(prev, next) ? prev : next));
   }
@@ -2193,6 +2243,19 @@ function Play({ mode }: { mode: StageMode }) {
       },
     };
   };
+  /** The brake button, driving: held down, the handbrake is on. */
+  const brakeDown = {
+    onPointerDown: (e: RPointerEvent<HTMLButtonElement>) => {
+      e.preventDefault();
+      e.stopPropagation();
+      braking.current = true;
+      capture(e);
+    },
+    onPointerUp: () => (braking.current = false),
+    onPointerCancel: () => (braking.current = false),
+    onLostPointerCapture: () => (braking.current = false),
+    onContextMenu: (e: { preventDefault: () => void }) => e.preventDefault(),
+  };
   /** The pick up button while it says to revive: held down, it revives. */
   const holdDown = {
     onPointerDown: (e: RPointerEvent<HTMLButtonElement>) => {
@@ -2311,6 +2374,10 @@ function Play({ mode }: { mode: StageMode }) {
       {big && focusFighter?.phase === 'bus' && <line x1={map.bus.x0} y1={map.bus.z0} x2={map.bus.x1} y2={map.bus.z1} stroke="#fff" strokeWidth="2" strokeDasharray="5 4" />}
       {drops.map((c) => (
         <rect key={c.id} x={c.x - (big ? 5 : 8)} y={c.z - (big ? 5 : 8)} width={big ? 10 : 16} height={big ? 10 : 16} rx="2" fill="#2f7de1" stroke="#fff" strokeWidth={big ? 1.6 : 2.6} />
+      ))}
+      {/* the cars that can be driven, wherever they've been driven (one gone up is a black shell) */}
+      {m.rides.map((c) => (
+        <rect key={`v${c.i}`} x={-c.hw - 0.4} y={-c.hl - 0.4} width={c.hw * 2 + 0.8} height={c.hl * 2 + 0.8} rx="0.8" transform={`translate(${c.x.toFixed(1)} ${c.z.toFixed(1)}) rotate(${((-c.a * 180) / Math.PI).toFixed(0)})`} fill={c.dead ? '#2a2624' : c.kind === 'truck' ? '#5d6670' : '#f4f6f8'} stroke="#2b2d33" strokeWidth="0.6" />
       ))}
       {big && leader && leader.phase === 'ground' && leader !== focusFighter && (
         // the kill leader, wherever it is
@@ -2656,12 +2723,12 @@ function Play({ mode }: { mode: StageMode }) {
             </div>
           )}
           {hud.prompt && hud.phase === 'ground' && (
-            <button type="button" className={`g-scramble-prompt${hud.reviving ? ' is-revive' : ''}`} style={hud.reviveColor ? { ['--mate' as string]: hud.reviveColor } : undefined} {...(hud.reviving ? holdDown : tap((t) => (t.interact = true)))}>
+            <button type="button" className={`g-scramble-prompt${hud.reviving ? ' is-revive' : ''}${hud.car ? ' is-ride' : ''}`} style={hud.reviveColor ? { ['--mate' as string]: hud.reviveColor } : undefined} {...(hud.reviving ? holdDown : tap((t) => (t.interact = true)))}>
               {!touchMode && <kbd>E</kbd>}
               {hud.prompt}
             </button>
           )}
-          {hud.phase === 'ground' && hud.mats && hud.mine && (!touchMode || buildMenu) && (
+          {hud.phase === 'ground' && hud.mats && hud.mine && !hud.car && (!touchMode || buildMenu) && (
             <div className="g-scramble-build" role="group" aria-label="Building">
               <div className="g-scramble-matbar">
                 {MATS.map((k, i) => (
@@ -2702,6 +2769,22 @@ function Play({ mode }: { mode: StageMode }) {
           {hud.phase !== 'none' && hud.phase !== 'bus' && (
             <div className="g-scramble-bottom">
               <div className="g-scramble-bars" aria-label={`${hud.hp} health, ${hud.shield} shield${hud.boost ? `, ${hud.boost} boost` : ''}`}>
+                {hud.car && (
+                  // the car: who sits where (the wheel first), what it is, and what it has left
+                  <div className={`g-scramble-car${hud.car.burning ? ' is-fire' : ''}`} role="status" aria-label={`${hud.car.seat === 0 ? 'Driving' : 'Riding in'} the ${hud.car.name}, ${hud.car.hp}% left${hud.car.burning ? ', on fire' : ''}`}>
+                    <span className="g-scramble-seats" aria-hidden="true">
+                      {hud.car.seats.map((c, k) => (
+                        <i key={k} className={[k === 0 ? 'is-wheel' : '', c === 'you' ? 'is-you' : c ? 'is-taken' : ''].join(' ').trim() || undefined} style={c && c !== 'you' ? { ['--seat' as string]: c } : undefined} />
+                      ))}
+                    </span>
+                    <b>{hud.car.burning ? 'on fire: get out!' : hud.car.name}</b>
+                    <div className="g-scramble-bar is-car">
+                      <b style={{ width: `${hud.car.hp}%` }} />
+                      <i style={{ width: `${hud.car.hp}%` }} />
+                      <span>{hud.car.hp}</span>
+                    </div>
+                  </div>
+                )}
                 {hud.boost > 0 && (
                   <div className="g-scramble-bar is-boost">
                     <i style={{ width: `${hud.boost}%` }} />
@@ -2874,16 +2957,32 @@ function Play({ mode }: { mode: StageMode }) {
               />
             )}
           </div>
-          {hud.phase === 'ground' && hud.mine && (
+          {hud.phase === 'ground' && hud.mine && hud.car?.seat === 0 && (
+            <div className="g-scramble-buttons is-drive">
+              <button type="button" tabIndex={-1} aria-label="Handbrake (hold)" {...brakeDown}>
+                <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                  <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" strokeWidth="2.4" />
+                  <path d="M12 7.5v6M12 16.5v0.5" fill="none" stroke="currentColor" strokeWidth="2.6" strokeLinecap="round" />
+                </svg>
+                <span>brake</span>
+              </button>
+            </div>
+          )}
+          {hud.phase === 'ground' && hud.mine && hud.car?.seat !== 0 && (
             <div className="g-scramble-buttons">
-              <button type="button" tabIndex={-1} aria-label={`Build a ${PIECE_NAMES[hud.piece]} (twice quickly: box up)`} className={hud.mats && hud.mats.some((n) => n >= PIECE_COST) ? undefined : 'is-none'} {...tap((t) => (t.build = true))}>
-                <PieceIcon k={hud.piece} size={24} />
-                <span>{PIECE_NAMES[hud.piece] === 'box up' ? 'box' : PIECE_NAMES[hud.piece]}</span>
-              </button>
-              <button type="button" tabIndex={-1} aria-label={buildMenu ? 'Close the build menu' : 'Open the build menu'} aria-pressed={buildMenu} className={buildMenu ? 'is-on' : undefined} {...tap(() => setBuildMenu((b) => !b))}>
-                <MatIcon mat={MATS[hud.mat]} size={20} />
-                <span>{hud.mats ? hud.mats[hud.mat] : 0}</span>
-              </button>
+              {!hud.car && (
+                // (nothing builds out of a car)
+                <>
+                  <button type="button" tabIndex={-1} aria-label={`Build a ${PIECE_NAMES[hud.piece]} (twice quickly: box up)`} className={hud.mats && hud.mats.some((n) => n >= PIECE_COST) ? undefined : 'is-none'} {...tap((t) => (t.build = true))}>
+                    <PieceIcon k={hud.piece} size={24} />
+                    <span>{PIECE_NAMES[hud.piece] === 'box up' ? 'box' : PIECE_NAMES[hud.piece]}</span>
+                  </button>
+                  <button type="button" tabIndex={-1} aria-label={buildMenu ? 'Close the build menu' : 'Open the build menu'} aria-pressed={buildMenu} className={buildMenu ? 'is-on' : undefined} {...tap(() => setBuildMenu((b) => !b))}>
+                    <MatIcon mat={MATS[hud.mat]} size={20} />
+                    <span>{hud.mats ? hud.mats[hud.mat] : 0}</span>
+                  </button>
+                </>
+              )}
               <button type="button" tabIndex={-1} aria-label="Reload" {...tap((t) => (t.reload = true))}>
                 <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true">
                   <path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v5h5" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />

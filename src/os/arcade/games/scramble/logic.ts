@@ -63,6 +63,7 @@ import {
 import {
   BUS_Y,
   CAMP,
+  CAR,
   CRATE_HALF,
   EDGE,
   DROP_BASE,
@@ -74,6 +75,7 @@ import {
   ROAD_SPEED,
   SUPPLY_FALL,
   TOILET_R,
+  TRUCK,
   WALL_T,
   DEEP,
   basementAt,
@@ -115,10 +117,12 @@ import {
   type Box,
   type Bridge,
   type Building,
+  type Car,
   type Container,
   type Door,
   type GameMap,
   type Obb,
+  type Push,
   type Solid,
   type Stair,
   type StormNow,
@@ -213,8 +217,10 @@ export const F_GHILLIE = 2048;
 export const F_STUN = 4096;
 export const F_DOWN = 8192;
 export const F_REVIVE = 16384;
+/** In a car (see Ride): a driver's report is where its car is. */
+export const F_RIDE = 32768;
 /** The highest flag bits there are. */
-export const F_ALL = 32767;
+export const F_ALL = 65535;
 /** `bush` for an egg hiding in a bush grown from a can. */
 export const GROWN = 1_000_000;
 
@@ -274,11 +280,11 @@ export type Phase = 'bus' | 'drop' | 'ground' | 'out';
 export const PHASES: readonly Phase[] = ['bus', 'drop', 'ground', 'out'];
 export type Kind = 'player' | 'bot' | 'remote';
 /**
- * What dealt a hit: a gun, a melee weapon, a grenade (or a MIRV's), an impulse egg, hot sauce, a barrel, or the storm.
- * An egg out from bleeding while knocked down went out to 'bleed'.
+ * What dealt a hit: a gun, a melee weapon, a grenade (or a MIRV's), an impulse egg, hot sauce, a barrel, the storm, a
+ * car running an egg over ('car') or going up ('wreck'). An egg out from bleeding while knocked down went out to 'bleed'.
  */
-export type Cause = WeaponId | MeleeId | 'grenade' | 'mirv' | 'impulse' | 'sauce' | 'barrel' | 'storm' | 'left' | 'bleed';
-export const CAUSES: readonly Cause[] = [...WEAPON_IDS, ...MELEE_IDS, 'grenade', 'mirv', 'impulse', 'sauce', 'barrel', 'storm', 'left', 'bleed'];
+export type Cause = WeaponId | MeleeId | 'grenade' | 'mirv' | 'impulse' | 'sauce' | 'barrel' | 'storm' | 'left' | 'bleed' | 'car' | 'wreck';
+export const CAUSES: readonly Cause[] = [...WEAPON_IDS, ...MELEE_IDS, 'grenade', 'mirv', 'impulse', 'sauce', 'barrel', 'storm', 'left', 'bleed', 'car', 'wreck'];
 /**
  * What the drop key puts down: a slot's gun, melee weapon or one throwable, a consumable, a box of ammo or material, or
  * the scope in use.
@@ -333,8 +339,10 @@ export type Input = {
   scope: number;
   /** An emote or a call for the team, and (for an enemy) the spot it points at. */
   emote: { k: EmoteId; x: number; z: number } | null;
+  /** The handbrake, held down while driving. */
+  brake: boolean;
 };
-export const noInput = (): Input => ({ mx: 0, mz: 0, aim: 0, fire: false, reload: false, slot: -1, cycle: 0, interact: false, build: false, piece: null, mat: 0, edit: false, use: null, jump: false, reach: 0, pick: null, hold: false, ping: null, drop: null, scope: 0, emote: null });
+export const noInput = (): Input => ({ mx: 0, mz: 0, aim: 0, fire: false, reload: false, slot: -1, cycle: 0, interact: false, build: false, piece: null, mat: 0, edit: false, use: null, jump: false, reach: 0, pick: null, hold: false, ping: null, drop: null, scope: 0, emote: null, brake: false });
 
 /** One position report for an egg another client owns. `at` is our clock when it arrived. */
 export type Snap = { at: number; x: number; z: number; y: number; aim: number; vx: number; vz: number };
@@ -343,10 +351,10 @@ export type Ai = {
   /**
    * Where we're off to: loot, a chest (or fridge, or locker) to open, a crate (or toilet, or hay bale) to smash, a
    * campfire to warm up at, a bank vault's door to open, a tree, rock or car to harvest, a stairway down to a basement
-   * to loot (its index in `chest`); in teams, a knocked teammate to revive (its id in `item`) or the team to catch up
-   * with.
+   * to loot (its index in `chest`), a car to get into for a long way (see carFor); in teams, a knocked teammate to
+   * revive (its id in `item`) or the team to catch up with.
    */
-  goal: 'drop' | 'loot' | 'chest' | 'smash' | 'fire' | 'zone' | 'roam' | 'chase' | 'harvest' | 'vault' | 'revive' | 'mate' | 'stairs';
+  goal: 'drop' | 'loot' | 'chest' | 'smash' | 'fire' | 'zone' | 'roam' | 'chase' | 'harvest' | 'vault' | 'revive' | 'mate' | 'stairs' | 'ride';
   gx: number;
   gz: number;
   item: number;
@@ -459,6 +467,24 @@ export type Ai = {
   stairAt: number;
   stairX: number;
   stairZ: number;
+  /**
+   * The car we're making for or riding in (-1 for none), until when (match time) we give up getting to it or driving,
+   * where we drive to, and the wait before we think of a car again. At the wheel (see chauffeur): when we got in, the
+   * way we steer for and the wait before we look again, how long we've gone nowhere, backing up for so long, how
+   * many times we've had to, and how far we had to go when we got in.
+   */
+  car: number;
+  carT: number;
+  carX: number;
+  carZ: number;
+  carCool: number;
+  boardAt: number;
+  driveA: number;
+  driveT: number;
+  slowT: number;
+  backT: number;
+  jams: number;
+  fromD: number;
 };
 
 export type Fighter = {
@@ -605,6 +631,10 @@ export type Fighter = {
   emoteA: Ammo | null;
   emoteAt: number;
   emotes: number[];
+  /** The car it sits in (see Ride, -1 on foot) and its seat there (0 drives), and our clock when it last got in or out. */
+  ride: number;
+  sit: number;
+  rideAt: number;
 };
 
 /**
@@ -632,7 +662,7 @@ export type Toss = { f: number; k: ThrowId; x: number; z: number; lx: number; lz
  */
 export type Zone = { k: 'flour' | 'sauce' | 'jam' | 'bush'; x: number; z: number; y: number; r: number; from: number; until: number; by: number };
 
-export type Thud = 'tree' | 'rock' | 'wall' | 'window' | 'door' | 'bars' | 'crate' | 'chest' | 'barrel' | 'car' | 'fence' | 'table' | 'post' | 'fire' | 'log' | 'shelf' | 'seat' | 'built' | 'egg' | 'pan' | 'ground';
+export type Thud = 'tree' | 'rock' | 'wall' | 'window' | 'door' | 'bars' | 'crate' | 'chest' | 'barrel' | 'car' | 'fence' | 'table' | 'post' | 'fire' | 'log' | 'shelf' | 'seat' | 'built' | 'egg' | 'pan' | 'ground' | 'ride';
 
 /**
  * Things that happened this frame, for sounds, effects and the network. `net` marks news that came from it. `stairs` is
@@ -641,6 +671,11 @@ export type Thud = 'tree' | 'rock' | 'wall' | 'window' | 'door' | 'bars' | 'crat
  * done reviving asking the host to stand the teammate up, `revived` the host's word that it stands, `ping` a spot marked
  * for the team, `emote` an emote or a call for the team (see EMOTE_IDS). An `out` that was `down` finished off a
  * knocked egg.
+ *
+ * Cars (see Ride): `hop` an egg asking the host to get into car `v` (-1: it got out, leaving its car at x, z facing `a`
+ * if it drove), `seat` the host's word that it sits in seat `s` of car `v` (-1: out of its car, which stands at x, z
+ * facing `a`), `wreck` a car going up where it stands, and `crash` a car hitting something hard (`d` meters a second),
+ * which only its driver's client sees happen (everyone else sees the car's damage).
  */
 export type Ev = (
   | { t: 'beep' }
@@ -658,7 +693,7 @@ export type Ev = (
   | { t: 'hit'; f: number; to: number; d: number; took: number; w: Cause; x: number; z: number; shield: boolean; local: boolean }
   | { t: 'hurt'; f: number; d: number; by: number; storm: boolean; shield: boolean }
   | { t: 'thud'; x: number; z: number; what: Thud }
-  | { t: 'smash'; f: number; kind: 'wall' | 'crate' | 'door'; id: number; d: number; x: number; z: number }
+  | { t: 'smash'; f: number; kind: 'wall' | 'crate' | 'door' | 'car'; id: number; d: number; x: number; z: number }
   | { t: 'glass'; f: number; i: number }
   | { t: 'latch'; f: number; i: number }
   | { t: 'door'; f: number; i: number; s: number }
@@ -689,6 +724,10 @@ export type Ev = (
   | { t: 'wall'; wall: Wall }
   | { t: 'wallgone'; id: number }
   | { t: 'edit'; f: number; id: number; e: number }
+  | { t: 'hop'; f: number; v: number; x: number; z: number; a: number }
+  | { t: 'seat'; f: number; v: number; s: number; x: number; z: number; a: number }
+  | { t: 'wreck'; v: number; f: number; x: number; z: number; a: number }
+  | { t: 'crash'; v: number; x: number; z: number; d: number }
   | { t: 'end'; winner: number }
 ) & { net?: boolean };
 
@@ -738,6 +777,8 @@ export type Match = {
   leader: number;
   /** When each egg last called a supply drop with a flare (the host's record). */
   calls: Map<number, number>;
+  /** The cars that can be driven (see Ride). */
+  rides: Ride[];
   storm: StormNow;
   events: Ev[];
   rng: Rng;
@@ -1166,6 +1207,9 @@ function newFighter(id: number, e: Entrant, x: number, z: number, team: number):
     emoteA: null,
     emoteAt: -99,
     emotes: [],
+    ride: -1,
+    sit: -1,
+    rideAt: -99,
   };
 }
 
@@ -1268,6 +1312,18 @@ function newAi(m: Match, f: Fighter): Ai {
     stairAt: -99,
     stairX: 0,
     stairZ: 0,
+    car: -1,
+    carT: 0,
+    carX: 0,
+    carZ: 0,
+    carCool: 0,
+    boardAt: 0,
+    driveA: 0,
+    driveT: 0,
+    slowT: 0,
+    backT: 0,
+    jams: 0,
+    fromD: 0,
   };
 }
 
@@ -1308,6 +1364,7 @@ export function createMatch(opts: { seed: number; role: Role; level: Level; entr
     locked: lockedBy(map),
     leader: -1,
     calls: new Map(),
+    rides: ridesOf(map),
     storm: stormAt(map.storm, 0),
     events: [],
     rng: rng32((opts.seed * 31 + 7 + Math.max(0, opts.me)) >>> 0),
@@ -1404,8 +1461,10 @@ export function viewOf(f: Fighter) {
 /** How much of the island a screen shows round the egg it follows (half the screen's height, in meters): on foot, and gliding down. */
 export const GROUND_VIEW = 14;
 export const DROP_VIEW = 34;
-/** What a screen following egg `f` shows of the island (half its height, in meters): more through a scope, up high, and from up in the air. */
-export const viewAt = (f: Fighter) => (f.phase === 'drop' ? DROP_VIEW + (f.y / BUS_Y) * 20 : GROUND_VIEW + viewOf(f));
+/** A little more of the island in view from a car, to see what's coming. */
+export const RIDE_VIEW = 6;
+/** What a screen following egg `f` shows of the island (half its height, in meters): more through a scope, up high, in a car, and from up in the air. */
+export const viewAt = (f: Fighter) => (f.phase === 'drop' ? DROP_VIEW + (f.y / BUS_Y) * 20 : GROUND_VIEW + viewOf(f) + (f.ride >= 0 ? RIDE_VIEW : 0));
 
 /** Does an egg carry the scope of this level? 1x (level 0) it always has. */
 export const hasScope = (f: { scopes: number }, lv: number) => lv === 0 || (lv > 0 && lv <= MAX_SCOPE && (f.scopes & (1 << (lv - 1))) !== 0);
@@ -1482,6 +1541,8 @@ export function step(m: Match, dt: number) {
     if (f.ai) think(m, f, dt);
     act(m, f, dt);
   }
+  // the cars: where their drivers took them, with everyone aboard in their seats, and those on fire burning down
+  if (m.rides.length) carry(m, dt);
   if (m.walls.size) growPieces(m, dt);
   moveBullets(m, dt);
   moveTosses(m);
@@ -1648,13 +1709,33 @@ function act(m: Match, f: Fighter, dt: number) {
   if (inp.ping) ping(m, f, inp.ping.x, inp.ping.z);
   if (inp.emote) emote(m, f, inp.emote.k, inp.emote.x, inp.emote.z);
   if (inp.scope) switchScope(f, inp.scope);
-  if (m.mode !== 'solo') reviveStep(m, f);
-  // knocked down (it crawls) or reviving a teammate (it stands still), it does nothing else
-  if (f.down || f.reviving >= 0) {
+  if (m.mode !== 'solo' && f.ride < 0) reviveStep(m, f);
+  // in a car: driving it, or shooting out of it (see seated); knocked down (it crawls) or reviving a teammate (it
+  // stands still), it does nothing else
+  if (f.ride >= 0) seated(m, f, dt);
+  else if (f.down || f.reviving >= 0) {
     f.heat = Math.max(0, f.heat - 3 * dt);
     f.spin = Math.max(0, f.spin - dt / 1.2);
     f.burst = 0;
   } else handle(m, f, dt);
+  if (f.ride >= 0) {
+    // (sat in its seat, see carry)
+    f.wet = false;
+    f.stillT = 0;
+  } else if (stride(m, f, dt)) {
+    clearOneShots(inp);
+    return;
+  }
+  status(m, f, dt);
+  clearOneShots(inp);
+}
+
+/**
+ * An egg on its feet moves: walking, onto a stairway, over pickups and onto a bounce pad. True when a pad threw it up
+ * for a glide.
+ */
+function stride(m: Match, f: Fighter, dt: number) {
+  const inp = f.input;
   const hg = f.slot < 2 ? f.guns[f.slot] : null;
   const hs = hg ? WEAPONS[hg.w] : null;
 
@@ -1739,10 +1820,16 @@ function act(m: Match, f: Fighter, dt: number) {
     f.on = -1;
     f.stillT = 0;
     emit(m, { t: 'bounce', f: f.id });
-    clearOneShots(inp);
-    return;
+    return true;
   }
+  return false;
+}
 
+/**
+ * What an egg on the ground goes through, on foot or in a car: a boost and a smoothie wearing on, bleeding out knocked
+ * down, the storm, and (on foot) a campfire's warmth, hot sauce and the cover it stands in.
+ */
+function status(m: Match, f: Fighter, dt: number) {
   if (f.boost > 0) {
     f.hp = Math.min(HP_MAX, f.hp + BOOST.heal * Math.min(dt, f.boost / BOOST.drain));
     f.boost = Math.max(0, f.boost - BOOST.drain * dt);
@@ -1752,12 +1839,9 @@ function act(m: Match, f: Fighter, dt: number) {
     f.sip = Math.max(0, f.sip - SIP * dt);
   }
   // a campfire warms you back up, slowly (not knocked down: that's bleeding out)
-  f.warm = f.y < 0.5 && !f.down && fireAt(m.map, f.x, f.z) >= 0;
+  f.warm = f.y < 0.5 && !f.down && f.ride < 0 && fireAt(m.map, f.x, f.z) >= 0;
   if (f.warm && f.hp < HP_MAX) f.hp = Math.min(HP_MAX, f.hp + CAMP.hps * dt);
-  if (f.down && bleed(m, f, dt)) {
-    clearOneShots(inp);
-    return;
-  }
+  if (f.down && bleed(m, f, dt)) return;
 
   // (underground, by the ground over us)
   const s = m.storm;
@@ -1771,7 +1855,7 @@ function act(m: Match, f: Fighter, dt: number) {
     }
   } else f.stormT = 0;
 
-  const burn = zoneAt(m, 'sauce', f.x, f.z, f.y);
+  const burn = f.ride < 0 ? zoneAt(m, 'sauce', f.x, f.z, f.y) : null;
   if (burn) {
     f.burnT += dt;
     while (f.burnT >= STORM_TICK && f.phase === 'ground') {
@@ -1780,9 +1864,8 @@ function act(m: Match, f: Fighter, dt: number) {
     }
   } else f.burnT = 0;
 
-  f.bush = f.y < 0.5 ? coverOf(m, f.x, f.z) : -1;
-  f.inside = f.y < 1 ? buildingAt(m.map, f.x, f.z) : -1;
-  clearOneShots(inp);
+  f.bush = f.y < 0.5 && f.ride < 0 ? coverOf(m, f.x, f.z) : -1;
+  f.inside = f.y < 1 && f.ride < 0 ? buildingAt(m.map, f.x, f.z) : -1;
 }
 
 /**
@@ -1969,6 +2052,16 @@ function resolve(m: Match, f: Fighter) {
         f.z += p.z * 0.5;
       }
     }
+    // and the cars, on the ground (one driven at us shoves us aside)
+    if (lv === 0 && f.y < 1.2)
+      for (const c of m.rides) {
+        if (Math.abs(c.x - f.x) > c.hl + 1 || Math.abs(c.z - f.z) > c.hl + 1) continue;
+        const p = pushObb(f.x, f.z, FIGHTER_R, rideObb(c));
+        if (p) {
+          f.x += p.x;
+          f.z += p.z;
+        }
+      }
     f.x = clampX(f.x);
     f.z = clamp(f.z, -EDGE, EDGE);
     // nothing in the way: a second look would find nothing either
@@ -2269,6 +2362,8 @@ export function hurt(m: Match, f: Fighter, d: number, by: number, w: Cause, stor
     f.lastByAt = m.clock;
   }
   emit(m, { t: 'hurt', f: f.id, d: fromShield + fromHp, by, storm, shield: fromShield > 0 });
+  // run over: knocked flying, out of the way of the car
+  if (w === 'car' && f.ride < 0) rammed(m, f, by);
   if (f.hp <= 0.001) {
     const foe = by >= 0 && by !== f.id;
     if (f.down) crack(m, f, foe ? by : f.knockBy, foe || f.knockBy < 0 ? w : 'bleed');
@@ -2281,6 +2376,8 @@ export function hurt(m: Match, f: Fighter, d: number, by: number, w: Cause, stor
 /** An egg this client owns is knocked down: its shield gone, whatever it was doing stopped, bleeding from DOWN_HP. */
 function knock(m: Match, f: Fighter, by: number, w: Cause) {
   stopReviving(m, f);
+  // knocked down in a car: out of it, on the ground beside it
+  if (f.ride >= 0) alight(m, f);
   f.down = true;
   f.hp = DOWN_HP;
   f.shield = 0;
@@ -2650,6 +2747,8 @@ function crack(m: Match, f: Fighter, by: number, w: Cause) {
   const place = placeOut(m, f);
   const down = f.down;
   if (f.reviving >= 0) stopReviving(m, f);
+  // cracked in a car: what it carried spills beside it
+  if (f.ride >= 0) alight(m, f);
   f.phase = 'out';
   f.down = false;
   f.hp = 0;
@@ -2777,6 +2876,19 @@ export function castRay(m: Match, x: number, z: number, dx: number, dz: number, 
     const t = rayWall(x, z, dx, dz, len, w, lows);
     if (t < (best?.t ?? Infinity)) best = { t, what: 'built', ref: w.id, fighter: null };
   });
+  // the cars stop bullets, throws, feet and swings (not out of the one the ray's egg sits in); the eye sees over them
+  if (m.rides.length && lv === 0 && windows !== 'open') {
+    const own = m.fighters[skip]?.ride ?? -1;
+    const x0 = Math.min(x, x + dx * len);
+    const x1 = Math.max(x, x + dx * len);
+    const z0 = Math.min(z, z + dz * len);
+    const z1 = Math.max(z, z + dz * len);
+    for (const c of m.rides) {
+      if (c.i === own || c.x + c.hl < x0 || c.x - c.hl > x1 || c.z + c.hl < z0 || c.z - c.hl > z1) continue;
+      const t = rayObb(x, z, dx, dz, len, rideObb(c));
+      if (t < (best?.t ?? Infinity)) best = { t, what: 'ride', ref: c.i, fighter: null };
+    }
+  }
   if (eggs) {
     // the box round the ray, for a cheap miss first
     const x0 = Math.min(x, x + dx * len) - HIT_R;
@@ -2788,7 +2900,8 @@ export function castRay(m: Match, x: number, z: number, dx: number, dz: number, 
     const team = m.fighters[skip]?.team ?? -1;
     let egg = null as RayHit | null;
     for (const o of m.fighters) {
-      if (o.x < x0 || o.x > x1 || o.z < z0 || o.z > z1 || o.id === skip || o.team === team || !fighting(o)) continue;
+      // (an egg in a car sits behind its body: see shootRide)
+      if (o.x < x0 || o.x > x1 || o.z < z0 || o.z > z1 || o.id === skip || o.team === team || o.ride >= 0 || !fighting(o)) continue;
       const t = rayCircle(x, z, dx, dz, len, o.x, o.z, HIT_R);
       if (t >= (egg?.t ?? Infinity)) continue;
       const ol = levelOf(o.y);
@@ -2814,7 +2927,7 @@ export const clearBetween = (m: Match, a: Fighter, b: Fighter) => clearLine(m, a
 const tall = (s: Solid, lv: number) => s.what === 'tree' || s.what === 'post' || ((s.what === 'wall' || s.what === 'window') && lv < MAX_LEVEL);
 
 /** The material a swing at a thing gathers. */
-const MAT_OF: Partial<Record<Thud, Mat>> = { tree: 'wood', log: 'wood', rock: 'stone', car: 'metal', post: 'metal' };
+const MAT_OF: Partial<Record<Thud, Mat>> = { tree: 'wood', log: 'wood', rock: 'stone', car: 'metal', ride: 'metal', post: 'metal' };
 
 /** Distance along a ray to a built wall: through the gap of a doorway, or of a window unless it's feet (`lows`). */
 function rayWall(x: number, z: number, dx: number, dz: number, len: number, w: Wall, lows: boolean) {
@@ -2891,6 +3004,7 @@ function moveBullets(m: Match, dt: number) {
     else if (hit.fighter && shooter) strike(m, shooter, hit.fighter, d, b.w, x, z);
     else if ((hit.what === 'crate' || hit.what === 'barrel') && shooter) smashCrate(m, shooter, hit.ref, d * WEAPONS[b.w].wallMult, x, z);
     else if (hit.what === 'built' && shooter) smashWall(m, shooter, hit.ref, d * WEAPONS[b.w].wallMult, x, z);
+    else if (hit.what === 'ride' && shooter) shootRide(m, shooter, hit.ref, d, b.w, x, z);
     // the first bullet through a window breaks the glass and stops there; the next goes through
     else if (hit.what === 'window') breakGlass(m, hit.ref, b.f, true);
     else if (hit.what === 'door' && shooter) smashDoor(m, shooter, hit.ref, d * WEAPONS[b.w].wallMult, x, z);
@@ -2938,6 +3052,11 @@ function blast(m: Match, fid: number, x: number, z: number, R: number, dmg: numb
     const d = Math.max(0, Math.hypot(c.x - x, c.z - z) - 0.7);
     if (d < R) smashCrate(m, shooter, c.id, dmg * wallMult * (1 - (0.6 * d) / R), c.x, c.z);
   }
+  if (y < 1)
+    for (const c of m.rides) {
+      const d = c.dead ? R : rideGap(c, x, z);
+      if (d < R) smashRide(m, shooter, c.i, dmg * wallMult * (1 - (0.6 * d) / R), c.x, c.z);
+    }
   for (const s of doorsNear(m, x, z, R)) smashDoor(m, shooter, s.i, dmg * wallMult * (1 - (0.6 * s.d) / R), s.x, s.z);
   shatter(m, fid, x, z, R);
 }
@@ -3019,6 +3138,7 @@ export const slabGap = (s: Box, x: number, z: number) => Math.hypot(Math.max(0, 
 
 /** Opens or shuts a door: here (solo and the host), or by asking the host. */
 export function requestDoor(m: Match, f: Fighter, i: number) {
+  if (f.ride >= 0) return false;
   if (m.world) return toggleDoor(m, i, f.id, f.x, f.z, true);
   const asked = f.pending.get(-1_000_000 - i);
   if (asked !== undefined && m.clock - asked < 1) return false;
@@ -3114,31 +3234,40 @@ export function openContainer(m: Match, c: number, by: number, announce: boolean
   if (box.kind === 'barrel') explode(m, box, by);
 }
 
+/** A barrel goes up (see burst). */
+function explode(m: Match, box: Container, by: number) {
+  burst(m, box.x, box.z, BARREL.radius, BARREL.dmg, by, 'barrel', box.id);
+}
+
 /**
- * A barrel goes up. Every client hurts the eggs it owns; the host also knocks down walls and breaks crates and barrels
+ * Something the whole island sees goes up at (x, z) (a barrel, or a car): every client hurts the eggs it owns, the
+ * host also knocks down walls and breaks crates, barrels (`skip`, the barrel itself, aside), doors, glass and cars
  * nearby (which may go up in turn).
  */
-function explode(m: Match, box: Container, by: number) {
-  const R = BARREL.radius;
+function burst(m: Match, x: number, z: number, R: number, dmg: number, by: number, cause: 'barrel' | 'wreck', skip = -1) {
   // every client draws its own bang, so it isn't news for the network
-  emit(m, { t: 'boom', f: by, x: box.x, z: box.z, net: true });
+  emit(m, { t: 'boom', f: by, x: r2(x), z: r2(z), net: true });
   for (const o of m.fighters) {
     if (!owned(o) || !fighting(o) || o.y > 2.5) continue;
-    const d = Math.max(0, Math.hypot(o.x - box.x, o.z - box.z) - HIT_R);
-    if (d < R) hurt(m, o, BARREL.dmg * (1 - (0.6 * d) / R), by, 'barrel', false);
+    const d = Math.max(0, Math.hypot(o.x - x, o.z - z) - HIT_R);
+    if (d < R) hurt(m, o, dmg * (1 - (0.6 * d) / R), by, cause, false);
   }
   if (!m.world) return;
-  for (const w of piecesIn(m, box.x, box.z, 0, R)) {
-    const d = Math.max(0, Math.hypot(w.x - box.x, w.z - box.z) - WALL_HALF);
-    if (d < R) damageWall(m, w.id, Math.round(BARREL.dmg * 2 * (1 - (0.6 * d) / R)), true);
+  for (const w of piecesIn(m, x, z, 0, R)) {
+    const d = Math.max(0, Math.hypot(w.x - x, w.z - z) - WALL_HALF);
+    if (d < R) damageWall(m, w.id, Math.round(dmg * 2 * (1 - (0.6 * d) / R)), true);
   }
   for (const c of m.map.containers) {
-    if (c === box || !breakable(c) || m.opened[c.id]) continue;
-    const d = Math.max(0, Math.hypot(c.x - box.x, c.z - box.z) - 0.7);
-    if (d < R) damageCrate(m, c.id, Math.round(BARREL.dmg * (1 - (0.6 * d) / R)), by, true);
+    if (c.id === skip || !breakable(c) || m.opened[c.id]) continue;
+    const d = Math.max(0, Math.hypot(c.x - x, c.z - z) - 0.7);
+    if (d < R) damageCrate(m, c.id, Math.round(dmg * (1 - (0.6 * d) / R)), by, true);
   }
-  for (const s of doorsNear(m, box.x, box.z, R)) damageDoor(m, s.i, Math.round(BARREL.dmg * 2 * (1 - (0.6 * s.d) / R)), by, true);
-  shatter(m, by, box.x, box.z, R);
+  for (const c of m.rides) {
+    const d = c.dead ? R : rideGap(c, x, z);
+    if (d < R) damageRide(m, c.i, Math.round(dmg * 1.5 * (1 - (0.6 * d) / R)), by, true);
+  }
+  for (const s of doorsNear(m, x, z, R)) damageDoor(m, s.i, Math.round(dmg * 2 * (1 - (0.6 * s.d) / R)), by, true);
+  shatter(m, by, x, z, R);
 }
 
 /** Eight ways round a point, a step apart, for looking for room. */
@@ -3858,10 +3987,12 @@ function containersNear(map: GameMap, x: number, z: number, r: number, visit: (c
 /**
  * What the interact key would do right now: open a chest (or a fridge, a locker and the like), pick something up (a
  * gun or melee weapon swaps), or open or shut a door, whichever is nearest (a door only when it is clearly nearer). By
- * a knocked teammate, holding it down revives them, before anything else. Knocked down, nothing.
+ * a knocked teammate, holding it down revives them, before anything else. Knocked down, nothing. By a car with a seat
+ * free, get in (`seat` the one it would take, see board), if nothing else is nearer; in one, get out (`seat` -1).
  */
-export function prompt(m: Match, f: Fighter): { chest: number } | { item: LootItem; swap: boolean } | { door: number } | { revive: number } | null {
+export function prompt(m: Match, f: Fighter): { chest: number } | { item: LootItem; swap: boolean } | { door: number } | { revive: number } | { ride: number; seat: number } | null {
   if (f.phase !== 'ground' || f.down) return null;
+  if (f.ride >= 0) return { ride: f.ride, seat: -1 };
   const mate = f.reviving >= 0 ? m.fighters[f.reviving] : downMate(m, f);
   if (mate) return { revive: mate.id };
   if (f.y > 1) return null;
@@ -3872,6 +4003,8 @@ export function prompt(m: Match, f: Fighter): { chest: number } | { item: LootIt
   const itemD = item ? Math.hypot(item.x - f.x, item.z - f.z) : Infinity;
   const chestD = chest >= 0 ? Math.hypot(m.map.containers[chest].x - f.x, m.map.containers[chest].z - f.z) : Infinity;
   if (door >= 0 && !asking(m, f, -1_000_000 - door) && slabGap(m.map.slabs[door], f.x, f.z) + 1 < Math.min(itemD, chestD)) return { door };
+  const car = rideNear(m, f);
+  if (car && car.gap + 0.6 < Math.min(itemD, chestD) && !asking(m, f, -2_000_000 - car.r.i)) return { ride: car.r.i, seat: car.seat };
   if (chest >= 0 && chestD < itemD) return { chest };
   if (!item) return null;
   const def = item.def;
@@ -3888,7 +4021,8 @@ function interact(m: Match, f: Fighter) {
   const p = prompt(m, f);
   // a revive is the key held down (see reviveStep)
   if (!p || 'revive' in p) return;
-  if ('chest' in p) requestOpen(m, f, p.chest);
+  if ('ride' in p) board(m, f, p.ride);
+  else if ('chest' in p) requestOpen(m, f, p.chest);
   else if ('door' in p) requestDoor(m, f, p.door);
   else requestTake(m, f, p.item, true);
 }
@@ -3905,6 +4039,7 @@ function autoPickup(m: Match, f: Fighter) {
 }
 
 function requestTake(m: Match, f: Fighter, l: LootItem, key = false) {
+  if (f.ride >= 0) return;
   const asked = f.pending.get(l.id);
   if (asked !== undefined && m.clock - asked < 1) return;
   if (key) f.keyAsk = l.id;
@@ -3916,6 +4051,7 @@ function requestTake(m: Match, f: Fighter, l: LootItem, key = false) {
 }
 
 function requestOpen(m: Match, f: Fighter, c: number) {
+  if (f.ride >= 0) return;
   if (m.world) openContainer(m, c, f.id, true);
   else {
     const asked = f.pending.get(-1 - c);
@@ -4052,6 +4188,813 @@ export function addLoot(m: Match, item: LootItem) {
 }
 
 // -------------------------------------------------------------------------------------------------------------------
+// Cars.
+//
+// Trucks and most of the island's cars can be driven off (see map.ts drivable). Whoever owns the egg at the wheel moves
+// the car, as it moves its egg: its reports put the driver in its seat facing the way the car faces, which tells
+// everyone else where the car is. Who sits where, and what a car has left, is the host's to settle: an egg asks to get
+// in (and says when it got out, and where it left its car), and the host says who sits where; hits on a car go to the
+// host, which says when one goes up. Cars stay on the ground up top: no building lets one in, nor any stairway.
+//
+// A driver drives and does nothing else. A passenger shoots and throws out of the car and patches up, but builds,
+// swings, picks up and drops nothing. Eggs in a car sit behind its body: a bullet into a car hurts the car, and a share
+// of it (THROUGH) whoever sits nearest where it hit. A car below BURN of its health burns down, and goes up once it has
+// nothing left, throwing everyone out, hurting whoever is near and setting off barrels and cars nearby. No fuel.
+
+export type RideKind = 'coupe' | 'jeep' | 'truck';
+/**
+ * Each kind of car: its health, its top speeds (meters a second) on a road or a bridge, on the grass, wading through a
+ * pond or the river, and backing up, how quickly it gets going, how fast it turns (radians a second, at speed), and its
+ * seats ([across, along] from its middle: across toward its left, along toward its nose), the driver's first.
+ */
+export const RIDES: Record<RideKind, { hp: number; road: number; grass: number; water: number; back: number; accel: number; turn: number; seats: readonly (readonly [number, number])[] }> = {
+  coupe: { hp: 200, road: 26, grass: 18, water: 7, back: 8, accel: 14, turn: 2.9, seats: [
+    [0.42, -0.15],
+    [-0.42, -0.15],
+  ] },
+  jeep: { hp: 260, road: 23, grass: 19, water: 9, back: 8, accel: 12, turn: 2.6, seats: [
+    [0.42, 0.3],
+    [-0.42, 0.3],
+    [0.42, -0.8],
+    [-0.42, -0.8],
+  ] },
+  truck: { hp: 380, road: 20, grass: 15, water: 7, back: 7, accel: 9, turn: 2.2, seats: [
+    [0.5, 1.45],
+    [-0.5, 1.45],
+    [0.55, -1.2],
+    [-0.55, -1.2],
+  ] },
+};
+/** The most seats a car has. */
+export const MAX_SEATS = 4;
+/** How far from a car's side an egg can get in. */
+export const RIDE_R = 1.6;
+/** A car burns below this share of its health, losing this share of it a second, until it goes up. */
+export const BURN = { at: 0.3, rate: 0.035 };
+/** A car going up: how far it reaches, and how hard it hits right by it. */
+export const WRECK = { radius: 6.5, dmg: 85 };
+/** Running an egg over, from `speed` (meters a second): so much a meter a second, between `min` and `max`. */
+export const RAM = { speed: 5, k: 2.4, min: 10, max: 60 };
+/** Hitting something hard, from `speed` into it: so much damage to the car a meter a second over. */
+export const CRASH = { speed: 7, k: 4.5 };
+/** The share of a bullet into a car that whoever sits nearest where it hit takes. */
+export const THROUGH = 0.35;
+/** Slowing down (meters a second, a second): the brakes, the handbrake, rolling to a stop, stopping to get out, and easing off past what it wants. */
+const BRAKE = 24;
+const HAND = 9;
+const ROLL = 4;
+const STOP = 16;
+const DRAG = 10;
+/** How much of its speed into what it hit a car bounces back with. */
+const BOUNCE = 0.3;
+/** The stick farther round than this from the way a car faces (radians) brakes it, then backs it up. */
+const BACK_ARC = 2.3;
+
+/**
+ * A car that can be driven: one of the island's (`car`, its place in map.cars), where its middle is, the way it faces
+ * (`a`: its nose points along (sin a, cos a)) and how fast it goes, half its width and length, its health, and who
+ * sits in each seat (fighter ids, -1 for nobody). `dead` once it has gone up (its burnt shell stays where it stood).
+ * `by` is the last egg to hurt it (a fire it started goes down to it), `at` our clock when its seats last changed (a
+ * report from before then doesn't undo it), `leave` its driver getting out once it stops, `rams` our clock when it
+ * last ran each egg over, and `crashAt` when it last hit something hard. `ob` is its box (see rideObb).
+ */
+export type Ride = { i: number; car: number; kind: RideKind; x: number; z: number; a: number; vx: number; vz: number; hw: number; hl: number; hp: number; max: number; seats: number[]; dead: boolean; by: number; at: number; leave: boolean; rams: Map<number, number>; crashAt: number; ob: Obb; oa: number };
+
+/**
+ * The way a car parked on the island faces at the start: along its length (x or z), its nose away from the building
+ * it's parked by (backed in, ready to drive off).
+ */
+export function parkedAim(map: GameMap, c: Car) {
+  let best = Infinity;
+  let bx = c.x;
+  let bz = c.z;
+  for (const b of map.buildings) {
+    const d = Math.abs(b.x - c.x) + Math.abs(b.z - c.z);
+    if (d < best && !isDeep(b.x)) {
+      best = d;
+      bx = b.x;
+      bz = b.z;
+    }
+  }
+  const toward = c.alongX ? bx > c.x : bz > c.z;
+  return (c.alongX ? Math.PI / 2 : 0) + (toward ? Math.PI : 0);
+}
+
+/** The island's cars that can be driven, parked where they stand: a truck, a coupe (the first two looks) or a jeep. */
+function ridesOf(map: GameMap): Ride[] {
+  const out: Ride[] = [];
+  map.cars.forEach((c, i) => {
+    if (!c.ride) return;
+    const kind: RideKind = c.truck ? 'truck' : c.look < 2 ? 'coupe' : 'jeep';
+    out.push(makeRide(out.length, kind, c.x, c.z, angleDiff(parkedAim(map, c), 0), i));
+  });
+  return out;
+}
+
+/** A car of a kind, parked anywhere facing `a`, nobody in it (`car` its place in map.cars; tests put them where they like). */
+export function makeRide(i: number, kind: RideKind, x: number, z: number, a: number, car = -1): Ride {
+  const hp = RIDES[kind].hp;
+  const size = kind === 'truck' ? TRUCK : CAR;
+  const hw = size.across / 2;
+  const hl = size.along / 2;
+  return { i, car, kind, x, z, a, vx: 0, vz: 0, hw, hl, hp, max: hp, seats: RIDES[kind].seats.map(() => -1), dead: false, by: -1, at: -99, leave: false, rams: new Map(), crashAt: -99, ob: { x, z, sa: 0, ca: 1, hw, hd: hl }, oa: NaN };
+}
+
+/** A car's box, turned the way it faces (worked out again only once it has turned). */
+export function rideObb(c: Ride): Obb {
+  const o = c.ob;
+  if (c.oa !== c.a) {
+    o.sa = Math.sin(c.a);
+    o.ca = Math.cos(c.a);
+    c.oa = c.a;
+  }
+  o.x = c.x;
+  o.z = c.z;
+  return o;
+}
+
+/** Where seat `s` of a car is. */
+export function seatAt(c: Ride, s: number) {
+  const [across, along] = RIDES[c.kind].seats[s];
+  const sa = Math.sin(c.a);
+  const ca = Math.cos(c.a);
+  return { x: c.x + ca * across + sa * along, z: c.z - sa * across + ca * along };
+}
+
+/** How far a point is from a car's side (0 in it). */
+export function rideGap(c: Ride, x: number, z: number) {
+  const sa = Math.sin(c.a);
+  const ca = Math.cos(c.a);
+  const u = (x - c.x) * ca - (z - c.z) * sa;
+  const v = (x - c.x) * sa + (z - c.z) * ca;
+  return Math.hypot(Math.max(0, Math.abs(u) - c.hw), Math.max(0, Math.abs(v) - c.hl));
+}
+
+/** How far to move box `a` (turned, see Obb) so it no longer overlaps box `b`, the shortest way, or null when they don't touch. */
+export function obbPush(a: Obb, b: Obb): Push | null {
+  const dx = b.x - a.x;
+  const dz = b.z - a.z;
+  let best = Infinity;
+  let px = 0;
+  let pz = 0;
+  // the four ways either box's sides face
+  for (let k = 0; k < 4; k++) {
+    const o = k < 2 ? a : b;
+    const nx = k % 2 ? o.sa : o.ca;
+    const nz = k % 2 ? o.ca : -o.sa;
+    const ra = a.hw * Math.abs(nx * a.ca - nz * a.sa) + a.hd * Math.abs(nx * a.sa + nz * a.ca);
+    const rb = b.hw * Math.abs(nx * b.ca - nz * b.sa) + b.hd * Math.abs(nx * b.sa + nz * b.ca);
+    const d = dx * nx + dz * nz;
+    const over = ra + rb - Math.abs(d);
+    if (over <= 0) return null;
+    if (over < best) {
+      best = over;
+      px = (d > 0 ? -nx : nx) * over;
+      pz = (d > 0 ? -nz : nz) * over;
+    }
+  }
+  return { x: px, z: pz };
+}
+
+/** A box along the island's axes, as an Obb (reused: worked out where it's needed, never kept). */
+const flat: Obb = { x: 0, z: 0, sa: 0, ca: 1, hw: 0, hd: 0 };
+const flatBox = (x: number, z: number, hw: number, hd: number) => {
+  flat.x = x;
+  flat.z = z;
+  flat.hw = hw;
+  flat.hd = hd;
+  return flat;
+};
+
+/** What stops a car but the island's solids: every building up top, whole (no driving in at a door), and every stairway, by cell (see SPOT). */
+const lotCells = new WeakMap<GameMap, { of: unknown; n: number; boxes: Box[]; cells: number[][]; stamp: Uint32Array; mark: number }>();
+function lotsNear(map: GameMap, x: number, z: number, r: number, visit: (b: Box) => void) {
+  let got = lotCells.get(map);
+  if (!got || got.of !== map.buildings || got.n !== map.buildings.length) {
+    const boxes: Box[] = [];
+    for (const b of map.buildings) if (!isDeep(b.x)) boxes.push({ x: b.x, z: b.z, hw: b.w / 2 + WALL_T / 2, hd: b.d / 2 + WALL_T / 2 });
+    for (const s of map.stairs) boxes.push({ x: s.x, z: s.z, hw: s.hw, hd: s.hd });
+    const cells: number[][] = Array.from({ length: SPOTS * SPOTS }, () => []);
+    boxes.forEach((b, i) => {
+      for (let cz = spotOf(b.z - b.hd); cz <= spotOf(b.z + b.hd); cz++) for (let cx = spotOf(b.x - b.hw); cx <= spotOf(b.x + b.hw); cx++) cells[cx + cz * SPOTS].push(i);
+    });
+    got = { of: map.buildings, n: map.buildings.length, boxes, cells, stamp: new Uint32Array(boxes.length), mark: 0 };
+    lotCells.set(map, got);
+  }
+  const mark = ++got.mark;
+  for (let cz = spotOf(z - r); cz <= spotOf(z + r); cz++)
+    for (let cx = spotOf(x - r); cx <= spotOf(x + r); cx++)
+      for (const i of got.cells[cx + cz * SPOTS]) {
+        if (got.stamp[i] === mark) continue;
+        got.stamp[i] = mark;
+        visit(got.boxes[i]);
+      }
+}
+
+/** The seat an egg gets in a car: the wheel while nobody has it, else the first one free; -1 when it's full, gone up, or someone of another team is aboard. */
+export function seatFor(m: Match, c: Ride, f: Fighter) {
+  if (c.dead || c.seats.some((id) => id >= 0 && id !== f.id && m.fighters[id]?.team !== f.team)) return -1;
+  return c.seats[0] < 0 ? 0 : c.seats.indexOf(-1);
+}
+
+/**
+ * The car an egg on foot could get into: the nearest within RIDE_R of its side with a seat for it (see seatFor), the
+ * seat it would take, and how far off its side it is. Null for none.
+ */
+export function rideNear(m: Match, f: Fighter): { r: Ride; seat: number; gap: number } | null {
+  if (f.ride >= 0 || f.y > 1 || isDeep(f.x)) return null;
+  let best: { r: Ride; seat: number; gap: number } | null = null;
+  for (const c of m.rides) {
+    if (c.dead || Math.abs(c.x - f.x) > c.hl + RIDE_R + 1 || Math.abs(c.z - f.z) > c.hl + RIDE_R + 1) continue;
+    const gap = rideGap(c, f.x, f.z);
+    if (gap > RIDE_R || (best && gap >= best.gap)) continue;
+    const seat = seatFor(m, c, f);
+    if (seat >= 0) best = { r: c, seat, gap };
+  }
+  return best;
+}
+
+/** Gets into a car: here (solo and the host), or by asking the host. */
+export function board(m: Match, f: Fighter, v: number) {
+  if (m.world) return seatEgg(m, f.id, v);
+  const asked = f.pending.get(-2_000_000 - v);
+  if (asked !== undefined && m.clock - asked < 1) return false;
+  f.pending.set(-2_000_000 - v, m.clock);
+  emit(m, { t: 'hop', f: f.id, v, x: 0, z: 0, a: 0 });
+  return true;
+}
+
+/**
+ * The host puts an egg in a car (and tells everyone): one on its feet by it (`slack` meters farther off for a guest's,
+ * which the host sees a moment late) that there's a seat for. False when it can't get in.
+ */
+export function seatEgg(m: Match, fid: number, v: number, slack = 0) {
+  const f = m.fighters[fid];
+  const c = m.rides[v];
+  if (!m.world || m.ended || !f || !c || f.ride >= 0 || !upright(f) || f.phase !== 'ground' || f.y > 1 || rideGap(c, f.x, f.z) > RIDE_R + slack) return false;
+  const s = seatFor(m, c, f);
+  if (s < 0) return false;
+  sit(m, f, c, s);
+  emit(m, { t: 'seat', f: fid, v, s, x: r2(c.x), z: r2(c.z), a: r2(c.a) });
+  return true;
+}
+
+/** An egg takes seat `s` of a car: done with whatever it was up to on foot, and (one of ours) sat down in it. */
+function sit(m: Match, f: Fighter, c: Ride, s: number) {
+  c.seats[s] = f.id;
+  c.at = m.clock;
+  if (s === 0) c.leave = false;
+  if (f.reviving >= 0) stopReviving(m, f);
+  f.ride = c.i;
+  f.sit = s;
+  f.rideAt = m.clock;
+  f.on = -1;
+  f.bush = -1;
+  f.inside = -1;
+  f.stillT = 0;
+  f.kx = 0;
+  f.kz = 0;
+  if (!owned(f)) return;
+  const p = seatAt(c, s);
+  f.x = p.x;
+  f.z = p.z;
+  f.y = 0;
+  f.vx = c.vx;
+  f.vz = c.vz;
+  f.burst = 0;
+  f.queued = null;
+  // at the wheel: hands on it
+  if (s === 0) {
+    f.using = null;
+    f.useT = 0;
+    f.reloadT = 0;
+    f.spin = 0;
+    f.aim = c.a;
+  }
+}
+
+/**
+ * An egg leaves its seat (any seat it holds, should the host have moved it): a car whose driver leaves stops where it
+ * is, and one of our eggs steps out by its door (or whichever side is free, see outSpot).
+ */
+function unseat(m: Match, f: Fighter) {
+  const c = f.ride >= 0 ? m.rides[f.ride] : undefined;
+  const s = f.sit;
+  for (const r of m.rides)
+    for (let k = 0; k < r.seats.length; k++) {
+      if (r.seats[k] !== f.id) continue;
+      r.seats[k] = -1;
+      r.at = m.clock;
+      if (k > 0) continue;
+      r.vx = 0;
+      r.vz = 0;
+      r.leave = false;
+    }
+  f.ride = -1;
+  f.sit = -1;
+  f.rideAt = m.clock;
+  if (!c || !owned(f) || s < 0) return;
+  const p = outSpot(m, c, s);
+  f.x = p.x;
+  f.z = p.z;
+  f.y = 0;
+  f.vx = 0;
+  f.vz = 0;
+}
+
+/** An egg this client owns gets out of its car, and says so: to the host (where it left the car, if it drove), or as the host. */
+export function alight(m: Match, f: Fighter) {
+  const c = m.rides[f.ride];
+  unseat(m, f);
+  if (!c) return;
+  const at = { f: f.id, v: -1, x: r2(c.x), z: r2(c.z), a: r2(c.a) };
+  emit(m, m.world ? { t: 'seat', ...at, s: -1 } : { t: 'hop', ...at });
+}
+
+/**
+ * The host lets go the seat of someone else's egg (one that says it got out, or one gone out or down) and tells
+ * everyone, with where its car stands if it drove: where it says it left it, if that's near where the host sees it.
+ */
+export function freeSeat(m: Match, fid: number, x?: number, z?: number, a?: number) {
+  const f = m.fighters[fid];
+  const c = !f ? undefined : f.ride >= 0 ? m.rides[f.ride] : m.rides.find((r) => r.seats.includes(fid));
+  if (!m.world || !f || !c || owned(f)) return false;
+  if (c.seats[0] === fid && x !== undefined && z !== undefined && a !== undefined && Math.hypot(x - c.x, z - c.z) < 25) {
+    c.x = x;
+    c.z = z;
+    c.a = a;
+  }
+  unseat(m, f);
+  emit(m, { t: 'seat', f: fid, v: -1, s: -1, x: r2(c.x), z: r2(c.z), a: r2(c.a) });
+  return true;
+}
+
+/**
+ * Who sits where, on the host's word: egg `fid` in seat `s` of car `v` (whoever we had there is out of it), or (`v`
+ * -1) out of its car, which stands at (x, z) facing `a` once its driver is out. One of ours the host has put out is out
+ * here too. False for news that's nothing new.
+ */
+export function applySeat(m: Match, fid: number, v: number, s: number, x: number, z: number, a: number) {
+  const f = m.fighters[fid];
+  if (!f || m.world) return false;
+  if (v >= 0) {
+    const c = m.rides[v];
+    if (!c || c.dead || s < 0 || s >= c.seats.length) return false;
+    f.pending.delete(-2_000_000 - v);
+    if (f.ride === v && f.sit === s && c.seats[s] === fid) return false;
+    if (f.ride >= 0) unseat(m, f);
+    const was = m.fighters[c.seats[s]];
+    if (was && was !== f) unseat(m, was);
+    sit(m, f, c, s);
+  } else {
+    const c = f.ride >= 0 ? m.rides[f.ride] : m.rides.find((r) => r.seats.includes(fid));
+    if (!c) return false;
+    const drove = c.seats[0] === fid;
+    unseat(m, f);
+    if (drove && !c.dead) {
+      c.x = x;
+      c.z = z;
+      c.a = a;
+    }
+  }
+  emit(m, { t: 'seat', f: fid, v, s, x, z, a, net: true });
+  return true;
+}
+
+/**
+ * The cars as a reliable report from the host has them, quietly (any news of them has come and gone): one gone up is
+ * a burnt shell where it stood with nobody in it, and the rest have the health the host says and who sits where (not
+ * a car whose seats changed here just now: the report may have set out before), and stand where it says while nobody
+ * drives them.
+ */
+export function syncRides(m: Match, notes: { i: number; x: number; z: number; a: number; hp: number; seats: number[] }[]) {
+  if (m.world) return;
+  for (const n of notes) {
+    const c = m.rides[n.i];
+    if (!c || c.dead) continue;
+    if (n.hp <= 0) {
+      for (const id of c.seats) {
+        const o = m.fighters[id];
+        if (o && o.ride === c.i) unseat(m, o);
+      }
+      c.dead = true;
+      c.hp = 0;
+      c.seats.fill(-1);
+      c.x = n.x;
+      c.z = n.z;
+      c.a = n.a;
+      c.vx = 0;
+      c.vz = 0;
+      continue;
+    }
+    if (m.clock - c.at < 1.5) continue;
+    c.hp = Math.min(c.max, n.hp);
+    for (let k = 0; k < c.seats.length; k++) {
+      const id = n.seats[k] ?? -1;
+      if (c.seats[k] === id) continue;
+      const was = m.fighters[c.seats[k]];
+      if (id >= 0 && m.fighters[id]) applySeat(m, id, c.i, k, c.x, c.z, c.a);
+      else if (was) unseat(m, was);
+      else c.seats[k] = -1;
+    }
+    if (c.seats[0] < 0) {
+      c.x = n.x;
+      c.z = n.z;
+      c.a = n.a;
+    }
+  }
+}
+
+/** Can an egg stand at (x, z), out of car `c`: on the island, out of every building and stairway, and clear of everything solid and every other car? */
+function roomBy(m: Match, c: Ride, x: number, z: number) {
+  if (Math.abs(x) > EDGE - 0.5 || Math.abs(z) > EDGE - 0.5) return false;
+  let ok = true;
+  lotsNear(m.map, x, z, FIGHTER_R, (b) => {
+    if (ok && pushBox(x, z, FIGHTER_R, b.x, b.z, b.hw, b.hd)) ok = false;
+  });
+  if (!ok) return false;
+  solidsNear(m.map, x, z, FIGHTER_R + 1, (_i, s) => {
+    if (!ok || !standing(m, s)) return;
+    if (s.shape === 'circle' ? pushCircle(x, z, FIGHTER_R, s.x, s.z, s.r) : pushBox(x, z, FIGHTER_R, s.x, s.z, s.hw, s.hd)) ok = false;
+  });
+  if (!ok) return false;
+  m.walls.near(x - 2, z - 2, x + 2, z + 2, (w) => {
+    if (ok && w.lv === 0 && (w.k === 'wall' || w.k === 'ramp') && pushObb(x, z, FIGHTER_R, w)) ok = false;
+  });
+  return ok && m.rides.every((o) => o === c || Math.abs(o.x - x) > o.hl + 1 || rideGap(o, x, z) > FIGHTER_R);
+}
+
+/** Where an egg in seat `s` gets out: by its door, else the other side, the back or the front, else a step farther off; the first clear spot. */
+function outSpot(m: Match, c: Ride, s: number) {
+  const [across, along] = RIDES[c.kind].seats[s];
+  const side = across >= 0 ? 1 : -1;
+  const w = c.hw + FIGHTER_R + 0.15;
+  const l = c.hl + FIGHTER_R + 0.15;
+  const sa = Math.sin(c.a);
+  const ca = Math.cos(c.a);
+  const at = (u: number, v: number) => ({ x: c.x + ca * u + sa * v, z: c.z - sa * u + ca * v });
+  const tries: [number, number][] = [
+    [side * w, along],
+    [-side * w, along],
+    [0, -l],
+    [0, l],
+    [side * w, -c.hl * 0.7],
+    [-side * w, -c.hl * 0.7],
+    [side * w, c.hl * 0.7],
+    [-side * w, c.hl * 0.7],
+  ];
+  for (const k of [0, 1, 2])
+    for (const [u, v] of tries) {
+      const p = at(u + Math.sign(u) * k * 0.9, v + (u ? 0 : Math.sign(v) * k * 0.9));
+      if (roomBy(m, c, p.x, p.z)) return p;
+    }
+  // nowhere clear: by its door anyway (the egg is pushed clear of whatever is there)
+  return at(side * w, along);
+}
+
+/** Meters a second a car can go on what's under its middle. */
+function topSpeed(m: Match, c: Ride) {
+  const spec = RIDES[c.kind];
+  if (waterAt(m.map, c.x, c.z)) return spec.water;
+  return roadAt(m.map, c.x, c.z) || bridgeAt(m.map, c.x, c.z) >= 0 ? spec.road : spec.grass;
+}
+
+const toward = (v: number, to: number, by: number) => (v < to ? Math.min(to, v + by) : Math.max(to, v - by));
+
+/**
+ * One step of a car driven by an egg this client owns. The stick says which way to go: the car speeds up that way,
+ * turning (quicker for its speed, not at all standing still), and pulled back the way it came it brakes, then backs
+ * up. The handbrake slows it and lets its tail slide round. Faster on a road, slower over the grass, slow through
+ * water. It stops short of whatever it runs into (see collide), and runs eggs over (see ram).
+ */
+function drive(m: Match, f: Fighter, c: Ride, dt: number) {
+  const spec = RIDES[c.kind];
+  const inp = f.input;
+  const stop = c.leave;
+  const len = Math.min(1, Math.hypot(inp.mx, inp.mz));
+  let fx = Math.sin(c.a);
+  let fz = Math.cos(c.a);
+  let fwd = c.vx * fx + c.vz * fz;
+  let throttle = 0;
+  let turn = 0;
+  if (len > 0.15 && !stop) {
+    const want = Math.atan2(inp.mx, inp.mz);
+    const off = angleDiff(want, c.a);
+    if (Math.abs(off) <= BACK_ARC) {
+      // on that way, easing off into a sharp turn
+      throttle = len * (Math.abs(off) > 1.4 ? 0.55 : 1);
+      turn = off;
+    } else if (fwd > 2) throttle = -len;
+    else {
+      // backing up that way, its tail swinging round to it
+      throttle = -len;
+      turn = angleDiff(want + Math.PI, c.a);
+    }
+  }
+  const hand = inp.brake && !stop;
+  // it turns with its speed (not at all standing still), tighter with the handbrake on, a little wider flat out
+  const rate = (spec.turn * Math.min(1, Math.abs(fwd) / 5) * (hand ? 1.5 : 1)) / (1 + Math.abs(fwd) / 45);
+  c.a = angleDiff(c.a + clamp(turn, -rate * dt, rate * dt), 0);
+  fx = Math.sin(c.a);
+  fz = Math.cos(c.a);
+  // (its left, as RIDES has it)
+  const lx = fz;
+  const lz = -fx;
+  fwd = c.vx * fx + c.vz * fz;
+  let side = c.vx * lx + c.vz * lz;
+  const top = topSpeed(m, c);
+  if (stop) fwd = toward(fwd, 0, STOP * dt);
+  else if (hand) fwd = toward(fwd, 0, HAND * dt);
+  else if (throttle !== 0) {
+    const want = throttle > 0 ? top * throttle : spec.back * throttle;
+    // the brakes going the other way, the engine short of what it wants, else easing off to it
+    fwd = toward(fwd, want, (fwd * want < 0 ? BRAKE : Math.abs(fwd) < Math.abs(want) ? spec.accel : DRAG) * dt);
+  } else fwd = toward(fwd, 0, (Math.abs(fwd) > top ? DRAG : ROLL) * dt);
+  // its tyres hold it to the way it faces (the handbrake lets them slide)
+  side *= Math.exp(-(hand ? 1.4 : 9) * dt);
+  c.vx = fx * fwd + lx * side;
+  c.vz = fz * fwd + lz * side;
+  c.x += c.vx * dt;
+  c.z += c.vz * dt;
+  collide(m, f, c);
+  ram(m, f, c);
+  // the driver at the wheel, facing the way the car does
+  const p = seatAt(c, 0);
+  f.x = p.x;
+  f.z = p.z;
+  f.y = 0;
+  f.vx = c.vx;
+  f.vz = c.vz;
+  f.aim = c.a;
+  if (stop && Math.hypot(c.vx, c.vz) < 2.5) alight(m, f);
+}
+
+/** What a car hit this step that can break (crates and barrels, built walls, cars), each once. */
+const struck: { k: 'crate' | 'built' | 'ride'; id: number }[] = [];
+
+/**
+ * A car this client drives stops short of what it runs into (whatever stands of the island, every building whole, the
+ * stairways, a wall or ramp built on the ground, another car, the shore), bouncing back a little and slowing. A hard
+ * enough hit hurts it, and whatever it hit that can break (a crate or a barrel, a built wall, another car).
+ */
+function collide(m: Match, f: Fighter, c: Ride) {
+  let px = 0;
+  let pz = 0;
+  struck.length = 0;
+  for (let pass = 0; pass < 3; pass++) {
+    const o = rideObb(c);
+    let moved = false;
+    const shove = (p: Push | null, k?: 'crate' | 'built' | 'ride', id = -1) => {
+      if (!p) return;
+      c.x += p.x;
+      c.z += p.z;
+      o.x = c.x;
+      o.z = c.z;
+      px += p.x;
+      pz += p.z;
+      moved = true;
+      if (k && !struck.some((h) => h.k === k && h.id === id)) struck.push({ k, id });
+    };
+    solidsNear(m.map, c.x, c.z, c.hl + 1, (_i, s) => {
+      if (!standing(m, s)) return;
+      const breaks = s.what === 'crate' || s.what === 'barrel' ? 'crate' : undefined;
+      if (s.shape === 'box') return shove(obbPush(o, flatBox(s.x, s.z, s.hw, s.hd)), breaks, s.ref);
+      const p = pushObb(s.x, s.z, s.r, o);
+      shove(p ? { x: -p.x, z: -p.z } : null, breaks, s.ref);
+    });
+    lotsNear(m.map, c.x, c.z, c.hl + 1, (b) => shove(obbPush(o, flatBox(b.x, b.z, b.hw, b.hd))));
+    if (m.walls.size)
+      m.walls.near(c.x - c.hl - 2, c.z - c.hl - 2, c.x + c.hl + 2, c.z + c.hl + 2, (w) => {
+        if (w.lv !== 0 || (w.k !== 'wall' && w.k !== 'ramp')) return;
+        for (const part of w.k === 'wall' && w.e === 1 && w.parts ? w.parts : [w]) shove(obbPush(o, part), 'built', w.id);
+      });
+    for (const q of m.rides) if (q !== c && Math.abs(q.x - c.x) < c.hl + q.hl && Math.abs(q.z - c.z) < c.hl + q.hl) shove(obbPush(o, rideObb(q)), 'ride', q.i);
+    if (!moved) break;
+  }
+  // it rolls to a stop at the shore (no harm done)
+  const edge = EDGE - c.hl;
+  if (Math.abs(c.x) > edge) {
+    c.x = Math.sign(c.x) * edge;
+    if (c.x * c.vx > 0) c.vx = 0;
+  }
+  if (Math.abs(c.z) > edge) {
+    c.z = Math.sign(c.z) * edge;
+    if (c.z * c.vz > 0) c.vz = 0;
+  }
+  if (!px && !pz) return;
+  const n = Math.hypot(px, pz);
+  const nx = px / n;
+  const nz = pz / n;
+  const into = -(c.vx * nx + c.vz * nz);
+  if (into <= 0) return;
+  // back off it a little, and slower along it after a knock
+  c.vx += nx * into * (1 + BOUNCE);
+  c.vz += nz * into * (1 + BOUNCE);
+  if (into > 3) {
+    c.vx *= 0.85;
+    c.vz *= 0.85;
+  }
+  if (into < CRASH.speed || m.clock - c.crashAt < 0.3) return;
+  c.crashAt = m.clock;
+  const d = (into - CRASH.speed) * CRASH.k;
+  emit(m, { t: 'crash', v: c.i, x: r2(c.x - nx * (c.hw + 0.4)), z: r2(c.z - nz * (c.hw + 0.4)), d: r1(into) });
+  smashRide(m, f, c.i, d, c.x, c.z);
+  for (const h of struck) {
+    if (h.k === 'crate') smashCrate(m, f, h.id, into * 10, c.x, c.z);
+    else if (h.k === 'built') smashWall(m, f, h.id, into * 9, c.x, c.z);
+    else smashRide(m, f, h.id, d, c.x, c.z);
+  }
+}
+
+/** A car this client drives runs over the eggs in its way, once a moment each (not its own team's: it only shoves them aside). */
+function ram(m: Match, f: Fighter, c: Ride) {
+  const speed = Math.hypot(c.vx, c.vz);
+  if (speed < RAM.speed) return;
+  const o = rideObb(c);
+  for (const e of m.fighters) {
+    if (e.ride >= 0 || e.team === f.team || !fighting(e) || e.y > 1.2 || Math.abs(e.x - c.x) > c.hl + 1 || Math.abs(e.z - c.z) > c.hl + 1) continue;
+    if (!pushObb(e.x, e.z, FIGHTER_R + 0.2, o)) continue;
+    // once a bump: not again until it has been clear of the car a moment
+    const last = c.rams.get(e.id) ?? -9;
+    c.rams.set(e.id, m.clock);
+    if (m.clock - last < 0.8) continue;
+    strike(m, f, e, clamp(speed * RAM.k, RAM.min, RAM.max), 'car', e.x, e.z);
+    // and it slows for the bump
+    c.vx *= 0.85;
+    c.vz *= 0.85;
+  }
+}
+
+/**
+ * An egg this client owns, run over by egg `by`'s car: knocked flying, off to the side of the car's way (its left,
+ * hit dead on) and on along it, out of its path.
+ */
+function rammed(m: Match, f: Fighter, by: number) {
+  const d = m.fighters[by];
+  const c = d && d.ride >= 0 ? m.rides[d.ride] : undefined;
+  if (!c) return;
+  const speed = Math.hypot(c.vx, c.vz);
+  const ux = speed > 0.5 ? c.vx / speed : Math.sin(c.a);
+  const uz = speed > 0.5 ? c.vz / speed : Math.cos(c.a);
+  const side = (f.x - c.x) * uz - (f.z - c.z) * ux >= 0 ? 1 : -1;
+  const k = Math.min(16, 4 + speed * 0.6);
+  f.kx += (uz * side * 0.85 + ux * 0.55) * k;
+  f.kz += (-ux * side * 0.85 + uz * 0.55) * k;
+}
+
+/**
+ * What an egg this client owns does in a car: the interact key gets it out (a driver brakes to a stop first), a driver
+ * drives, and a passenger shoots and throws out of the car and patches up, but builds, swings, picks up and drops
+ * nothing.
+ */
+function seated(m: Match, f: Fighter, dt: number) {
+  const c = m.rides[f.ride];
+  const inp = f.input;
+  // (the host put someone else in our seat, or the car went up)
+  if (!c || c.dead || c.seats[f.sit] !== f.id) return unseat(m, f);
+  if (f.sit === 0) {
+    if (inp.interact) c.leave = true;
+    return drive(m, f, c, dt);
+  }
+  if (inp.interact) return alight(m, f);
+  inp.build = false;
+  inp.piece = null;
+  inp.mat = 0;
+  inp.edit = false;
+  inp.drop = null;
+  if (f.slot === SLOT_MELEE) inp.fire = false;
+  handle(m, f, dt);
+}
+
+/** Damage to a car from something this client did (a shot, a blast, a crash). */
+function smashRide(m: Match, by: Fighter, v: number, dmg: number, x: number, z: number) {
+  const c = m.rides[v];
+  if (!c || c.dead) return;
+  const d = Math.max(1, Math.round(dmg));
+  emit(m, { t: 'smash', f: by.id, kind: 'car', id: v, d, x: r2(x), z: r2(z) });
+  damageRide(m, v, d, by.id, true);
+}
+
+/** A bullet from this client into a car: the car takes it, and whoever sits nearest where it hit its share (see THROUGH). */
+function shootRide(m: Match, by: Fighter, v: number, dmg: number, w: Cause, x: number, z: number) {
+  const c = m.rides[v];
+  if (!c || c.dead) return emit(m, { t: 'thud', x, z, what: 'ride' });
+  smashRide(m, by, v, dmg, x, z);
+  let near: Fighter | null = null;
+  let best = Infinity;
+  for (const id of c.seats) {
+    const o = m.fighters[id];
+    const d = o && o.ride === v ? Math.hypot(o.x - x, o.z - z) : Infinity;
+    if (d < best) {
+      best = d;
+      near = o;
+    }
+  }
+  if (near) strike(m, by, near, dmg * THROUGH, w, near.x, near.z);
+}
+
+/** Damage to a car from anyone. Only the host (or a solo game) has one go up; guests wait to hear it did. */
+export function damageRide(m: Match, v: number, d: number, by: number, announce: boolean) {
+  const c = m.rides[v];
+  if (!c || c.dead || !(d > 0)) return;
+  c.hp = Math.max(m.world ? 0 : 1, c.hp - d);
+  if (by >= 0) c.by = by;
+  if (m.world && c.hp <= 0) wreckRide(m, v, by, announce);
+}
+
+/**
+ * A car goes up: on this client's word (`announce`, the host's) or on the host's, where it says the car stood. Everyone
+ * aboard is thrown out (one of ours flung clear), then it bursts (see burst); its burnt shell stays where it stood.
+ */
+export function wreckRide(m: Match, v: number, by: number, announce: boolean, x?: number, z?: number, a?: number) {
+  const c = m.rides[v];
+  if (!c || c.dead) return false;
+  if (x !== undefined && z !== undefined && a !== undefined) {
+    c.x = x;
+    c.z = z;
+    c.a = a;
+  }
+  for (const id of c.seats) {
+    const o = m.fighters[id];
+    if (!o || o.ride !== v) continue;
+    unseat(m, o);
+    if (!owned(o)) continue;
+    const dx = o.x - c.x;
+    const dz = o.z - c.z;
+    const d = Math.hypot(dx, dz) || 1;
+    o.kx += (dx / d) * 9;
+    o.kz += (dz / d) * 9;
+  }
+  c.dead = true;
+  c.hp = 0;
+  c.seats.fill(-1);
+  c.vx = 0;
+  c.vz = 0;
+  c.leave = false;
+  c.at = m.clock;
+  emit(m, announce ? { t: 'wreck', v, f: by, x: r2(c.x), z: r2(c.z), a: r2(c.a) } : { t: 'wreck', v, f: by, x: c.x, z: c.z, a: c.a, net: true });
+  burst(m, c.x, c.z, WRECK.radius, WRECK.dmg, by, 'wreck');
+  return true;
+}
+
+/** A car on fire: below BURN of its health, and not gone up yet. */
+export const burning = (c: Ride) => !c.dead && c.hp < c.max * BURN.at;
+
+/**
+ * Once a step, after everyone has moved: a car someone else drives goes where its driver's reports put it (the driver
+ * sits at the wheel, so the car's middle is back from there, the way it faces), everyone aboard every car sits in
+ * their seats, and cars on fire burn down (the host has one go up once it has nothing left). The host also lets go
+ * the seats of eggs gone out or down, whose owners may never say so.
+ */
+function carry(m: Match, dt: number) {
+  for (const c of m.rides) {
+    if (c.dead) continue;
+    const d = m.fighters[c.seats[0]];
+    if (d && d.kind === 'remote' && d.ride === c.i && d.snaps.length && (d.show.flags & F_RIDE) !== 0) {
+      const [across, along] = RIDES[c.kind].seats[0];
+      const sa = Math.sin(d.aim);
+      const ca = Math.cos(d.aim);
+      c.a = angleDiff(d.aim, 0);
+      c.x = d.x - ca * across - sa * along;
+      c.z = d.z + sa * across - ca * along;
+      c.vx = d.vx;
+      c.vz = d.vz;
+    }
+    for (let s = 0; s < c.seats.length; s++) {
+      const o = m.fighters[c.seats[s]];
+      if (!o || o.ride !== c.i) continue;
+      const p = seatAt(c, s);
+      o.x = p.x;
+      o.z = p.z;
+      o.y = 0;
+      o.vx = c.vx;
+      o.vz = c.vz;
+      if (o.kind !== 'remote') continue;
+      o.bush = -1;
+      o.inside = -1;
+      o.wet = false;
+      o.warm = false;
+    }
+    if (burning(c)) {
+      c.hp -= c.max * BURN.rate * dt;
+      if (m.world && c.hp <= 0) wreckRide(m, c.i, c.by, true);
+      // (a guest's waits for the host's word that it went up)
+      else if (!m.world) c.hp = Math.max(0.5, c.hp);
+    }
+  }
+  if (!m.world) return;
+  for (const c of m.rides)
+    for (let s = 0; s < c.seats.length; s++) {
+      const o = m.fighters[c.seats[s]];
+      if (c.seats[s] < 0 || (o && o.phase === 'ground' && !o.down && o.ride === c.i)) continue;
+      if (!o) c.seats[s] = -1;
+      else if (owned(o) && o.ride === c.i) alight(m, o);
+      else if (!owned(o)) freeSeat(m, o.id);
+      else c.seats[s] = -1;
+    }
+}
+
+// -------------------------------------------------------------------------------------------------------------------
 // Remote eggs.
 
 export function flagsOf(f: Fighter) {
@@ -4072,7 +5015,8 @@ export function flagsOf(f: Fighter) {
     (f.ghillie ? F_GHILLIE : 0) |
     (f.stunT > 0 ? F_STUN : 0) |
     (f.down ? F_DOWN : 0) |
-    (f.reviving >= 0 ? F_REVIVE : 0)
+    (f.reviving >= 0 ? F_REVIVE : 0) |
+    (f.ride >= 0 ? F_RIDE : 0)
   );
 }
 
@@ -4483,6 +5427,19 @@ function think(m: Match, f: Fighter, dt: number) {
     ai.think = 0.2 + m.rng() * 0.12;
     decide(m, f, ai, L);
   }
+  ai.carCool -= dt;
+  // in a car: at the wheel, drive; along for the ride, out once nobody drives or it's on fire, else fight from it
+  // (where it goes is the driver's)
+  if (f.ride >= 0) {
+    const c = m.rides[f.ride];
+    if (f.sit === 0 && c) return chauffeur(m, f, ai, c, dt);
+    if (!c || c.seats[0] < 0 || burning(c)) {
+      inp.interact = true;
+      ai.car = -1;
+      ai.carCool = 12;
+      return;
+    }
+  }
   // reviving a teammate: keep at it, unless an egg comes close or it gets too hot
   if (f.reviving >= 0) {
     const t = ai.target >= 0 ? m.fighters[ai.target] : undefined;
@@ -4497,11 +5454,11 @@ function think(m: Match, f: Fighter, dt: number) {
   const s = m.storm;
   const outside = Math.hypot(topX(f.x) - s.x, f.z - s.z) > s.r - 1;
   if (outside) ai.hideT = 0;
-  // hot sauce or jam underfoot: out of it the shortest way
-  const burn = m.zones.length ? (zoneAt(m, 'sauce', f.x, f.z) ?? zoneAt(m, 'jam', f.x, f.z)) : null;
+  // hot sauce or jam underfoot, or a car on fire close by (about to go up): away from it the shortest way
+  const burn = (m.zones.length ? (zoneAt(m, 'sauce', f.x, f.z) ?? zoneAt(m, 'jam', f.x, f.z)) : null) ?? (f.ride < 0 ? blaze(m, f) : null);
   // hiding in a bush we threw down: still there, and still standing (or on our way to it)
   const hiding = ai.hideT > 0 && !!zoneAt(m, 'bush', ai.hideX, ai.hideZ);
-  const away = (zn: Zone) => {
+  const away = (zn: { x: number; z: number; r: number }) => {
     // right in the middle of it, out the way we were going
     const mid = Math.hypot(f.x - zn.x, f.z - zn.z) < 0.05;
     const dx = mid ? ai.gx - f.x : f.x - zn.x;
@@ -4769,6 +5726,20 @@ function think(m: Match, f: Fighter, dt: number) {
       ai.gz = o.z;
       if (Math.hypot(o.x - f.x, o.z - f.z) < REVIVE_R - 0.4) inp.hold = true;
     }
+  } else if (ai.goal === 'ride') {
+    // by the car: in (the wheel, or a seat by a teammate driving)
+    const c = m.rides[ai.car];
+    if (!c || seatFor(m, c, f) < 0) ai.think = 0;
+    else if (rideGap(c, f.x, f.z) < RIDE_R - 0.3 && board(m, f, c.i)) {
+      ai.boardAt = m.time;
+      ai.carT = m.time + 70;
+      ai.slowT = 0;
+      ai.backT = 0;
+      ai.driveT = 0;
+      ai.jams = 0;
+      ai.driveA = NaN;
+      ai.fromD = Math.hypot(ai.carX - c.x, ai.carZ - c.z);
+    }
   }
   if (m.mode !== 'solo' && !inp.hold && !f.using && !bring(m, f, ai)) share(m, f, ai);
 }
@@ -4968,9 +5939,9 @@ function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
   const lv = scopeFor(m, f, ai);
   if (lv !== f.scope) f.input.scope = 10 + lv;
   ai.pad = -1;
-  if (ai.target >= 0 || ai.goal === 'fire' || ai.goal === 'smash' || ai.goal === 'chase') return;
+  if (f.ride >= 0 || ai.target >= 0 || ai.goal === 'fire' || ai.goal === 'smash' || ai.goal === 'chase') return;
   const far = Math.hypot(ai.gx - f.x, ai.gz - f.z);
-  if (far < 35) return;
+  if (carFor(m, f, ai, far) || far < 35) return;
   const s = m.storm;
   const safe = s.shrinking || s.timer < 20 ? s.next : { x: s.x, z: s.z, r: s.r };
   let best = far - 8;
@@ -4985,6 +5956,191 @@ function decide(m: Match, f: Fighter, ai: Ai, L: LevelSpec) {
     ai.pad = i;
     best = walk;
   });
+}
+
+/** How far off a computer egg's goal must be for it to take a car there, and how far it walks to one. */
+const CAR_FAR = 70;
+const CAR_NEAR = 28;
+
+/**
+ * Now and then a computer egg takes a car: with a long way to go (the storm coming, or roaming far), the nearest in
+ * reach with nobody at the wheel, not on fire nor badly hurt, and not the wrong way; in teams, a seat in a car a
+ * teammate drives that has stopped close by. It walks to it (the `ride` goal), gets in and drives (see chauffeur)
+ * where it was going. True while it's making for one.
+ */
+function carFor(m: Match, f: Fighter, ai: Ai, far: number) {
+  // (nobody drives down a stairway)
+  if (!m.rides.length || isDeep(f.x) || isDeep(ai.gx) || f.y > 1) return false;
+  let c = ai.car >= 0 ? m.rides[ai.car] : undefined;
+  if (c && (seatFor(m, c, f) < 0 || burning(c) || m.time > ai.carT || (c.seats[0] < 0 ? far < CAR_FAR * 0.7 : Math.hypot(c.vx, c.vz) > 4))) {
+    ai.car = -1;
+    ai.carCool = 10;
+    c = undefined;
+  }
+  if (!c && ai.carCool <= 0) {
+    ai.carCool = 2 + m.rng() * 2;
+    let best = Infinity;
+    for (const o of m.rides) {
+      if (o.dead || o.hp < o.max * 0.45) continue;
+      const d = Math.hypot(o.x - f.x, o.z - f.z);
+      if (d >= best || d > CAR_NEAR) continue;
+      const s = seatFor(m, o, f);
+      const mate = s > 0 && Math.hypot(o.vx, o.vz) < 3 && d < 16;
+      const wheel = s === 0 && far >= CAR_FAR && Math.hypot(o.x - ai.gx, o.z - ai.gz) < far;
+      if (!mate && !wheel) continue;
+      best = d;
+      c = o;
+    }
+    if (!c) return false;
+    ai.car = c.i;
+    ai.carT = m.time + 14;
+  }
+  if (!c) return false;
+  // where to drive: where we were going, as it moves (the storm's circle)
+  ai.carX = ai.gx;
+  ai.carZ = ai.gz;
+  // and to the car, by the door of the seat we'd take
+  const s = seatFor(m, c, f);
+  const [u, v] = RIDES[c.kind].seats[Math.max(0, s)];
+  const k = (u >= 0 ? 1 : -1) * (c.hw + 0.9);
+  ai.goal = 'ride';
+  ai.gx = c.x + Math.cos(c.a) * k + Math.sin(c.a) * v;
+  ai.gz = c.z - Math.sin(c.a) * k + Math.cos(c.a) * v;
+  return true;
+}
+
+/** The turns a computer egg at the wheel tries, straight on first. */
+const DRIVE_TURNS = [0, 0.3, -0.3, 0.65, -0.65, 1.05, -1.05, 1.5, -1.5, 2, -2];
+/** How hard a computer egg reckons on braking (meters a second, a second), to stop short of what's ahead. */
+const BOT_BRAKE = 12;
+
+/**
+ * A computer egg at the wheel drives where it was going (on into the storm's circle as it moves): it feels the way
+ * ahead for the first clear line a car's width across (see clearFor), round to it from straight there, slows for a
+ * sharp turn, the end of the way and anything ahead it couldn't stop short of (braking hard if need be), and backs up
+ * when it's stuck. It gets out once it's there, the car is on fire, it has been stuck too often or driven long
+ * enough, or there's a fight right by it going slow; in teams it first waits a moment for teammates on their way in.
+ */
+function chauffeur(m: Match, f: Fighter, ai: Ai, c: Ride, dt: number) {
+  const inp = f.input;
+  inp.brake = false;
+  inp.aim = f.aim;
+  if (c.leave) return;
+  if (ai.goal === 'zone') {
+    ai.carX = ai.gx;
+    ai.carZ = ai.gz;
+  }
+  const dx = ai.carX - c.x;
+  const dz = ai.carZ - c.z;
+  const d = Math.hypot(dx, dz);
+  const speed = Math.hypot(c.vx, c.vz);
+  const t = ai.target >= 0 ? m.fighters[ai.target] : undefined;
+  const fight = !!t && fighting(t) && Math.hypot(t.x - f.x, t.z - f.z) < 12 && speed < 6;
+  // (and a car that won't get out of where it's parked is soon left there)
+  const going = m.time - ai.boardAt < 12 || d < ai.fromD - 15;
+  if (d < 10 || isDeep(ai.carX) || burning(c) || ai.jams > 3 || !going || m.time > ai.carT || fight) {
+    inp.interact = true;
+    ai.car = -1;
+    ai.carCool = 20 + m.rng() * 20;
+    return;
+  }
+  if (m.time - ai.boardAt < 3 && m.fighters.some((o) => o !== f && o.team === f.team && o.ai?.car === c.i && o.ride < 0 && upright(o))) return;
+  if (ai.backT > 0) {
+    // backing up, its nose swinging round the way we want to go
+    ai.backT -= dt;
+    const a = c.a + Math.PI + ai.strafe * 0.6;
+    inp.mx = Math.sin(a);
+    inp.mz = Math.cos(a);
+    return;
+  }
+  const look = c.hl + 5 + speed * 0.8;
+  const want = Math.atan2(dx, dz);
+  ai.driveT -= dt;
+  if (ai.driveT <= 0) {
+    ai.driveT = 0.12;
+    const need = Math.min(look, d);
+    const was = ai.driveA;
+    let best = -1;
+    ai.driveA = NaN;
+    // straight there; else on the way we chose (round whatever is in the way), while it's clear; else the first clear way
+    if (!Number.isNaN(was) && Math.abs(angleDiff(was, want)) < 2.1 && clearFor(m, f, c, want, look) < need && clearFor(m, f, c, was, look) >= need) ai.driveA = was;
+    else
+      for (const turn of DRIVE_TURNS) {
+      const free = clearFor(m, f, c, want + turn, look);
+      if (free >= need) {
+        ai.driveA = want + turn;
+        break;
+      }
+        // none clear all the way: the one that goes farthest
+        if (free > best && free > c.hl + 3) {
+          best = free;
+          ai.driveA = want + turn;
+        }
+      }
+  }
+  const lost = Number.isNaN(ai.driveA);
+  const a = lost ? want : ai.driveA;
+  const turn = angleDiff(a, c.a);
+  const off = Math.abs(turn);
+  const ahead = clearFor(m, f, c, c.a, look) - c.hl - 1.5;
+  // a tight turn with no room ahead to make it: back up, swinging round
+  if (off > 1.4 && ahead < 3 && speed < 4) {
+    ai.backT = 0.9;
+    ai.strafe = turn >= 0 ? 1 : -1;
+    return;
+  }
+  // as fast as it could still stop short of what's ahead, round a turn and at the end of the way
+  const top = topSpeed(m, c);
+  const fwd = c.vx * Math.sin(c.a) + c.vz * Math.cos(c.a);
+  const safe = Math.min(Math.sqrt(2 * BOT_BRAKE * Math.max(0, ahead)) + 3, off > 0.8 ? 7 : off > 0.35 ? 13 : top, 6 + d * 0.5, lost ? 5 : top);
+  if (fwd > safe + 2) {
+    // the brakes (the stick back the way it came)
+    inp.mx = -Math.sin(c.a);
+    inp.mz = -Math.cos(c.a);
+  } else {
+    const k = Math.max(0.3, Math.min(1, safe / top));
+    inp.mx = Math.sin(a) * k;
+    inp.mz = Math.cos(a) * k;
+  }
+  // gone nowhere a moment: back up, then try again
+  ai.slowT = speed < 1.5 ? ai.slowT + dt : 0;
+  if (ai.slowT > 1.2) {
+    ai.slowT = 0;
+    ai.backT = 1;
+    ai.jams++;
+    ai.strafe = turn >= 0 ? 1 : -1;
+  }
+}
+
+/**
+ * How far the way along `b` is clear for a car, its width across, up to `look` meters: nothing solid, no building,
+ * stairway or other car, and nobody of its driver's team (never run over the team).
+ */
+function clearFor(m: Match, f: Fighter, c: Ride, b: number, look: number) {
+  const ex = Math.sin(b);
+  const ez = Math.cos(b);
+  const side = c.hw + 0.25;
+  let free = look;
+  for (const k of [-1, 0, 1]) {
+    const x = c.x + ez * side * k;
+    const z = c.z - ex * side * k;
+    const hit = castRay(m, x, z, ex, ez, free, f.id, false, true);
+    if (hit) free = hit.t;
+    lotsNear(m.map, x + (ex * free) / 2, z + (ez * free) / 2, free / 2 + 1, (o) => {
+      free = Math.min(free, rayBox(x, z, ex, ez, free, o.x, o.z, o.hw, o.hd));
+    });
+  }
+  for (const id of m.teams[f.team] ?? []) {
+    const o = m.fighters[id];
+    if (o !== f && o.ride < 0 && fighting(o)) free = Math.min(free, rayCircle(c.x, c.z, ex, ez, free, o.x, o.z, side + FIGHTER_R));
+  }
+  return free;
+}
+
+/** A car on fire close enough to an egg to catch it when it goes up, as a circle to get out of, or null. */
+function blaze(m: Match, f: Fighter) {
+  for (const c of m.rides) if (burning(c) && Math.abs(c.x - f.x) < WRECK.radius + 1 && Math.abs(c.z - f.z) < WRECK.radius + 1 && Math.hypot(c.x - f.x, c.z - f.z) < WRECK.radius + 1) return { x: c.x, z: c.z, r: WRECK.radius };
+  return null;
 }
 
 /** About how far a scope lets an egg see (the view's half height), by level. */

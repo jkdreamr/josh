@@ -169,6 +169,7 @@ import {
   makePiece,
   makeWall,
   moveLoot,
+  rideObb,
   noInput,
   openable,
   panBlocks,
@@ -196,6 +197,9 @@ import {
 import { BLEED_T, CRAWL, DOWN_HP, F_DOWN, F_REVIVE, PING_T, REVIVE_HP, REVIVE_T, dropOut, forfeit, isMode, pingOf, reviveEgg, reviveShare, teamCount, type Mode } from '../src/os/arcade/games/scramble/logic.ts';
 import { ASK_T, EMOTE_GAP, EMOTE_IDS, EMOTE_SPAN, EMOTE_T, FACE_EMOTES, TEAM_EMOTES, ammoAsk, emoteOf, emoteReady, endMatch, isTeamEmote, type EmoteId, type LootItem } from '../src/os/arcade/games/scramble/logic.ts';
 import { actorOf, parseTeams, teamAsk } from '../src/os/arcade/games/scramble/net.ts';
+import { BURN, CRASH, F_RIDE, RAM, RIDES, RIDE_VIEW, THROUGH, alight, angleDiff, board, burning, damageRide, makeRide, rideGap, rideNear, seatAt, seatFor, syncRides, wreckRide, type Ride, type RideKind } from '../src/os/arcade/games/scramble/logic.ts';
+import { packSeats, parseRides, rideNotes, unpackSeats } from '../src/os/arcade/games/scramble/net.ts';
+import { drivable } from '../src/os/arcade/games/scramble/map.ts';
 import { nextTeam, pinTeam, teamsFor, winnersOf } from '../src/os/arcade/games/scramble/session.ts';
 import { MAX_KICK, applyNet, configOf, endOf, guestState, hitCap, hostState, packDoors, packEvents, packGlass, packPiece, parsePacket, pieceEv, placesOf, stateOf, toNet, unpackDoors, unpackGlass, unpackPiece, type NetEv } from '../src/os/arcade/games/scramble/net.ts';
 import { END_PAUSE, FAR_EVERY, FIRST_GRACE, FLUSH, LATE_MAX, NEAR, OUT_EVERY, QUICK_LEVEL, STALE, TICK_MS, catchUp, ending, flush, frameTime, guestMatch, hostBots, hostMatch, newSession, offscreen, receive, resultCard, share, stepIn, tick, type Me, type Player, type Session } from '../src/os/arcade/games/scramble/session.ts';
@@ -225,6 +229,7 @@ function openSpot(m: Match) {
   m.map.buildings = [];
   m.map.yards = [];
   m.map.cars = [];
+  m.rides = [];
   m.map.roads = [];
   m.map.river = [];
   m.map.bridges = [];
@@ -629,14 +634,22 @@ test('the grid finds everything a ray could hit, the same as checking every soli
     const dx = Math.sin(a);
     const dz = Math.cos(a);
     const grid = castRay(m, x, z, dx, dz, len, -1, false, true);
-    let brute = Infinity;
+    // (and the cars that can be driven, wherever they are)
+    let cars = Infinity;
+    for (const c of m.rides) cars = Math.min(cars, rayObb(x, z, dx, dz, len, rideObb(c)));
+    let brute = cars;
     for (const s of m.map.solids) if (standing(m, s)) brute = Math.min(brute, raySolid(s, x, z, dx, dz, len));
     assert.equal(grid?.t ?? Infinity, brute, `ray ${i}`);
-    // bullets and eyes go over fences, tables and fire pits
+    // bullets go over fences, tables and fire pits (not cars), and eyes over cars too
     const high = castRay(m, x, z, dx, dz, len, -1, false);
     let tall = Infinity;
     for (const s of m.map.solids) if (standing(m, s) && !low(s)) tall = Math.min(tall, raySolid(s, x, z, dx, dz, len));
-    assert.equal(high?.t ?? Infinity, tall, `high ray ${i}`);
+    assert.equal(high?.t ?? Infinity, Math.min(tall, cars), `high ray ${i}`);
+    const rides = m.rides;
+    m.rides = [];
+    const bare = castRay(m, x, z, dx, dz, len, -1, false, false, 0, 'open')?.t ?? Infinity;
+    m.rides = rides;
+    assert.equal(castRay(m, x, z, dx, dz, len, -1, false, false, 0, 'open')?.t ?? Infinity, bare, `eye ray ${i}`);
   }
   // cells along a diagonal come in order, each next to the last
   const cells: number[] = [];
@@ -1247,9 +1260,9 @@ test('packets survive the trip and anything malformed is turned away', () => {
   assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(guestState(4, s, 7)))), { k: 's', round: 4, state: s, watch: 7 });
   assert.equal(parsePacket({ ...guestState(4, s), v: MAX_FIGHTERS }), null);
   const host = parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, -2.5, 'hard', [0, 1, -1], [[0, s], [2, s]]))));
-  assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]], glass: null, doors: [], mode: 'solo', teams: null });
+  assert.deepEqual(host, { k: 'S', round: 4, seed: 99, time: -2.5, level: 'hard', roster: [0, 1, -1], states: [[0, s], [2, s]], glass: null, doors: [], mode: 'solo', teams: null, rides: [] });
   // the roster only goes with some of the host's reports
-  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]], glass: null, doors: null, mode: 'solo', teams: null });
+  assert.deepEqual(parsePacket(JSON.parse(JSON.stringify(hostState(4, 99, 3, 'hard', null, [[2, s]])))), { k: 'S', round: 4, seed: 99, time: 3, level: 'hard', roster: null, states: [[2, s]], glass: null, doors: null, mode: 'solo', teams: null, rides: null });
   assert.equal(parsePacket({ ...hostState(4, 99, 3, 'hard', null, []), ro: 'all' }), null);
   assert.deepEqual(parsePacket(endOf(4, 2, [[2, 1, 3], [0, 2, 1]])), { k: 'end', round: 4, winner: 2, places: [[2, 1, 3], [0, 2, 1]] });
   assert.deepEqual(parsePacket(configOf(4, 'none', 'easy')), { k: 'cfg', round: 4, bots: 'none', level: 'easy', mode: 'solo', picks: [] });
@@ -7636,7 +7649,8 @@ test('in busy matches, the egg the camera follows never sees another egg blink o
   let raw = 0;
   let held = 0;
   let hidden = 0;
-  for (const seed of [2, 10]) {
+  // (seeds where eggs hide often enough, and the lines are crossed, to tell)
+  for (const seed of [10, 7]) {
     const names = botNames(seed);
     const entrants: Entrant[] = names.slice(0, MAX_FIGHTERS).map((name) => ({ name, color: '#fff', kind: 'bot', seat: -1 }));
     const m = createMatch({ seed, role: 'solo', level: 'hard', entrants, me: -1, countdown: 0, mode: 'duos' });
@@ -7979,4 +7993,589 @@ test('online over a lossy link that reorders fast packets, no screen sees an egg
   assert.ok(passed > 1000, `fast packets passed each other (${passed})`);
   assert.ok(frames > 5000 && hidden > 50, `eggs were on screen (${frames} frames) and hid (${hidden})`);
   assert.deepEqual(bad, []);
+});
+
+// ---------------------------------------------------------------------------------------------------------------------
+// Cars.
+
+/** `n` people on bare grass a few seconds in (in duos or squads, in fighter order), in a row out of the way. */
+function lot(n = 2, mode: Mode = 'solo', seed = 7) {
+  const entrants: Entrant[] = Array.from({ length: n }, (_, i) => ({ name: `p${i}`, color: '#fff', kind: 'player', seat: -1 }));
+  const m = createMatch({ seed, role: 'solo', level: 'normal', entrants, me: 0, countdown: 0, mode });
+  m.time = 5;
+  openSpot(m);
+  m.fighters.forEach((f, i) => land(f, -150 + i * 3, -150));
+  return m;
+}
+
+/** Parks a car of a kind at (x, z) facing `a`. */
+function park(m: Match, kind: RideKind, x: number, z: number, a = 0) {
+  const c = makeRide(m.rides.length, kind, x, z, a);
+  m.rides.push(c);
+  return c;
+}
+
+/** Stands an egg by a car's driver door and gets it in (true when it did). */
+function getIn(m: Match, f: Fighter, c: Ride) {
+  const p = seatAt(c, 0);
+  land(f, p.x + Math.cos(c.a) * (c.hw + 0.5), p.z - Math.sin(c.a) * (c.hw + 0.5));
+  return board(m, f, c.i);
+}
+
+/** Holds the stick (and the handbrake, if asked) one way for a while, and what happened meanwhile. */
+function hold(m: Match, f: Fighter, a: number, seconds: number, k = 1, brake = false) {
+  const evs: Ev[] = [];
+  for (let t = 0; t < seconds; t += DT) {
+    f.input.mx = Math.sin(a) * k;
+    f.input.mz = Math.cos(a) * k;
+    f.input.brake = brake;
+    step(m, DT);
+    evs.push(...m.events.splice(0));
+  }
+  f.input.mx = 0;
+  f.input.mz = 0;
+  f.input.brake = false;
+  return evs;
+}
+
+const speedOf = (c: Ride) => Math.hypot(c.vx, c.vz);
+/** How fast a car goes the way it faces (less backing up), and across that. */
+const forward = (c: Ride) => c.vx * Math.sin(c.a) + c.vz * Math.cos(c.a);
+const across = (c: Ride) => c.vx * Math.cos(c.a) - c.vz * Math.sin(c.a);
+
+test('trucks and most cars can be driven off: they leave the solids to the old ones and those boxed in, and each has room to drive away', () => {
+  let boxed = 0;
+  for (let seed = 1; seed <= 8; seed++) {
+    const m = quiet(seed);
+    land(m.fighters[1], -EDGE + 1, -EDGE + 1);
+    const { cars } = m.map;
+    assert.ok(cars.filter((c) => c.ride).length >= cars.length / 3 && cars.every((c) => !c.ride || drivable(c.truck, c.look)), `seed ${seed}: which can be driven`);
+    boxed += cars.filter((c) => !c.ride && drivable(c.truck, c.look)).length;
+    assert.equal(m.map.solids.filter((s) => s.what === 'car').length, cars.filter((c) => !c.ride).length, 'only the old ones are solids');
+    assert.equal(m.rides.length, cars.filter((c) => c.ride).length);
+    for (const c of m.rides) {
+      const car = cars[c.car];
+      assert.ok(car.ride && c.x === car.x && c.z === car.z && c.hp === RIDES[c.kind].hp && c.seats.every((id) => id < 0));
+      assert.equal(c.kind === 'truck', car.truck);
+      // the box it stands in is the parked car's
+      assert.ok(Math.abs(Math.abs(Math.sin(c.a)) * c.hl + Math.abs(Math.cos(c.a)) * c.hw - car.hw) < 0.01, `seed ${seed}: car ${c.i} lies the way it was parked`);
+    }
+    // driven off from where it stands, forward or back, it gets a few car lengths away
+    const f = m.fighters[0];
+    for (const c of m.rides) {
+      const home = { x: c.x, z: c.z, a: c.a };
+      let best = 0;
+      for (const way of [0, Math.PI]) {
+        Object.assign(c, { ...home, vx: 0, vz: 0, hp: c.max });
+        assert.ok(getIn(m, f, c), `seed ${seed}: into car ${c.i}`);
+        hold(m, f, home.a + way, 2);
+        best = Math.max(best, Math.hypot(c.x - home.x, c.z - home.z));
+        alight(m, f);
+        m.events.length = 0;
+      }
+      Object.assign(c, { ...home, vx: 0, vz: 0, hp: c.max });
+      assert.ok(best > 6, `seed ${seed}: car ${c.i} (${c.kind}) at ${home.x},${home.z} drove off only ${best.toFixed(1)} m`);
+    }
+  }
+  assert.ok(boxed < 16, `few are left where they're boxed in (${boxed})`);
+});
+
+test('a car speeds up the way the stick points: fastest on a road, slower on grass, slow through water; it turns once it rolls, brakes and backs up', () => {
+  const m = lot(2);
+  m.map.roads = [{ x0: -120, z0: 0, x1: 120, z1: 0 }];
+  m.map.ponds = [{ x: 0, z: 80, r: 30 }];
+  const f = m.fighters[0];
+  const c = park(m, 'jeep', -100, 0, Math.PI / 2);
+  const reset = (x: number, z: number, a = Math.PI / 2) => Object.assign(c, { x, z, a, vx: 0, vz: 0 });
+  assert.ok(getIn(m, f, c));
+  assert.equal(f.sit, 0);
+  assert.equal(viewAt(f), viewAt({ ...f, ride: -1 } as Fighter) + RIDE_VIEW, 'the camera pulls back');
+  // standing still, the stick off to the side hardly turns it at first
+  hold(m, f, 0, 0.1);
+  assert.ok(Math.abs(angleDiff(c.a, Math.PI / 2)) < 0.1);
+  // along the road, up to its road speed
+  reset(-100, 0);
+  hold(m, f, Math.PI / 2, 4);
+  assert.ok(speedOf(c) > RIDES.jeep.road - 2 && speedOf(c) <= RIDES.jeep.road + 0.01, `road ${speedOf(c)}`);
+  assert.ok(Math.abs(c.z) < 0.5, 'straight on');
+  // on the grass, slower
+  reset(-100, 30);
+  hold(m, f, Math.PI / 2, 4);
+  assert.ok(speedOf(c) > RIDES.jeep.grass - 2 && speedOf(c) <= RIDES.jeep.grass + 0.01, `grass ${speedOf(c)}`);
+  // through the pond, slow
+  reset(-20, 80);
+  hold(m, f, Math.PI / 2, 2);
+  assert.ok(speedOf(c) <= RIDES.jeep.water + 0.01, `water ${speedOf(c)}`);
+  // at speed it turns the way the stick points
+  reset(-100, 30);
+  hold(m, f, Math.PI / 2, 2);
+  hold(m, f, Math.PI, 1);
+  assert.ok(Math.abs(angleDiff(c.a, Math.PI)) < 0.6, `turned to ${c.a}`);
+  // the stick back the way it came brakes hard, then backs it up (straight back, its nose the same way)
+  reset(-100, 30);
+  hold(m, f, Math.PI / 2, 2);
+  const v0 = speedOf(c);
+  hold(m, f, -Math.PI / 2, 0.4);
+  assert.ok(speedOf(c) < v0 - 7, 'the brakes');
+  hold(m, f, -Math.PI / 2, 3);
+  assert.ok(forward(c) < -1 && speedOf(c) <= RIDES.jeep.back + 0.01, 'backing up');
+  assert.ok(Math.abs(angleDiff(c.a, Math.PI / 2)) < 0.05);
+  // let go, and it rolls to a stop
+  hold(m, f, 0, 3, 0);
+  assert.ok(speedOf(c) < 0.01);
+  // the handbrake lets its tail slide round a corner
+  const slide = (brake: boolean) => {
+    reset(-100, 30);
+    hold(m, f, Math.PI / 2, 2);
+    hold(m, f, Math.PI, 0.35, 1, brake);
+    return Math.abs(across(c));
+  };
+  assert.ok(slide(true) > slide(false) + 1, 'it slides');
+});
+
+test('a car stops short of trees, rocks, walls and buildings and bounces back: a hard hit hurts it (a gentle one not), and hits a built wall', () => {
+  const m = lot(2);
+  const f = m.fighters[0];
+  const c = park(m, 'coupe', 0, 0, Math.PI / 2);
+  m.map.solids.push({ shape: 'circle', x: 30, z: 0, r: 0.7, what: 'tree', ref: 0 });
+  m.map.solids.push({ shape: 'circle', x: 10, z: 20, r: 1, what: 'rock', ref: 0 });
+  reindex(m.map);
+  assert.ok(getIn(m, f, c));
+  const evs = hold(m, f, Math.PI / 2, 3);
+  const crash = evs.find((e) => e.t === 'crash');
+  assert.ok(crash && crash.t === 'crash' && crash.d > CRASH.speed, 'a hard hit');
+  assert.ok(c.x + c.hl < 30 - 0.7 + 0.1, 'short of the tree');
+  assert.ok(c.hp < c.max && c.hp >= c.max - (crash.d - CRASH.speed) * CRASH.k - 1, `and the car is hurt (${c.hp})`);
+  assert.ok(evs.some((e) => e.t === 'smash' && e.kind === 'car' && e.id === c.i), 'which the host hears of');
+  assert.ok(forward(c) <= 0.5, 'it bounced off');
+  // gently up to a rock: no harm done
+  const hp = c.hp;
+  Object.assign(c, { x: 0, z: 20, a: Math.PI / 2, vx: 0, vz: 0 });
+  const soft = hold(m, f, Math.PI / 2, 4, 0.2);
+  assert.ok(!soft.some((e) => e.t === 'crash'));
+  assert.equal(c.hp, hp);
+  assert.ok(c.x + c.hl <= 10 - 1 + 0.1);
+  // a wall someone built takes the hit too
+  Object.assign(c, { x: 0, z: -30, a: Math.PI / 2, vx: 0, vz: 0, hp: c.max });
+  m.walls.set(7, makeWall(7, 1, 25, -30, Math.PI / 2, 150));
+  const wall = hold(m, f, Math.PI / 2, 3);
+  assert.ok(wall.some((e) => e.t === 'smash' && e.kind === 'wall' && e.id === 7), 'the wall was hit');
+  // and nothing drives into a building (doorway or not)
+  const house = generateMap(3).buildings.find((b) => b.kind === 'house')!;
+  m.map.buildings = [{ ...house, x: 0, z: 60 }];
+  Object.assign(c, { x: -30, z: 60, a: Math.PI / 2, vx: 0, vz: 0, hp: c.max });
+  hold(m, f, Math.PI / 2, 4);
+  const b = m.map.buildings[0];
+  assert.ok(c.x + c.hl <= b.x - b.w / 2 + 0.05, `stopped at its wall (${(c.x + c.hl).toFixed(2)})`);
+});
+
+test('getting in: the wheel first, then the seats behind, a teammate along for the ride but never an enemy, nobody into a full car', () => {
+  const m = lot(6, 'squads');
+  const [a, b, cc, d, e] = m.fighters;
+  const jeep = park(m, 'jeep', 0, 0, 0);
+  assert.equal(rideNear(m, a), null, 'too far off');
+  assert.ok(getIn(m, a, jeep));
+  assert.deepEqual([a.ride, a.sit, jeep.seats[0]], [jeep.i, 0, a.id]);
+  assert.deepEqual(prompt(m, a), { ride: jeep.i, seat: -1 });
+  // a teammate gets the next seat, from the other side
+  land(b, jeep.x - (jeep.hw + 1), jeep.z);
+  assert.equal(rideNear(m, b)?.seat, 1);
+  assert.deepEqual(prompt(m, b), { ride: jeep.i, seat: 1 });
+  assert.ok(board(m, b, jeep.i));
+  assert.equal(b.sit, 1);
+  // an enemy can't get in, nor is it offered
+  land(e, jeep.x + jeep.hw + 1, jeep.z - 1);
+  assert.equal(rideNear(m, e), null);
+  assert.equal(seatFor(m, jeep, e), -1);
+  assert.ok(!board(m, e, jeep.i));
+  assert.equal(e.ride, -1);
+  // a full car takes nobody
+  const coupe = park(m, 'coupe', 20, 0, 0);
+  assert.ok(getIn(m, cc, coupe));
+  land(d, 20 - coupe.hw - 1, 0);
+  assert.ok(board(m, d, coupe.i));
+  assert.deepEqual(coupe.seats, [cc.id, d.id]);
+  alight(m, b);
+  land(b, 20 - coupe.hw - 1, 1);
+  assert.equal(seatFor(m, coupe, b), -1);
+  assert.ok(!board(m, b, coupe.i));
+  // no getting in knocked down, or from on top of something built
+  b.down = true;
+  land(b, jeep.x - jeep.hw - 1, jeep.z);
+  assert.ok(!board(m, b, jeep.i));
+  b.down = false;
+  b.y = 3;
+  assert.ok(!board(m, b, jeep.i));
+  b.y = 0;
+  // the driver does nothing but drive (no shots, no building); a passenger shoots out of the car but builds nothing
+  assert.ok(board(m, b, jeep.i));
+  aimEast(a, 'rifle');
+  aimEast(b, 'rifle');
+  a.input.build = true;
+  b.input.build = true;
+  const evs = run(m, 0.2);
+  assert.ok(!evs.some((x) => x.t === 'shot' && x.f === a.id), 'the driver has no shot');
+  assert.ok(evs.some((x) => x.t === 'shot' && x.f === b.id), 'the passenger has');
+  assert.equal(m.walls.size, 0, 'nobody built');
+  assert.ok(!evs.some((x) => x.t === 'smash' && x.kind === 'car' && x.id === jeep.i), 'its shots go out of the car, not into it');
+});
+
+test('getting out: by your own door if it is clear, else another side; a driver brakes to a stop first, and the car stays where it stopped', () => {
+  const m = lot(2);
+  const [a] = m.fighters;
+  const c = park(m, 'jeep', 0, 0, 0);
+  assert.ok(getIn(m, a, c));
+  hold(m, a, 0, 2);
+  assert.ok(speedOf(c) > 10);
+  a.input.interact = true;
+  step(m, DT);
+  assert.equal(a.ride, c.i, 'still in while it stops');
+  assert.ok(c.leave);
+  let t = 0;
+  while (a.ride >= 0 && t < 3) {
+    step(m, DT);
+    t += DT;
+  }
+  m.events.length = 0;
+  assert.ok(a.ride < 0 && t < 2, `out once it stopped (${t.toFixed(2)} s)`);
+  assert.equal(speedOf(c), 0);
+  assert.equal(c.seats[0], -1);
+  // by the driver's door, on its left
+  const left = (a.x - c.x) * Math.cos(c.a) - (a.z - c.z) * Math.sin(c.a);
+  assert.ok(left > c.hw && rideGap(c, a.x, a.z) >= FIGHTER_R - 0.05, 'by the door');
+  const at = { x: c.x, z: c.z };
+  run(m, 1);
+  assert.deepEqual({ x: c.x, z: c.z }, at, 'the car stays put');
+  // a wall along the driver's side: out the other side
+  m.map.solids.push({ shape: 'box', x: c.x + Math.cos(c.a) * (c.hw + 0.6), z: c.z, hw: 0.25, hd: 4, what: 'wall', ref: 0 });
+  reindex(m.map);
+  land(a, c.x - (c.hw + 1), c.z);
+  assert.ok(board(m, a, c.i));
+  alight(m, a);
+  assert.ok(a.x < c.x - c.hw, 'out the passenger side');
+  assert.ok(m.map.solids.every((s) => s.shape !== 'box' || !pushBox(a.x, a.z, FIGHTER_R - 0.05, s.x, s.z, s.hw, s.hd)), 'clear of the wall');
+});
+
+test('a car runs an enemy over, hurting it more the faster it goes and knocking it flying; a teammate is only shoved aside', () => {
+  const ram = (k: number) => {
+    const m = lot(4, 'duos');
+    const [a, b, cc] = m.fighters;
+    const car = park(m, 'jeep', -40, 0, Math.PI / 2);
+    getIn(m, a, car);
+    land(cc, -20, 0);
+    land(b, 30, 0.5);
+    let knocked = 0;
+    const evs: Ev[] = [];
+    for (let t = 0; t < 4.5; t += DT) {
+      evs.push(...hold(m, a, Math.PI / 2, DT, k));
+      knocked = Math.max(knocked, Math.hypot(cc.kx, cc.kz));
+    }
+    const hits = evs.filter((e) => e.t === 'hit' && e.to === cc.id);
+    return { m, a, b, cc, car, hits, knocked, evs };
+  };
+  const fast = ram(1);
+  assert.equal(fast.hits.length, 1, 'once');
+  const hit = fast.hits[0];
+  assert.ok(hit.t === 'hit' && hit.w === 'car' && hit.d >= RAM.min && hit.d <= RAM.max);
+  assert.ok(fast.cc.hp < 100 && fast.knocked > 8, `hurt and knocked flying (${fast.knocked.toFixed(1)})`);
+  assert.ok(rideGap(fast.car, fast.cc.x, fast.cc.z) > 0, 'never under it');
+  // the teammate ahead: shoved aside, never hurt
+  assert.equal(fast.b.hp, 100);
+  assert.ok(!fast.evs.some((e) => e.t === 'hit' && e.to === fast.b.id));
+  assert.ok(rideGap(fast.car, fast.b.x, fast.b.z) > 0);
+  // slower hurts less
+  const slow = ram(0.35);
+  assert.equal(slow.hits.length, 1, 'once a bump');
+  assert.ok(slow.hits[0].t === 'hit' && hit.t === 'hit' && slow.hits[0].d < hit.d, 'the faster the worse');
+});
+
+test('a shot into a car hurts the car and a share of it whoever sits nearest; below BURN it burns down and goes up, throwing everyone out', () => {
+  const m = lot(4, 'duos');
+  const [a, b, cc] = m.fighters;
+  const truck = park(m, 'truck', 0, 0, 0);
+  getIn(m, a, truck);
+  const s1 = seatAt(truck, 1);
+  land(b, s1.x - truck.hw - 0.8, s1.z);
+  assert.ok(board(m, b, truck.i));
+  assert.equal(b.sit, 1);
+  // an enemy to the west fires along the passenger side
+  land(cc, -14, s1.z);
+  aimEast(cc, 'rifle');
+  const evs = run(m, 0.3);
+  cc.input.fire = false;
+  evs.push(...run(m, 0.5));
+  const smash = evs.filter((e) => e.t === 'smash' && e.kind === 'car');
+  assert.ok(smash.length > 0 && truck.hp < truck.max, 'the truck took it');
+  const through = evs.filter((e) => e.t === 'hit' && (e.to === a.id || e.to === b.id));
+  assert.ok(through.length > 0 && through.every((e) => e.t === 'hit' && e.to === b.id && e.d <= Math.round(damageOf('rifle', 0) * THROUGH) + 1), 'a share for the passenger nearest');
+  assert.ok(b.hp < 100 && a.hp === 100);
+  // below BURN it burns down, then goes up
+  truck.hp = truck.max * BURN.at - 1;
+  assert.ok(burning(truck));
+  const hpA = a.hp;
+  let wreck: Ev | undefined;
+  for (let t = 0; t < 12 && !wreck; t += DT) {
+    step(m, DT);
+    wreck = m.events.splice(0).find((e) => e.t === 'wreck');
+  }
+  assert.ok(wreck && truck.dead && truck.hp === 0, 'it went up');
+  assert.ok(wreck.t === 'wreck' && wreck.f === cc.id, 'down to whoever set it on fire');
+  assert.ok(a.ride < 0 && b.ride < 0 && truck.seats.every((id) => id < 0), 'everyone thrown out');
+  assert.ok(a.hp < hpA && rideGap(truck, a.x, a.z) > 0, 'caught in it, clear of the shell');
+  // the shell stays: nobody gets in, and it still stops bullets
+  land(a, truck.x + truck.hw + 1, truck.z);
+  assert.equal(rideNear(m, a), null);
+  assert.equal(castRay(m, -10, 0, 1, 0, 20, -1, false)?.what, 'ride');
+});
+
+test('a car going up sets off the barrels and hurts the cars near it', () => {
+  const m = quiet(8, 3);
+  const [one] = m.map.containers.filter((c) => c.kind === 'barrel');
+  const [car, other] = m.rides;
+  Object.assign(car, { x: one.x + 3, z: one.z });
+  Object.assign(other, { x: one.x - 3.5, z: one.z + 2 });
+  land(m.fighters[0], -EDGE + 1, -EDGE + 1);
+  land(m.fighters[1], -EDGE + 4, -EDGE + 1);
+  assert.ok(wreckRide(m, car.i, 0, true));
+  assert.ok(m.opened[one.id], 'the barrel went up');
+  assert.ok(other.hp < other.max, 'the other car was hurt');
+  assert.ok(!wreckRide(m, car.i, 0, true), 'and it only goes up once');
+});
+
+test('car news is checked: getting in and out, who sits where, a car going up and hits on cars; anything out of bounds is turned away', () => {
+  const parse = (ev: object) => {
+    const p = parsePacket({ t: 'pk', r: 1, k: 'e', g: [[1, [ev]]] });
+    return p && p.k === 'e' ? (p.groups[0]?.[1][0] ?? null) : null;
+  };
+  for (const ev of [
+    { y: 'vq', f: 1, v: 2 },
+    { y: 'vq', f: 1, v: -1, x: 3, z: 4, a: 1.2 },
+    { y: 'vq', f: 1, v: -1 },
+    { y: 'vs', f: 1, v: 2, s: 3, x: 0, z: 0, a: 0 },
+    { y: 'vs', f: 1, v: -1, s: -1, x: 10, z: -20, a: -3 },
+    { y: 'vx', v: 2, f: -1, x: 0, z: 0, a: 0 },
+    { y: 'vx', v: 2, f: 4, x: 0, z: 0, a: 0 },
+    { y: 'm', f: 1, k: 'car', id: 3, d: 40 },
+  ])
+    assert.deepEqual(parse(ev), ev, JSON.stringify(ev));
+  for (const ev of [
+    { y: 'vq', f: 99, v: 2 },
+    { y: 'vq', f: 1, v: 64 },
+    { y: 'vq', f: 1, v: -2 },
+    { y: 'vq', f: 1, v: 2, x: 0, z: 0, a: 0 },
+    { y: 'vq', f: 1, v: -1, x: 3 },
+    { y: 'vq', f: 1, v: -1, x: 999, z: 0, a: 0 },
+    { y: 'vq', f: 1, v: -1, x: 0, z: 0, a: 50 },
+    { y: 'vs', f: 1, v: 2, s: 4, x: 0, z: 0, a: 0 },
+    { y: 'vs', f: 1, v: 2, s: -1, x: 0, z: 0, a: 0 },
+    { y: 'vs', f: 1, v: -1, s: 0, x: 0, z: 0, a: 0 },
+    { y: 'vs', f: 1, v: 2, s: 0, x: 0, z: 0 },
+    { y: 'vs', f: 1, v: 2, s: 0.5, x: 0, z: 0, a: 0 },
+    { y: 'vx', v: -1, f: 1, x: 0, z: 0, a: 0 },
+    { y: 'vx', v: 2, f: 50, x: 0, z: 0, a: 0 },
+    { y: 'vx', v: 2, f: 1, x: 0, z: 9999, a: 0 },
+    { y: 'm', f: 1, k: 'car', id: 64, d: 40 },
+    { y: 'm', f: 1, k: 'car', id: 3, d: 0 },
+    { y: 'd', f: 1, to: 2, d: RAM.max + 1, w: 'car', x: 0, z: 0 },
+    { y: 'd', f: 1, to: 2, d: 5, w: 'wreck', x: 0, z: 0 },
+  ])
+    assert.equal(parse(ev), null, JSON.stringify(ev));
+  assert.equal(hitCap('car'), RAM.max);
+  assert.equal(hitCap('wreck'), 0, 'everyone works a car going up out for its own eggs');
+  // what goes out
+  assert.deepEqual(toNet({ t: 'hop', f: 1, v: 2, x: 9, z: 9, a: 1 }), { y: 'vq', f: 1, v: 2 }, 'getting in says nothing of where');
+  assert.deepEqual(toNet({ t: 'hop', f: 1, v: -1, x: 9, z: 8, a: 1 }), { y: 'vq', f: 1, v: -1, x: 9, z: 8, a: 1 });
+  assert.deepEqual(toNet({ t: 'seat', f: 1, v: 2, s: 1, x: 9, z: 8, a: 1 }), { y: 'vs', f: 1, v: 2, s: 1, x: 9, z: 8, a: 1 });
+  assert.deepEqual(toNet({ t: 'wreck', v: 2, f: 1, x: 9, z: 8, a: 1 }), { y: 'vx', v: 2, f: 1, x: 9, z: 8, a: 1 });
+  assert.deepEqual(toNet({ t: 'smash', f: 1, kind: 'car', id: 2, d: 30, x: 0, z: 0 }), { y: 'm', f: 1, k: 'car', id: 2, d: 30 });
+  assert.equal(toNet({ t: 'crash', v: 2, x: 0, z: 0, d: 12 }), null, 'a crash shows in the car');
+  assert.equal(toNet({ t: 'seat', f: 1, v: 2, s: 1, x: 9, z: 8, a: 1, net: true }), null);
+  assert.equal(actorOf({ y: 'vq', f: 3, v: 1 }), 3);
+  assert.equal(actorOf({ y: 'vs', f: 3, v: 1, s: 0, x: 0, z: 0, a: 0 }), -1, 'the host’s word');
+  assert.equal(actorOf({ y: 'vx', v: 1, f: 3, x: 0, z: 0, a: 0 }), -1);
+  // who sits where, in one number and back
+  for (const seats of [[-1, -1], [3, -1, 49, 0], [-1, -1, -1, -1], [0, 1, 2, 3]]) assert.deepEqual(unpackSeats(packSeats(seats)).slice(0, seats.length), seats);
+  // the reliable report lists the cars that aren't as they started
+  const m = quiet(7, 3);
+  const [c0, c1, c2] = m.rides;
+  Object.assign(c0, { x: c0.x + 10, a: 1, at: 1 });
+  c0.seats[0] = 2;
+  c1.hp = 50;
+  c2.dead = true;
+  c2.hp = 0;
+  assert.equal(rideNotes(m.rides).length, 3, 'just the three');
+  const packet = parsePacket(JSON.parse(JSON.stringify(hostState(1, 7, 10, 'normal', [-1, -1, -1], [], [], [], 'solo', [], m.rides))));
+  assert.ok(packet && packet.k === 'S' && packet.rides);
+  const r0 = packet.rides.find((r) => r.i === c0.i)!;
+  assert.ok(Math.abs(r0.x - c0.x) < 0.06 && Math.abs(r0.a - 1) < 0.006 && r0.seats[0] === 2 && r0.hp === c0.max);
+  assert.equal(packet.rides.find((r) => r.i === c1.i)?.hp, 50);
+  assert.equal(packet.rides.find((r) => r.i === c2.i)?.hp, 0, 'gone up');
+  const fast = parsePacket(JSON.parse(JSON.stringify(hostState(1, 7, 10, 'normal', null, [], [], [], 'solo', [], m.rides))));
+  assert.ok(fast && fast.k === 'S' && fast.rides === null, 'only the reliable reports carry them');
+  const empty = parsePacket(JSON.parse(JSON.stringify(hostState(1, 7, 10, 'normal', [-1, -1, -1], [], [], [], 'solo', [], []))));
+  assert.ok(empty && empty.k === 'S' && Array.isArray(empty.rides) && empty.rides.length === 0, 'none listed: all as they started');
+  assert.ok(parseRides([[0, 0, 0, 0, 100, 0]]));
+  for (const bad of [[[0, 0, 0, 0, 100]], [[0, 0, 0, 0, 100, 0.5]], [[64, 0, 0, 0, 100, 0]], [[0, 99999, 0, 0, 100, 0]], [[0, 0, 0, 900, 100, 0]], [[0, 0, 0, 0, -1, 0]], [[0, 0, 0, 0, 100, 51 ** 4]], 'x', [0]]) assert.equal(parseRides(bad), null, JSON.stringify(bad));
+  assert.equal(parsePacket({ ...JSON.parse(JSON.stringify(hostState(1, 7, 10, 'normal', [-1, -1, -1], [], [], [], 'solo', [], m.rides))), vh: [[0, 1]] }), null, 'a bad list spoils the report');
+  // a driver's report says it's in a car
+  const rider = m.fighters[2];
+  rider.ride = c0.i;
+  rider.sit = 0;
+  assert.ok(flagsOf(rider) & F_RIDE);
+  const back = parsePacket(JSON.parse(JSON.stringify(guestState(1, stateOf(rider)))));
+  assert.ok(back && back.k === 's' && back.state.flags & F_RIDE);
+});
+
+test('online: the host seats a guest who asks, the guest drives and the host sees the car where its driver is, and getting out leaves the car where it stopped', () => {
+  const { h, g, hs, hMe, toHost, toGuest } = pair();
+  for (const m of [h, g]) m.rides = [makeRide(0, 'jeep', 4, 10, 0)];
+  const [hc, gc] = [h.rides[0], g.rides[0]];
+  const mine = g.fighters[1];
+  // by its door, on both sides
+  const p = seatAt(gc, 0);
+  land(mine, p.x + gc.hw + 0.5, p.z);
+  land(h.fighters[1], p.x + gc.hw + 0.5, p.z);
+  assert.ok(board(g, mine, 0));
+  assert.equal(mine.ride, -1, 'it waits for the host');
+  assert.ok(!board(g, mine, 0), 'and asks once');
+  toHost();
+  assert.equal(hc.seats[0], 1, 'the host seats it');
+  toGuest();
+  assert.deepEqual([mine.ride, mine.sit, gc.seats[0]], [0, 0, 1]);
+  // an enemy (the host's egg) can't get in now
+  land(h.fighters[0], hc.x - hc.hw - 1, hc.z);
+  assert.ok(!board(h, h.fighters[0], 0));
+  // the guest drives south for two seconds, reporting as it goes
+  let clock = 0;
+  for (let t = 0; t < 2; t += DT) {
+    mine.input.mz = 1;
+    step(g, DT);
+    g.events.length = 0;
+    clock += DT;
+    const n = Math.round(t / DT);
+    if (n % 4 === 0) receive(hs, h, hMe, 1, JSON.parse(JSON.stringify(guestState(1, stateOf(mine), -1, n))), () => h, clock);
+    step(h, DT);
+    h.events.length = 0;
+  }
+  assert.ok(gc.z > 20, 'it went');
+  assert.ok(Math.hypot(hc.x - gc.x, hc.z - gc.z) < 4 && Math.abs(angleDiff(hc.a, gc.a)) < 0.1, `the host has the car where its driver is (${hc.z.toFixed(1)} vs ${gc.z.toFixed(1)})`);
+  assert.equal(h.fighters[1].ride, 0);
+  // stop and get out: the host hears where the car was left
+  mine.input.mz = 0;
+  mine.input.interact = true;
+  for (let t = 0; t < 3 && mine.ride >= 0; t += DT) {
+    step(g, DT);
+    g.events = g.events.filter((e) => e.t === 'hop');
+    clock += DT;
+    if (Math.round(t / DT) % 4 === 0 && mine.ride >= 0) receive(hs, h, hMe, 1, JSON.parse(JSON.stringify(guestState(1, stateOf(mine), -1, 200 + Math.round(t / DT)))), () => h, clock);
+    step(h, DT);
+    h.events.length = 0;
+  }
+  assert.equal(mine.ride, -1);
+  toHost();
+  assert.equal(hc.seats[0], -1);
+  assert.ok(Math.hypot(hc.x - gc.x, hc.z - gc.z) < 0.02 && speedOf(hc) === 0, 'where the guest left it');
+  toGuest();
+  assert.equal(mine.ride, -1, 'and the guest stays out');
+  // a report from before it got out doesn't put it back in (not for a moment)
+  syncRides(g, [{ i: 0, x: gc.x, z: gc.z, a: gc.a, hp: gc.max, seats: [1, -1, -1, -1] }]);
+  assert.equal(mine.ride, -1);
+});
+
+test('online: hits on a car go to the host, which says when it goes up; a guest’s egg is thrown out, and a guest who joins late hears of every car', () => {
+  const { h, g, toHost, toGuest } = pair();
+  for (const m of [h, g]) m.rides = [makeRide(0, 'coupe', 20, 0, 0), makeRide(1, 'truck', -20, 30, 0)];
+  const mine = g.fighters[1];
+  const p = seatAt(g.rides[0], 0);
+  land(mine, p.x + 1.5, p.z);
+  land(h.fighters[1], p.x + 1.5, p.z);
+  board(g, mine, 0);
+  toHost();
+  toGuest();
+  assert.equal(mine.ride, 0);
+  // the host's hits: the guest takes them, but only the host has a car go up
+  applyNet(g, { y: 'm', f: 0, k: 'car', id: 0, d: 120 });
+  assert.equal(g.rides[0].hp, 80);
+  applyNet(g, { y: 'm', f: 0, k: 'car', id: 0, d: 500 });
+  assert.ok(!g.rides[0].dead && g.rides[0].hp >= 1, 'only the host has one go up');
+  damageRide(h, 0, 500, 0, true);
+  assert.ok(h.rides[0].dead);
+  toGuest();
+  assert.ok(g.rides[0].dead, 'on its word');
+  assert.equal(mine.ride, -1, 'thrown out');
+  assert.ok(mine.hp < 100, 'and caught in it');
+  assert.ok(rideGap(g.rides[0], mine.x, mine.z) > 0);
+  // a guest's own hits on a car go to the host
+  mine.hp = 100;
+  land(mine, -32, 30);
+  aimEast(mine, 'rifle');
+  for (let i = 0; i < 40 && !g.events.some((e) => e.t === 'smash' && e.kind === 'car'); i++) step(g, DT);
+  mine.input.fire = false;
+  toHost();
+  assert.ok(h.rides[1].hp < h.rides[1].max, 'the host took the guest’s hit on the truck');
+  // someone joining now hears of both cars from the first reliable report
+  const players: Player[] = [{ seat: 0, name: 'h' }, { seat: 1, name: 'g' }];
+  const hs2 = newSession(true, [0, 1]);
+  const me0: Me = { seat: 0, isHost: true, round: 1 };
+  let reliable: object | null = null;
+  for (let k = 0; k < 5 && !reliable; k++) for (const out of tick(hs2, h, me0, [0, 1], k * 0.07)) if (!out.fast && out.to === 1) reliable = JSON.parse(JSON.stringify(out.d));
+  assert.ok(reliable);
+  const joined = receive(newSession(false), g, { seat: 1, isHost: false, round: 1 }, 0, reliable, (seed, lvl, time, roster, md, teams) => {
+    const m = guestMatch(players, 1, seed, lvl, time, roster, md, teams);
+    m.rides = [makeRide(0, 'coupe', 20, 0, 0), makeRide(1, 'truck', -20, 30, 0)];
+    return m;
+  }, 1);
+  assert.ok(joined !== g && joined.rides[0].dead, 'the wreck');
+  assert.equal(joined.rides[1].hp, Math.ceil(h.rides[1].hp), 'the truck’s health');
+});
+
+test('computer eggs take a car for a long way to the storm circle, drive round what is in the way (never over the team) and get out once there', () => {
+  const entrants: Entrant[] = [0, 1, 2].map((i) => ({ name: `b${i}`, color: '#fff', kind: i === 2 ? 'player' : 'bot', seat: -1 }));
+  const m = createMatch({ seed: 7, role: 'solo', level: 'normal', entrants, me: 2, countdown: 0, mode: 'duos' });
+  m.time = 5;
+  openSpot(m);
+  // the circle far off to the east, all along
+  m.map.storm = { circles: m.map.storm.circles.map(() => ({ x: 120, z: 0, r: 25 })), starts: m.map.storm.starts, ends: m.map.storm.ends };
+  const [bot, mate, other] = m.fighters;
+  land(bot, -110, 4);
+  land(mate, -60, 0.5);
+  mate.ai = null;
+  land(other, -150, -150);
+  bot.shield = 100;
+  const car = park(m, 'jeep', -104, 0, 0);
+  // a rock right on the way
+  m.map.solids.push({ shape: 'circle', x: 0, z: 0, r: 3, what: 'rock', ref: 0 });
+  reindex(m.map);
+  let drove = false;
+  let closest = Infinity;
+  let outAt = -1;
+  for (let t = 0; t < 40 && outAt < 0; t += DT) {
+    step(m, DT);
+    for (const e of m.events.splice(0)) if (e.t === 'seat' && e.f === bot.id && e.v < 0 && drove) outAt = t;
+    if (bot.ride === car.i && bot.sit === 0) drove = true;
+    if (drove && car.seats[0] === bot.id) closest = Math.min(closest, rideGap(car, mate.x, mate.z));
+    assert.equal(mate.hp, 100, 'the teammate is never run over');
+  }
+  assert.ok(drove, 'it took the car');
+  assert.ok(outAt > 0, 'and got out');
+  assert.ok(Math.hypot(car.x - 120, car.z) < 45, `near the circle (${car.x.toFixed(0)},${car.z.toFixed(0)})`);
+  assert.ok(closest > 0.3, `round the teammate (${closest.toFixed(2)} m)`);
+});
+
+test('computer eggs shoot at whoever drives by, and the car takes it', () => {
+  const entrants: Entrant[] = [0, 1].map((i) => ({ name: `b${i}`, color: '#fff', kind: i === 0 ? 'bot' : 'player', seat: -1 }));
+  const m = createMatch({ seed: 7, role: 'solo', level: 'hard', entrants, me: 1, countdown: 0 });
+  m.time = 5;
+  openSpot(m);
+  const [bot, me] = m.fighters;
+  land(bot, 0, 0);
+  bot.guns[0] = { w: 'rifle', r: 0, mag: WEAPONS.rifle.mag };
+  bot.ammo.heavy = 200;
+  bot.slot = 0;
+  const car = park(m, 'jeep', -40, 14, Math.PI / 2);
+  getIn(m, me, car);
+  const evs: Ev[] = [];
+  for (let t = 0; t < 4; t += DT) evs.push(...hold(m, me, Math.PI / 2, DT, 0.5));
+  assert.ok(evs.some((e) => e.t === 'shot' && e.f === bot.id), 'it fired');
+  assert.ok(car.hp < car.max, 'into the car');
 });
