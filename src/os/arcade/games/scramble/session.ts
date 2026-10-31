@@ -2,7 +2,7 @@
 // regular tick, the events it queues and flushes, and when the match is over. Pure, so a whole room can be simulated
 // in a test; index.tsx connects it to the real room.
 import { WEAPONS, isMelee, isWeapon } from './items.ts';
-import { DOOR_OPENING, FALL, FIGHTER_COLORS, MAX_FIGHTERS, MAX_TEAMS, TEAM_SIZE, VAULT_TIME, adoptBots, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, grantTake, ordinal, owned, step, syncRides, teamCount, teamsLeft, viewAt, type Entrant, type Ev, type Fighter, type Level, type Match, type Mode } from './logic.ts';
+import { DOOR_OPENING, FALL, FIGHTER_COLORS, MAX_FIGHTERS, MAX_TEAMS, TEAM_SIZE, VAULT_TIME, adoptBots, aliveCount, applyOut, applyState, botNames, createMatch, endMatch, forfeit, grantTake, ordinal, owned, seatEgg, step, syncRides, teamCount, teamsLeft, viewAt, type Entrant, type Ev, type Fighter, type Level, type Match, type Mode } from './logic.ts';
 import { BUS_Y, DROP_BASE, stormEnd } from './map.ts';
 import { LEFT, SETTLED, actorOf, applyNet, applySettled, endOf, guestState, hostState, kitsOf, logOf, packEvents, parsePacket, pieceEv, placesOf, putKit, stateKey, stateOf, toNet, type Kit, type NetEv, type Packet, type State } from './net.ts';
 
@@ -556,8 +556,8 @@ export function toNewHost(s: Session, m: Match, me: Me, clock: number): object[]
   if (f && f.phase === 'ground')
     for (const [key, at] of f.pending) {
       if (m.clock - at > REASK) continue;
-      // a pickup, or a chest (doors aren't asked again: one asked twice would shut again)
-      const ev: NetEv | null = key >= 0 ? { y: 'tk', f: f.id, id: key } : key > -1_000_000 ? { y: 'op', f: f.id, c: -1 - key } : null;
+      // a pickup, a chest, or a seat in a car (doors aren't asked again: one asked twice would shut again)
+      const ev: NetEv | null = key >= 0 ? { y: 'tk', f: f.id, id: key } : key > -1_000_000 ? { y: 'op', f: f.id, c: -1 - key } : key <= -2_000_000 ? { y: 'vq', f: f.id, v: -2_000_000 - key } : null;
       if (!ev) continue;
       s.queue.push([me.seat, ev]);
       f.pending.set(key, m.clock);
@@ -616,6 +616,7 @@ export function takeOver(s: Session, m: Match, me: Me, present: number[], clock:
       if (m.clock - at > REASK) continue;
       if (key >= 0) asks.push({ y: 'tk', f: mine.id, id: key });
       else if (key > -1_000_000) asks.push({ y: 'op', f: mine.id, c: -1 - key });
+      else if (key <= -2_000_000) seatEgg(m, mine.id, -2_000_000 - key);
     }
   if (mine) mine.pending.clear();
   for (const ev of asks) applyNet(m, ev);

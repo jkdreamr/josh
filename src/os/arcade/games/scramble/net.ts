@@ -88,6 +88,7 @@ import {
   reviveEgg,
   seatEgg,
   setDoor,
+  settleSeat,
   slabGap,
   toggleDoor,
   wreckRide,
@@ -510,7 +511,7 @@ export function putKit(f: Fighter, k: Kit) {
 export const kitsOf = (round: number, bots: Fighter[]) => ({ t: 'pk', r: round, k: 'K', b: bots.map((f) => [f.id, ...kitOf(f)]) });
 
 /** What the host settles (and every guest keeps a few seconds of, for a new host): see applySettled. */
-export const SETTLED: ReadonlySet<NetEv['y']> = new Set(['dr', 'tko', 'opd', 'wg', 'ds', 'fd', 'rvd', 'o', 'lv', 'gl', 'wl', 'we']);
+export const SETTLED: ReadonlySet<NetEv['y']> = new Set(['dr', 'tko', 'opd', 'wg', 'ds', 'fd', 'rvd', 'o', 'lv', 'gl', 'wl', 'we', 'vs', 'vx']);
 
 /**
  * A guest's last few seconds of what the host settled (the result too, if it came), for a new host: as much of the
@@ -533,8 +534,8 @@ export function logOf(round: number, events: NetEv[], end: { winner: number; pla
  * What a host that has since left settled, as a guest heard it, applied by the new host (see takeOver) as a guest
  * would have, once: whatever it hadn't heard of comes true here too. Only what was the old host's to say counts: a
  * computer egg's drops and outs (everyone else's come from them), pickups (a computer egg keeps what its kit says it
- * carried), chests and crates opened, pieces up and down, doors, called drops, revives, loot moved and glass. True
- * when it was news here, to pass on to everyone.
+ * carried), chests and crates opened, pieces up and down, doors, called drops, revives, loot moved, glass, who sat
+ * where (see settleSeat) and cars gone up. True when it was news here, to pass on to everyone.
  */
 export function applySettled(m: Match, e: NetEv): boolean {
   const f = 'f' in e && e.f >= 0 ? m.fighters[e.f] : undefined;
@@ -582,6 +583,10 @@ export function applySettled(m: Match, e: NetEv): boolean {
       const w = m.walls.get(e.id);
       return !!w && w.e !== e.e && applyEdit(m, e.f, e.id, e.e);
     }
+    case 'vs':
+      return settleSeat(m, e.f, e.v, e.s, e.x, e.z, e.a);
+    case 'vx':
+      return wreckRide(m, e.v, e.f, false, e.x, e.z, e.a);
     default:
       return false;
   }

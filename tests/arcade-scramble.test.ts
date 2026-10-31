@@ -197,7 +197,7 @@ import {
 import { BLEED_T, CRAWL, DOWN_HP, F_DOWN, F_REVIVE, PING_T, REVIVE_HP, REVIVE_T, dropOut, forfeit, isMode, pingOf, reviveEgg, reviveShare, teamCount, type Mode } from '../src/os/arcade/games/scramble/logic.ts';
 import { ASK_T, EMOTE_GAP, EMOTE_IDS, EMOTE_SPAN, EMOTE_T, FACE_EMOTES, TEAM_EMOTES, ammoAsk, emoteOf, emoteReady, endMatch, isTeamEmote, type EmoteId, type LootItem } from '../src/os/arcade/games/scramble/logic.ts';
 import { LEFT, actorOf, applySettled, kitOf, kitsOf, logOf, parseKit, parseTeams, putKit, teamAsk } from '../src/os/arcade/games/scramble/net.ts';
-import { BURN, CRASH, F_RIDE, RAM, RIDES, RIDE_VIEW, THROUGH, alight, angleDiff, board, burning, damageRide, makeRide, rideGap, rideNear, seatAt, seatFor, syncRides, wreckRide, type Ride, type RideKind } from '../src/os/arcade/games/scramble/logic.ts';
+import { BURN, CRASH, F_RIDE, RAM, RIDES, RIDE_VIEW, THROUGH, alight, angleDiff, board, burning, damageRide, makeRide, rideGap, rideNear, seatAt, seatEgg, seatFor, syncRides, wreckRide, type Ride, type RideKind } from '../src/os/arcade/games/scramble/logic.ts';
 import { packSeats, parseRides, rideNotes, unpackSeats } from '../src/os/arcade/games/scramble/net.ts';
 import { drivable } from '../src/os/arcade/games/scramble/map.ts';
 import { nextTeam, pinTeam, teamsFor, winnersOf } from '../src/os/arcade/games/scramble/session.ts';
@@ -8624,7 +8624,7 @@ type Mover = {
  * and done watching. `joinAt`: someone new comes into the room then and takes the lowest free seat. Returns everyone,
  * who got each piece of loot (to spot any handed out twice), and the computer eggs' spots after the first hand-off.
  */
-function migrate(opts: { humans: number; seed: number; level?: Level; mode?: Mode; delay?: number; loss?: number; leaves: { at?: number; when?: (m: Match) => boolean; seats: number[] }[]; lose?: number; hooks?: { at: number; run: (m: Match) => void }[]; heirOut?: number; joinAt?: number }) {
+function migrate(opts: { humans: number; seed: number; level?: Level; mode?: Mode; delay?: number; loss?: number; leaves: { at?: number; when?: (m: Match) => boolean; seats: number[] }[]; lose?: number; hooks?: { at: number; run: (m: Match, ps: Mover[]) => void }[]; heirOut?: number; joinAt?: number }) {
   const { humans, seed, level = 'normal', mode, delay = 0.06, loss = 0.08, lose = 0.5 } = opts;
   const players: Player[] = Array.from({ length: humans }, (_, seat) => ({ seat, name: `P${seat + 1}` }));
   const rng = rng32(seed * 13 + 5);
@@ -8633,7 +8633,7 @@ function migrate(opts: { humans: number; seed: number; level?: Level; mode?: Mod
   const mover = (start: number, room: number): Mover => ({ start, room, me: { seat: room, isHost: room === 0, round: 1 }, s: newSession(room === 0, room === 0 ? host.roster : []), m: room === 0 ? host.match : null, inbox: [], gone: false, call: null, hand: [], syncAt: Infinity, lastRel: 0 });
   const ps: Mover[] = players.map((p) => mover(p.seat, p.seat));
   autopilot(host.match, host.match.fighters[host.match.me]);
-  const got = new Map<number, number[]>();
+  const got = new Map<number, [egg: number, by: number][]>();
   // what the computer eggs carried on the old host as it left, and on the new one as it took over
   const kits: { before?: Map<number, string>; after?: Map<number, string> } = {};
   let now = 0;
@@ -8710,7 +8710,7 @@ function migrate(opts: { humans: number; seed: number; level?: Level; mode?: Mod
   const handle = (c: Mover, e: Ev) => {
     const m = c.m!;
     // what went into whose pockets: the host's word on an egg it runs, or a guest's own egg on the host's word
-    if (e.t === 'took' && ((e.net && e.f === m.me) || (!e.net && owned(m.fighters[e.f])))) got.set(e.id, [...(got.get(e.id) ?? []), e.f]);
+    if (e.t === 'took' && ((e.net && e.f === m.me) || (!e.net && owned(m.fighters[e.f])))) got.set(e.id, [...(got.get(e.id) ?? []), [e.f, c.start]]);
     share(c.s, e, c.me.seat);
   };
   const leaves = opts.leaves.map((l) => ({ ...l, done: false }));
@@ -8730,7 +8730,7 @@ function migrate(opts: { humans: number; seed: number; level?: Level; mode?: Mod
     for (const k of hooks)
       if (!k.done && hm && hm.time >= k.at) {
         k.done = true;
-        k.run(hm);
+        k.run(hm, ps);
       }
     if (opts.joinAt !== undefined && !joined && hm && hm.time >= opts.joinAt) {
       joined = true;
@@ -8829,13 +8829,22 @@ function agreeAfter(res: ReturnType<typeof migrate>, label: string, leftSeats: n
     assert.deepEqual([...m.loot.keys()].sort((a, b) => a - b), [...h.loot.keys()].sort((a, b) => a - b), `${label}: seat ${c.start} has the same loot on the ground`);
     assert.deepEqual(m.opened, h.opened, `${label}: seat ${c.start} has the same chests and crates open`);
     assert.deepEqual([...m.walls.keys()].sort((a, b) => a - b), [...h.walls.keys()].sort((a, b) => a - b), `${label}: seat ${c.start} has the same pieces standing`);
+    assert.deepEqual(m.rides.map((r) => (r.dead ? 'x' : r.seats.join())), h.rides.map((r) => (r.dead ? 'x' : r.seats.join())), `${label}: seat ${c.start} has the same cars gone up and the same eggs in them`);
+    m.rides.forEach((r, i) => assert.ok(r.dead || Math.abs(r.hp - h.rides[i].hp) <= r.max * 0.05, `${label}: seat ${c.start} has car ${i} as hurt (${r.hp.toFixed(0)} vs ${h.rides[i].hp.toFixed(0)})`));
     for (const seat of leftSeats) {
       const egg = m.fighters[seat];
       assert.equal(egg.phase, 'out', `${label}: seat ${c.start} has the egg of seat ${seat}, who left, out`);
       assert.equal(egg.seat, LEFT, `${label}: and nobody's`);
     }
   }
-  for (const [id, fs] of res.got) assert.equal(fs.length, 1, `${label}: loot ${id} went to ${fs.join(' and ')}`);
+  for (const [id, fs] of res.got) {
+    // (a computer egg the old host gave something to just as it left, the news lost, may take it again on the new one:
+    // the first never happened for anyone still here)
+    const eggs = new Set(fs.map(([f]) => f));
+    const twice = fs.length - eggs.size;
+    const gone = fs.filter(([, by]) => res.ps[by].gone).length;
+    assert.ok(eggs.size === 1 && twice <= gone, `${label}: loot ${id} went to ${fs.map(([f]) => f).join(' and ')}`);
+  }
   // the computer eggs carry on with the guns, melee weapon and backpack they had (the new host heard of them from the
   // old one), all but those that changed them at the last moment
   const { before, after } = res.kits;
@@ -8962,6 +8971,70 @@ test('squads: the host leaves with a computer teammate knocked down and its own 
   const { live, h } = agreeAfter(res, 'squads knock', [0]);
   assert.ok(bot >= 0, 'a computer teammate was knocked');
   for (const c of live) assert.equal(c.m!.fighters[bot].phase === 'out', h.fighters[bot].phase === 'out', 'the same end to its knock for everyone');
+});
+
+/** Puts an egg in a free car (by its door, here and on the host) for the computer to drive into the storm's next circle. */
+function driveOff(m: Match, f: Fighter, c: Ride, also?: Match) {
+  const p = seatAt(c, 0);
+  const [x, z] = [p.x + Math.cos(c.a) * (c.hw + 0.5), p.z - Math.sin(c.a) * (c.hw + 0.5)];
+  land(f, x, z);
+  // (the host sees it there too, not on its way)
+  if (also) also.fighters[f.id].snaps = [{ at: also.clock, x, z, y: 0, aim: f.aim, vx: 0, vz: 0 }];
+  board(m, f, c.i);
+  f.ai!.car = c.i;
+  f.ai!.boardAt = m.time;
+  f.ai!.carT = m.time + 40;
+  f.ai!.carX = m.storm.next.x;
+  f.ai!.carZ = m.storm.next.z;
+  f.ai!.fromD = Math.hypot(c.x - f.ai!.carX, c.z - f.ai!.carZ);
+}
+
+test('the host leaves while a guest, a computer egg and the host itself drive: the cars, their seats and their health come out the same for everyone', () => {
+  let drove: { bot: number; car: number; guest: number; gcar: number; hcar: number } | null = null;
+  let at: { x: number; z: number } | null = null;
+  let after: { x: number; z: number; bot: string; seat: number } | null = null;
+  const free = (m: Match, used: number[]) => m.rides.filter((c) => !c.dead && c.seats.every((id) => id < 0) && !used.includes(c.i) && !isDeep(c.x) && Math.hypot(c.x - m.storm.next.x, c.z - m.storm.next.z) > 40);
+  const seat = (m: Match, ps: Mover[]) => {
+    const egg = (f: Fighter | undefined) => !!f && f.phase === 'ground' && !f.down && f.ride < 0 && f.y < 0.5;
+    const bot = m.fighters.find((f) => f.seat === -1 && egg(f));
+    const guest = [...ps].reverse().find((c) => c.room > 0 && !c.gone && c.m && egg(c.m.fighters[c.m.me]));
+    const [a, b, c] = free(m, []);
+    if (!bot || !guest || !c) return;
+    driveOff(m, bot, a);
+    const gm = guest.m!;
+    driveOff(gm, gm.fighters[gm.me], gm.rides[b.i], m);
+    const mine = m.fighters[m.me];
+    if (egg(mine)) driveOff(m, mine, c);
+    drove = { bot: bot.id, car: a.i, guest: gm.me, gcar: b.i, hcar: c.i };
+  };
+  const res = migrate({
+    humans: 3,
+    seed: 44,
+    hooks: [
+      { at: 45, run: seat },
+      {
+        at: 48.4,
+        run: (m) => {
+          if (drove) at = { x: m.rides[drove.car].x, z: m.rides[drove.car].z };
+        },
+      },
+      {
+        at: 52,
+        run: (m) => {
+          if (drove) after = { x: m.rides[drove.car].x, z: m.rides[drove.car].z, bot: m.fighters[drove.bot].kind, seat: m.rides[drove.gcar].seats[0] };
+        },
+      },
+    ],
+    leaves: [{ at: 48.5, seats: [0] }],
+  });
+  agreeAfter(res, 'driving', [0]);
+  assert.ok(drove && at && after, 'they got in, and the match went on');
+  const { bot, car, guest } = drove!;
+  const a = at as unknown as { x: number; z: number };
+  const b = after as unknown as { x: number; z: number; bot: string; seat: number };
+  assert.equal(b.bot, 'bot', `the computer egg ${bot} is the new host's to run`);
+  assert.ok(Math.hypot(b.x - a.x, b.z - a.z) > 10, `and drove on (${Math.hypot(b.x - a.x, b.z - a.z).toFixed(1)} m in car ${car})`);
+  assert.equal(b.seat, guest, 'the guest still at its wheel');
 });
 
 test('someone joining after the host left sits the match out, and the match goes on', () => {
@@ -9188,6 +9261,80 @@ test('a new host with nobody to hear from waits a moment at most before handing 
   tick(gs, g, me, [0, 2], 5 + HOLD_TAKES + 0.1);
   assert.ok(!g.loot.has(id));
   assert.ok(g.events.some((e) => e.t === 'took' && e.f === 2 && e.id === id && !e.net), 'to the first who asked');
+});
+
+test('cars after a hand-off: a computer egg at the wheel drives on, the old host\'s seat comes free, a lost ask to get in is answered, and a lost getting out is caught', () => {
+  const { h, hs, g, gs } = hostAndGuest(3, 2);
+  const gMe: Me = { seat: 1, isHost: false, round: 1 };
+  for (const m of [h, g]) {
+    openSpot(m);
+    m.time = 30;
+    m.rides = [makeRide(0, 'jeep', -60, -60, 0), makeRide(1, 'coupe', -40, -60, 0), makeRide(2, 'truck', -20, -60, 0), makeRide(3, 'jeep', 0, -60, 0)];
+    // everyone by the driver's door of a car: the computer egg 3 by the first, the host by the next, then seat 2, and
+    // this guest by the last
+    [3, 0, 2, 1].forEach((id, i) => {
+      const p = seatAt(m.rides[i], 0);
+      land(m.fighters[id], p.x + m.rides[i].hw + 0.5, p.z);
+    });
+    land(m.fighters[4], 60, 60);
+  }
+  // the old host seats them, and the guest hears of it
+  assert.ok(seatEgg(h, 3, 0) && seatEgg(h, 0, 1) && seatEgg(h, 2, 2, 3));
+  for (const e of h.events.splice(0)) share(hs, e, 0);
+  for (const p of flush(hs, 1, FLUSH)) receive(gs, g, gMe, 0, JSON.parse(JSON.stringify(p)), () => g, 1);
+  assert.deepEqual(g.rides.map((c) => c.seats[0]), [3, 0, 2, -1]);
+  // the guest asks to get in, and seat 2 gets out of its truck, but the host leaves before either is heard
+  const me = g.fighters[1];
+  assert.ok(board(g, me, 3));
+  g.events.length = 0;
+  handOff(gs, g, 1, 2);
+  const nm: Me = { seat: 0, isHost: true, round: 1 };
+  takeOver(gs, g, nm, [0, 2], 2);
+  assert.deepEqual([me.ride, me.sit], [3, 0], 'the new host answers its own ask');
+  const bot = g.fighters[3];
+  assert.ok(bot.kind === 'bot' && bot.ai?.car === 0 && bot.ride === 0, 'the computer egg is ours to run, at the wheel');
+  const [x0, z0] = [g.rides[0].x, g.rides[0].z];
+  // seat 2's reports say it is on foot
+  const two = g.fighters[2];
+  const afoot = { ...stateOf(two), flags: 0, x: two.x + 3 };
+  let clock = 2;
+  for (let t = 0; t < 4; t += DT) {
+    clock += DT;
+    if (Math.round(t / DT) % 4 === 0) receive(gs, g, nm, 2, JSON.parse(JSON.stringify(guestState(1, afoot, -1, 10 + Math.round(t / DT)))), () => g, clock);
+    if (Math.round(t / DT) % 4 === 1) tick(gs, g, nm, [0, 2], clock);
+    step(g, DT);
+  }
+  assert.equal(g.fighters[0].phase, 'out', 'the old host\'s egg is out');
+  assert.equal(g.rides[1].seats[0], -1, 'and its seat free');
+  assert.equal(g.rides[2].seats[0], -1, 'seat 2 got out, the news lost on the way: its seat is free too');
+  assert.equal(two.ride, -1);
+  assert.ok(Math.hypot(g.rides[0].x - x0, g.rides[0].z - z0) > 8, 'the computer egg drove on');
+  // what a guest heard the old host settle of cars: a seat still free taken, one taken since not, a car gone up once
+  assert.equal(applySettled(g, { y: 'vs', f: 4, v: 2, s: 0, x: 0, z: 0, a: 0 }), false, 'not an egg far off in a car it never reached');
+  land(g.fighters[4], g.rides[1].x + 2, g.rides[1].z);
+  assert.equal(applySettled(g, { y: 'vs', f: 4, v: 3, s: 0, x: 0, z: 0, a: 0 }), false, 'nor into a seat taken since');
+  assert.equal(applySettled(g, { y: 'vs', f: 4, v: 1, s: 0, x: 0, z: 0, a: 0 }), true);
+  assert.equal(g.fighters[4].ride, 1);
+  assert.equal(applySettled(g, { y: 'vs', f: 1, v: -1, s: -1, x: 0, z: 0, a: 0 }), false, 'nor our own egg out of its seat');
+  assert.equal(applySettled(g, { y: 'vx', v: 2, f: -1, x: g.rides[2].x, z: g.rides[2].z, a: 0 }), true);
+  assert.ok(g.rides[2].dead);
+  assert.equal(applySettled(g, { y: 'vx', v: 2, f: -1, x: 0, z: 0, a: 0 }), false);
+});
+
+test('a guest asks a new host again for the seat it asked the old one for', () => {
+  const { g, gs } = hostAndGuest(3, 2);
+  openSpot(g);
+  g.time = 30;
+  g.rides = [makeRide(0, 'jeep', -60, -60, 0)];
+  const me = g.fighters[1];
+  const p = seatAt(g.rides[0], 0);
+  land(me, p.x + g.rides[0].hw + 0.5, p.z);
+  assert.ok(board(g, me, 0));
+  flush(gs, 1, FLUSH);
+  g.events.length = 0;
+  handOff(gs, g, 2, 3);
+  toNewHost(gs, g, { seat: 1, isHost: false, round: 1 }, 3);
+  assert.ok(gs.queue.some(([, ev]) => ev.y === 'vq' && ev.f === 1 && ev.v === 0));
 });
 
 test('a guest follows a new host: a fresh clock, nobody\'s seats only once it has followed the hand-off, its log and its asks to the new host', () => {

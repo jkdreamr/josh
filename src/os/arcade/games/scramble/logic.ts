@@ -1486,6 +1486,23 @@ function adopt(m: Match, f: Fighter) {
     ai.gx = f.x;
     ai.gz = f.z;
   }
+  // in a car: along for the ride, or at the wheel driving on, into the storm's next circle
+  const c = f.ride >= 0 ? m.rides[f.ride] : undefined;
+  if (c) {
+    // (the car where its driver was last heard of, going the way it went)
+    if (f.sit === 0 && c.seats[0] === f.id && last) {
+      wheelAt(c, last.x, last.z, last.aim);
+      c.vx = vx;
+      c.vz = vz;
+    }
+    ai.car = c.i;
+    ai.boardAt = m.time;
+    ai.carT = m.time + 40;
+    ai.carX = m.storm.next.x;
+    ai.carZ = m.storm.next.z;
+    ai.fromD = Math.hypot(ai.carX - c.x, ai.carZ - c.z);
+    ai.driveA = NaN;
+  }
 }
 
 /** A match on this device: you and forty-nine computer players (in duos and squads, your teammates among them). */
@@ -4647,6 +4664,33 @@ export function applySeat(m: Match, fid: number, v: number, s: number, x: number
 }
 
 /**
+ * Who sat where on the word of a host that has since left, as a guest heard it, for the new host (see net.ts
+ * applySettled): only what doesn't undo anything since. An egg on foot by a car takes a seat still free there, and
+ * one still in its car leaves it (not one of ours: we know where it sits). True when it was news here.
+ */
+export function settleSeat(m: Match, fid: number, v: number, s: number, x: number, z: number, a: number) {
+  const f = m.fighters[fid];
+  if (!m.world || !f || f.phase !== 'ground' || f.kind === 'player') return false;
+  if (v >= 0) {
+    const c = m.rides[v];
+    if (!c || c.dead || f.ride >= 0 || f.down || s < 0 || s >= c.seats.length || c.seats[s] >= 0 || c.seats.includes(fid) || rideGap(c, f.x, f.z) > RIDE_R + 3) return false;
+    sit(m, f, c, s);
+  } else {
+    const c = f.ride >= 0 ? m.rides[f.ride] : undefined;
+    if (!c) return false;
+    const drove = c.seats[0] === fid;
+    unseat(m, f);
+    if (drove && !c.dead) {
+      c.x = x;
+      c.z = z;
+      c.a = a;
+    }
+  }
+  emit(m, { t: 'seat', f: fid, v, s, x, z, a, net: true });
+  return true;
+}
+
+/**
  * The cars as a reliable report from the host has them, quietly (any news of them has come and gone): one gone up is
  * a burnt shell where it stood with nobody in it, and the rest have the health the host says and who sits where (not
  * a car whose seats changed here just now: the report may have set out before), and stand where it says while nobody
@@ -5022,6 +5066,16 @@ export function wreckRide(m: Match, v: number, by: number, announce: boolean, x?
   return true;
 }
 
+/** A car put where its driver sits at the wheel at (x, z), facing `aim` (the car's middle is back from there). */
+function wheelAt(c: Ride, x: number, z: number, aim: number) {
+  const [across, along] = RIDES[c.kind].seats[0];
+  const sa = Math.sin(aim);
+  const ca = Math.cos(aim);
+  c.a = angleDiff(aim, 0);
+  c.x = x - ca * across - sa * along;
+  c.z = z + sa * across - ca * along;
+}
+
 /** A car on fire: below BURN of its health, and not gone up yet. */
 export const burning = (c: Ride) => !c.dead && c.hp < c.max * BURN.at;
 
@@ -5036,12 +5090,7 @@ function carry(m: Match, dt: number) {
     if (c.dead) continue;
     const d = m.fighters[c.seats[0]];
     if (d && d.kind === 'remote' && d.ride === c.i && d.snaps.length && (d.show.flags & F_RIDE) !== 0) {
-      const [across, along] = RIDES[c.kind].seats[0];
-      const sa = Math.sin(d.aim);
-      const ca = Math.cos(d.aim);
-      c.a = angleDiff(d.aim, 0);
-      c.x = d.x - ca * across - sa * along;
-      c.z = d.z + sa * across - ca * along;
+      wheelAt(c, d.x, d.z, d.aim);
       c.vx = d.vx;
       c.vz = d.vz;
     }
@@ -5071,7 +5120,10 @@ function carry(m: Match, dt: number) {
   for (const c of m.rides)
     for (let s = 0; s < c.seats.length; s++) {
       const o = m.fighters[c.seats[s]];
-      if (c.seats[s] < 0 || (o && o.phase === 'ground' && !o.down && o.ride === c.i)) continue;
+      // (one whose owner's reports since well after it sat down say it's on foot got out, the news lost: a host that
+      // left may never have heard it)
+      const afoot = !!o && o.kind === 'remote' && (o.show.flags & F_RIDE) === 0 && (o.snaps[o.snaps.length - 1]?.at ?? -Infinity) > o.rideAt + 1.5;
+      if (c.seats[s] < 0 || (o && o.phase === 'ground' && !o.down && o.ride === c.i && !afoot)) continue;
       if (!o) c.seats[s] = -1;
       else if (owned(o) && o.ride === c.i) alight(m, o);
       else if (!owned(o)) freeSeat(m, o.id);
