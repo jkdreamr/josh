@@ -8090,7 +8090,18 @@ function migrate(opts: { humans: number; seed: number; level?: Level; mode?: Mod
     if (now < c.syncAt) return;
     c.syncAt = Infinity;
     c.me = { seat: c.room, isHost: c.room === 0, round: 1 };
-    if (!c.m || !c.s.synced || c.hand.length <= c.s.handoffs) return;
+    if (c.hand.length <= c.s.handoffs) return;
+    if (!c.m || !c.s.synced) {
+      // the host left before its first report got here: as the host it is now, it sets the match up afresh
+      if (c.me.isHost) {
+        const fresh = hostMatch(named(), 0, seed + 1000, level, MAX_FIGHTERS, lead, mode);
+        c.m = fresh.match;
+        Object.assign(c.s, newSession(true, fresh.roster));
+        autopilot(c.m, c.m.fighters[c.m.me]);
+      }
+      c.s.handoffs = c.hand.length;
+      return;
+    }
     for (const from of c.hand.slice(c.s.handoffs)) handOff(c.s, c.m, from, now);
     if (c.me.isHost) {
       takeOver(c.s, c.m, c.me, present(), now);
@@ -8249,6 +8260,48 @@ test('the host leaves on the bus: the next person runs the match, the computer e
   const { auth, h } = agreeAfter(res, 'on the bus', [0]);
   assert.equal(auth.start, 1, 'the lowest seat took over');
   assert.ok(res.handAt < h.map.bus.off, 'it was handed on with eggs still on the bus');
+});
+
+test('the host leaves in the countdown, before anyone is on the bus: the match goes on the same', () => {
+  const res = migrate({ humans: 4, seed: 41, leaves: [{ at: -2, seats: [0] }] });
+  const { auth, h } = agreeAfter(res, 'countdown', [0]);
+  assert.equal(auth.start, 1);
+  assert.ok(res.handAt < h.map.bus.on, 'it was handed on before the bus set off');
+});
+
+test('the host leaves before its first report gets out: the next person sets the match up afresh and everyone plays it to the end', () => {
+  const res = migrate({ humans: 4, seed: 42, leaves: [{ at: -Infinity, seats: [0] }] });
+  const live = res.ps.filter((c) => !c.gone);
+  const auth = live.find((c) => c.room === 0)!;
+  assert.equal(auth.start, 1);
+  const h = auth.m!;
+  assert.ok(auth.s.host && h.ended, 'the new host ran its own match to the end');
+  assert.equal(h.fighters.filter((f) => f.seat >= 0).length, 3, 'with the three still in the room');
+  for (const c of live) {
+    assert.ok(c.s.synced && c.m!.seed === h.seed, `seat ${c.start} plays the new host's match`);
+    assert.equal(c.call, 'report', `seat ${c.start} heard the end called`);
+    assert.equal(JSON.stringify(c.s.end), JSON.stringify(auth.s.end), `seat ${c.start} has the one result`);
+  }
+  assert.ok(h.fighters.filter((f) => f.seat === -1 && f.phase === 'out' && f.by >= 0).length > 10, 'the computer eggs played');
+});
+
+test('a guest that heard of the old host\'s match joins the one a new host set up afresh, and nobody else\'s report moves it', () => {
+  const { players, h, gs, g } = hostAndGuest(3, 4, 9);
+  const fresh = hostMatch(players.filter((p) => p.seat !== 0).map((p) => ({ seat: p.seat === 1 ? 0 : p.seat, name: p.name })), 0, 77, 'normal', 4, 3);
+  const fs = newSession(true, fresh.roster);
+  fs.handoffs = 1;
+  // the new host's report of another island, to the guest now in seat 2... once without it in the match: nothing moves
+  const me: Me = { seat: 2, isHost: false, round: 1 };
+  gs.handoffs = 1;
+  const other = JSON.parse(JSON.stringify(hostState(1, 77, 0, 'normal', [0, 5, -1], [], [], [], 'solo', [], 1)));
+  assert.equal(receive(gs, g, me, 0, other, () => assert.fail('no join'), 1), g);
+  assert.equal(gs.synced, true);
+  const report = reliableTo(fs, fresh.match, [0, 2], 2, 1);
+  const joined = receive(gs, g, me, 0, report, (sd, lv, t, ro, md, te) => guestMatch(players, 2, sd, lv, t, ro, md, te), 2);
+  assert.notEqual(joined, g, 'a new match');
+  assert.equal(joined.seed, 77);
+  assert.ok(gs.synced && gs.handoffs === 1 && gs.roster.join() === fresh.roster.join(), 'in step with the new host');
+  assert.equal(h.seed, 9);
 });
 
 test('the host leaves early in the fight, with lag and lost packets: the match goes on and ends the same for everyone', () => {

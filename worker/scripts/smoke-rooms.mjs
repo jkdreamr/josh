@@ -242,6 +242,28 @@ assert.ok(goWin, 'the win the two still in the round agree on is recorded');
 pass('A round the new host takes over goes on, someone playing it hosts, and its result is recorded');
 for (const client of [goers[2], goers[3], goLate]) client.socket.close();
 
+// ...but with nobody from the round left to run it (only a latecomer sitting it out), it ends, bots or not.
+const endCode = await createRoom('scramble', true);
+const enders = [];
+for (const name of ['EndAnn', 'EndBo']) {
+  const client = await connect(endCode, name, 4);
+  await client.wait('welcome');
+  enders.push(client);
+}
+enders[0].send({ t: 'bots', n: 5 });
+await enders[1].wait('players', (message) => Array.isArray(message.bots) && message.bots.length === 5);
+enders[0].send({ t: 'start' });
+await enders[1].wait('start');
+const endLate = await connect(endCode, 'EndLate', 4);
+await endLate.wait('welcome');
+enders[1].socket.close(1000, 'leave');
+await endLate.wait('players', (message) => !message.players.some((player) => player.name === 'EndBo'));
+enders[0].socket.close(1000, 'leave');
+const endHand = await endLate.wait('host');
+assert.deepEqual([endHand.from, endHand.started], [2, false], 'the latecomer hosts the room, and the round is over');
+pass('A round nobody from it is left to run ends when its host leaves, so the latecomer starts the next');
+endLate.socket.close();
+
 const lightCode = await createRoom('lightcycles');
 const riders = [];
 for (let seat = 0; seat < 4; seat++) {

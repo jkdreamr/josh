@@ -757,9 +757,9 @@ export class Room extends DurableObject<Env> {
       if (!goesOn) endRound(room);
     }
     const players = this.players(except);
-    // Benched latecomers aren't in the round, so they don't keep it going.
+    // Benched latecomers aren't in the round, so they don't keep it going (nor run one the old host's game ran).
     const inRound = room.roster ? players.filter(({ seat: s }) => room.roster!.includes(s)).length : players.length;
-    if ((from === null || goesOn) && room.started && !roundPlayable(room, inRound)) endRound(room);
+    if ((from === null || goesOn) && room.started && (!roundPlayable(room, inRound) || (goesOn && !inRound))) endRound(room);
     await this.ctx.storage.put('room', room);
     const lineup = { ...this.lineup(room, players), started: room.started };
     this.broadcast(from === null ? { t: 'players', ...lineup } : { t: 'host', from, ...lineup }, except);

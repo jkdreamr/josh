@@ -532,20 +532,27 @@ function Play({ mode }: { mode: StageMode }) {
   const view = useRef<View | null>(null);
   const match = useRef<Match | null>(null);
   const net = useRef<Session>(null as unknown as Session);
+  /**
+   * Sets up the match as its host: the room's bots, and with any of them, more to fill the island when the host wants
+   * it (quick play always does), in the mode quick play found (else the host's, with the teams as the room arranged
+   * them). The room's hand-offs this round so far are behind us: its seats are as they are now.
+   */
+  const setUp = (o: NonNullable<typeof online>) => {
+    const quick = o.quick;
+    const bots = hostBots(quick, o.bots.length, fill === 'fill');
+    const md: Mode = quick ? (isMode(o.pool) ? o.pool : 'solo') : teamMode;
+    const h = hostMatch(o.players, o.seat, randomSeed(), quick ? QUICK_LEVEL : level, bots, COUNTDOWN + HOST_LEAD, md, quick ? [] : lobbyPicks.current);
+    match.current = h.match;
+    // (the same session the room's handlers hold, afresh)
+    net.current = Object.assign(net.current ?? {}, newSession(true, h.roster));
+    net.current.handoffs = o.handedOff.filter((x) => x.round === o.round).length;
+  };
   net.current ??= newSession(!live || online!.isHost);
   if (!match.current) {
     if (mode === 'idle') match.current = soloMatch(randomSeed(), level);
     else if (!live) match.current = soloMatch(randomSeed(), level, 'you', FIGHTER_COLORS[0], teamMode);
-    else if (online!.isHost) {
-      // the room's bots, and with any of them, more to fill the island when the host wants it (quick play always does),
-      // in the mode quick play found (else the host's, with the teams as the room arranged them)
-      const quick = online!.quick;
-      const bots = hostBots(quick, online!.bots.length, fill === 'fill');
-      const md: Mode = quick ? (isMode(online!.pool) ? online!.pool : 'solo') : teamMode;
-      const h = hostMatch(online!.players, online!.seat, randomSeed(), quick ? QUICK_LEVEL : level, bots, COUNTDOWN + HOST_LEAD, md, quick ? [] : lobbyPicks.current);
-      match.current = h.match;
-      net.current.roster = h.roster;
-    } else match.current = waitingMatch(level);
+    else if (online!.isHost) setUp(online!);
+    else match.current = waitingMatch(level);
   }
   const [viewKey, setViewKey] = useState(0);
   const clock = useRef(0);
@@ -784,9 +791,19 @@ function Play({ mode }: { mode: StageMode }) {
     const ours = o.handedOff.filter((h) => h.round === o.round);
     if (ours.length <= n.handoffs) return;
     if (!n.synced) {
-      // made the host of a match we sat out: nothing to take over, nor to hold the next one for
       n.handoffs = ours.length;
-      if (o.isHost && shellRef.current.status === 'over') shellRef.current.updateOver(SIT_OUT);
+      if (!o.isHost) return;
+      // made the host of a match we sat out: nothing to take over, nor to hold the next one for
+      if (shellRef.current.status === 'over') shellRef.current.updateOver(SIT_OUT);
+      else {
+        // the host left before its first report got to us: nobody has the match it set up, so we set it up afresh
+        // (anyone who did hear of it hears of this one and joins it instead)
+        setUp(o);
+        hosting.current = true;
+        lastStep.current = performance.now() / 1000;
+        setViewKey((x) => x + 1);
+        addFeed('you are now running the match', true);
+      }
       return;
     }
     const now = performance.now() / 1000;

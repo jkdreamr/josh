@@ -469,7 +469,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
     });
     // The host left and someone took over. Their game ran the round, so it's over (unless the new host's game takes it
     // over); everyone stays in the room.
-    link.on('host', ({ from, seat, players }) => {
+    link.on('host', ({ from, seat, players, started }) => {
       raceRef.current.seat = seat;
       // the room renumbered its seats: race scores and the round's lineup follow, so nobody's result moves to someone else
       roundSeatsRef.current = roundSeatsRef.current.map((s) => handOffSeat(s, from));
@@ -482,9 +482,11 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
       // a finished race keeps its standings and names, now under the new seat numbers
       setRaceSettled((settled) => settled && handOffSettled(settled, from));
       setOnlineHandoffs((n) => n + 1);
-      setHandedOff((h) => [...h, { round: raceRef.current.round, from }]);
-      if (migrates && onlineModeRef.current) {
-        // the round goes on: a card already up on the new host holds the next round until its game says this one is over
+      if (migrates && onlineModeRef.current && started) {
+        // the round goes on, the new host's game running it (a room that ended it instead, with nobody from it left to
+        // run it or on a server from before, ends it here as for any game): a card already up on the new host holds the
+        // next round until its game says this one is over
+        setHandedOff((h) => [...h, { round: raceRef.current.round, from }]);
         if (seat === 0) setResult((r) => (r && !r.wait ? { ...r, wait: 'The Match Goes On.' } : r));
         return;
       }

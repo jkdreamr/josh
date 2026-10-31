@@ -28,7 +28,7 @@ type OnlineValue = {
    * takes it over (meta.online.migrate).
    */
   handoffs: number;
-  /** Each hand-off, oldest first: the round under way here when it came, and the seat that took over (seat 0 from then on). */
+  /** Each hand-off a round went on past, oldest first: the round, and the seat that took over (seat 0 from then on). */
   handedOff: readonly HandOff[];
   /** A quick-play room: it started on its own, and the game sets the match up the same way every time. */
   quick: boolean;

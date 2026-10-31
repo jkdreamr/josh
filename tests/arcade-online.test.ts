@@ -477,7 +477,7 @@ test('RoomLink follows a host hand-off, round ends and the round a latecomer wal
     const socket = FakeWebSocket.last;
     const seen: unknown[] = [];
     link.on('welcome', (welcome) => seen.push(['welcome', welcome.round, welcome.started]));
-    link.on('host', (host) => seen.push(['host', host.from, host.seat]));
+    link.on('host', (host) => seen.push(['host', host.from, host.seat, host.started]));
     link.on('started', (started) => seen.push(['started', started]));
     link.on('players', (players) => seen.push(['players', players.map((p) => p.seat)]));
     socket.open();
@@ -488,13 +488,16 @@ test('RoomLink follows a host hand-off, round ends and the round a latecomer wal
     assert.equal(link.seat, 2);
     // Then Cy leaves too: Bea takes over.
     socket.receive({ t: 'host', from: 2, players: [{ seat: 0, name: 'Bea' }], started: false });
+    // (in a game that takes rounds over, the room says when the round goes on past one)
+    socket.receive({ t: 'host', from: 2, players: [{ seat: 0, name: 'Bea' }], started: true });
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(link.seat, 0);
     assert.deepEqual(seen, [
       ['welcome', 3, true], ['players', [0, 1, 2]],
       ['players', [0, 1, 2]], ['started', false],
-      ['host', 1, 2], ['players', [0, 2]], ['started', false],
-      ['host', 2, 0], ['players', [0]], ['started', false],
+      ['host', 1, 2, false], ['players', [0, 2]], ['started', false],
+      ['host', 2, 0, false], ['players', [0]], ['started', false],
+      ['host', 2, 0, true], ['players', [0]], ['started', true],
     ]);
     link.endRound(4);
     assert.deepEqual(JSON.parse(socket.sent.at(-1)!), { t: 'over', round: 4 });

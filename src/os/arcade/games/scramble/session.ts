@@ -316,6 +316,9 @@ export function receive(s: Session, m: Match, me: Me, from: number, d: unknown, 
     applyState(m, f, p.state);
   } else if (p.k === 'S') {
     if (me.isHost || from !== 0) return m;
+    // another island: a new host that never heard of the match the old one set up has set one up afresh, and that is
+    // the match now (see index.tsx's syncHost)
+    if (s.synced && p.roster?.includes(me.seat) && p.seed !== m.seed) Object.assign(s, newSession(false));
     if (!s.synced) {
       if (!p.roster || !p.roster.includes(me.seat)) return m;
       m = join(p.seed, p.level, p.time, p.roster, p.mode, p.teams);
