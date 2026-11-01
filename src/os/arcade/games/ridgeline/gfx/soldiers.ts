@@ -177,12 +177,14 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: P
         const gone = a.id === hide || a.drop === 1 || (dead && time - a.deathT > (m.mode === 'dm' ? 2.6 : 40));
         if (gone) {
           r.mesh.visible = false;
+          r.muzzle.set(0, -1000, 0);
           continue;
         }
         const dist = Math.hypot(b.x - cx, b.z - cz);
         sphere.center.set(b.x, b.y + 0.9, b.z);
         if (dist > FAR || !frustum.intersectsSphere(sphere)) {
           r.mesh.visible = false;
+          r.muzzle.set(0, -1000, 0);
           continue;
         }
         r.mesh.visible = true;
@@ -224,7 +226,7 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: P
         if (gg && id) {
           const mz = gunModel(THREE, id, side).muzzle;
           r.muzzle.copy(gg.localToWorld(tmp.set(mz[0], mz[1], mz[2])));
-        }
+        } else r.muzzle.set(0, -1000, 0);
       }
       for (const r of rigs.values()) if (r.frame !== frame) r.mesh.visible = false;
     },

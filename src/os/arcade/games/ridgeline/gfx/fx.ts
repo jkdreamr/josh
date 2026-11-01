@@ -461,13 +461,18 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
       const W = tW.array as Float32Array;
       for (const b of m.bullets) {
         if (n >= TMAX) break;
+        const len = Math.hypot(b.vx, b.vy, b.vz) || 1;
         let o = origins.get(b);
         if (!o) {
+          // the tracer starts at the shooter's muzzle, unless that is unknown or not where this bullet came from
+          // (a soldier far off is posed now and then): then where the bullet really started
+          const sx = b.x - (b.vx / len) * b.dist;
+          const sy = b.y - (b.vy / len) * b.dist;
+          const sz = b.z - (b.vz / len) * b.dist;
           muzzleOf(b.owner, v);
-          o = v.y > -500 ? [v.x, v.y, v.z] : [b.px, b.py, b.pz];
+          o = v.y > -500 && Math.hypot(v.x - sx, v.y - sy, v.z - sz) < 3 ? [v.x, v.y, v.z] : [sx, sy, sz];
           origins.set(b, o);
         }
-        const len = Math.hypot(b.vx, b.vy, b.vz) || 1;
         const tail = Math.min(b.dist + 0.001, 26);
         let ax = b.x - (b.vx / len) * tail;
         let ay = b.y - (b.vy / len) * tail;

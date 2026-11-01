@@ -113,14 +113,13 @@ uniform vec3 uColor;
 varying vec3 vWp;
 varying float vY;
 void main() {
-  // a haze that is thick at the ground and thins with height, slow bands drifting up it and a bright seam low down
+  // a haze that is thick at the ground and thins with height, with slow bands drifting up it
   float bands = 0.55 + 0.45 * sin(vY * 140.0 - uTime * 1.6 + sin(atan(vWp.z, vWp.x) * 24.0) * 0.6);
   float low = 1.0 - smoothstep(0.0, 0.7, vY);
   float a = low * low * 0.55 * bands + low * 0.12 + 0.06;
-  float seam = exp(-pow((vY - 0.09) * 60.0, 2.0)) * 0.35;
   float d = distance(cameraPosition.xz, vWp.xz);
-  a = (a + seam) * (0.6 + 0.4 * smoothstep(3.0, 50.0, d));
-  gl_FragColor = vec4(uColor * (1.0 + seam * 2.0), min(a, 0.85));
+  a *= 0.6 + 0.4 * smoothstep(3.0, 50.0, d);
+  gl_FragColor = vec4(uColor, min(a, 0.8));
 }`;
 
 export type Royale = { group: T.Group; update(m: Match, camera: T.Camera, time: number): void; dispose(): void };
