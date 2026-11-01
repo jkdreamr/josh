@@ -334,8 +334,10 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
     return f ? { geo: f.geo, mat: worldMaterial(THREE, f.mat, shared) } : { geo: fragGeo, mat: nadeMat };
   });
   const smokeMat = new THREE.MeshStandardMaterial({ color: 0x8a8f94, roughness: 0.5, metalness: 0.4 });
-  const nades = Array.from({ length: 8 }, () => {
-    const mesh: T.Mesh<T.BufferGeometry, T.Material> = new THREE.Mesh(fragGeo, nadeMat);
+  // each starts in one of the looks a grenade can take, so the shader warm up compiles every one of them
+  const nades = Array.from({ length: 8 }, (_, i) => {
+    const look = i < 3 ? fragLook[0] : i < 6 ? fragLook[1] : { geo: smokeGeo, mat: smokeMat };
+    const mesh: T.Mesh<T.BufferGeometry, T.Material> = new THREE.Mesh(look.geo, look.mat);
     mesh.visible = false;
     mesh.castShadow = true;
     group.add(mesh);

@@ -10,6 +10,7 @@ import { Ammo, BannerView, BuyMenu, DeathPanel, Feed, Markers, Minimap, Reticle,
 import { MAPS, MAP_IDS, type MapId } from './maps.ts';
 import { DEG, canShop, createMatch, currentGun, eyeY, finalScore, idleInput, lootNear, owns, spareOf, spreadOf, standings, step, viewDir, type Actor, type Input, type Match, type ShopItem } from './match.ts';
 import { HEAL, ROYALE_PLAYERS, ZONES, itemName, planeAt } from './royale.ts';
+import { newBrain } from './bots.ts';
 import { floorAt } from './terrain.ts';
 import { WEAPONS, type WeaponId } from './weapons.ts';
 import { buildWorld, cacheWorld, cachedWorld, type World } from './world.ts';
@@ -605,7 +606,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
               ads: a.ads,
               scoped,
               reload: a.reloadT > 0 ? 1 - a.reloadT / wdef.reload : 0,
-              switching: a.switchT > 0 ? Math.min(1, a.switchT / wdef.equip) : 0,
+              switching: a.healT > 0 ? 0.55 : a.switchT > 0 ? Math.min(1, a.switchT / wdef.equip) : 0,
               speed: Math.min(1, Math.hypot(a.body.vx, a.body.vz) / 5.8),
               phase: a.phase,
               air: !a.body.onGround,
@@ -862,6 +863,13 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
       view: () => viewRef.current,
       locked: () => setLocked(true),
       closeBuy: () => openBuy(false),
+      /** Hands your seat to a bot, so a whole match can play itself out on screen. */
+      autopilot(level: 'easy' | 'normal' | 'hard' = 'hard') {
+        const m = matchRef.current?.m;
+        if (!m) return;
+        m.actors[0].bot = true;
+        m.actors[0].brain = newBrain(level, 0);
+      },
       skip(sec: number) {
         const m = matchRef.current?.m;
         if (!m) return;

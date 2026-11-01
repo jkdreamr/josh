@@ -680,6 +680,20 @@ function buildGrid(boxes: Box[], trunks: Trunk[], rocks: RockCol[]): Grid {
 
 const SURFACE: Record<Part, Surface> = { wall: 'stone', trim: 'stone', roof: 'stone', floor: 'wood', wood: 'wood', metal: 'metal', sandbag: 'dirt', concrete: 'stone', hesco: 'dirt' };
 
+/** Loot spots minus any that ended up inside something solid (a crate in a barn, a truck, a tree trunk). */
+function clearSpots(spots: number[], boxes: Box[], trunks: Trunk[]) {
+  const out: number[] = [];
+  for (let i = 0; i < spots.length; i += 3) {
+    const x = spots[i];
+    const y = spots[i + 1];
+    const z = spots[i + 2];
+    const inBox = boxes.some((b) => x > b.x0 - 0.25 && x < b.x1 + 0.25 && z > b.z0 - 0.25 && z < b.z1 + 0.25 && b.y0 < y + 0.6 && b.y1 > y + 0.05);
+    const inTrunk = trunks.some((t) => Math.hypot(t.x - x, t.z - z) < t.r + 0.3);
+    if (!inBox && !inTrunk) out.push(x, y, z);
+  }
+  return out;
+}
+
 /** Builds a map: the uplink arena, or with `royale` the whole land, with many more towns, cover and loot. */
 export function buildWorld(id: MapId, royale = false): World {
   const def = MAPS[id];
@@ -931,7 +945,7 @@ export function buildWorld(id: MapId, royale = false): World {
     minimap: { size: 0, span: 0, data: new Uint8ClampedArray(0) },
     arena: ARENA,
     region,
-    loot: new Float32Array(c.loot),
+    loot: new Float32Array(clearSpots(c.loot, boxes, trunks)),
     doors: new Float32Array(c.doors),
   };
   world.light = bakeLight(world, c.blocks);

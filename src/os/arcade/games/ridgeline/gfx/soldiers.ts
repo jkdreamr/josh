@@ -72,6 +72,7 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: P
   const pv = new THREE.Matrix4();
   const sphere = new THREE.Sphere(new THREE.Vector3(), 1.5);
   let frame = 0;
+  let lastMatch: Match | null = null;
   /** Bodies made only to compile shaders. */
   const warmers: T.SkinnedMesh[] = [];
 
@@ -159,6 +160,10 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: P
     },
     update(m, hide, time, camera) {
       frame++;
+      if (m !== lastMatch) {
+        lastMatch = m;
+        for (const r of rigs.values()) r.posedAt = -1;
+      }
       pv.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse);
       frustum.setFromProjectionMatrix(pv);
       const cx = camera.position.x;

@@ -151,6 +151,7 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
   patch(canopyMat, shared, { key: 'dz-canopy', noBaked: true });
   const canopies = new THREE.InstancedMesh(keep(canopyGeometry(THREE)), canopyMat, 100);
   canopies.count = 0;
+  canopies.setColorAt(0, new THREE.Color(1, 1, 1));
   canopies.frustumCulled = false;
   canopies.castShadow = shadows;
   group.add(canopies);
@@ -200,6 +201,7 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
   const bucket = (geo: T.BufferGeometry, mat: T.Material, max: number, match: Bucket['match'], place: Bucket['place'], color?: Bucket['color']) => {
     const mesh = new THREE.InstancedMesh(geo, mat, max);
     mesh.count = 0;
+    if (color) mesh.setColorAt(0, new THREE.Color(1, 1, 1));
     mesh.castShadow = false;
     mesh.receiveShadow = true;
     mesh.frustumCulled = false;
@@ -270,6 +272,7 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
     }, (it) => LEVEL_COLOR[Number(it.what)]);
 
   let lootVer = -1;
+  let lootOf: Match | null = null;
   let lootX = Infinity;
   let lootZ = Infinity;
   const fillLoot = (m: Match, cx: number, cz: number) => {
@@ -341,7 +344,10 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
       // loot near the camera
       const cx = camera.position.x;
       const cz = camera.position.z;
-      if (m.lootVer !== lootVer || Math.abs(cx - lootX) > 3 || Math.abs(cz - lootZ) > 3) fillLoot(m, cx, cz);
+      if (m !== lootOf || m.lootVer !== lootVer || Math.abs(cx - lootX) > 3 || Math.abs(cz - lootZ) > 3) {
+        lootOf = m;
+        fillLoot(m, cx, cz);
+      }
     },
     dispose() {
       for (const d of disposables) d.dispose();
