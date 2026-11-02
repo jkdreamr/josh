@@ -731,6 +731,13 @@
 .g-ridgeline .g-ridgeline-scope {
   position: absolute;
   inset: 0;
+  /* (sized to the game's own frame, not the browser window, so the lens fits a windowed game too) */
+  container-type: size;
+  pointer-events: none;
+}
+.g-ridgeline .g-ridgeline-scopeMask {
+  position: absolute;
+  inset: 0;
   background: radial-gradient(circle at 50% 50%, transparent 0, transparent min(42cqh, 42cqw), #000 calc(min(42cqh, 42cqw) + 1px));
 }
 .g-ridgeline .g-ridgeline-scopeLens {
@@ -748,16 +755,62 @@
   background: rgba(0, 0, 0, 0.85);
 }
 .g-ridgeline .g-ridgeline-scopeLens .is-h {
-  left: 0;
-  right: 0;
+  left: 6%;
+  right: 6%;
   top: 50%;
   height: 1px;
 }
 .g-ridgeline .g-ridgeline-scopeLens .is-v {
-  top: 0;
-  bottom: 0;
+  top: 6%;
+  bottom: 50%;
   left: 50%;
   width: 1px;
+}
+/* thick posts from the rim in to near the middle, as on a real sniper reticle */
+.g-ridgeline .g-ridgeline-scopeLens .is-l,
+.g-ridgeline .g-ridgeline-scopeLens .is-r {
+  top: calc(50% - 2px);
+  height: 4px;
+  width: 34%;
+}
+.g-ridgeline .g-ridgeline-scopeLens .is-l {
+  left: 0;
+}
+.g-ridgeline .g-ridgeline-scopeLens .is-r {
+  right: 0;
+}
+.g-ridgeline .g-ridgeline-scopeLens .is-b {
+  left: calc(50% - 2px);
+  width: 4px;
+  top: 66%;
+  bottom: 0;
+}
+/* the thin line below the middle, with the aim point dot (red, easy to see on any ground) */
+.g-ridgeline .g-ridgeline-scopeLens::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1px;
+  height: 16%;
+  background: rgba(0, 0, 0, 0.85);
+}
+.g-ridgeline .g-ridgeline-scopeLens b {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: #ff3b2f;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+}
+.g-ridgeline .g-ridgeline-scopeHint {
+  margin-top: 2px;
+  font-size: 11px;
+  opacity: 0.75;
+  text-align: right;
 }
 
 /* buy menu */
