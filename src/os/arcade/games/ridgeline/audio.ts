@@ -4,7 +4,7 @@
 // reloads, grenades and the charge. Every sound off to one side comes from that side, and distance muffles it.
 // Nothing plays while the arcade is muted (graph() is null then).
 import { sfx } from '../../kit';
-import type { Ev, Match } from './match.ts';
+import { echoOfMine, type Ev, type Match } from './match.ts';
 import type { Surface } from './world.ts';
 import { WEAPONS, type WeaponClass, type WeaponId } from './weapons.ts';
 
@@ -236,15 +236,22 @@ export function playEvents(m: Match, evs: Ev[], ear: Ear, you: number) {
         break;
       }
       case 'hit':
-        if (e.a === you && e.v !== you) {
-          // the hit you landed: a dry tick, a bright ring for the head, a deeper knock for the kill
+        if (e.a === you && e.v !== you && !echoOfMine(m, e)) {
+          // the hit you landed, loud and clear over the gunfire: a crisp tick for the body (a harder clack on armor), a
+          // bright ring for the head, and for the kill a deep knock with a rising chime
           if (e.kill) {
-            osc(g, HERE, { type: 'triangle', freq: 520, to: 420, decay: 0.14, vol: 0.22 });
-            osc(g, HERE, { freq: 1560, decay: 0.2, vol: 0.12, at: 0.05 });
+            osc(g, HERE, { freq: 160, to: 70, decay: 0.18, vol: 0.32 });
+            osc(g, HERE, { type: 'triangle', freq: 660, to: 520, decay: 0.16, vol: 0.26 });
+            osc(g, HERE, { freq: 1320, decay: 0.24, vol: 0.16, at: 0.06 });
+            osc(g, HERE, { freq: 1980, decay: 0.3, vol: 0.1, at: 0.12 });
           } else if (e.zone === 'head') {
-            osc(g, HERE, { freq: 2900, decay: 0.16, vol: 0.14 });
-            osc(g, HERE, { freq: 4350, decay: 0.12, vol: 0.07 });
-          } else burst(g, HERE, { type: 'bandpass', freq: e.armor ? 2400 : 1500, q: 4, decay: 0.03, vol: 0.2 });
+            osc(g, HERE, { freq: 2900, decay: 0.2, vol: 0.22 });
+            osc(g, HERE, { freq: 4350, decay: 0.16, vol: 0.11 });
+            burst(g, HERE, { type: 'bandpass', freq: 3200, q: 3, decay: 0.03, vol: 0.18 });
+          } else {
+            burst(g, HERE, { type: 'bandpass', freq: e.armor ? 2600 : 1700, q: 3, decay: 0.035, vol: 0.32 });
+            osc(g, HERE, { type: 'triangle', freq: e.armor ? 1250 : 880, to: e.armor ? 900 : 620, decay: 0.05, vol: 0.2 });
+          }
         }
         if (e.v === you) {
           osc(g, HERE, { freq: 120, to: 55, decay: 0.16, vol: 0.4 });

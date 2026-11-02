@@ -574,6 +574,109 @@ export const Reticle = forwardRef<FastHud, { shotgun: boolean }>(function Reticl
   );
 });
 
+/**
+ * What your hits did, where they landed: a damage number that pops off the spot and rises (gold for the head, red for
+ * the kill; quick hits on the same soldier add up into one), and a health bar over whoever you last hit, so there is
+ * never a doubt whether a shot connected. Moved every frame through refs.
+ */
+export type HitInfoApi = {
+  pop(x: number, y: number, z: number, dmg: number, kind: 'hit' | 'head' | 'kill', target: number): void;
+  place(project: (x: number, y: number, z: number, out: { x: number; y: number; z: number }) => void, w: number, h: number, dt: number, actor: (id: number) => { x: number; y: number; z: number; hp: number; alive: boolean } | null): void;
+};
+type Pop = { x: number; y: number; z: number; t: number; dmg: number; kind: 'hit' | 'head' | 'kill'; target: number; el: HTMLElement };
+const POP_LIFE = 0.85;
+export const HitInfo = forwardRef<HitInfoApi, { children?: ReactNode }>(function HitInfo(_, ref) {
+  const box = useRef<HTMLDivElement>(null);
+  const bar = useRef<HTMLDivElement>(null);
+  const pops = useRef<Pop[]>([]);
+  const target = useRef({ id: -1, t: 0, shown: 100 });
+  const pt = useRef({ x: 0, y: 0, z: 0 });
+  useImperativeHandle(ref, () => ({
+    pop(x, y, z, dmg, kind, who) {
+      const root = box.current;
+      if (!root) return;
+      target.current.id = who;
+      target.current.t = 2.2;
+      if (dmg <= 0 && kind !== 'kill') return;
+      // a burst, or a shotgun's pellets: one number that counts up
+      const last = pops.current[pops.current.length - 1];
+      if (last && last.target === who && last.t > POP_LIFE - 0.35 && kind !== 'kill' && last.kind !== 'kill') {
+        last.dmg += dmg;
+        last.t = POP_LIFE;
+        if (kind === 'head') last.kind = 'head';
+        last.el.textContent = String(Math.round(last.dmg));
+        last.el.dataset.kind = last.kind;
+        last.el.style.animation = 'none';
+        void last.el.offsetWidth;
+        last.el.style.animation = '';
+        return;
+      }
+      const el = document.createElement('b');
+      el.dataset.kind = kind;
+      el.textContent = kind === 'kill' && dmg <= 0 ? 'KO' : String(Math.round(dmg));
+      root.appendChild(el);
+      pops.current.push({ x, y, z, t: POP_LIFE, dmg, kind, target: who, el });
+      if (pops.current.length > 10) pops.current.shift()?.el.remove();
+    },
+    place(project, w, h, dt, actor) {
+      const p = pt.current;
+      pops.current = pops.current.filter((q) => {
+        q.t -= dt;
+        if (q.t <= 0) {
+          q.el.remove();
+          return false;
+        }
+        project(q.x, q.y, q.z, p);
+        const age = POP_LIFE - q.t;
+        const on = p.z < 1 && p.x > -40 && p.x < w + 40 && p.y > -40 && p.y < h + 40;
+        q.el.style.display = on ? '' : 'none';
+        if (on) {
+          q.el.style.transform = `translate(${p.x + 14 + age * 18}px, ${p.y - 16 - age * 46}px) translate(-50%, -50%)`;
+          q.el.style.opacity = String(Math.min(1, q.t * 3.5));
+        }
+        return true;
+      });
+      // the bar over the one you last hit
+      const tg = target.current;
+      const el = bar.current;
+      if (!el) return;
+      tg.t -= dt;
+      const a = tg.id >= 0 && tg.t > 0 ? actor(tg.id) : null;
+      if (!a) {
+        el.style.display = 'none';
+        return;
+      }
+      project(a.x, a.y, a.z, p);
+      const on = p.z < 1 && p.x > 0 && p.x < w && p.y > 0 && p.y < h;
+      el.style.display = on ? '' : 'none';
+      if (!on) return;
+      const hp = a.alive ? Math.max(0, Math.min(100, a.hp)) : 0;
+      // the bar eases down to where the health is now, so a hit visibly takes a bite
+      tg.shown = hp > tg.shown ? hp : tg.shown + (hp - tg.shown) * Math.min(1, dt * 7);
+      el.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, -100%)`;
+      el.style.opacity = String(Math.min(1, tg.t * 2.5));
+      (el.firstChild as HTMLElement).style.width = `${tg.shown}%`;
+      (el.lastChild as HTMLElement).style.width = `${hp}%`;
+      el.dataset.dead = a.alive ? '' : '1';
+    },
+  }));
+  useEffect(
+    () => () => {
+      for (const q of pops.current) q.el.remove();
+      pops.current = [];
+    },
+    [],
+  );
+  return (
+    <div ref={box} className="g-ridgeline-hitinfo" aria-hidden="true">
+      <div ref={bar} className="g-ridgeline-hpbar" style={{ display: 'none' }}>
+        <i />
+        <i />
+      </div>
+    </div>
+  );
+});
+
 /** The minimap: the baked map picture, the sites and the charge, your team, enemies your team can see, and you. Drawn
  * on demand. */
 export type MinimapApi = { draw(s: MapState): void };
