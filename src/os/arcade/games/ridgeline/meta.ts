@@ -21,7 +21,7 @@ export const meta: GameMeta = {
   accent: '#c8473b',
   glyph: 'M2 19l6-8 4 5 3-4 7 7zM17 2v5M14.5 4.5h5',
   order: 0,
-  music: 'tension',
+  music: 'own',
   leaderboard: {
     order: 'desc',
     max: 60_000,

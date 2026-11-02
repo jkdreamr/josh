@@ -219,6 +219,17 @@ export const sfx = {
     musicBus.gain.linearRampToValueAtTime(on ? MUSIC_LEVEL : 0, t + (on ? 0.05 : 0.12));
   },
   isMuted: () => muted,
+  /**
+   * The audio graph, for a game that builds its own sounds (filters, its own score): the context, the effects output
+   * and the music bus (which the shell fades on pause and the Music switch silences). Null while muted or before the
+   * first gesture made a context; ask again for each sound, as the mute switch can change at any time.
+   */
+  graph(): { ctx: AudioContext; out: AudioNode; music: AudioNode } | null {
+    if (muted) return null;
+    const ac = audio();
+    if (!ac || !master || !musicBus) return null;
+    return { ctx: ac, out: master, music: musicBus };
+  },
   /** The shared Music switch: whether games play their background music. */
   isMusicOn: () => musicOn,
   setMusicOn(on: boolean) {

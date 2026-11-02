@@ -91,7 +91,7 @@ export const WEAPON_IDS = Object.keys(WEAPONS) as WeaponId[];
 export const PRIMARIES = WEAPON_IDS.filter((id) => WEAPONS[id].slot === 'primary');
 
 export const ARMOR = { light: { amount: 25, price: 400 }, heavy: { amount: 50, price: 1000 } } as const;
-export const NADES = { frag: { price: 300, max: 1 }, smoke: { price: 200, max: 2 } } as const;
+export const NADES = { frag: { price: 300, max: 1 }, smoke: { price: 200, max: 2 }, flash: { price: 250, max: 2 } } as const;
 
 /** Share of each hit armor takes while it lasts. */
 export const ARMOR_SHARE = 0.66;

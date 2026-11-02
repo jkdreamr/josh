@@ -3,12 +3,13 @@ import { GameShell, Segmented, defineSetting, useGameLoop, useKeys, useSetting, 
 import type { GameProps } from '../../types';
 import { meta } from './meta';
 import { chargeBeeps, playEvents } from './audio.ts';
+import { Score, type Mood } from './score.ts';
 import { useAssets } from './assets.ts';
 import { autoQuality, createView, flyover, type Quality, type View } from './gfx/view.ts';
 import { kitOf, paletteOf } from './gfx/soldiers.ts';
-import { Ammo, BannerView, BreachPrompts, BuyMenu, DeathPanel, Feed, Markers, Minimap, Reticle, RoyalePrompts, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi } from './hud.tsx';
+import { Ammo, BannerView, BreachPrompts, BuyMenu, DeathPanel, Feed, Markers, MedalView, Minimap, Reticle, RoyalePrompts, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type MedalPop, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi } from './hud.tsx';
 import { MAPS, MAP_IDS, type MapId } from './maps.ts';
-import { DEFUSE_HALF, DEFUSE_TIME, DEG, PLANT_TIME, canDefuse, canShop, createMatch, currentGun, eyeY, finalScore, idleInput, lootNear, owns, plantSite, spareOf, spreadOf, standings, step, viewDir, type Actor, type Input, type Match, type ShopItem } from './match.ts';
+import { DEFUSE_HALF, DEFUSE_TIME, DEG, PLANT_TIME, type Medal, canDefuse, canShop, createMatch, currentGun, eyeY, finalScore, idleInput, lootNear, owns, plantSite, spareOf, spreadOf, standings, step, viewDir, type Actor, type Input, type Match, type ShopItem } from './match.ts';
 import { HEAL, ROYALE_PLAYERS, ZONES, itemName, planeAt } from './royale.ts';
 import { newBrain } from './bots.ts';
 import { floorAt } from './terrain.ts';
@@ -119,6 +120,35 @@ function myName() {
 }
 
 const TEAM_COLORS = ['#7cc6ff', '#ff7a5c'];
+
+/** A medal's words and how big it shows. */
+function medalText(kind: Medal, n: number): Omit<MedalPop, 'key'> {
+  switch (kind) {
+    case 'first':
+      return { title: 'First blood', sub: '', tier: 1 };
+    case 'head':
+      return { title: 'Headshot', sub: '', tier: 1 };
+    case 'double':
+      return { title: 'Double kill', sub: '', tier: 1 };
+    case 'triple':
+      return { title: 'Triple kill', sub: '', tier: 2 };
+    case 'quad':
+      return { title: 'Quad kill', sub: 'one more for the ace', tier: 2 };
+    case 'ace':
+      return { title: 'Ace', sub: 'the whole team, by yourself', tier: 3 };
+    default:
+      return { title: 'Clutch', sub: `won it 1 v ${n}`, tier: 3 };
+  }
+}
+
+/** What the music should do: strings while buying, the march once live, a driving pulse when it is close. */
+function moodOf(m: Match): Mood {
+  if (m.phase === 'over') return 'off';
+  if (m.mode !== 'breach') return m.phase === 'live' ? 'march' : 'calm';
+  if (m.phase !== 'live') return 'calm';
+  const left = [0, 1].map((t) => m.actors.reduce((n, a) => n + (a.alive && a.team === t ? 1 : 0), 0));
+  return m.charge.state === 'planted' || Math.min(left[0], left[1]) <= 1 ? 'urgent' : 'march';
+}
 const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
 const wrapAngle = (a: number) => {
   let d = a % (Math.PI * 2);
@@ -127,7 +157,7 @@ const wrapAngle = (a: number) => {
   return d;
 };
 
-type Touch = { stick: number | null; sx: number; sy: number; mx: number; mz: number; look: number | null; lx: number; ly: number; fire: number | null; fx: number; fy: number; ads: boolean; crouch: boolean; jump: boolean; reload: boolean; swap: boolean; frag: boolean; smoke: boolean; use: boolean; heal: boolean; hold: boolean };
+type Touch = { stick: number | null; sx: number; sy: number; mx: number; mz: number; look: number | null; lx: number; ly: number; fire: number | null; fx: number; fy: number; ads: boolean; crouch: boolean; jump: boolean; reload: boolean; swap: boolean; frag: boolean; smoke: boolean; flash: boolean; use: boolean; heal: boolean; hold: boolean };
 
 /** Royale weapon keys 1, 2, 3: the two long guns, then the sidearm. */
 const ROYALE_SLOTS = [0, 2, 1] as const;
@@ -154,6 +184,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
   const matchRef = useRef<{ m: Match; round: number } | null>(null);
   const [hud, setHud] = useState<Hud>(() => blankHud(mode));
   const [banner, setBanner] = useState<Banner | null>(null);
+  const [medal, setMedal] = useState<MedalPop | null>(null);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [buyOpen, setBuyOpen] = useState(false);
   const buyRef = useRef(false);
@@ -172,7 +203,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
   // input state
   const look = useRef({ dx: 0, dy: 0 });
   const mouse = useRef({ fire: false, ads: false, wheel: 0 });
-  const touch = useRef<Touch>({ stick: null, sx: 0, sy: 0, mx: 0, mz: 0, look: null, lx: 0, ly: 0, fire: null, fx: 0, fy: 0, ads: false, crouch: false, jump: false, reload: false, swap: false, frag: false, smoke: false, use: false, heal: false, hold: false });
+  const touch = useRef<Touch>({ stick: null, sx: 0, sy: 0, mx: 0, mz: 0, look: null, lx: 0, ly: 0, fire: null, fx: 0, fy: 0, ads: false, crouch: false, jump: false, reload: false, swap: false, frag: false, smoke: false, flash: false, use: false, heal: false, hold: false });
   const unlockOnPurpose = useRef(false);
 
   // per match view state
@@ -189,6 +220,12 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
   const lastLook = useRef({ yaw: 0, pitch: 0 });
   const lastRender = useRef(0);
   const firstBuy = useRef(true);
+  const score = useRef(new Score());
+  // the score plays only while a round does (the Music switch and mute are checked as it plays)
+  useEffect(() => {
+    if (shell.status !== 'playing') score.current.stop();
+  }, [shell.status]);
+  useEffect(() => () => score.current.stop(), []);
 
   // the world: from the cache, or built in a worker (main thread if workers fail)
   useEffect(() => {
@@ -462,12 +499,13 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
           if (mouse.current.wheel !== 0 || t.swap) inp.slot = you.slot === 0 ? 1 : 0;
           if (k.pressed('Digit3', 'KeyG') || t.frag) inp.throw = 'frag';
           if (k.pressed('Digit4', 'KeyQ') || t.smoke) inp.throw = 'smoke';
+          if (k.pressed('Digit5', 'KeyX') || t.flash) inp.throw = 'flash';
           // plant and defuse: held
           inp.use = k.down('KeyF', 'KeyE') || t.hold;
         }
       }
       mouse.current.wheel = 0;
-      t.jump = t.reload = t.swap = t.frag = t.smoke = t.use = t.heal = false;
+      t.jump = t.reload = t.swap = t.frag = t.smoke = t.flash = t.use = t.heal = false;
       const p = pending.current;
       if (p.buy) inp.buy = p.buy;
       p.buy = null;
@@ -524,7 +562,9 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
         if (e.t === 'round') {
           const won = e.winner === you.team;
           const why = e.why === 'blast' ? 'the charge went off' : e.why === 'defuse' ? 'the charge was defused' : e.why === 'elim' ? (won ? 'all knocked out' : 'your team is out') : 'time ran out before a plant';
-          pushBanner(e.winner < 0 ? 'Round drawn' : won ? 'Round won' : 'Round lost', why, e.winner < 0 ? 'info' : won ? 'win' : 'loss');
+          // and how your round went
+          const mine = m.mode === 'breach' ? `. you: ${you.roundKills} ${you.roundKills === 1 ? 'kill' : 'kills'}, ${Math.round(you.roundDmg)} damage` : '';
+          pushBanner(e.winner < 0 ? 'Round drawn' : won ? 'Round won' : 'Round lost', why + mine, e.winner < 0 ? 'info' : won ? 'win' : 'loss');
         }
         if (e.t === 'plant' && e.done) {
           const atk = m.attack === you.team;
@@ -533,6 +573,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
         if (e.t === 'carry' && e.a === 0) pushBanner('You have the charge', 'plant it on A or B: stand on the site and hold F', 'info');
         if (e.t === 'dropcharge' && m.attack === you.team && you.alive) pushBanner('The charge is down', 'pick it up: walk over it', 'info');
         if (e.t === 'sides') pushBanner('Switching sides', 'everyone starts over with a pistol', 'info');
+        if (e.t === 'medal' && e.a === 0) setMedal({ ...medalText(e.kind, e.n), key: Date.now() + Math.random() });
       }
       damageFx.current = Math.max(0, damageFx.current - dt * 1.4);
       flashFx.current = Math.max(0, flashFx.current - dt * 3);
@@ -548,8 +589,10 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
 
       // sound from where the camera is
       const eyeA = watched(m);
-      playEvents(m, m.events, eyeA.body.x, eyeA.body.z, 0);
-      chargeBeeps(m, eyeA.body.x, eyeA.body.z);
+      const ear = { x: eyeA.body.x, z: eyeA.body.z, yaw: eyeA.yaw };
+      playEvents(m, m.events, ear, 0);
+      chargeBeeps(m, ear);
+      score.current.tick(moodOf(m));
 
       // the HUD, ten or so times a second
       hudClock.current -= dt;
@@ -638,7 +681,9 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
               kit: kitOf(m, a),
             }
           : null;
-      view.render({ m, dt, time: time.current, eye, fov, hide, vm: vmState, fired, damage: damageFx.current, low: a.alive ? Math.max(0, (35 - a.hp) / 35) : 0, flash: flashFx.current });
+      // a flashbang: white while it lasts, fading out over its last second or so
+      const blind = a.alive && a.blindT > 0 ? Math.min(1, a.blindT / Math.min(1.2, a.blind0)) : 0;
+      view.render({ m, dt, time: time.current, eye, fov, hide, vm: vmState, fired, damage: damageFx.current, low: a.alive ? Math.max(0, (35 - a.hp) / 35) : 0, flash: Math.max(flashFx.current, blind) });
       // fast HUD bits: crosshair spread in pixels, markers, minimap
       const fh = fast.current;
       if (fh) {
@@ -720,7 +765,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
     const top = st[0];
     const killer = m.actors[you.killer];
     const owned: Hud['owned'] = {};
-    for (const i of ['wren', 'bulwark', 'hornet', 'mauler', 'kestrel', 'lancer', 'longbow', 'light', 'heavy', 'frag', 'smoke'] as ShopItem[]) owned[i] = owns(you, i);
+    for (const i of ['wren', 'bulwark', 'hornet', 'mauler', 'kestrel', 'lancer', 'longbow', 'light', 'heavy', 'frag', 'smoke', 'flash'] as ShopItem[]) owned[i] = owns(you, i);
     return {
       mode: m.mode,
       phase: m.phase,
@@ -737,6 +782,8 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
       guns: [a.guns[0]?.id ?? null, a.guns[1]?.id ?? null, a.guns[2]?.id ?? null],
       frags: a.frags,
       smokes: a.smokes,
+      flashes: a.flashes,
+      blind: a.alive && a.blindT > 0 ? Math.min(1, a.blindT / Math.min(1.2, a.blind0)) : 0,
       canBuy: canShop(m, you),
       alive: you.alive,
       dead: !you.alive ? { by: you.killedWith === 'zone' ? 'the zone' : you.killedWith === 'blast' ? 'the charge' : killer && killer !== you ? killer.name : 'yourself', w: you.killedWith === 'frag' ? 'Frag' : you.killedWith === 'zone' ? 'out in the open too long' : you.killedWith === 'blast' ? 'caught in the blast' : you.killedWith ? WEAPONS[you.killedWith].name : '', head: you.killedHead, respawn: you.respawnT } : null,
@@ -974,6 +1021,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
           <Reticle ref={fast} shotgun={gunCls === 'shotgun'} />
           <Scope on={hud.scoped} />
           <BannerView b={banner} />
+          <MedalView m={medal} />
           <DeathPanel h={hud} touch={touchUi} />
           <RoyalePrompts h={hud} touch={touchUi} />
           <BreachPrompts h={hud} touch={touchUi} />
@@ -1014,6 +1062,11 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
               <button type="button" className="g-ridgeline-btn is-smoke" onPointerDown={tap((t) => (t.smoke = true))}>
                 Smoke
               </button>
+              {hud.breach && (
+                <button type="button" className="g-ridgeline-btn is-flash" onPointerDown={tap((t) => (t.flash = true))}>
+                  Flash
+                </button>
+              )}
               {hud.royale && (
                 <>
                   <button type="button" className="g-ridgeline-btn is-use" data-on={hud.royale.pickup ? '1' : '0'} onPointerDown={tap((t) => (t.use = true))}>

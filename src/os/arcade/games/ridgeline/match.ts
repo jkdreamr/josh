@@ -9,14 +9,15 @@ import { fieldTo, navOf } from './nav.ts';
 import { clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
 import { CROUCH_H, GRAVITY, STAND_H, groundAt, newHit, raySphere, rayWorld, stepBody, type Body } from './physics.ts';
 import { AMMO_KINDS, AMMO_MAX, AMMO_OF, CHUTE_GLIDE, CHUTE_OPEN, CHUTE_VY, FALL_FAST, FALL_SLOW, FALL_VY, HEAL, HELMET, NADE_MAX, ROYALE_PLAYERS, VEST, ZONES, nextCircle, planeAt, planePath, spawnLoot, type AmmoKind, type HealKind, type Item, type Plane, type Zone as Circle } from './royale.ts';
-import { floorAt } from './terrain.ts';
+import { floorAt, heightAt } from './terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, LOSS_STREAK_BONUS, MAX_CREDITS, NADES, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, interval, kickOf, rangeMul, type WeaponId } from './weapons.ts';
 import { ARENA, SITE_R, SPAWN_R, yawTo, type Surface, type World } from './world.ts';
 
 export type Mode = 'breach' | 'royale' | 'dm';
 export type Level = BotLevel;
 export type Zone = 'head' | 'body' | 'leg';
-export type ShopItem = WeaponId | 'light' | 'heavy' | 'frag' | 'smoke';
+export type NadeKind = 'frag' | 'smoke' | 'flash';
+export type ShopItem = WeaponId | 'light' | 'heavy' | NadeKind;
 
 export const DEG = Math.PI / 180;
 export const RUN = 5.8;
@@ -27,7 +28,7 @@ export const BULLET_G = 9.81;
 export const ROUNDS_TO_WIN = 7;
 /** Rounds in a half: the teams swap sides after this many. */
 export const HALF = 6;
-export const BUY_TIME = 15;
+export const BUY_TIME = 12;
 export const ROUND_TIME = 100;
 export const END_TIME = 5;
 /** Breach: seconds to plant, to defuse (half of it is kept once reached), the fuse once planted, the blast radius and
@@ -59,7 +60,7 @@ export type Input = {
   reload: boolean;
   /** Switch to the primary (0), the sidearm (1) or the second primary (2), or -1. */
   slot: number;
-  throw: 'frag' | 'smoke' | null;
+  throw: NadeKind | null;
   buy: ShopItem | null;
   /** Held: plant or defuse (breach). Pressed: pick up what's at your feet (royale). */
   use: boolean;
@@ -90,6 +91,13 @@ export type Actor = {
   slot: 0 | 1 | 2;
   frags: number;
   smokes: number;
+  /** Breach: flashbangs carried; how long it stays blinded, and how long that started at (for the fade). */
+  flashes: number;
+  blindT: number;
+  blind0: number;
+  /** Breach, this round: knockouts and damage dealt. */
+  roundKills: number;
+  roundDmg: number;
   fireCd: number;
   fireHeld: boolean;
   reloadT: number;
@@ -141,12 +149,15 @@ export type Actor = {
 };
 
 export type Bullet = { x: number; y: number; z: number; px: number; py: number; pz: number; vx: number; vy: number; vz: number; owner: number; w: WeaponId; life: number; dist: number; live: boolean };
-export type Nade = { kind: 'frag' | 'smoke'; x: number; y: number; z: number; vx: number; vy: number; vz: number; fuse: number; owner: number; rest: boolean; spin: number };
+export type Nade = { kind: NadeKind; x: number; y: number; z: number; vx: number; vy: number; vz: number; fuse: number; owner: number; rest: boolean; spin: number };
 export type Smoke = { x: number; y: number; z: number; age: number; life: number; r: number };
 export type Sound = { x: number; z: number; t: number; team: number; range: number; who: number };
 export type Cause = WeaponId | 'frag' | 'zone' | 'blast';
 export type Kill = { t: number; killer: number; victim: number; w: Cause; head: boolean };
 export type Why = 'elim' | 'time' | 'blast' | 'defuse';
+/** Breach highlights: first blood, a headshot kill, two to five kills in a round (five is the whole team, an ace), and a
+ * round won as the last one standing against two or more. */
+export type Medal = 'first' | 'head' | 'double' | 'triple' | 'quad' | 'ace' | 'clutch';
 
 /** Breach: where the charge is and what is being done to it. */
 export type Charge = {
@@ -177,7 +188,10 @@ export type Ev =
   | { t: 'kill'; k: Kill }
   | { t: 'boom'; x: number; y: number; z: number }
   | { t: 'smoke'; x: number; y: number; z: number }
-  | { t: 'throw'; a: number; kind: 'frag' | 'smoke' }
+  | { t: 'throw'; a: number; kind: NadeKind }
+  | { t: 'flash'; x: number; y: number; z: number }
+  | { t: 'blind'; a: number; secs: number }
+  | { t: 'medal'; a: number; kind: Medal; n: number }
   | { t: 'bounce'; x: number; y: number; z: number }
   | { t: 'reload'; a: number; w: WeaponId }
   | { t: 'empty'; a: number }
@@ -241,6 +255,9 @@ export type Match = {
   zone: Circle | null;
   plane: Plane | null;
   alive: number;
+  /** Breach, this round: whether first blood was drawn, and per team its last one standing and how many they faced. */
+  firstBlood: boolean;
+  clutch: [{ a: number; vs: number } | null, { a: number; vs: number } | null];
 };
 
 const BOT_NAMES = ['Vega', 'Rook', 'Sable', 'Juno', 'Kite', 'Onyx', 'Mako', 'Pike', 'Wren', 'Ash', 'Bishop', 'Cobalt', 'Drift', 'Ember', 'Flint', 'Haze', 'Ivy', 'Jett', 'Lark', 'Moss', 'Nova', 'Quill', 'Reed', 'Slate'];
@@ -266,6 +283,11 @@ function newActor(id: number, name: string, team: number, bot: boolean, level: L
     slot: 1,
     frags: 0,
     smokes: 0,
+    flashes: 0,
+    blindT: 0,
+    blind0: 0,
+    roundKills: 0,
+    roundDmg: 0,
     fireCd: 0,
     fireHeld: false,
     reloadT: 0,
@@ -368,6 +390,8 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
     zone: null,
     plane: null,
     alive: count,
+    firstBlood: false,
+    clutch: [null, null],
   };
   if (mode === 'royale') startRoyale(m, opts.seed ?? Math.floor(rng() * 1e9));
   else if (mode === 'breach') {
@@ -508,6 +532,7 @@ function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'fr
   const dealt = Math.min(before, raw);
   const att = m.actors[from];
   if (att && att !== v) {
+    if (isEnemy(att, v)) att.roundDmg += dealt;
     att.damage += dealt;
     att.cs += Math.round(dealt);
     v.dmgFrom[from] = (v.dmgFrom[from] ?? 0) + dealt;
@@ -533,7 +558,17 @@ function die(m: Match, v: Actor, from: number, w: Cause, head: boolean) {
   if (att && att !== v && isEnemy(att, v)) {
     att.kills++;
     att.cs += 150 + (head ? 30 : 0);
-    if (m.mode === 'breach') att.credits = Math.min(MAX_CREDITS, att.credits + KILL_REWARD);
+    if (m.mode === 'breach') {
+      att.credits = Math.min(MAX_CREDITS, att.credits + KILL_REWARD);
+      // the highlights: first blood, then a multi kill (or a headshot, the smaller one)
+      att.roundKills++;
+      const n = att.roundKills;
+      const multi = n >= 5 ? 'ace' : n === 4 ? 'quad' : n === 3 ? 'triple' : n === 2 ? 'double' : null;
+      if (multi) m.events.push({ t: 'medal', a: att.id, kind: multi, n });
+      else if (!m.firstBlood) m.events.push({ t: 'medal', a: att.id, kind: 'first', n: 1 });
+      else if (head) m.events.push({ t: 'medal', a: att.id, kind: 'head', n: 1 });
+      m.firstBlood = true;
+    }
   }
   for (const o of m.actors)
     if (o !== att && o !== v && isEnemy(o, v) && (v.dmgFrom[o.id] ?? 0) >= 40) {
@@ -548,10 +583,17 @@ function die(m: Match, v: Actor, from: number, w: Cause, head: boolean) {
   if (m.mode === 'breach') {
     // a teammate down near a site tells the rest where the fight is
     callout(m, v.team, v.body.x, v.body.z);
+    // down to one: a clutch if that one wins it against two or more
+    if (m.phase === 'live' && !m.clutch[v.team]) {
+      const mates = m.actors.filter((o) => o.alive && o.team === v.team);
+      const foes = m.actors.filter((o) => o.alive && o.team !== v.team).length;
+      if (mates.length === 1 && foes >= 2) m.clutch[v.team] = { a: mates[0].id, vs: foes };
+    }
     v.guns[0] = null;
     v.armor = 0;
     v.frags = 0;
     v.smokes = 0;
+    v.flashes = 0;
     const c = m.charge;
     if (c.plantBy === v.id) {
       c.plantBy = -1;
@@ -603,6 +645,8 @@ function resetCombat(a: Actor) {
   a.bloom = 0;
   a.kickP = 0;
   a.fireHeld = false;
+  a.blindT = 0;
+  a.blind0 = 0;
 }
 
 export function startRound(m: Match) {
@@ -618,6 +662,7 @@ export function startRound(m: Match) {
       a.armor = 0;
       a.frags = 0;
       a.smokes = 0;
+      a.flashes = 0;
     }
     m.events.push({ t: 'sides' });
   }
@@ -634,6 +679,8 @@ export function startRound(m: Match) {
   m.smokes = [];
   m.sounds = [];
   m.last = null;
+  m.firstBlood = false;
+  m.clutch = [null, null];
   const seen = [0, 0];
   for (const a of m.actors) {
     const s = spawnOf(m, a.team);
@@ -652,6 +699,8 @@ export function startRound(m: Match) {
     a.hp = 100;
     a.slot = a.guns[0] ? 0 : 1;
     a.dmgFrom.fill(0);
+    a.roundKills = 0;
+    a.roundDmg = 0;
     resetCombat(a);
     place(m, a, slot.x, slot.z, slot.yaw);
     if (a.brain) a.brain.reset = true;
@@ -681,6 +730,8 @@ function endRound(m: Match, winner: number, why: Why) {
     if (won) a.cs += 60;
   }
   m.events.push({ t: 'round', winner, why });
+  const cl = winner >= 0 ? m.clutch[winner] : null;
+  if (cl && m.actors[cl.a].alive) m.events.push({ t: 'medal', a: cl.a, kind: 'clutch', n: cl.vs });
 }
 
 function respawn(m: Match, a: Actor) {
@@ -1231,7 +1282,7 @@ export function canShop(m: Match, a: Actor) {
 
 export function priceOf(item: ShopItem) {
   if (item === 'light' || item === 'heavy') return ARMOR[item].price;
-  if (item === 'frag' || item === 'smoke') return NADES[item].price;
+  if (item === 'frag' || item === 'smoke' || item === 'flash') return NADES[item].price;
   return WEAPONS[item].price;
 }
 
@@ -1241,6 +1292,7 @@ export function owns(a: Actor, item: ShopItem) {
   if (item === 'heavy') return a.armor >= ARMOR.heavy.amount;
   if (item === 'frag') return a.frags >= NADES.frag.max;
   if (item === 'smoke') return a.smokes >= NADES.smoke.max;
+  if (item === 'flash') return a.flashes >= NADES.flash.max;
   return a.guns[0]?.id === item || a.guns[1]?.id === item;
 }
 
@@ -1255,11 +1307,12 @@ export function buy(m: Match, a: Actor, item: ShopItem) {
     a.credits -= cost;
     a.armor = ARMOR[item].amount;
     a.boughtArmor = ARMOR[item].price;
-  } else if (item === 'frag' || item === 'smoke') {
+  } else if (item === 'frag' || item === 'smoke' || item === 'flash') {
     if (a.credits < NADES[item].price) return false;
     a.credits -= NADES[item].price;
     if (item === 'frag') a.frags++;
-    else a.smokes++;
+    else if (item === 'smoke') a.smokes++;
+    else a.flashes++;
   } else {
     const def = WEAPONS[item];
     const k = def.slot === 'primary' ? 0 : 1;
@@ -1371,14 +1424,15 @@ function startReload(m: Match, a: Actor) {
   m.events.push({ t: 'reload', a: a.id, w: g.id });
 }
 
-function throwNade(m: Match, a: Actor, kind: 'frag' | 'smoke') {
-  if (kind === 'frag' ? a.frags <= 0 : a.smokes <= 0) return;
+function throwNade(m: Match, a: Actor, kind: NadeKind) {
+  if ((kind === 'frag' ? a.frags : kind === 'smoke' ? a.smokes : a.flashes) <= 0) return;
   if (a.switchT > 0.2) return;
   if (kind === 'frag') a.frags--;
-  else a.smokes--;
+  else if (kind === 'smoke') a.smokes--;
+  else a.flashes--;
   const d = viewDir(a.yaw, a.pitch + 0.12);
   const sp = 17;
-  m.nades.push({ kind, x: a.body.x + d.x * 0.5, y: eyeY(a) - 0.1, z: a.body.z + d.z * 0.5, vx: d.x * sp + a.body.vx * 0.5, vy: d.y * sp + 1.5, vz: d.z * sp + a.body.vz * 0.5, fuse: kind === 'frag' ? 2.3 : 1.5, owner: a.id, rest: false, spin: 0 });
+  m.nades.push({ kind, x: a.body.x + d.x * 0.5, y: eyeY(a) - 0.1, z: a.body.z + d.z * 0.5, vx: d.x * sp + a.body.vx * 0.5, vy: d.y * sp + 1.5, vz: d.z * sp + a.body.vz * 0.5, fuse: kind === 'frag' ? 2.3 : kind === 'flash' ? 1.2 : 1.5, owner: a.id, rest: false, spin: 0 });
   a.switchT = Math.max(a.switchT, 0.4);
   a.reloadT = 0;
   a.ads = 0;
@@ -1428,6 +1482,7 @@ function stepNades(m: Match, dt: number) {
     }
     if (n.fuse <= 0) {
       if (n.kind === 'frag') explode(m, n);
+      else if (n.kind === 'flash') flashbang(m, n);
       else {
         m.smokes.push({ x: n.x, y: n.y, z: n.z, age: 0, life: 15, r: 0 });
         m.events.push({ t: 'smoke', x: n.x, y: n.y, z: n.z });
@@ -1440,6 +1495,36 @@ function stepNades(m: Match, dt: number) {
     s.r = 5.6 * smoothstep(0, 1.6, s.age) * (1 - smoothstep(s.life - 1.5, s.life, s.age) * 0.6);
   }
   m.smokes = m.smokes.filter((s) => s.age < s.life);
+}
+
+/** A flashbang goes off: everyone with a clear line to it is blinded, for longer the nearer they are and the more
+ * they were looking at it (looking away saves most of it, so throw it and turn). */
+const FLASH_R = 34;
+function flashbang(m: Match, n: Nade) {
+  m.events.push({ t: 'flash', x: n.x, y: n.y, z: n.z });
+  m.sounds.push({ x: n.x, z: n.z, t: m.time, team: m.actors[n.owner]?.team ?? -1, range: 90, who: n.owner });
+  for (const a of m.actors) {
+    if (!a.alive || a.drop) continue;
+    const ey = eyeY(a);
+    const dx = n.x - a.body.x;
+    const dy = n.y + 0.1 - ey;
+    const dz = n.z - a.body.z;
+    const d = Math.hypot(dx, dy, dz);
+    if (d > FLASH_R) continue;
+    if (d > 0.5) {
+      rayWorld(m.world, a.body.x, ey, a.body.z, dx / d, dy / d, dz / d, d - 0.2, nadeHit);
+      if (nadeHit.kind !== 'none') continue;
+      if (smokeBlocks(m, a.body.x, ey, a.body.z, n.x, n.y + 0.1, n.z)) continue;
+    }
+    const v = viewDir(a.yaw, a.pitch);
+    const facing = d > 0.5 ? (v.x * dx + v.y * dy + v.z * dz) / d : 1;
+    const look = clamp((facing + 0.35) / 0.85, 0.1, 1);
+    const secs = (0.3 + 3.6 * Math.pow(1 - d / FLASH_R, 0.7)) * look;
+    if (secs < 0.5 || secs <= a.blindT) continue;
+    a.blindT = secs;
+    a.blind0 = secs;
+    m.events.push({ t: 'blind', a: a.id, secs });
+  }
 }
 
 function explode(m: Match, n: Nade) {
@@ -1550,6 +1635,7 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
   // timers
   a.fireCd = Math.max(-dt, a.fireCd - dt);
   a.shield = Math.max(0, a.shield - dt);
+  a.blindT = Math.max(0, a.blindT - dt);
   if (a.switchT > 0) a.switchT = Math.max(0, a.switchT - dt);
   if (a.reloadT > 0) {
     a.reloadT -= dt;
@@ -1634,7 +1720,7 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
     if (a.stepDist > 2.1) {
       a.stepDist = 0;
       const loud = !inp.walk && a.crouch < 0.5 && Math.hypot(b.vx, b.vz) > WALK + 0.4;
-      m.events.push({ t: 'step', a: a.id, loud, s: b.swim ? 'water' : 'dirt' });
+      m.events.push({ t: 'step', a: a.id, loud, s: surfaceUnder(m, a) });
       if (loud) m.sounds.push({ x: b.x, z: b.z, t: m.time, team: a.team, range: 24, who: a.id });
     }
   }
@@ -1654,6 +1740,19 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
   else if (inp.fire && g && g.mag <= 0 && a.reloadT <= 0 && !a.fireHeld) fire(m, a);
   if (a.fireCd < 0) a.fireCd = 0;
   a.fireHeld = inp.fire;
+}
+
+/** What a body stands on, for its footsteps: a floor or a crate's top, water, or the map's own ground. */
+function surfaceUnder(m: Match, a: Actor): Surface {
+  const b = a.body;
+  if (b.swim) return 'water';
+  const t = m.world.terrain;
+  const g = floorAt(t, b.x, b.z);
+  if (b.y > g + 0.08)
+    for (const q of m.world.boxes) if (b.x > q.x0 && b.x < q.x1 && b.z > q.z0 && b.z < q.z1 && Math.abs(b.y - q.y1) < 0.3) return q.s;
+  if (t.ice && heightAt(t, b.x, b.z) < t.water) return 'stone';
+  const id = m.world.id;
+  return id === 'frost' ? 'snow' : id === 'mesa' ? 'sand' : id === 'isles' && g < t.water + 2.5 ? 'sand' : 'leaf';
 }
 
 function spot(m: Match) {

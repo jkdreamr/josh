@@ -111,6 +111,9 @@ export type Brain = {
   faceZ: number;
   /** Push to the goal even while fighting (a defuse to stop or to make before the charge blows). */
   rush: boolean;
+  /** Just threw a flashbang: looks away from it (that way) until it has gone off. */
+  flashAway: number;
+  awayYaw: number;
   /** How close counts as there: close for the charge (to pick it up or work on it), looser for a spot to hold. */
   arrive: number;
   /** Heading toward the last thing it heard, how long to keep facing it, and when it last stopped to listen. */
@@ -196,6 +199,8 @@ export function newBrain(level: BotLevel, seed: number): Brain {
     faceX: 0,
     faceZ: 0,
     rush: false,
+    flashAway: 0,
+    awayYaw: 0,
     arrive: 2.2,
     listenA: 0,
     waitT: 0,
@@ -231,7 +236,7 @@ function shop(m: Match, a: Actor, br: Brain) {
   const want: ShopItem[] = [];
   if (m.round === 1 || m.round === HALF + 1) {
     if (r() < 0.45) want.push('bulwark');
-    else want.push('light', r() < 0.5 ? 'frag' : 'smoke');
+    else want.push('light', r() < 0.4 ? 'frag' : r() < 0.5 ? 'smoke' : 'flash');
   } else if (!a.guns[0]) {
     const eco = avg < 2500 && a.credits < 3900;
     if (eco) {
@@ -244,9 +249,9 @@ function shop(m: Match, a: Actor, br: Brain) {
       else if (a.credits >= 3900) gun = roll < 0.72 ? 'kestrel' : 'lancer';
       else if (a.credits >= 2400) gun = roll < 0.4 ? 'lancer' : roll < 0.75 ? 'hornet' : 'mauler';
       else gun = roll < 0.6 ? 'hornet' : 'mauler';
-      want.push(gun, 'heavy', 'light', 'frag', 'smoke');
+      want.push(gun, 'heavy', 'light', 'flash', 'frag', 'smoke');
     }
-  } else want.push('heavy', 'light', 'frag', 'smoke');
+  } else want.push('heavy', 'light', 'flash', 'frag', 'smoke');
   for (const item of want) {
     if (owns(a, item)) continue;
     if (item === 'light' && owns(a, 'heavy')) continue;
@@ -391,6 +396,14 @@ function perceive(m: Match, a: Actor, br: Brain) {
   const fw = viewDir(a.yaw, 0);
   let best = -1;
   let bestScore = Infinity;
+  // flashed: sees nothing until it clears (it still remembers where they were)
+  if (a.blindT > 0.35) {
+    if (br.target >= 0) {
+      br.lostAt = m.time;
+      br.target = -1;
+    }
+    return;
+  }
   // breach: enemy footsteps or shots heard near a site tell the team where the push is
   if (m.mode === 'breach')
     for (const s of m.sounds)
@@ -885,6 +898,7 @@ function roundReset(m: Match, a: Actor, br: Brain) {
   br.role = k % 5 === 1 || k % 5 === 2 ? 'entry' : k % 5 === 3 ? 'flank' : 'support';
   br.rush = false;
   br.arrive = 2.2;
+  br.flashAway = 0;
   if (m.mode === 'breach') {
     if (a.team === m.attack) {
       // one flanks through the middle, unless that is a long way round
@@ -1173,6 +1187,34 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
         wantPitch = 0.35;
         br.nadeT = 6;
       }
+      // a flashbang over the site before going in (the attack), or onto the charge before a retake (the defense)
+      if (m.mode === 'breach' && m.phase === 'live' && a.flashes > 0 && br.nadeT <= 0 && br.skill > 0.25) {
+        const c = m.charge;
+        const at = a.team === m.attack ? (c.state === 'planted' ? null : m.world.sites[siteFor(m, a, br)]) : c.state === 'planted' ? { x: c.x, z: c.z } : null;
+        if (at) {
+          const d = Math.hypot(at.x - a.body.x, at.z - a.body.z);
+          if (d > 14 && d < 34 && (a.team === m.attack ? br.role !== 'flank' : br.rush || c.fuse < 25)) {
+            const yaw = Math.atan2(-(at.x - a.body.x), -(at.z - a.body.z));
+            wantYaw = yaw;
+            wantPitch = 0.22 + d * 0.004;
+            // throw once facing it, then turn away until it has gone off
+            if (Math.abs(angDiff(a.yaw, yaw)) < 0.25 && r() < 0.5) {
+              inp.throw = 'flash';
+              br.nadeT = 7 + r() * 4;
+              br.flashAway = 1.5;
+              br.awayYaw = yaw + Math.PI;
+            }
+          }
+        }
+      }
+    }
+  }
+  // a flashbang of its own in the air: look the other way
+  if (br.flashAway > 0) {
+    br.flashAway -= dt;
+    if (!tgt) {
+      wantYaw = br.awayYaw;
+      wantPitch = -0.6;
     }
   }
   // turn toward the wanted view at a limited speed

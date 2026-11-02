@@ -334,9 +334,12 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
     return f ? { geo: f.geo, mat: worldMaterial(THREE, f.mat, shared) } : { geo: fragGeo, mat: nadeMat };
   });
   const smokeMat = new THREE.MeshStandardMaterial({ color: 0x8a8f94, roughness: 0.5, metalness: 0.4 });
+  // a flashbang: the same can, pale with a dark band
+  const flashGeo = new THREE.CylinderGeometry(0.032, 0.032, 0.13, 10);
+  const flashMat = new THREE.MeshStandardMaterial({ color: 0xc9cdc4, roughness: 0.45, metalness: 0.5 });
   // each starts in one of the looks a grenade can take, so the shader warm up compiles every one of them
-  const nades = Array.from({ length: 8 }, (_, i) => {
-    const look = i < 3 ? fragLook[0] : i < 6 ? fragLook[1] : { geo: smokeGeo, mat: smokeMat };
+  const nades = Array.from({ length: 9 }, (_, i) => {
+    const look = i < 3 ? fragLook[0] : i < 6 ? fragLook[1] : i < 8 ? { geo: smokeGeo, mat: smokeMat } : { geo: flashGeo, mat: flashMat };
     const mesh: T.Mesh<T.BufferGeometry, T.Material> = new THREE.Mesh(look.geo, look.mat);
     mesh.visible = false;
     mesh.castShadow = true;
@@ -433,6 +436,10 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
             litRGB(0xb0b0b0, v.x, v.z, rgb);
             alpha.spawn(v.x, v.y, v.z, e.dx * 1.5, 0.4, e.dz * 1.5, 0.6, 0.08, 0.5, rgb[0], rgb[1], rgb[2], 0.25, -0.3, 2);
           }
+        } else if (e.t === 'flash') {
+          // a flashbang: a hot white burst and a few sparks, gone in a blink
+          for (let i = 0; i < 6; i++) add.spawn(e.x + rnd(0.2), e.y + 0.2 + rnd(0.2), e.z + rnd(0.2), rnd(1), rnd(1), rnd(1), 0.12 + Math.random() * 0.06, 1.2, 4.2, 14, 14, 13, 1, 0, 5);
+          for (let i = 0; i < 12; i++) add.spawn(e.x, e.y + 0.2, e.z, rnd(10), Math.random() * 6, rnd(10), 0.25 + Math.random() * 0.2, 0.05, 0.02, 9, 8, 6, 1, 9.8, 0.5);
         } else if (e.t === 'boom') {
           for (let i = 0; i < 10; i++) add.spawn(e.x + rnd(0.6), e.y + 0.4 + rnd(0.6), e.z + rnd(0.6), rnd(6), rnd(5) + 3, rnd(6), 0.28 + Math.random() * 0.2, 0.8, 3.4, 12, 6.5, 2, 1, -1, 4);
           litRGB(0x3a3632, e.x, e.z, rgb);
@@ -497,8 +504,8 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
         mesh.visible = !!g;
         if (!g) return;
         const look = fragLook[m.mode === 'breach' ? (m.actors[g.owner]?.team ?? 0) : g.owner % 2];
-        mesh.geometry = g.kind === 'frag' ? look.geo : smokeGeo;
-        mesh.material = g.kind === 'frag' ? look.mat : smokeMat;
+        mesh.geometry = g.kind === 'frag' ? look.geo : g.kind === 'flash' ? flashGeo : smokeGeo;
+        mesh.material = g.kind === 'frag' ? look.mat : g.kind === 'flash' ? flashMat : smokeMat;
         mesh.position.set(g.x, g.y, g.z);
         mesh.rotation.set(g.spin, g.spin * 0.7, 0);
       });
