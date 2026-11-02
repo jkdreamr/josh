@@ -7,12 +7,13 @@ import { think } from './bots.ts';
 import { meta } from './meta';
 import {
   PACKET_LIMIT, endPacket, helloPacket, initPacket, movePacket, operationPackets, packetBytes, parsePacket,
-  snapshotPackets, statePacket, type NetOp, type Packet, type RosterEntry, type SnakeState,
+  snapshotPackets, statePacket, type NetOp, type Packet, type RosterEntry,
 } from './net.ts';
+import { HostClock, HostHeads, INTERP, OwnSnake, SILENT, STATE_EVERY, StateBuffer, WallClock } from './netsync.ts';
 import { overlayLayout, renderWorld, type Camera, type Particle } from './render.ts';
 import {
   TICK, SKINS, addSnake, angleDiff, bodyGridFor, createSoloWorld, createWorld, maxTurnRate, spawnSnake, step,
-  type Input, type Level, type World,
+  type Input, type Level, type Snake, type World,
 } from './world.ts';
 import {
   applyHeadState, applyOps, loadSnapshot, makeRoster, ordinal, peopleLine, peopleResults, resultRows, rosterChanges, rosterNotice,
@@ -167,28 +168,12 @@ type Hud = {
 };
 type TouchPoint = { x: number; y: number; startX: number; startY: number };
 type SnapshotBuffer = { total: number; parts: Map<number, unknown[][]> };
-type RemoteSample = { receivedAt: number; tick: number; clock: number; snakes: SnakeState[] };
-
-function interpolateStates(before: RemoteSample, after: RemoteSample, alpha: number): SnakeState[] {
-  const previous = new Map(before.snakes.map((row) => [row[0], row]));
-  return after.snakes.map((row): SnakeState => {
-    const old = previous.get(row[0]);
-    if (!old) return row;
-    return [
-      row[0],
-      old[1] + (row[1] - old[1]) * alpha,
-      old[2] + (row[2] - old[2]) * alpha,
-      old[3] + angleDiff(row[3], old[3]) * alpha,
-      old[4] + (row[4] - old[4]) * alpha,
-      alpha < 0.5 ? old[5] : row[5],
-      row[6],
-      alpha < 0.5 ? old[7] : row[7],
-      old[8] + (row[8] - old[8]) * alpha,
-      old[9] + (row[9] - old[9]) * alpha,
-      Math.max(old[10], row[10]),
-    ] as SnakeState;
-  });
-}
+/** How a guest's own snake moves, carried over a new world or a snapshot from the host instead of being pulled back to where the host had it. */
+type Motion = Pick<Snake, 'x' | 'y' | 'px' | 'py' | 'angle' | 'prevAngle' | 'vx' | 'vy' | 'body' | 'pathDistance' | 'boosting'>;
+const motionOf = (snake: Snake): Motion => ({
+  x: snake.x, y: snake.y, px: snake.px, py: snake.py, angle: snake.angle, prevAngle: snake.prevAngle,
+  vx: snake.vx, vy: snake.vy, body: snake.body.slice(), pathDistance: snake.pathDistance, boosting: snake.boosting,
+});
 
 function Play() {
   const shell = useShell();
@@ -211,14 +196,24 @@ function Play() {
   const boardLevelRef = useRef<Level>('normal');
   const durationRef = useRef(180);
   const accumulator = useRef(0);
-  const remoteInputs = useRef(new Map<number, Input>());
+  /** Host: what guests say about their own snakes, and each snake's warp. */
+  const heads = useRef(new HostHeads());
   const botInputs = useRef(new Map<number, Input>());
   const receivedMoveSeq = useRef(new Map<number, number>());
   const opSeq = useRef(0);
   const sentMoveSeq = useRef(0);
   const receivedOpSeq = useRef(0);
   const snapshots = useRef(new Map<number, SnapshotBuffer>());
-  const remoteSamples = useRef<RemoteSample[]>([]);
+  /** Guest: its own snake (moved here), the host's states and clock (for drawing everyone else), and when a state last came. */
+  const own = useRef(new OwnSnake());
+  const states = useRef(new StateBuffer());
+  const hostClock = useRef(new HostClock());
+  const heardAt = useRef(-Infinity);
+  /** Guest: a new world came and its snapshot hasn't yet (the world's own snake isn't where the host has it until then). */
+  const awaitingSnapshot = useRef(false);
+  const ownAccumulator = useRef(0);
+  /** Online, the round keeps to the wall clock. */
+  const wall = useRef(new WallClock());
   const receivedStateTick = useRef(-1);
   const pointerPosition = useRef<{ x: number; y: number } | null>(null);
   const input = useRef({ target: 0, boost: false, mode: 'pointer' as 'pointer' | 'keys' | 'joystick', lastTarget: 99, lastBoost: false });
@@ -255,6 +250,16 @@ function Play() {
     setLate(false);
     setLateOver(null);
   };
+  /** Guest: a new round (or a world from scratch) starts our own snake, the host's clock and its states over. */
+  const resetGuestNet = () => {
+    own.current.reset();
+    states.current.reset();
+    hostClock.current.reset();
+    receivedStateTick.current = -1;
+    heardAt.current = -Infinity;
+    ownAccumulator.current = 0;
+    wall.current.reset();
+  };
   const sendToRoom = (value: Packet, to?: number, fast = false) => {
     if (packetBytes(value) > PACKET_LIMIT) return;
     onlineRef.current?.send(value, to === undefined ? (fast ? { fast: true } : undefined) : { to, fast });
@@ -281,13 +286,12 @@ function Play() {
     boostHeld.current = false;
     touches.current.clear();
     particles.current = [];
-    remoteInputs.current.clear();
+    heads.current = new HostHeads();
     botInputs.current.clear();
     receivedMoveSeq.current.clear();
-    remoteSamples.current = [];
-    receivedStateTick.current = -1;
     opSeq.current = receivedOpSeq.current = 0;
     accumulator.current = 0;
+    wall.current.reset();
     ended.current = false;
     const info = initPacket(room.round, seed, ARENA_RADIUS, durationRef.current, levelRef.current, opSeq.current, roster);
     sendToRoom(info);
@@ -311,8 +315,7 @@ function Play() {
         roundRef.current = room.round;
         currentId.current = -1;
         ended.current = false;
-        remoteSamples.current = [];
-        receivedStateTick.current = -1;
+        resetGuestNet();
         sendToRoom(helloPacket(room.round));
       }
       return;
@@ -353,6 +356,12 @@ function Play() {
       const snake = world.snakes.find((s) => s.id === entry.id);
       if (!snake) continue;
       const joined = snake.seat < 0 && entry.seat >= 0;
+      // someone else steers it now (a person took a bot's seat, or left it to one): whatever the last one said is over
+      if (snake.seat !== entry.seat || snake.bot !== entry.bot) {
+        heads.current.reset(snake, performance.now() / 1000);
+        receivedMoveSeq.current.delete(snake.seat);
+        receivedMoveSeq.current.delete(entry.seat);
+      }
       snake.seat = entry.seat;
       snake.name = entry.name;
       snake.skin = entry.skin;
@@ -408,8 +417,7 @@ function Play() {
         roundRef.current = msg.r;
         currentId.current = -1;
         ended.current = false;
-        remoteSamples.current = [];
-        receivedStateTick.current = -1;
+        resetGuestNet();
         sendToRoom(helloPacket(msg.r));
         if (msg.k === 'S') return;
       }
@@ -423,8 +431,14 @@ function Play() {
           const last = receivedMoveSeq.current.get(from) ?? -1;
           if (msg.seq <= last) return;
           receivedMoveSeq.current.set(from, msg.seq);
-          remoteInputs.current.set(snake.id, { target: msg.target, boost: msg.boost });
+          heads.current.receive(snake.id, msg, performance.now() / 1000);
         } else if ((msg.k === 'H' || msg.k === 'Q') && !ended.current) {
+          // A hello is a page starting over (a new round, a late join, a reload): its move numbers start over too.
+          const snake = msg.k === 'H' ? world.snakes.find((s) => s.seat === from && !s.bot) : undefined;
+          if (snake) {
+            heads.current.reset(snake, performance.now() / 1000);
+            receivedMoveSeq.current.delete(from);
+          }
           sendToRoom(initPacket(room.round, seedRef.current, ARENA_RADIUS, durationRef.current, levelRef.current, opSeq.current, rosterRef.current), from);
           for (const part of snapshotPackets(world, room.round, world.tick + 1)) sendToRoom(part, from);
         }
@@ -432,6 +446,12 @@ function Play() {
       }
       if (msg.k === 'I') {
         if (rosterRef.current.length && roundRef.current === msg.r) showNotice(rosterNotice(rosterChanges(rosterRef.current, msg.roster, room.seat)));
+        const sameRound = roundRef.current === msg.r && !!worldRef.current;
+        // A new roster mid-round (someone came or went, or we asked to catch up) is no reason to pull our own snake
+        // back to where the host had it: it carries on from where we have it, in the new world too.
+        const mine = sameRound && own.current.moving ? worldRef.current?.snakes.find((snake) => snake.id === currentId.current && snake.alive) : undefined;
+        const carried = mine ? { id: mine.id, motion: motionOf(mine), mass: mine.mass, peak: mine.peak, kills: mine.kills } : null;
+        if (!sameRound) resetGuestNet();
         roundRef.current = msg.r;
         const world = createWorld({ seed: msg.seed, radius: msg.radius });
         for (const entry of msg.roster) addSnake(world, {
@@ -445,12 +465,16 @@ function Play() {
         levelRef.current = msg.level;
         boardLevelRef.current = msg.level;
         currentId.current = world.snakes.find((snake) => snake.seat === room.seat && !snake.bot)?.id ?? -1;
-        input.current.target = world.snakes[currentId.current]?.angle ?? 0;
-        input.current.boost = false;
+        const ours = world.snakes.find((snake) => snake.id === currentId.current);
+        if (carried && ours && carried.id === ours.id) Object.assign(ours, carried.motion, { mass: carried.mass, peak: carried.peak, kills: carried.kills });
+        else {
+          own.current.reset();
+          input.current.target = ours?.angle ?? 0;
+          input.current.boost = false;
+        }
+        awaitingSnapshot.current = true;
         receivedOpSeq.current = msg.seq;
         snapshots.current.clear();
-        remoteSamples.current = [];
-        receivedStateTick.current = -1;
         away.current = false;
         if (lateRef.current && currentId.current >= 0 && shellRef.current.status === 'ready') {
           setLate(true);
@@ -463,8 +487,18 @@ function Play() {
         if (!world) return;
         if (msg.tick <= receivedStateTick.current) return;
         receivedStateTick.current = msg.tick;
-        remoteSamples.current.push({ receivedAt: performance.now(), tick: msg.tick, clock: msg.clock, snakes: msg.snakes });
-        if (remoteSamples.current.length > 4) remoteSamples.current.shift();
+        const now = performance.now() / 1000;
+        // everyone else is drawn from these, on the host's clock (the tick each state was taken at)
+        hostClock.current.heard(msg.tick * TICK, now);
+        states.current.push({ t: msg.tick * TICK, snakes: msg.snakes });
+        heardAt.current = now;
+        // our own snake takes its length and score from the host, and its position only when the host moved it
+        // (not before the snapshot of a new world is in: until then the world's copy of our snake is nowhere real)
+        const index = msg.snakes.findIndex((row) => row[0] === currentId.current);
+        const mine = world.snakes.find((snake) => snake.id === currentId.current);
+        if (mine && index >= 0 && !awaitingSnapshot.current && own.current.fromHost(mine, msg.snakes[index], msg.w?.[index])) {
+          ownAccumulator.current = 0;
+        }
       } else if (msg.k === 'O') {
         if (msg.seq <= receivedOpSeq.current) return;
         if (msg.seq !== receivedOpSeq.current + 1) {
@@ -491,7 +525,9 @@ function Play() {
               camera.current.shake = 5;
             } else if (op.killer === currentId.current) sfx.play('coin');
           }
-          applyOps(world, msg.ops);
+          for (const op of msg.ops) if (op.k === 'remove') own.current.removed(op.id);
+          // a host that takes our word places our respawned snake through its warp in the next state instead
+          applyOps(world, own.current.moving ? msg.ops.filter((op) => op.k !== 'spawn' || op.id !== currentId.current) : msg.ops);
         }
         receivedOpSeq.current = msg.seq;
       } else if (msg.k === 'Z') {
@@ -501,8 +537,15 @@ function Play() {
         snapshots.current.set(msg.snap, buffer);
         if (buffer.parts.size === buffer.total && worldRef.current) {
           const all = Array.from({ length: buffer.total }, (_, i) => buffer.parts.get(i) ?? []).flat();
-          loadSnapshot(worldRef.current, all);
+          const world = worldRef.current;
+          const mine = world.snakes.find((snake) => snake.id === currentId.current);
+          const motion = mine?.alive && own.current.moving ? motionOf(mine) : null;
+          loadSnapshot(world, all);
           snapshots.current.clear();
+          awaitingSnapshot.current = false;
+          own.current.expire(world, 0, true);
+          // (the snapshot has our snake where the host had it a moment ago; we have it where it is)
+          if (mine && motion && mine.alive) Object.assign(mine, motion);
         }
       } else if (msg.k === 'P') {
         away.current = msg.away;
@@ -644,7 +687,7 @@ function Play() {
     setBoostPressed(false);
   };
 
-  useGameLoop((dt) => {
+  useGameLoop((dt, now) => {
     const world = worldRef.current;
     const room = onlineRef.current;
     if (!world || ended.current) return;
@@ -663,8 +706,11 @@ function Play() {
     }
     input.current.boost = keys.down('action', 'up', 'ShiftLeft', 'ShiftRight') || boostHeld.current;
 
+    // Online, the round keeps to the wall clock: a slow frame is made up rather than played in slow motion.
+    const elapsed = room ? wall.current.elapsed(now, dt) : dt;
+    const seconds = now / 1000;
     if (host) {
-      accumulator.current = Math.min(TICK * 6, accumulator.current + dt);
+      accumulator.current = Math.min(TICK * (room ? 8 : 6), accumulator.current + elapsed);
       while (accumulator.current >= TICK) {
         const bodyGrid = bodyGridFor(world);
         const inputs = new Map<number, Input>();
@@ -681,11 +727,14 @@ function Play() {
               snake.reaction = levelRef.current === 'hard' ? 0.1 : levelRef.current === 'normal' ? 0.19 : 0.35;
             } else inputs.set(snake.id, botInputs.current.get(snake.id) ?? { target: snake.angle, boost: false });
           } else {
-            inputs.set(snake.id, remoteInputs.current.get(snake.id) ?? { target: snake.angle, boost: false });
+            // a guest's snake: along the path it reported (or, an older guest's, toward where it steers), as of
+            // this tick's moment (a slow frame's ticks are spread over it, rather than all happening at its end)
+            inputs.set(snake.id, heads.current.input(snake, seconds - (accumulator.current - TICK)));
           }
         }
         const events = step(world, inputs, bodyGrid);
         for (const event of events) {
+          if (event.type === 'spawn') heads.current.moved(event.id);
           if (event.type === 'eat' && event.id === currentId.current && world.clock - lastEatSfxAt.current >= 0.1) {
             sfx.tone({ freq: 500, to: 850, dur: 0.055, type: 'sine', vol: 0.09 });
             lastEatSfxAt.current = world.clock;
@@ -723,10 +772,10 @@ function Play() {
         accumulator.current -= TICK;
       }
       if (room?.isHost) {
-        elapsedSend.current += dt;
-        if (elapsedSend.current >= 1 / 12) {
-          elapsedSend.current = 0;
-          sendToRoom(statePacket(room.round, world), undefined, true);
+        elapsedSend.current += elapsed;
+        if (elapsedSend.current >= STATE_EVERY) {
+          elapsedSend.current = Math.min(STATE_EVERY, elapsedSend.current - STATE_EVERY);
+          sendToRoom(statePacket(room.round, world, heads.current.warpList(world)), undefined, true);
         }
         if (world.clock >= durationRef.current) {
           const winner = winnerOf(world);
@@ -737,37 +786,37 @@ function Play() {
           finishOnline(winner, world.clock, ranking);
         }
       }
-    } else {
-      elapsedSend.current += dt;
-      if (elapsedSend.current >= 0.08 && currentId.current >= 0) {
-        elapsedSend.current = 0;
-        const target = input.current.target;
-        const changed = Math.abs(angleDiff(target, input.current.lastTarget)) > 0.04 || input.current.boost !== input.current.lastBoost;
-        if (changed || world.tick % 3 === 0) {
-          input.current.lastTarget = target;
-          input.current.lastBoost = input.current.boost;
-          sendToRoom(movePacket(currentRound(), ++sentMoveSeq.current, target, input.current.boost), undefined, true);
+    } else if (room) {
+      // Our own snake moves here, on our own steering, a tick at a time (unless the host's round has stopped).
+      const hold = away.current || seconds - heardAt.current > SILENT;
+      if (me?.alive && own.current.moving && !hold) {
+        ownAccumulator.current = Math.min(TICK * 8, ownAccumulator.current + elapsed);
+        while (ownAccumulator.current >= TICK) {
+          ownAccumulator.current -= TICK;
+          const ate = own.current.tick(world, me, { target: input.current.target, boost: input.current.boost }, seconds);
+          if (ate && world.clock - lastEatSfxAt.current >= 0.1) {
+            sfx.tone({ freq: 500, to: 850, dur: 0.055, type: 'sine', vol: 0.09 });
+            lastEatSfxAt.current = world.clock;
+          }
         }
+      } else ownAccumulator.current = 0;
+      own.current.expire(world, seconds);
+      const target = input.current.target;
+      const changed = Math.abs(angleDiff(target, input.current.lastTarget)) > 0.04 || input.current.boost !== input.current.lastBoost;
+      if (currentId.current >= 0 && own.current.due(seconds, changed)) {
+        input.current.lastTarget = target;
+        input.current.lastBoost = input.current.boost;
+        sendToRoom(movePacket(currentRound(), ++sentMoveSeq.current, target, input.current.boost, own.current.report(seconds)), undefined, true);
       }
-    }
 
-    if (!host && room && remoteSamples.current.length) {
-      const samples = remoteSamples.current;
-      const renderAt = performance.now() - 1000 / 12;
-      let before = samples[0];
-      let after = samples[samples.length - 1];
-      for (let i = 1; i < samples.length; i++) {
-        if (samples[i].receivedAt >= renderAt) {
-          before = samples[i - 1];
-          after = samples[i];
-          break;
-        }
+      // Everyone else, INTERP behind the host's newest state on its clock (and our own snake too, for a host that doesn't take our word).
+      const hostNow = hostClock.current.at(seconds);
+      const sample = hostNow === null ? null : states.current.at(hostNow - INTERP);
+      if (sample) {
+        world.clock = sample.t;
+        world.tick = Math.floor(sample.t / TICK);
+        applyHeadState(world, own.current.moving ? sample.snakes.filter((row) => row[0] !== currentId.current) : sample.snakes);
       }
-      const span = after.receivedAt - before.receivedAt;
-      const alpha = before === after ? 1 : clamp((renderAt - before.receivedAt) / Math.max(1, span), 0, 1);
-      world.clock = before.clock + (after.clock - before.clock) * alpha;
-      world.tick = Math.floor(before.tick + (after.tick - before.tick) * alpha);
-      applyHeadState(world, interpolateStates(before, after, alpha));
     }
 
     for (const particle of particles.current) {

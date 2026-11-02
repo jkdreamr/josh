@@ -9,7 +9,12 @@ export const FIELD_NAMES = ['Ziti', 'Rigatoni', 'Fusilli', 'Orzo', 'Penne', 'Far
 
 export type Level = 'easy' | 'normal' | 'hard';
 export type Point = { x: number; y: number };
-export type Input = { target: number; boost: boolean };
+/**
+ * How a snake steers for a tick: toward `target`, boosting or not. Online, a guest's own snake comes with `path`
+ * instead: the head positions its owner reported, one a tick, which step walks it along (an empty path holds it still).
+ */
+export type Input = { target: number; boost: boolean; path?: readonly PathPoint[] };
+export type PathPoint = { x: number; y: number; angle: number; boost: boolean };
 export type Skin = { name: string; color: string; light: string };
 export const SKINS: readonly Skin[] = [
   { name: 'Citrus', color: '#f6bd4b', light: '#fff0b2' },
@@ -242,6 +247,20 @@ function addHistory(snake: Snake, oldX: number, oldY: number, newX: number, newY
   dy = 0;
 }
 
+/** Puts a snake's head somewhere new: its body runs on from where it was, or (fresh, or a long way off) lies straight behind it. */
+export function placeHead(snake: Snake, x: number, y: number, angle: number, fresh: boolean) {
+  snake.angle = snake.prevAngle = wrapAngle(angle);
+  if (fresh || Math.hypot(x - snake.x, y - snake.y) > 200) {
+    snake.pathDistance = 0;
+    snake.body = Array.from({ length: bodyCount(snake.mass) }, (_, i) => ({
+      x: x - Math.cos(snake.angle) * i * SPACING,
+      y: y - Math.sin(snake.angle) * i * SPACING,
+    }));
+  } else addHistory(snake, snake.x, snake.y, x, y);
+  snake.x = snake.px = x;
+  snake.y = snake.py = y;
+}
+
 function buildGrid(snakes: Snake[]) {
   const grid = new Map<string, { snake: Snake; point: Point; head: boolean }[]>();
   for (const snake of snakes) {
@@ -284,6 +303,71 @@ function makeDeathPellets(world: World, snake: Snake, events: WorldEvent[]) {
   }
 }
 
+/** Turns a snake toward its target (as fast as its size allows) and moves it a tick: the rules for how every snake moves. */
+export function steer(snake: Snake, input: Input | undefined) {
+  const target = input?.target ?? snake.angle;
+  const turn = clamp(angleDiff(target, snake.angle), -maxTurnRate(snake) * TICK, maxTurnRate(snake) * TICK);
+  snake.prevAngle = wrapAngle(snake.angle);
+  snake.px = snake.x;
+  snake.py = snake.y;
+  snake.angle = wrapAngle(snake.angle + turn);
+  snake.boosting = !!input?.boost && snake.mass > BOOST_MIN;
+  const oldX = snake.x;
+  const oldY = snake.y;
+  const speed = snake.boosting ? BOOST_SPEED : SPEED;
+  snake.vx = Math.cos(snake.angle) * speed;
+  snake.vy = Math.sin(snake.angle) * speed;
+  snake.x += snake.vx * TICK;
+  snake.y += snake.vy * TICK;
+  addHistory(snake, oldX, oldY, snake.x, snake.y);
+}
+
+/** Lengthens a body that is shorter than its mass calls for. */
+export function growBody(snake: Snake) {
+  while (snake.body.length < bodyCount(snake.mass)) {
+    const tail = snake.body[snake.body.length - 1] ?? snake;
+    snake.body.push({ x: tail.x - Math.cos(snake.angle) * SPACING, y: tail.y - Math.sin(snake.angle) * SPACING });
+  }
+}
+
+/** A tick of boosting costs mass, shed as pellets behind the tail. */
+function drain(world: World, snake: Snake, events: WorldEvent[]) {
+  if (!snake.boosting) return;
+  const amount = Math.min(snake.mass - BOOST_MIN, BOOST_DRAIN * TICK);
+  snake.mass -= amount;
+  snake.boostDrop += amount * 0.82;
+  if (snake.boostDrop >= 0.6) {
+    const tail = snake.body[Math.min(snake.body.length - 1, bodyCount(snake.mass) - 1)] ?? snake;
+    const pellet = addPellet(world, tail, false, snake.boostDrop, snake.color);
+    events.push({ type: 'pellet', pellet });
+    snake.boostDrop = 0;
+  }
+}
+
+/** Walks a snake along the head positions its owner reported (a tick a point), laying its body as it goes. Returns where its head went. */
+function walk(world: World, snake: Snake, path: readonly PathPoint[], events: WorldEvent[]): Point[] {
+  snake.prevAngle = wrapAngle(snake.angle);
+  snake.px = snake.x;
+  snake.py = snake.y;
+  const heads: Point[] = [];
+  for (const point of path) {
+    const oldX = snake.x;
+    const oldY = snake.y;
+    snake.angle = wrapAngle(point.angle);
+    snake.boosting = point.boost && snake.mass > BOOST_MIN;
+    snake.x = point.x;
+    snake.y = point.y;
+    addHistory(snake, oldX, oldY, snake.x, snake.y);
+    drain(world, snake, events);
+    heads.push({ x: snake.x, y: snake.y });
+  }
+  const speed = !path.length ? 0 : snake.boosting ? BOOST_SPEED : SPEED;
+  if (!path.length) snake.boosting = false;
+  snake.vx = Math.cos(snake.angle) * speed;
+  snake.vy = Math.sin(snake.angle) * speed;
+  return heads;
+}
+
 export function step(
   world: World,
   inputs: ReadonlyMap<number, Input> | ReadonlyArray<Input | undefined> | Record<number, Input> = [],
@@ -297,6 +381,8 @@ export function step(
     : Array.isArray(inputs)
       ? inputs[id]
       : (inputs as Record<number, Input>)[id];
+  // A walked path is judged at every point on it, so a burst of reported moves can't step over a body or a pellet.
+  const walked = new Map<number, Point[]>();
 
   for (const snake of world.snakes) {
     if (!snake.alive) {
@@ -304,58 +390,39 @@ export function step(
       continue;
     }
     const input = getInput(snake.id);
-    const target = input?.target ?? snake.angle;
-    const turn = clamp(angleDiff(target, snake.angle), -maxTurnRate(snake) * TICK, maxTurnRate(snake) * TICK);
-    snake.prevAngle = wrapAngle(snake.angle);
-    snake.px = snake.x;
-    snake.py = snake.y;
-    snake.angle = wrapAngle(snake.angle + turn);
-    snake.boosting = !!input?.boost && snake.mass > BOOST_MIN;
-    const oldX = snake.x;
-    const oldY = snake.y;
-    const speed = snake.boosting ? BOOST_SPEED : SPEED;
-    snake.vx = Math.cos(snake.angle) * speed;
-    snake.vy = Math.sin(snake.angle) * speed;
-    snake.x += snake.vx * TICK;
-    snake.y += snake.vy * TICK;
-    addHistory(snake, oldX, oldY, snake.x, snake.y);
-    if (snake.boosting) {
-      const drain = Math.min(snake.mass - BOOST_MIN, BOOST_DRAIN * TICK);
-      snake.mass -= drain;
-      snake.boostDrop += drain * 0.82;
-      if (snake.boostDrop >= 0.6) {
-        const tail = snake.body[Math.min(snake.body.length - 1, bodyCount(snake.mass) - 1)] ?? snake;
-        const pellet = addPellet(world, tail, false, snake.boostDrop, snake.color);
-        events.push({ type: 'pellet', pellet });
-        snake.boostDrop = 0;
-      }
+    if (input?.path) {
+      const heads = walk(world, snake, input.path, events);
+      if (heads.length) walked.set(snake.id, heads);
+    } else {
+      steer(snake, input);
+      drain(world, snake, events);
     }
     snake.mass = Math.max(1, snake.mass);
     snake.peak = Math.max(snake.peak, snake.mass);
-    while (snake.body.length < bodyCount(snake.mass)) {
-      const tail = snake.body[snake.body.length - 1] ?? snake;
-      snake.body.push({ x: tail.x - Math.cos(snake.angle) * SPACING, y: tail.y - Math.sin(snake.angle) * SPACING });
-    }
+    growBody(snake);
   }
 
   const deaths = new Map<number, number | null>();
   for (const snake of world.snakes) {
     if (!snake.alive) continue;
     const r = radiusOf(snake.mass);
-    if (Math.hypot(snake.x, snake.y) + r >= world.radius) {
-      deaths.set(snake.id, null);
-      continue;
-    }
-    const nearby = nearGrid(bodyGrid, snake.x, snake.y, r + 28);
-    for (const point of nearby) {
-      if (point.snake === snake || !point.snake.alive) continue;
-      const reach = r + radiusOf(point.snake.mass);
-      const dx = snake.x - point.point.x;
-      const dy = snake.y - point.point.y;
-      if (dx * dx + dy * dy <= reach * reach) {
-        deaths.set(snake.id, point.snake.id);
+    for (const head of walked.get(snake.id) ?? [snake]) {
+      if (Math.hypot(head.x, head.y) + r >= world.radius) {
+        deaths.set(snake.id, null);
         break;
       }
+      const nearby = nearGrid(bodyGrid, head.x, head.y, r + 28);
+      for (const point of nearby) {
+        if (point.snake === snake || !point.snake.alive) continue;
+        const reach = r + radiusOf(point.snake.mass);
+        const dx = head.x - point.point.x;
+        const dy = head.y - point.point.y;
+        if (dx * dx + dy * dy <= reach * reach) {
+          deaths.set(snake.id, point.snake.id);
+          break;
+        }
+      }
+      if (deaths.has(snake.id)) break;
     }
   }
 
@@ -384,19 +451,17 @@ export function step(
   const eaten = new Set<number>();
   for (const snake of world.snakes) {
     if (!snake.alive) continue;
-    const reach = radiusOf(snake.mass) + 16;
-    const candidates: Pellet[] = [];
-    const minX = Math.floor((snake.x - reach) / GRID_SIZE);
-    const maxX = Math.floor((snake.x + reach) / GRID_SIZE);
-    const minY = Math.floor((snake.y - reach) / GRID_SIZE);
-    const maxY = Math.floor((snake.y + reach) / GRID_SIZE);
-    for (let gy = minY; gy <= maxY; gy++) for (let gx = minX; gx <= maxX; gx++) candidates.push(...(pellets.get(`${gx},${gy}`) ?? []));
-    for (const pellet of candidates) {
-      if (eaten.has(pellet.id)) continue;
-      const dx = snake.x - pellet.x;
-      const dy = snake.y - pellet.y;
-      const pull = radiusOf(snake.mass) + 9 + Math.sqrt(pellet.value) * 2;
-      if (dx * dx + dy * dy <= pull * pull) {
+    for (const head of walked.get(snake.id) ?? [snake]) {
+      const reach = radiusOf(snake.mass) + 16;
+      const candidates: Pellet[] = [];
+      const minX = Math.floor((head.x - reach) / GRID_SIZE);
+      const maxX = Math.floor((head.x + reach) / GRID_SIZE);
+      const minY = Math.floor((head.y - reach) / GRID_SIZE);
+      const maxY = Math.floor((head.y + reach) / GRID_SIZE);
+      for (let gy = minY; gy <= maxY; gy++) for (let gx = minX; gx <= maxX; gx++) candidates.push(...(pellets.get(`${gx},${gy}`) ?? []));
+      for (const pellet of candidates) {
+        if (eaten.has(pellet.id)) continue;
+        if (!eats(snake, head, pellet)) continue;
         eaten.add(pellet.id);
         snake.mass += pellet.value;
         snake.peak = Math.max(snake.peak, snake.mass);
@@ -423,6 +488,14 @@ export function step(
     events.push({ type: 'pellet', pellet });
   }
   return events;
+}
+
+/** Whether a head at `head` (the snake's, or a point on its walked path) is close enough to eat a pellet. */
+export function eats(snake: Snake, head: Point, pellet: Pellet) {
+  const dx = head.x - pellet.x;
+  const dy = head.y - pellet.y;
+  const pull = radiusOf(snake.mass) + 9 + Math.sqrt(pellet.value) * 2;
+  return dx * dx + dy * dy <= pull * pull;
 }
 
 export function bodyGridFor(world: World): BodyGrid {
