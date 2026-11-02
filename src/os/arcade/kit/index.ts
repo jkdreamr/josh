@@ -1,6 +1,6 @@
 export { GameShell, useShell, type GameShellProps } from './shell';
 export type { ShellApi, GameStatus, GameOverInfo } from './context';
-export { useGameLoop, MAX_DT } from './loop';
+export { useGameLoop, loopSteps, MAX_DT, MAX_CATCH_UP } from './loop';
 export { useCanvas, type CanvasSize } from './canvas';
 export { useKeys, KeyState, keyAliases, type KeyListener } from './keys';
 export { useHighScore } from './score';
