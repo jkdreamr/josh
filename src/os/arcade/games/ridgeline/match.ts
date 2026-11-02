@@ -1919,7 +1919,8 @@ export function step(m: Match, dt: number, you: Input) {
   if (m.phase === 'over') return;
   m.time += dt;
   for (const a of m.actors) {
-    if (a.id === m.me) act(m, a, you, dt);
+    // (your seat handed to a bot, as the dev autopilot does, plays as one)
+    if (a.id === m.me) act(m, a, a.bot && a.brain && m.authority ? botInput(m, a, dt) : you, dt);
     // an online guest mirrors everyone else: they are where the host's stream puts them
     else if (!m.authority) puppet(m, a, dt);
     // the host: a remote player is where their own machine says, and the rules here judge what they do
