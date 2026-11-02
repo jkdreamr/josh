@@ -115,14 +115,24 @@ export function steerPaddle(p: Paddle, targetY: number, dt: number, speed = PADD
   movePaddle(p, clamp(d, -max, max), dt);
 }
 
-export function step(m: Match, dt: number, events: PongEvent[] = [], rng: Rng = Math.random): PongEvent[] {
+/**
+ * Online, each screen calls the points at its own end (see net.ts): `hold` names the ends whose points are called on the
+ * other screen, where a ball that goes out waits at the edge for word, and with `noServe` the ball stays at center when
+ * the serve is due (a guest waits for the host's serve).
+ */
+export type StepOpts = { hold?: readonly [boolean, boolean]; noServe?: boolean };
+
+export function step(m: Match, dt: number, events: PongEvent[] = [], rng: Rng = Math.random, opts?: StepOpts): PongEvent[] {
   if (m.winner !== null || dt <= 0) return events;
   m.time += dt;
   if (m.serveIn > 0) {
     m.serveIn -= dt;
     if (m.serveIn <= 0) {
-      serve(m, rng);
-      events.push({ kind: 'serve' });
+      if (opts?.noServe) m.serveIn = 0;
+      else {
+        serve(m, rng);
+        events.push({ kind: 'serve' });
+      }
     }
     return events;
   }
@@ -170,20 +180,28 @@ export function step(m: Match, dt: number, events: PongEvent[] = [], rng: Rng = 
 
   if (b.x < -BALL_R * 2 || b.x > COURT.w + BALL_R * 2) {
     const scorer: Side = b.x < 0 ? 1 : 0;
-    m.score[scorer]++;
-    events.push({ kind: 'score', side: scorer, x: b.x < 0 ? 0 : COURT.w, y: b.y });
-    b.vx = 0;
-    b.vy = 0;
-    b.spin = 0;
-    b.x = COURT.w / 2;
-    b.y = COURT.h / 2;
-    if (m.score[scorer] >= WIN_SCORE) {
-      m.winner = scorer;
-      events.push({ kind: 'win', side: scorer });
-    } else {
-      m.serveTo = other(scorer);
-      m.serveIn = SERVE_DELAY;
-    }
+    if (opts?.hold?.[other(scorer)]) b.x = clamp(b.x, -BALL_R * 2, COURT.w + BALL_R * 2);
+    else point(m, scorer, b.y, events);
+  }
+  return events;
+}
+
+/** `scorer` wins the point (the ball went out at the other end, at height y), and the ball goes back to center to serve. */
+export function point(m: Match, scorer: Side, y: number, events: PongEvent[] = []): PongEvent[] {
+  const b = m.ball;
+  m.score[scorer]++;
+  events.push({ kind: 'score', side: scorer, x: scorer === 1 ? 0 : COURT.w, y });
+  b.vx = 0;
+  b.vy = 0;
+  b.spin = 0;
+  b.x = COURT.w / 2;
+  b.y = COURT.h / 2;
+  if (m.score[scorer] >= WIN_SCORE) {
+    m.winner = scorer;
+    events.push({ kind: 'win', side: scorer });
+  } else {
+    m.serveTo = other(scorer);
+    m.serveIn = SERVE_DELAY;
   }
   return events;
 }

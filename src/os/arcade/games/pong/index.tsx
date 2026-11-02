@@ -2,7 +2,8 @@ import { useEffect, useRef } from 'react';
 import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSetting, levelIndex, levelLabel, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { meta } from './meta';
-import { BALL_R, BASE_SPEED, COURT, KEY_SPEED, MAX_SPEED, PADDLE, SERVE_DELAY, WIN_SCORE, aiStep, clamp, createAi, createMatch, extrapolateBall, mergeGuestSnapshot, movePaddle, other, paddleX, steerPaddle, step, type AiLevel, type PongEvent, type Side } from './pong';
+import { BALL_R, BASE_SPEED, COURT, KEY_SPEED, MAX_SPEED, PADDLE, SERVE_DELAY, WIN_SCORE, aiStep, clamp, createAi, createMatch, extrapolateBall, mergeGuestSnapshot, movePaddle, other, paddleX, steerPaddle, step, type AiLevel, type Match, type Paddle, type PongEvent, type Side } from './pong';
+import { HostClock, frame, guestEvents, guestHears, hearPass, hostHears, legacyReport, newNet, shownBall, shownThem, SEND_S, type EventsMsg, type Net, type PaddleMsg, type PassMsg, type SnapshotMsg } from './net';
 import './pong.css';
 
 const MODE = defineSetting('pong:mode', PLAY_MODES, 'cpu');
@@ -87,10 +88,12 @@ function Pong() {
     hover: null as { side: Side; y: number } | null,
     mouseAt: 0,
     keyAt: 0,
-    remoteTarget: null as number | null,
+    /** Online play (net.ts): the host always, a guest once its host's snapshots carry the clock. A guest's reading of the host's clock outlasts a match. */
+    net: newNet(0) as Net,
+    clock: new HostClock(),
+    /** A guest following an older host's snapshots (and a spectator): the ball's jump from the last one, faded out. */
     ballErr: { x: 0, y: 0 },
     sendAt: 0,
-    snapshotAt: 0,
     view: { ox: 0, oy: 0, s: 1, portrait: false } as View,
     /** Shell chrome over the canvas (control pill, online badge) in layout pixels. */
     covers: [] as Box[],
@@ -108,9 +111,9 @@ function Pong() {
     st.level = levelIndex(levelName) as AiLevel;
     st.match = createMatch(Math.random() < 0.5 ? 0 : 1);
     st.ai = createAi();
-    st.remoteTarget = null;
+    st.net = newNet(online && online.seat !== 0 ? 1 : 0, st.clock);
+    st.ballErr = { x: 0, y: 0 };
     st.sendAt = 0;
-    st.snapshotAt = 0;
     st.ended = false;
     shell.invalidate();
   }, [mode, levelName, shell.status, shell.invalidate, st, online?.seat]);
@@ -167,9 +170,22 @@ function Pong() {
     if (!online || !data || typeof data !== 'object') return;
     const message = data as { game?: unknown; type?: unknown; y?: unknown; match?: unknown; events?: unknown };
     if (message.game !== 'pong') return;
+    const local = performance.now() / 1000;
+    const guest = !online.watching && online.seat !== 0;
     if (online.seat === 0 && from !== 0 && message.type === 'paddle' && typeof message.y === 'number' && Number.isFinite(message.y)) {
-      st.remoteTarget = message.y;
+      hostPlay(hostHears(st.net, st.match, message as PaddleMsg, local));
+    } else if (online.seat === 0 && from !== 0 && message.type === 'pass') {
+      hostPlay(hearPass(st.net, st.match, message as PassMsg));
+    } else if (guest && from === 0 && message.type === 'pass') {
+      onEvents(hearPass(st.net, st.match, message as PassMsg));
     } else if (online.seat !== 0 && from === 0 && message.type === 'snapshot' && message.match && typeof message.match === 'object') {
+      // a guest whose host keeps the clock plays its own end (net.ts); otherwise it follows the host's snapshots
+      const heard = guest ? guestHears(st.net, st.match, message as SnapshotMsg, local) : null;
+      if (heard) {
+        onEvents(heard);
+        flush();
+        return;
+      }
       const before = st.match.ball;
       // a spectator steers nothing, so both paddles are the host's
       const next = online.watching ? (message.match as typeof st.match) : mergeGuestSnapshot(st.match, message.match as typeof st.match);
@@ -180,9 +196,23 @@ function Pong() {
       st.ballErr = smooth ? { x: dx, y: dy } : { x: 0, y: 0 };
       st.match = next;
     } else if (online.seat !== 0 && from === 0 && message.type === 'events' && Array.isArray(message.events)) {
-      onEvents(message.events as PongEvent[]);
+      onEvents(guest && st.net.live ? guestEvents(st.net, st.match, message as EventsMsg, local) : (message.events as PongEvent[]));
     }
+    flush();
   }), [online?.onMessage, online?.seat]);
+
+  /** Sends what the netcode has queued. */
+  const flush = () => {
+    if (!online) return;
+    for (const o of st.net.out.splice(0)) online.send(o.data, { fast: o.fast, reliable: o.reliable });
+  };
+  /** Host: sounds and shows what happened, and tells everyone (with the match it left, for guests that call their own end). */
+  const hostPlay = (events: PongEvent[]) => {
+    onEvents(events);
+    if (online?.seat === 0 && events.length) {
+      online.send({ game: 'pong', type: 'events', events, match: st.match, at: Math.round(st.net.t * 1000), turn: st.net.turn } satisfies EventsMsg);
+    }
+  };
 
   // Pointer input: finger or mouse steers a paddle. In 2P each half of the court owns a side.
   useEffect(() => {
@@ -274,6 +304,11 @@ function Pong() {
     return nameFor(side);
   };
 
+  /** Where the ball and a paddle are drawn: online, a correction from the other screen fades out rather than jumps. */
+  const netLive = () => !!online && !online.watching && st.net.live;
+  const ballAt = (m: Match) => (netLive() ? shownBall(st.net, m.ball) : { x: m.ball.x + st.ballErr.x, y: m.ball.y + st.ballErr.y });
+  const paddleAt = (m: Match, side: Side) => (netLive() && side !== st.net.me ? shownThem(st.net, m) : m.paddles[side].y);
+
   useGameLoop(
     (dt) => {
       if (dt <= 0) return;
@@ -281,8 +316,6 @@ function Pong() {
       const now = performance.now();
       const guest = !!online && online.seat !== 0;
       const sides: Side[] = online?.watching ? [] : guest ? [1] : online ? [0] : st.mode === '2p' ? [0, 1] : [0];
-      st.sendAt += dt;
-      st.snapshotAt += dt;
       st.measureIn -= dt;
       if (st.measureIn <= 0) {
         st.measureIn = 0.5;
@@ -291,7 +324,8 @@ function Pong() {
       const portrait = st.view.portrait;
       // Keyboard: one player uses either cluster, two local players split W/S and the arrows.
       // In a portrait court the paddle runs left to right, so the side keys move it too.
-      for (const side of sides) {
+      // (read once a frame; online the match steps more finely than frames, and the paddle moves with each step)
+      const control = (side: Side) => {
         const local2p = st.mode === '2p' && !online;
         const along = local2p
           ? (keys.down(side === 0 ? 'KeyS' : 'ArrowDown') || (portrait && keys.down(side === 0 ? 'KeyD' : 'ArrowRight')) ? 1 : 0) -
@@ -301,38 +335,44 @@ function Pong() {
         const held = [...st.pointers.values()].find((p) => p.side === side);
         const hover = st.hover?.side === side && st.mouseAt > st.keyAt ? st.hover : null;
         const target = held ?? hover;
-        if (target) steerPaddle(m.paddles[side], target.y, dt, POINTER_SPEED);
-        else if (along !== 0) movePaddle(m.paddles[side], along * KEY_SPEED * dt, dt);
-        else m.paddles[side].vy *= Math.max(0, 1 - dt * 14);
-      }
-      if (guest && !online!.watching && st.sendAt >= 0.05) {
-        online!.send({ game: 'pong', type: 'paddle', y: m.paddles[1].y }, { fast: true });
-        st.sendAt %= 0.05;
-      }
-      if (online && online.seat === 0) {
-        if (st.remoteTarget !== null) steerPaddle(m.paddles[1], st.remoteTarget, dt, POINTER_SPEED);
-        else m.paddles[1].vy *= Math.max(0, 1 - dt * 14);
-      } else if (!online && st.mode === 'cpu') aiStep(m, 1, st.level, st.ai, dt);
-      if (!guest) {
-        const events = step(m, dt);
-        onEvents(events);
-        if (online?.seat === 0 && events.length) online.send({ game: 'pong', type: 'events', events });
-        if (online?.seat === 0 && st.snapshotAt >= 0.05) {
-          online.send({ game: 'pong', type: 'snapshot', match: m }, { fast: true });
-          st.snapshotAt %= 0.05;
-        }
+        return (p: Paddle, h: number) => {
+          if (target) steerPaddle(p, target.y, h, POINTER_SPEED);
+          else if (along !== 0) movePaddle(p, along * KEY_SPEED * h, h);
+          else p.vy *= Math.max(0, 1 - h * 14);
+        };
+      };
+      if (online && !online.watching && st.net.live) {
+        // Online with the host's clock: each screen plays the ball in its own half and its own paddle exactly (net.ts).
+        const events = frame(st.net, m, now / 1000, dt, control(online.seat === 0 ? 0 : 1));
+        if (online.seat === 0) hostPlay(events);
+        else onEvents(events);
+        flush();
       } else {
-        extrapolateBall(m, dt);
-        if (m.serveIn <= 0 && m.winner === null) movePaddle(m.paddles[0], m.paddles[0].vy * dt, dt);
-        const target = [...st.pointers.values()].find((p) => p.side === 1) ?? (st.hover?.side === 1 ? st.hover : null);
-        if (target && !online!.watching) m.paddles[1].y += (target.y - m.paddles[1].y) * Math.min(1, dt * 12);
+        for (const side of sides) control(side)(m.paddles[side], dt);
+        if (guest && !online!.watching) {
+          // (still sending its clock, so a newer host can be read and this guest can take over its end)
+          st.sendAt += dt;
+          if (st.sendAt >= SEND_S) {
+            online!.send(legacyReport(m.paddles[1], now / 1000), { fast: true });
+            st.sendAt %= SEND_S;
+          }
+        }
+        if (!online && st.mode === 'cpu') aiStep(m, 1, st.level, st.ai, dt);
+        if (!guest) onEvents(step(m, dt));
+        else {
+          // following an older host's snapshots (or watching): the ball flies on between them
+          extrapolateBall(m, dt);
+          if (m.serveIn <= 0 && m.winner === null) movePaddle(m.paddles[0], m.paddles[0].vy * dt, dt);
+          const target = [...st.pointers.values()].find((p) => p.side === 1) ?? (st.hover?.side === 1 ? st.hover : null);
+          if (target && !online!.watching) m.paddles[1].y += (target.y - m.paddles[1].y) * Math.min(1, dt * 12);
+        }
+        const decay = Math.exp(-dt * 12);
+        st.ballErr.x *= decay;
+        st.ballErr.y *= decay;
       }
-      const decay = Math.exp(-dt * 12);
-      st.ballErr.x *= decay;
-      st.ballErr.y *= decay;
 
       if (m.serveIn <= 0 && m.winner === null) {
-        st.trail.push({ x: m.ball.x + st.ballErr.x, y: m.ball.y + st.ballErr.y });
+        st.trail.push(ballAt(m));
         if (st.trail.length > 16) st.trail.shift();
       } else st.trail.length = 0;
 
@@ -489,7 +529,7 @@ function Pong() {
 
       // Paddles flash and swell for a moment on contact.
       for (const side of [0, 1] as Side[]) {
-        const p = m.paddles[side];
+        const py = paddleAt(m, side);
         const hit = st.hit[side];
         const pw = PADDLE.w * (1 + hit * 0.5);
         const x = paddleX(side) - pw / 2;
@@ -497,14 +537,13 @@ function Pong() {
         c.shadowBlur = (14 + hit * 16) * s;
         c.fillStyle = hit > 0 ? mix(P_COLORS[side], '#ffffff', hit * 0.6) : P_COLORS[side];
         c.beginPath();
-        c.roundRect(x, p.y - PADDLE.h / 2, pw, PADDLE.h, pw / 2);
+        c.roundRect(x, py - PADDLE.h / 2, pw, PADDLE.h, pw / 2);
         c.fill();
         c.shadowBlur = 0;
       }
 
       if (live) {
-        const bx = m.ball.x + st.ballErr.x;
-        const by = m.ball.y + st.ballErr.y;
+        const { x: bx, y: by } = ballAt(m);
         c.shadowColor = ballColor;
         c.shadowBlur = (12 + heat * 10) * s;
         c.fillStyle = ballColor;
