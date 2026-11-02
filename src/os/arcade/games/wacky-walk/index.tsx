@@ -11,8 +11,8 @@ import {
   type Show,
 } from './show';
 import {
-  fallPacket, finishPacket, Interp, movePacket, parsePacket, playersPacket, showOf, showPacket,
-  tilePacket, unpackBody, type Packet,
+  ClockGap, fallPacket, finishPacket, followClock, Interp, movePacket, parsePacket, playersPacket, relayOf, showOf, showPacket, takeMove, takePlayers,
+  tilePacket, type Packet, type Sample,
 } from './net';
 import type { Body, Course, CourseId, Entrant, Input, Bump } from './types.ts';
 import { EV } from './types.ts';
@@ -178,6 +178,8 @@ function Play() {
   const bodiesRef = useRef(new Map<number, Body>());
   const brainsRef = useRef(new Map<number, Brain>());
   const interpRef = useRef(new Map<number, Interp>());
+  /** Host: each guest's course clock against ours, from its moves. */
+  const gapsRef = useRef(new Map<number, ClockGap>());
   const remoteClockRef = useRef(0);
   const guestClockRef = useRef(0);
   const clockErrorRef = useRef(0);
@@ -248,6 +250,7 @@ function Play() {
     bodiesRef.current.clear();
     brainsRef.current.clear();
     interpRef.current.clear();
+    gapsRef.current.clear();
     hiddenRef.current.clear();
     checkpointRef.current.clear();
     lastGroundRef.current.clear();
@@ -648,7 +651,9 @@ function Play() {
       if (packet.k === 'm') {
         const who = entrant(from, show);
         if (!who || who.bot) return;
-        getInterp(from).push(show.clock, unpackBody(packet.b));
+        let gap = gapsRef.current.get(from);
+        if (!gap) gapsRef.current.set(from, (gap = new ClockGap()));
+        takeMove(getInterp(from), gap, show.clock, packet);
         remoteClockRef.current = show.clock;
       } else if (packet.k === 'fin') {
         if (markFinish(show, from)) {
@@ -680,11 +685,7 @@ function Play() {
     } else if (packet.k === 'P') {
       remoteClockRef.current = packet.c;
       clockErrorRef.current = packet.c - guestClockRef.current;
-      for (const row of packet.b) {
-        const id = row[0];
-        if (id === currentRoom.seat) continue;
-        getInterp(id).push(packet.c, unpackBody(row.slice(1)));
-      }
+      takePlayers(packet, currentRoom.seat, getInterp);
     } else if (packet.k === 'tile') {
       const course = courseRef.current;
       if (course) applyTouch(course, packet.id, packet.at);
@@ -936,10 +937,7 @@ function Play() {
       markRunnerFall(show, id, body);
     }
     if (modeRef.current === 'online' && currentRoom && !currentRoom.isHost) {
-      guestClockRef.current += STEP;
-      const error = remoteClockRef.current - guestClockRef.current;
-      if (Math.abs(error) > 0.5) guestClockRef.current = remoteClockRef.current;
-      else guestClockRef.current += error * STEP * 0.1;
+      guestClockRef.current = followClock(guestClockRef.current, remoteClockRef.current, STEP);
       show.phaseT += STEP;
       show.clock = guestClockRef.current;
       return;
@@ -964,7 +962,8 @@ function Play() {
     }
     reportLocalElimination(show);
     if (show.phase === 'done') {
-      if (authoritative) sendShow(true);
+      // (only if it changed: the show stays done until the next one, and this runs 60 times a second)
+      if (authoritative) sendShow();
       finishShow(show);
     }
   }
@@ -1048,19 +1047,21 @@ function Play() {
       netClockRef.current += dt;
       if (netClockRef.current >= 1 / 12) {
         netClockRef.current %= 1 / 12;
-        currentRoom.send(movePacket(currentRoom.round, activeShow.round, playerBody), { fast: true });
+        // (with when it was sampled on our course clock, which the host places it by)
+        currentRoom.send(movePacket(currentRoom.round, activeShow.round, playerBody, guestClockRef.current), { fast: true });
       }
     } else if (mode === 'online' && currentRoom?.isHost) {
       netClockRef.current += dt;
       if (netClockRef.current >= 1 / 12) {
         netClockRef.current %= 1 / 12;
-        const states: { id: number; body: Body }[] = [];
+        const states: { id: number; body: Body | Sample; age?: number }[] = [];
         for (const id of activeShow.inRound) {
           if (hiddenRef.current.has(id)) continue;
           const body = bodiesRef.current.get(id);
           if (!body) continue;
-          if (!isLocallyStepped(id)) sampleRemote(id, activeShow.clock);
-          states.push({ id, body });
+          // a guest goes out as it last said, and how long ago that was, rather than where we draw it a moment further back
+          const relay = isLocallyStepped(id) ? null : relayOf(getInterp(id), activeShow.clock);
+          states.push(relay ? { id, body: relay.body, age: relay.age } : { id, body });
         }
         currentRoom.send(playersPacket(currentRoom.round, activeShow.round, activeShow.clock, states), { fast: true });
       }
