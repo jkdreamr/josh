@@ -302,6 +302,24 @@
 .g-ridgeline .g-ridgeline-hpBar i.is-low {
   background: #ff5a4a;
 }
+/* royale: the boost meter, a thin bar under the health bar, brighter while it is high enough to run faster */
+.g-ridgeline .g-ridgeline-boostBar {
+  width: 150px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.g-ridgeline .g-ridgeline-boostBar i {
+  display: block;
+  height: 100%;
+  background: #e0b13c;
+  transition: width 0.3s linear;
+}
+.g-ridgeline .g-ridgeline-boostBar[data-fast='1'] i {
+  background: #ffd25a;
+  box-shadow: 0 0 6px rgba(255, 210, 90, 0.7);
+}
 .g-ridgeline .g-ridgeline-armor {
   display: flex;
   align-items: center;
@@ -1364,7 +1382,8 @@
   .g-ridgeline .g-ridgeline-mag b {
     font-size: 32px;
   }
-  .g-ridgeline .g-ridgeline-hpBar {
+  .g-ridgeline .g-ridgeline-hpBar,
+  .g-ridgeline .g-ridgeline-boostBar {
     width: 100px;
   }
   .g-ridgeline .g-ridgeline-slots {

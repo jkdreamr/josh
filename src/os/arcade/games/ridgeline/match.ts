@@ -9,7 +9,7 @@ import { blastCars, carHit, carNear, enterCar, hurtCar, leaveCar, rayCars, rideI
 import { fieldTo, navOf } from './nav.ts';
 import { clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
 import { CROUCH_H, GRAVITY, STAND_H, blockedAt, clearLine, groundAt, newHit, raySphere, rayWorld, stepBody, type Body } from './physics.ts';
-import { AMMO_KINDS, AMMO_MAX, AMMO_OF, CHUTE_GLIDE, CHUTE_OPEN, CHUTE_VY, FALL_FAST, FALL_SLOW, FALL_VY, HEAL, HELMET, NADE_MAX, RED_EVERY, RED_FIRST, RED_GAP, RED_LIVE, RED_R, RED_WARN, ROYALE_PLAYERS, SHELL_DMG, SHELL_R, SUPPLY_FALL, SUPPLY_HIGH, SUPPLY_MAX, VEST, ZONES, nextCircle, onLand, planeAt, planePath, spawnLoot, supplyContents, type AmmoKind, type HealKind, type Item, type Plane, type Red, type Supply, type Zone as Circle } from './royale.ts';
+import { AMMO_KINDS, AMMO_OF, BOOST, BOOST_DRAIN, BOOST_FAST, BOOST_RUN, CHUTE_GLIDE, CHUTE_OPEN, CHUTE_VY, COMP_BLOOM, COMP_KICK, FALL_FAST, FALL_SLOW, FALL_VY, HEAL, HELMET, RED_EVERY, RED_FIRST, RED_GAP, RED_LIVE, RED_R, RED_WARN, ROYALE_PLAYERS, SHELL_DMG, SHELL_R, SUPPLY_FALL, SUPPLY_HIGH, SUPPLY_MAX, USE, VEST, ZONES, adsOf, adsTimeOf, ammoCap, attach, boostCap, boostHeal, fits, fitted, hasAtt, healCap, magOf, nadeCap, nextCircle, onLand, planeAt, planePath, spawnLoot, supplyContents, type AmmoKind, type AttKind, type BoostKind, type HealKind, type Item, type Mods, type Plane, type Red, type Supply, type UseKind, type Zone as Circle } from './royale.ts';
 import { floorAt, heightAt } from './terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, LOSS_STREAK_BONUS, MAX_CREDITS, NADES, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, interval, kickOf, rangeMul, type WeaponId } from './weapons.ts';
 import { ARENA, SITE_R, SPAWN_R, yawTo, type Surface, type World } from './world.ts';
@@ -65,14 +65,18 @@ export type Input = {
   buy: ShopItem | null;
   /** Held: plant or defuse (breach). Pressed: pick up what's at your feet (royale). */
   use: boolean;
-  /** Patch yourself up (royale). */
+  /** Patch yourself up (royale): a heal while one helps, else a boost. */
   heal: boolean;
   /** Pressed: get into the vehicle at hand, or out of the one you are in (royale). */
   ride: boolean;
+  /** Take a boost (royale). */
+  boost: boolean;
 };
-export const idleInput = (yaw = 0, pitch = 0): Input => ({ mx: 0, mz: 0, yaw, pitch, fire: false, ads: false, crouch: false, walk: false, jump: false, reload: false, slot: -1, throw: null, buy: null, use: false, heal: false, ride: false });
+export const idleInput = (yaw = 0, pitch = 0): Input => ({ mx: 0, mz: 0, yaw, pitch, fire: false, ads: false, crouch: false, walk: false, jump: false, reload: false, slot: -1, throw: null, buy: null, use: false, heal: false, ride: false, boost: false });
 
-export type Gun = { id: WeaponId; mag: number; reserve: number; fresh: boolean };
+/** A gun carried: its id, rounds in the magazine, spare rounds (breach), whether bought this round (for a refund), and
+ * (royale) what is fitted to it. */
+export type Gun = { id: WeaponId; mag: number; reserve: number; fresh: boolean; mods?: Mods | null };
 
 export type Actor = {
   id: number;
@@ -138,14 +142,19 @@ export type Actor = {
   /** Walk cycle phase for the animation. */
   phase: number;
   dmPick: WeaponId;
-  /** Royale: rounds carried per ammo kind, vest and helmet levels, heals, a heal under way, the drop and the place. */
+  /** Royale: rounds carried per ammo kind, vest, helmet and backpack levels, heals and boosts carried, the boost meter
+   * (0 to 100), a heal or boost under way, the drop and the place. */
   ammo: Record<AmmoKind, number>;
   vest: number;
   helmet: number;
+  pack: number;
   bandages: number;
   kits: number;
+  drinks: number;
+  pills: number;
+  boost: number;
   healT: number;
-  healKind: HealKind | null;
+  healKind: UseKind | null;
   /** 0 on the ground, 1 aboard the transport, 2 in freefall, 3 under the canopy. */
   drop: 0 | 1 | 2 | 3;
   /** Seconds in the air while dropping; once down, when it landed. */
@@ -376,8 +385,12 @@ function newActor(id: number, name: string, team: number, bot: boolean, level: L
     ammo: { light: 0, rifle: 0, shells: 0, magnum: 0, sniper: 0 },
     vest: 0,
     helmet: 0,
+    pack: 0,
     bandages: 0,
     kits: 0,
+    drinks: 0,
+    pills: 0,
+    boost: 0,
     healT: 0,
     healKind: null,
     drop: 0,
@@ -916,34 +929,38 @@ function startRoyale(m: Match, seed: number) {
   }
 }
 
-/** Puts something on the ground. */
-function dropItem(m: Match, kind: Item['kind'], what: string, n: number, x: number, z: number, y: number) {
-  m.loot.push({ id: m.loot.length, kind, what, n, x, y, z, live: true });
+/** Puts something on the ground (a gun with what is fitted to it; `by` whoever put it there, if anyone). */
+function dropItem(m: Match, kind: Item['kind'], what: string, n: number, x: number, z: number, y: number, mods: Mods | null = null, by = -1) {
+  m.loot.push({ id: m.loot.length, kind, what, n, x, y, z, live: true, mods: mods && (mods.sight || mods.ext || mods.comp) ? mods : null, by });
 }
 
 /** Everything a fallen player carried, spread on the ground around them. */
 function dropAll(m: Match, v: Actor) {
   const b = v.body;
   const y = floorAt(m.world.terrain, b.x, b.z) > b.y + 0.6 ? floorAt(m.world.terrain, b.x, b.z) : Math.max(b.y, floorAt(m.world.terrain, b.x, b.z)) + 0.02;
-  const things: [Item['kind'], string, number][] = [];
-  for (const g of v.guns) if (g) things.push(['gun', g.id, g.mag]);
-  for (const k of AMMO_KINDS) if (v.ammo[k] > 0) things.push(['ammo', k, v.ammo[k]]);
-  if (v.vest > 0 && v.armor > 0) things.push(['vest', String(v.vest), 1]);
-  if (v.helmet > 0) things.push(['helmet', String(v.helmet), 1]);
-  if (v.kits > 0) things.push(['heal', 'kit', v.kits]);
-  if (v.bandages > 0) things.push(['heal', 'bandage', v.bandages]);
-  if (v.frags > 0) things.push(['nade', 'frag', v.frags]);
-  if (v.smokes > 0) things.push(['nade', 'smoke', v.smokes]);
-  things.forEach(([kind, what, n], i) => {
+  const things: [Item['kind'], string, number, Mods | null][] = [];
+  for (const g of v.guns) if (g) things.push(['gun', g.id, g.mag, g.mods ?? null]);
+  for (const k of AMMO_KINDS) if (v.ammo[k] > 0) things.push(['ammo', k, v.ammo[k], null]);
+  if (v.vest > 0 && v.armor > 0) things.push(['vest', String(v.vest), 1, null]);
+  if (v.helmet > 0) things.push(['helmet', String(v.helmet), 1, null]);
+  if (v.pack > 0) things.push(['pack', String(v.pack), 1, null]);
+  if (v.kits > 0) things.push(['heal', 'kit', v.kits, null]);
+  if (v.bandages > 0) things.push(['heal', 'bandage', v.bandages, null]);
+  if (v.drinks > 0) things.push(['boost', 'drink', v.drinks, null]);
+  if (v.pills > 0) things.push(['boost', 'pills', v.pills, null]);
+  if (v.frags > 0) things.push(['nade', 'frag', v.frags, null]);
+  if (v.smokes > 0) things.push(['nade', 'smoke', v.smokes, null]);
+  things.forEach(([kind, what, n, mods], i) => {
     const a = (i / Math.max(1, things.length)) * Math.PI * 2 + v.id;
     const r = 0.5 + (i % 2) * 0.4;
     const x = b.x + Math.cos(a) * r;
     const z = b.z + Math.sin(a) * r;
-    dropItem(m, kind, what, n, x, z, Math.max(y, floorAt(m.world.terrain, x, z) + 0.02));
+    dropItem(m, kind, what, n, x, z, Math.max(y, floorAt(m.world.terrain, x, z) + 0.02), mods);
   });
   v.guns = [null, null, null];
   for (const k of AMMO_KINDS) v.ammo[k] = 0;
-  v.vest = v.helmet = v.kits = v.bandages = v.frags = v.smokes = 0;
+  v.vest = v.helmet = v.pack = v.kits = v.bandages = v.drinks = v.pills = v.frags = v.smokes = 0;
+  v.boost = 0;
   v.armor = 0;
   m.lootVer++;
 }
@@ -983,7 +1000,8 @@ function autoLoot(m: Match, a: Actor): Item | null {
     const dx = it.x - b.x;
     const dz = it.z - b.z;
     if (Math.abs(dx) > 1.6 || Math.abs(dz) > 1.6 || dx * dx + dz * dz > 1.6 * 1.6 || it.y < b.y - 1.2 || it.y > b.y + 1.4) continue;
-    if (!wants(a, it)) continue;
+    // (never what you put down yourself: a backpack you swapped out, the overflow it left)
+    if (it.by === a.id || !wants(a, it)) continue;
     // a gun only into an empty slot: swapping the one you carry is your call (F)
     if (it.kind === 'gun' && (WEAPONS[it.what as WeaponId].slot === 'secondary' ? !!a.guns[1] : !!a.guns[0] && !!a.guns[2])) continue;
     return it;
@@ -1001,16 +1019,77 @@ export function wants(a: Actor, it: Item) {
       return !a.guns[0] || !a.guns[2] || (a.guns[0].id !== id && WEAPONS[id].price > Math.min(WEAPONS[a.guns[0].id].price, WEAPONS[a.guns[2].id].price) + 400);
     }
     case 'ammo':
-      return a.ammo[it.what as AmmoKind] < AMMO_MAX[it.what as AmmoKind];
+      return a.ammo[it.what as AmmoKind] < ammoCap(a.pack, it.what as AmmoKind);
     case 'vest':
       return Number(it.what) > a.vest || (Number(it.what) === a.vest && a.armor < VEST[a.vest] * 0.6);
     case 'helmet':
       return Number(it.what) > a.helmet;
     case 'heal':
-      return it.what === 'kit' ? a.kits < HEAL.kit.max : a.bandages < HEAL.bandage.max;
+      return it.what === 'kit' ? a.kits < healCap(a.pack, 'kit') : a.bandages < healCap(a.pack, 'bandage');
+    case 'boost':
+      return it.what === 'drink' ? a.drinks < boostCap(a.pack, 'drink') : a.pills < boostCap(a.pack, 'pills');
+    case 'pack':
+      return Number(it.what) > a.pack;
+    case 'att':
+      return !!attTarget(a, it.what as AttKind);
     default:
-      return it.what === 'frag' ? a.frags < NADE_MAX.frag : a.smokes < NADE_MAX.smoke;
+      return it.what === 'frag' ? a.frags < nadeCap(a.pack, 'frag') : a.smokes < nadeCap(a.pack, 'smoke');
   }
+}
+
+/** The long gun an attachment would go on: the one in hand first, else the other, as long as it fits and that place
+ * on it is free. */
+export function attTarget(a: Actor, k: AttKind): Gun | null {
+  const h = a.slot !== 1 ? a.guns[a.slot] : null;
+  if (h && fits(h.id, k) && !fitted(h, k)) return h;
+  const g0 = a.guns[0];
+  if (g0 && fits(g0.id, k) && !fitted(g0, k)) return g0;
+  const g2 = a.guns[2];
+  if (g2 && fits(g2.id, k) && !fitted(g2, k)) return g2;
+  return null;
+}
+
+/** The gun in hand, if F would swap its sight for this one (a red dot for a 4x or the other way). */
+export function sightSwap(a: Actor, k: AttKind): Gun | null {
+  const h = a.slot !== 1 ? a.guns[a.slot] : null;
+  return h && (k === 'dot' || k === 'x4') && fits(h.id, k) && !hasAtt(h, k) ? h : null;
+}
+
+/** With a smaller backpack: whatever no longer fits goes on the ground at your feet. */
+function shed(m: Match, a: Actor, y: number) {
+  const b = a.body;
+  let i = 0;
+  const put = (kind: Item['kind'], what: string, n: number) => {
+    if (n <= 0) return;
+    const ang = i++ * 2.1 + a.id;
+    dropItem(m, kind, what, n, b.x + Math.cos(ang) * 0.6, b.z + Math.sin(ang) * 0.6, y, null, a.id);
+  };
+  for (const k of AMMO_KINDS) {
+    const extra = a.ammo[k] - ammoCap(a.pack, k);
+    if (extra > 0) {
+      a.ammo[k] -= extra;
+      put('ammo', k, extra);
+    }
+  }
+  const over = (have: number, cap: number) => Math.max(0, have - cap);
+  let n = over(a.bandages, healCap(a.pack, 'bandage'));
+  a.bandages -= n;
+  put('heal', 'bandage', n);
+  n = over(a.kits, healCap(a.pack, 'kit'));
+  a.kits -= n;
+  put('heal', 'kit', n);
+  n = over(a.drinks, boostCap(a.pack, 'drink'));
+  a.drinks -= n;
+  put('boost', 'drink', n);
+  n = over(a.pills, boostCap(a.pack, 'pills'));
+  a.pills -= n;
+  put('boost', 'pills', n);
+  n = over(a.frags, nadeCap(a.pack, 'frag'));
+  a.frags -= n;
+  put('nade', 'frag', n);
+  n = over(a.smokes, nadeCap(a.pack, 'smoke'));
+  a.smokes -= n;
+  put('nade', 'smoke', n);
 }
 
 function pickup(m: Match, a: Actor, it: Item) {
@@ -1019,12 +1098,13 @@ function pickup(m: Match, a: Actor, it: Item) {
   switch (it.kind) {
     case 'gun': {
       const id = it.what as WeaponId;
-      const g: Gun = { id, mag: Math.min(it.n, WEAPONS[id].mag), reserve: 0, fresh: false };
+      const mods = it.mods ? { ...it.mods } : null;
+      const g: Gun = { id, mag: Math.min(it.n, magOf({ id, mods })), reserve: 0, fresh: false, mods };
       // a long gun takes a free slot; with both full a player swaps the one in hand, a bot the cheaper one
       const cheaper = WEAPONS[a.guns[0]?.id ?? 'wren'].price <= WEAPONS[a.guns[2]?.id ?? 'wren'].price ? 0 : 2;
       const k: 0 | 1 | 2 = WEAPONS[id].slot === 'secondary' ? 1 : !a.guns[0] ? 0 : !a.guns[2] ? 2 : a.bot ? cheaper : a.slot === 2 ? 2 : 0;
       const old = a.guns[k];
-      if (old) dropItem(m, 'gun', old.id, old.mag, b.x, b.z, it.y);
+      if (old) dropItem(m, 'gun', old.id, old.mag, b.x, b.z, it.y, old.mods ?? null, a.id);
       a.guns[k] = g;
       if (k !== 1 || !a.guns[a.slot] || a.slot === 1) {
         a.slot = k;
@@ -1037,7 +1117,7 @@ function pickup(m: Match, a: Actor, it: Item) {
     }
     case 'ammo': {
       const k = it.what as AmmoKind;
-      const take = Math.min(it.n, AMMO_MAX[k] - a.ammo[k]);
+      const take = Math.min(it.n, ammoCap(a.pack, k) - a.ammo[k]);
       if (take <= 0) return;
       a.ammo[k] += take;
       it.n -= take;
@@ -1060,7 +1140,7 @@ function pickup(m: Match, a: Actor, it: Item) {
     }
     case 'heal': {
       const kit = it.what === 'kit';
-      const room = kit ? HEAL.kit.max - a.kits : HEAL.bandage.max - a.bandages;
+      const room = kit ? healCap(a.pack, 'kit') - a.kits : healCap(a.pack, 'bandage') - a.bandages;
       const take = Math.min(room, it.n);
       if (take <= 0) return;
       if (kit) a.kits += take;
@@ -1069,9 +1149,39 @@ function pickup(m: Match, a: Actor, it: Item) {
       if (it.n <= 0) it.live = false;
       break;
     }
+    case 'boost': {
+      const drink = it.what === 'drink';
+      const take = Math.min(drink ? boostCap(a.pack, 'drink') - a.drinks : boostCap(a.pack, 'pills') - a.pills, it.n);
+      if (take <= 0) return;
+      if (drink) a.drinks += take;
+      else a.pills += take;
+      it.n -= take;
+      if (it.n <= 0) it.live = false;
+      break;
+    }
+    case 'pack': {
+      // a better one replaces yours; a worse one (taken with F) leaves what no longer fits on the ground
+      const lv = Number(it.what);
+      if (lv === a.pack) return;
+      if (a.pack > 0) dropItem(m, 'pack', String(a.pack), 1, b.x, b.z, it.y, null, a.id);
+      a.pack = lv;
+      it.live = false;
+      shed(m, a, it.y);
+      break;
+    }
+    case 'att': {
+      // onto a long gun with that place free; with none, F swaps the sight on the gun in hand (the old one dropped)
+      const k = it.what as AttKind;
+      const g = attTarget(a, k) ?? (a.bot ? null : sightSwap(a, k));
+      if (!g) return;
+      const off = attach(g, k);
+      if (off) dropItem(m, 'att', off, 1, b.x, b.z, it.y, null, a.id);
+      it.live = false;
+      break;
+    }
     default: {
       const frag = it.what === 'frag';
-      const room = frag ? NADE_MAX.frag - a.frags : NADE_MAX.smoke - a.smokes;
+      const room = frag ? nadeCap(a.pack, 'frag') - a.frags : nadeCap(a.pack, 'smoke') - a.smokes;
       const take = Math.min(room, it.n);
       if (take <= 0) return;
       if (frag) a.frags += take;
@@ -1090,6 +1200,13 @@ export function healPick(a: Actor): HealKind | null {
   if (a.kits > 0 && (a.hp < 55 || (a.hp >= HEAL.bandage.to && a.bandages >= 0))) return 'kit';
   if (a.bandages > 0 && a.hp < HEAL.bandage.to) return 'bandage';
   return a.kits > 0 ? 'kit' : null;
+}
+
+/** Which boost a press uses: painkillers while the meter is low, else a drink; none once it is nearly full. */
+export function boostPick(a: Actor): BoostKind | null {
+  if (a.boost >= 95) return null;
+  if (a.pills > 0 && (a.boost < 40 || a.drinks <= 0)) return 'pills';
+  return a.drinks > 0 ? 'drink' : null;
 }
 
 /** The zone's own damage: straight to health, armor doesn't help. */
@@ -1142,9 +1259,13 @@ function stepRoyale(m: Match, dt: number) {
   }
   stepSupplies(m, dt);
   stepRed(m, dt);
-  // outside it hurts, once a second
+  // outside it hurts, once a second; a boost mends a little all the time while it drains
   for (const a of m.actors) {
     if (!a.alive || a.drop) continue;
+    if (a.boost > 0) {
+      if (a.hp < 100) a.hp = Math.min(100, a.hp + boostHeal(a.boost) * dt);
+      a.boost = Math.max(0, a.boost - BOOST_DRAIN * dt);
+    }
     if (Math.hypot(a.body.x - z.x, a.body.z - z.z) > z.r) {
       a.zoneT += dt;
       if (a.zoneT >= 1) {
@@ -1634,9 +1755,10 @@ export function spreadOf(a: Actor) {
   const sp = Math.hypot(a.body.vx, a.body.vz) / RUN;
   // (a person's spray and running open up half as much as a bot's: shots go where the crosshair is)
   const ease = a.bot ? 1 : 0.5;
-  let s = (w.base + a.bloom * ease) * lerp(1, w.ads, a.ads);
+  const ads = g.mods ? adsOf(g) : w.ads;
+  let s = (w.base + a.bloom * ease) * lerp(1, ads, a.ads);
   // walking (Shift) and crouch walking stay nearly true; running throws shots wide
-  s += w.move * ease * smoothstep(0.45, 1, sp) * lerp(1, Math.max(w.ads, 0.6), a.ads);
+  s += w.move * ease * smoothstep(0.45, 1, sp) * lerp(1, Math.max(ads, 0.6), a.ads);
   if (!a.body.onGround && !a.body.swim) s += w.air;
   if (a.crouch > 0.5 && a.body.onGround) s *= 0.8;
   return s;
@@ -1703,7 +1825,8 @@ function fire(m: Match, a: Actor) {
   // online: the others are shown this shot (the host from a guest, everyone from the host)
   if (!m.authority && a.id === m.me) m.net?.fire(g.id, ex, ey, ez, vel);
   const [up, side] = kickOf(w, a.spray);
-  const k = (a.crouch > 0.5 ? 0.85 : 1) * (1 - a.ads * 0.15);
+  const comp = !!g.mods?.comp;
+  const k = (a.crouch > 0.5 ? 0.85 : 1) * (1 - a.ads * 0.15) * (comp ? COMP_KICK : 1);
   // the view climbs for bots only (their aim works against it); a person's crosshair stays where they put it, the
   // kick shows in the gun in hand instead
   if (a.bot) {
@@ -1711,7 +1834,7 @@ function fire(m: Match, a: Actor) {
     a.yaw += side * k * DEG;
   }
   a.kickP += up * k;
-  a.bloom = Math.min(w.bloomMax, a.bloom + w.bloom);
+  a.bloom = Math.min(w.bloomMax, a.bloom + w.bloom * (comp ? COMP_BLOOM : 1));
   a.spray++;
   a.lastShot = m.time;
   m.events.push({ t: 'shot', a: a.id, w: g.id, x: ex, y: ey, z: ez, dx: d.x, dy: d.y, dz: d.z, v: vel });
@@ -1768,7 +1891,7 @@ function startReload(m: Match, a: Actor) {
   if (!g || a.reloadT > 0 || a.switchT > 0) return;
   const w = WEAPONS[g.id];
   const spare = spareOf(m, a, g);
-  if (g.mag >= w.mag || spare <= 0) return;
+  if (g.mag >= magOf(g) || spare <= 0) return;
   a.reloadT = w.reload;
   a.ads = Math.min(a.ads, 0.3);
   m.events.push({ t: 'reload', a: a.id, w: g.id });
@@ -1963,11 +2086,12 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
       const it = autoLoot(m, a);
       if (it) pickup(m, a, it);
     }
-    if (inp.heal && a.healT <= 0) {
-      const kind = healPick(a);
+    if ((inp.heal || inp.boost) && a.healT <= 0) {
+      // H: a heal while one helps, else a boost; the boost key only a boost
+      const kind = (inp.heal ? healPick(a) : null) ?? boostPick(a);
       if (kind) {
         a.healKind = kind;
-        a.healT = HEAL[kind].time;
+        a.healT = USE[kind].time;
         a.reloadT = 0;
         a.ads = 0;
         m.events.push({ t: 'heal', a: a.id, done: false });
@@ -1980,10 +2104,17 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
       } else {
         a.healT -= dt;
         if (a.healT <= 0 && a.healKind) {
-          const h = HEAL[a.healKind];
-          a.hp = Math.min(100, Math.max(a.hp, Math.min(h.to, a.hp + h.add)));
-          if (a.healKind === 'kit') a.kits--;
-          else a.bandages--;
+          const k = a.healKind;
+          if (k === 'kit' || k === 'bandage') {
+            const h = HEAL[k];
+            a.hp = Math.min(100, Math.max(a.hp, Math.min(h.to, a.hp + h.add)));
+            if (k === 'kit') a.kits--;
+            else a.bandages--;
+          } else {
+            a.boost = Math.min(100, a.boost + BOOST[k].add);
+            if (k === 'drink') a.drinks--;
+            else a.pills--;
+          }
           a.healT = 0;
           a.healKind = null;
           m.events.push({ t: 'heal', a: a.id, done: true });
@@ -2020,7 +2151,7 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
       a.reloadT = 0;
       const cg = currentGun(a);
       if (cg) {
-        const need = WEAPONS[cg.id].mag - cg.mag;
+        const need = magOf(cg) - cg.mag;
         const take = Math.min(need, spareOf(m, a, cg));
         cg.mag += take;
         if (m.mode === 'royale') a.ammo[AMMO_OF[cg.id]] -= take;
@@ -2052,7 +2183,7 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
   // aiming
   const canAds = a.reloadT <= 0 && a.switchT <= 0 && !b.swim;
   const adsTarget = inp.ads && canAds ? 1 : 0;
-  a.ads = clamp(a.ads + (adsTarget ? 1 : -1.6) * (dt / w.adsTime), 0, 1);
+  a.ads = clamp(a.ads + (adsTarget ? 1 : -1.6) * (dt / (g?.mods ? adsTimeOf(g) : w.adsTime)), 0, 1);
   // crouch
   const wantCrouch = inp.crouch && !b.swim;
   a.crouch = clamp(a.crouch + (wantCrouch ? 1 : -1) * dt * 7, 0, 1);
@@ -2069,6 +2200,8 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
       mz /= ml;
     }
     let speed = b.swim ? 2.4 : a.crouch > 0.5 ? CROUCH_SPEED : inp.walk || a.healT > 0 ? WALK : RUN;
+    // (a boost high up puts a little more in a run)
+    if (speed === RUN && a.boost >= BOOST_FAST) speed *= BOOST_RUN;
     speed *= w.weight * (a.ads > 0.5 ? 0.78 : 1);
     const sy = Math.sin(a.yaw);
     const cy = Math.cos(a.yaw);

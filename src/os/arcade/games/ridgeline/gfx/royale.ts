@@ -1,6 +1,7 @@
 // What a royale adds to the scene: the transport flying its line, a canopy over everyone gliding in, the zone's wall of
 // haze, supply crates coming down under their parachutes, a red wall around a bombardment, and the loot lying around
-// (drawn only near you, rebuilt when it changes or you move on).
+// (guns, ammo, armor, backpacks, heals, boosts and attachments, each with a look of its own: drawn only near you,
+// rebuilt when it changes or you move on).
 import type { Assets } from '../assets.ts';
 import type { Match } from '../match.ts';
 import { SUPPLY_MAX, planeAt, type AmmoKind, type Item } from '../royale.ts';
@@ -151,7 +152,100 @@ function chuteGeometry(THREE: Three) {
   return merged(THREE, parts);
 }
 
-const CANOPY_COLORS = [0x4f5a3a, 0xc8b28a, 0xd06a2c, 0xe8e6de, 0x3d6a8f, 0x7a2a2a, 0x2f3a2f];
+/** Builds a small loot model from parts: [geometry, color, x, y, z, rotation x, y, z]. */
+function lootGeometry(THREE: Three, list: [T.BufferGeometry, number, number, number, number, number?, number?, number?][]) {
+  const parts: [T.BufferGeometry, number][] = [];
+  for (const [g, c, x, y, z, rx = 0, ry = 0, rz = 0] of list) {
+    if (rx) g.rotateX(rx);
+    if (ry) g.rotateY(ry);
+    if (rz) g.rotateZ(rz);
+    g.translate(x, y, z);
+    parts.push([g, c]);
+  }
+  return merged(THREE, parts);
+}
+
+/** A backpack lying on its back, its bottom at the origin: a rounded pack with a top flap, a front pocket and two
+ * dark straps across it. The body is white so each level's color tints it. */
+function packGeometry(THREE: Three) {
+  const strap = 0x3a3a36;
+  return lootGeometry(THREE, [
+    [roundBox(THREE, 0.38, 0.2, 0.52, 0.35, 2), 0xffffff, 0, 0.1, 0],
+    [roundBox(THREE, 0.4, 0.07, 0.16, 0.4, 2), 0xd8d8d8, 0, 0.19, -0.2],
+    [roundBox(THREE, 0.26, 0.08, 0.2, 0.35, 2), 0xe6e6e6, 0, 0.22, 0.09],
+    [new THREE.BoxGeometry(0.035, 0.012, 0.5), strap, -0.09, 0.205, 0],
+    [new THREE.BoxGeometry(0.035, 0.012, 0.5), strap, 0.09, 0.205, 0],
+    [new THREE.TorusGeometry(0.05, 0.012, 5, 10, Math.PI), strap, 0, 0.12, -0.27, 0, Math.PI / 2],
+  ]);
+}
+
+/** An energy drink can standing up: a bright green body, a dark band and a silver top. */
+function drinkGeometry(THREE: Three) {
+  return lootGeometry(THREE, [
+    [new THREE.CylinderGeometry(0.04, 0.04, 0.15, 14), 0x7ddc2e, 0, 0.075, 0],
+    [new THREE.CylinderGeometry(0.0405, 0.0405, 0.04, 14), 0x1d2a18, 0, 0.08, 0],
+    [new THREE.CylinderGeometry(0.034, 0.04, 0.012, 14), 0xc9cccf, 0, 0.156, 0],
+  ]);
+}
+
+/** A bottle of painkillers standing up: amber with a white cap and label. */
+function pillsGeometry(THREE: Three) {
+  return lootGeometry(THREE, [
+    [new THREE.CylinderGeometry(0.038, 0.038, 0.1, 14), 0xc8741e, 0, 0.05, 0],
+    [new THREE.CylinderGeometry(0.0385, 0.0385, 0.05, 14), 0xf0ede4, 0, 0.05, 0],
+    [new THREE.CylinderGeometry(0.042, 0.042, 0.035, 14), 0xf6f6f2, 0, 0.117, 0],
+  ]);
+}
+
+/** A red dot sight on its mount: a squat dark housing round a lens with a red glint, about twice true size so it can
+ * be seen on the ground. */
+function dotGeometry(THREE: Three) {
+  const body = 0x2a2d30;
+  return lootGeometry(THREE, [
+    [new THREE.BoxGeometry(0.1, 0.03, 0.16), body, 0, 0.015, 0],
+    [new THREE.CylinderGeometry(0.05, 0.05, 0.13, 14, 1, true), body, 0, 0.08, 0, Math.PI / 2],
+    [new THREE.CircleGeometry(0.046, 14), 0xd8302a, 0, 0.08, 0.06],
+    [new THREE.CircleGeometry(0.046, 14), 0x6a1a18, 0, 0.08, -0.06, 0, Math.PI],
+    [new THREE.BoxGeometry(0.03, 0.035, 0.03), body, 0.06, 0.09, 0],
+  ]);
+}
+
+/** A 4x scope: a long black tube with bells at both ends and a turret on top, on two rings. */
+function scopeGeometry(THREE: Three) {
+  const black = 0x1b1d1f;
+  return lootGeometry(THREE, [
+    [new THREE.CylinderGeometry(0.03, 0.03, 0.3, 12), black, 0, 0.075, 0, Math.PI / 2],
+    [new THREE.CylinderGeometry(0.048, 0.03, 0.09, 12), black, 0, 0.075, 0.18, Math.PI / 2],
+    [new THREE.CylinderGeometry(0.03, 0.04, 0.06, 12), black, 0, 0.075, -0.17, Math.PI / 2],
+    [new THREE.CircleGeometry(0.044, 12), 0x3c6e8a, 0, 0.075, 0.226],
+    [new THREE.CylinderGeometry(0.02, 0.02, 0.05, 10), black, 0, 0.115, 0],
+    [new THREE.BoxGeometry(0.05, 0.045, 0.03), 0x3a3d40, 0, 0.022, 0.08],
+    [new THREE.BoxGeometry(0.05, 0.045, 0.03), 0x3a3d40, 0, 0.022, -0.08],
+  ]);
+}
+
+/** An extended magazine lying on its side: long and curved (three segments), with a yellow witness band. */
+function extGeometry(THREE: Three) {
+  const steel = 0x2e3236;
+  return lootGeometry(THREE, [
+    [new THREE.BoxGeometry(0.11, 0.04, 0.12), steel, 0, 0.02, -0.11],
+    [new THREE.BoxGeometry(0.11, 0.04, 0.12), steel, 0.012, 0.02, 0.0, 0, -0.12],
+    [new THREE.BoxGeometry(0.11, 0.04, 0.12), steel, 0.035, 0.02, 0.11, 0, -0.24],
+    [new THREE.BoxGeometry(0.115, 0.042, 0.025), 0xe2b43a, 0.012, 0.021, 0.0, 0, -0.12],
+    [new THREE.BoxGeometry(0.13, 0.05, 0.03), 0x1a1c1e, 0.05, 0.025, 0.18, 0, -0.24],
+  ]);
+}
+
+/** A compensator lying down: a short ported muzzle device, its slots cut dark across the top. */
+function compGeometry(THREE: Three) {
+  const steel = 0x5a5f63;
+  const list: [T.BufferGeometry, number, number, number, number, number?, number?, number?][] = [[new THREE.CylinderGeometry(0.035, 0.035, 0.16, 12), steel, 0, 0.035, 0, Math.PI / 2]];
+  for (const z of [-0.04, 0, 0.04]) list.push([new THREE.BoxGeometry(0.05, 0.012, 0.016), 0x111213, 0, 0.068, z]);
+  list.push([new THREE.CylinderGeometry(0.04, 0.04, 0.03, 12), 0x3a3e41, 0, 0.035, -0.08, Math.PI / 2]);
+  return lootGeometry(THREE, list);
+}
+
+const CANOPY_COLORS =[0x4f5a3a, 0xc8b28a, 0xd06a2c, 0xe8e6de, 0x3d6a8f, 0x7a2a2a, 0x2f3a2f];
 
 const ZONE_VERT = /* glsl */ `
 varying vec3 vWp;
@@ -337,6 +431,22 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
     o.position.set(it.x, it.y + 0.035, it.z);
     o.rotation.set(0, yawOf(it), Math.PI / 2);
   }, () => 0x6d7276);
+  // backpacks in their level's color, boosts standing up, attachments lying down
+  const PACK_COLOR = [0, 0xa8946a, 0x66734a, 0x34393a];
+  bucket(keep(packGeometry(THREE)), lootMat, 40, (it) => it.kind === 'pack', (it, o) => {
+    o.position.set(it.x, it.y, it.z);
+    o.rotation.set(0, yawOf(it), 0);
+  }, (it) => PACK_COLOR[Number(it.what)]);
+  const stand = (it: Item, o: T.Object3D) => {
+    o.position.set(it.x, it.y, it.z);
+    o.rotation.set(0, yawOf(it), 0);
+  };
+  bucket(keep(drinkGeometry(THREE)), lootMat, 40, (it) => it.kind === 'boost' && it.what === 'drink', stand);
+  bucket(keep(pillsGeometry(THREE)), lootMat, 40, (it) => it.kind === 'boost' && it.what === 'pills', stand);
+  bucket(keep(dotGeometry(THREE)), lootMat, 30, (it) => it.kind === 'att' && it.what === 'dot', stand);
+  bucket(keep(scopeGeometry(THREE)), lootMat, 30, (it) => it.kind === 'att' && it.what === 'x4', stand);
+  bucket(keep(extGeometry(THREE)), lootMat, 30, (it) => it.kind === 'att' && it.what === 'ext', stand);
+  bucket(keep(compGeometry(THREE)), lootMat, 30, (it) => it.kind === 'att' && it.what === 'comp', stand);
   // real models where they loaded: the M67 for frags, the helmet for helmets
   const realBucket = (part: Part | undefined, max: number, match: Bucket['match'], place: Bucket['place'], fallback: () => T.BufferGeometry) => {
     if (part) bucket(part.geo, keep(worldMaterial(THREE, part.mat, shared)), max, match, place);

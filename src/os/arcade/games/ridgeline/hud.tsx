@@ -4,6 +4,7 @@
 // crosshair, hit markers and the scope.
 import { forwardRef, useEffect, useImperativeHandle, useRef, type ReactNode } from 'react';
 import type { Mode, Phase, ShopItem } from './match.ts';
+import { BOOST_FAST } from './royale.ts';
 import { ARMOR, NADES, WEAPONS, type WeaponId } from './weapons.ts';
 import type { World } from './world.ts';
 
@@ -78,8 +79,14 @@ export type RoyaleHud = {
   drop: number;
   vest: number;
   helmet: number;
+  /** Backpack level (0 none), heals and boosts carried, and the boost meter, 0 to 100. */
+  pack: number;
   bandages: number;
   kits: number;
+  drinks: number;
+  pills: number;
+  boost: number;
+  /** A heal or boost under way, 0 to 1, and what it is. */
   heal: number;
   healName: string | null;
   pickup: string | null;
@@ -236,6 +243,11 @@ export function Vitals({ h }: { h: Hud }) {
         <span className="g-ridgeline-hpBar">
           <i style={{ width: `${h.hp}%` }} className={h.hp < 35 ? 'is-low' : ''} />
         </span>
+        {h.royale && (
+          <span className="g-ridgeline-boostBar" data-fast={h.royale.boost >= BOOST_FAST ? '1' : '0'} title="boost">
+            <i style={{ width: `${h.royale.boost}%` }} />
+          </span>
+        )}
       </div>
       <div className="g-ridgeline-armor" data-on={h.armor > 0 ? '1' : '0'}>
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -247,10 +259,14 @@ export function Vitals({ h }: { h: Hud }) {
         <div className="g-ridgeline-kit">
           <span data-on={h.royale.helmet ? '1' : '0'}>helmet {h.royale.helmet || '-'}</span>
           <span data-on={h.royale.vest ? '1' : '0'}>vest {h.royale.vest || '-'}</span>
+          <span data-on={h.royale.pack ? '1' : '0'}>pack {h.royale.pack || '-'}</span>
           <span data-on={h.royale.bandages ? '1' : '0'}>
             <kbd>H</kbd>bandage {h.royale.bandages}
           </span>
           <span data-on={h.royale.kits ? '1' : '0'}>kit {h.royale.kits}</span>
+          <span data-on={h.royale.drinks || h.royale.pills ? '1' : '0'}>
+            <kbd>X</kbd>drink {h.royale.drinks} pills {h.royale.pills}
+          </span>
         </div>
       )}
       {h.mode === 'breach' && (
