@@ -4,12 +4,12 @@
 // runs the bots, applies every rule (trails, cuts, captures, deaths) and tells everyone how the board changed:
 //   I  init      host -> guest, reliable   the round: arena, clock, who plays (with colors and skins)
 //   O  ops       host -> all,   reliable   numbered board changes: spawns, captures (row runs), deaths, looks
-//   S  state     host -> all,   fast       every head (position, heading, flags), the clock, a board hash now and then
+//   S  state     host -> all,   fast       every head (position, heading, flags; how old a guest's is), the clock, a board hash now and then
 //   Z  snapshot  host -> guest, reliable   the whole board as row runs, in chunks, for joiners and anyone out of step
 //   E  end       host -> all,   reliable   who won
 //   P  pause     host -> all,   reliable   the host's page is hidden (its round is not running): hold still until it is back
 //   H  hello     guest -> host, reliable   I am here (and my skin); answered with I and Z
-//   M  move      guest -> host, fast       my last three positions, numbered, so a lost packet costs nothing
+//   M  move      guest -> host, fast       my last three positions, numbered, so a lost packet costs nothing, and the tick of the newest
 //   Q  resync    guest -> host, reliable   please send a snapshot
 // Room messages are capped at 8 KB, so anything big is split well under that.
 import type { Cause, Op } from './world.ts';
@@ -20,7 +20,8 @@ export const F_ALIVE = 1;
 export const F_OUT = 2;
 
 export type RosterEntry = { id: number; seat: number; name: string; color: number; skin: number; bot: boolean };
-export type HeadState = { id: number; x: number; y: number; h: number; f: number; kills: number; life: number };
+/** `age`: how long before the state's tick the host last heard where this head was (ms; a guest's head, from newer hosts). */
+export type HeadState = { id: number; x: number; y: number; h: number; f: number; kills: number; life: number; age?: number };
 /** A look change rides the op stream too: the host learns a guest's skin after the round starts. */
 export type NetOp = Op | { k: 'look'; id: number; color: number; skin: number } | { k: 'cap'; id: number; runs: number[]; more: true };
 /** Where everyone is in a snapshot, so a joiner knows who is alive (and its own life count). */
@@ -34,7 +35,8 @@ export type Packet =
   | { k: 'E'; round: number; winner: number | null; order: number[]; pct: number[] }
   | { k: 'P'; round: number; away: boolean }
   | { k: 'H'; round: number; skin: number }
-  | { k: 'M'; round: number; life: number; seq: number; pts: number[]; h: number; dead: boolean }
+  /** `tick`: the guest's world tick at the newest of `pts`, which are two ticks apart (newer guests say). */
+  | { k: 'M'; round: number; life: number; seq: number; pts: number[]; h: number; dead: boolean; tick?: number }
   | { k: 'Q'; round: number };
 
 const int = (v: unknown): v is number => Number.isInteger(v);
@@ -124,7 +126,8 @@ export const statePacket = (round: number, tick: number, elapsed: number, go: nu
     e: Math.round(elapsed * 10),
     g: Math.max(0, Math.round(go * 10)),
     q: seq,
-    p: heads.map((s) => [s.id, q10(s.x), q10(s.y), q100(s.h), s.f, s.kills, s.life]),
+    // (an age goes last, where older guests do not look)
+    p: heads.map((s) => (s.age ? [s.id, q10(s.x), q10(s.y), q100(s.h), s.f, s.kills, s.life, Math.round(s.age)] : [s.id, q10(s.x), q10(s.y), q100(s.h), s.f, s.kills, s.life])),
   };
   if (hash !== null) p.h = hash;
   return p;
@@ -197,8 +200,8 @@ export function decodeRows(into: Uint8Array, n: number, y0: number, rows: number
 export const endPacket = (round: number, winner: number | null, order: number[], pct: number[]) => ({ t: 'po', r: round, k: 'E', w: winner, o: order, c: pct.map((p) => Math.round(p * 100)) });
 export const pausePacket = (round: number, away: boolean) => ({ t: 'po', r: round, k: 'P', a: away ? 1 : 0 });
 export const helloPacket = (round: number, skin: number) => ({ t: 'po', r: round, k: 'H', sk: skin });
-/** pts: the last few positions, oldest first, as [x, y] pairs; `seq` numbers the newest. */
-export const movePacket = (round: number, life: number, seq: number, pts: number[], h: number, dead: boolean) => ({ t: 'po', r: round, k: 'M', l: life, s: seq, p: pts.map(q100), h: Math.round(h * 1000), ...(dead ? { d: 1 } : {}) });
+/** pts: the last few positions, oldest first, as [x, y] pairs two ticks apart; `seq` numbers the newest, taken at world tick `tick`. */
+export const movePacket = (round: number, life: number, seq: number, pts: number[], h: number, dead: boolean, tick?: number) => ({ t: 'po', r: round, k: 'M', l: life, s: seq, p: pts.map(q100), h: Math.round(h * 1000), ...(dead ? { d: 1 } : {}), ...(tick !== undefined ? { n: tick } : {}) });
 export const resyncPacket = (round: number) => ({ t: 'po', r: round, k: 'Q' });
 
 /** Positions travel as hundredths of a cell; both sides round the same way so they walk the same cells. */
@@ -268,7 +271,9 @@ export function parsePacket(value: unknown): Packet | null {
       const heads: HeadState[] = [];
       for (const a of p.p.slice(0, 16)) {
         if (!Array.isArray(a) || !idOk(a[0]) || !a.slice(1, 7).every(int)) continue;
-        heads.push({ id: a[0], x: a[1] / 10, y: a[2] / 10, h: a[3] / 100, f: a[4], kills: Math.max(0, a[5]), life: a[6] });
+        const head: HeadState = { id: a[0], x: a[1] / 10, y: a[2] / 10, h: a[3] / 100, f: a[4], kills: Math.max(0, a[5]), life: a[6] };
+        if (int(a[7]) && a[7] > 0 && a[7] < 5000) head.age = a[7];
+        heads.push(head);
       }
       return { k: 'S', round, tick: p.n as number, elapsed: (p.e as number) / 10, go: (p.g as number) / 10, seq: p.q as number, hash: int(p.h) ? (p.h as number) >>> 0 : null, heads };
     }
@@ -300,10 +305,40 @@ export function parsePacket(value: unknown): Packet | null {
       return int(p.sk) && (p.sk as number) >= 0 && (p.sk as number) < 64 ? { k: 'H', round, skin: p.sk as number } : null;
     case 'M': {
       if (!int(p.l) || !int(p.s) || !Array.isArray(p.p) || p.p.length % 2 !== 0 || p.p.length > 16 || !p.p.every(int) || !int(p.h)) return null;
-      return { k: 'M', round, life: p.l as number, seq: p.s as number, pts: (p.p as number[]).map((v) => v / 100), h: (p.h as number) / 1000, dead: p.d === 1 };
+      const mv: Extract<Packet, { k: 'M' }> = { k: 'M', round, life: p.l as number, seq: p.s as number, pts: (p.p as number[]).map((v) => v / 100), h: (p.h as number) / 1000, dead: p.d === 1 };
+      if (int(p.n) && (p.n as number) >= 0) mv.tick = p.n as number;
+      return mv;
     }
     case 'Q':
       return { k: 'Q', round };
   }
   return null;
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Clocks
+
+/** A gap this much wider than the least delayed one is a clock that stopped or jumped (a page away, the countdown), not the link. */
+const CLOCK_JUMP = 0.5;
+/** How fast the gap follows a link that has got slower for good: this share of the difference each report. */
+const DRIFT = 0.02;
+
+/**
+ * Another page's clock against ours (seconds), from the times its reports were taken and when they arrived here. The
+ * least delayed report sets the gap (it drifts up slowly, so a link that got slower is followed too), so jitter in
+ * the link does not move it about.
+ */
+export class ClockGap {
+  private gap: number | null = null;
+  /** A report taken at `sent` on its clock arrived at `local` on ours: when it is taken to be current here (never after it arrived). */
+  at(local: number, sent: number): number {
+    const gap = local - sent;
+    if (this.gap === null || gap < this.gap || gap - this.gap > CLOCK_JUMP) this.gap = gap;
+    else this.gap += (gap - this.gap) * DRIFT;
+    return Math.min(local, sent + this.gap);
+  }
+  /** Our clock minus theirs, or null before the first report. */
+  get value(): number | null {
+    return this.gap;
+  }
 }

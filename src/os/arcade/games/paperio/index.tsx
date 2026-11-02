@@ -942,7 +942,8 @@ function Play({ mode }: { mode: Mode }) {
       }
       const t0 = performance.now();
       s.clock += dt;
-      s.frameDt = dt;
+      // (online a slow frame comes as several steps: the render gets all of them)
+      s.frameDt += dt;
       adapt(dt);
       c.frame?.(dt);
       const scale = s.clock < s.slowUntil ? 0.22 : 1;
@@ -1028,7 +1029,9 @@ function Play({ mode }: { mode: Mode }) {
       st.current.renderMs += (performance.now() - t0 - st.current.renderMs) * 0.05;
       st.current.frameDt = 0;
     },
-    { always: mode === 'idle' },
+    // online, a slow frame is caught up rather than run in slow motion: the round runs on everyone else's pages (and the
+    // host's) at full speed, so this head, the clock it draws others on and, on the host, the bots would fall behind
+    { always: mode === 'idle', realtime: mode === 'online' },
   );
 
   // ---------------------------------------------------------------------------------------------------------------
