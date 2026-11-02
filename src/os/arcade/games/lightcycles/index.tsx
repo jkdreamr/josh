@@ -2,7 +2,8 @@ import { useEffect, useLayoutEffect, useRef, useState, type PointerEvent as RPoi
 import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, levelIndex, levelOptions, modeOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import { formatTally } from '../../kit/tally.ts';
 import type { GameProps } from '../../types';
-import { alive, cell, createArena, departedSeats, fitGrid, frameUnit, riderSeats, roundOver, roundTally, steer, step, swipeDir, tapDir, think, DX, DY, type Arena, type Dir, type Level } from './cycles.ts';
+import { alive, createArena, departedSeats, fitGrid, frameUnit, riderSeats, roundOver, roundTally, steer, step, swipeDir, tapDir, think, DX, DY, type Arena, type Dir, type Level } from './cycles.ts';
+import { applyTick, dueTurn, Glide, guestView, heard, HostClock, inputDelay, landing, nextWay, PING_MS, planned, prune, queueTurn, takeTurn, type Ahead, type RiderState, type Turn } from './net.ts';
 import { meta } from './meta';
 import './lightcycles.css';
 
@@ -66,7 +67,8 @@ type Match = {
   timer: number;
   acc: number;
   speed: number;
-  queue: Dir[][];
+  /** Each rider's turns to come (see net.ts): offline they land on the next step, online a moment later. */
+  queue: Turn[][];
   particles: Particle[];
   rings: Ring[];
   /** Per rider: 1 at the moment it crashes, easing down as its wall dims. */
@@ -84,6 +86,19 @@ type Match = {
   bots: number[];
   /** Online: the room round this match was set up for. */
   onlineRound: number;
+  /** Online: the input delay (seconds) everyone's turns land after, and (host) whether it is a guess, some guest's round trip not known yet. */
+  delay: number;
+  delayGuess: boolean;
+  /** Host: the step each bot's next move was worked out after (they go out with the tick, a step early). */
+  thought: number[];
+  /** Host: the time (seconds) of the frame its arena is as of. */
+  frameAt: number;
+  /** Guest: the host stamps turns (hosts from before it don't), the last number given to one of its own, and the arena as it is on the host now. */
+  lockstep: boolean;
+  sent: number;
+  ahead: Ahead | null;
+  /** Guest: the step on screen (the steps done, and how far into the next one). */
+  shown: number;
 };
 
 /** Room above the arena for the shell's control pill, and below it for the round pips. */
@@ -105,6 +120,12 @@ function Cycles() {
   const [levelName] = useSetting(LEVEL);
   const cfg = useRef<{ mode: Mode; level: Level }>({ mode: modeOf(playMode, rivals), level: levelIndex(levelName) });
   const m = useRef<Match | null>(null);
+  /** Online, a guest's reading of the host's clock, and the host's of each guest's round trip (ms, by seat). */
+  const clock = useRef(new HostClock());
+  const trips = useRef(new Map<number, number>());
+  /** Online, heads glide over a jump rather than snap (see net.ts), from frame to frame. */
+  const glide = useRef(new Glide());
+  const drawnAt = useRef(0);
   const roomRound = useRef(0);
   roomRound.current = online?.round ?? 0;
   const touches = useRef(new Map<number, { x: number; y: number; sx: number; sy: number; rider: number; swiped: boolean }>());
@@ -184,6 +205,8 @@ function Cycles() {
     match.arena = createArena(g.cols, g.rows, riderCount(match), humans(match));
     if (online) markBots(match);
     match.queue = match.arena.riders.map(() => []);
+    match.thought = [];
+    glide.current.clear();
     match.phase = 'ready';
     match.timer = READY;
     match.acc = 0;
@@ -195,7 +218,25 @@ function Cycles() {
     match.banner = `Round ${match.round}`;
     match.sub = match.round === 1 ? hint() : scoreLine(match);
     setBanner({ text: match.banner, sub: match.sub, count: 3 });
-    if (online?.seat === 0) online.send({ game: 'lightcycles', type: 'round', cols: g.cols, rows: g.rows, players: riderCount(match), seats: match.seats, bots: match.bots, wins: match.wins, round: match.round, speed: match.speed, longest: match.longest });
+    if (online?.seat === 0) {
+      setDelay(match);
+      online.send({ game: 'lightcycles', type: 'round', cols: g.cols, rows: g.rows, players: riderCount(match), seats: match.seats, bots: match.bots, wins: match.wins, round: match.round, speed: match.speed, longest: match.longest, delay: match.delay });
+    }
+  };
+
+  /** Host: the input delay for the round, from the round trips of the people riding it as guests (see net.ts). */
+  const setDelay = (match: Match) => {
+    const people = match.seats.filter((seat) => seat !== 0 && !match.bots.includes(seat));
+    const known = people.map((seat) => trips.current.get(seat) ?? null);
+    match.delay = inputDelay(known);
+    match.delayGuess = known.includes(null);
+  };
+  /** Host: where it is in the round, in steps (the countdown counts up to 0), as of now; null between rounds. */
+  const hostPhase = (match: Match) => {
+    const since = Math.max(0, Math.min(0.05, performance.now() / 1000 - match.frameAt));
+    if (match.phase === 'ready') return -Math.max(0, match.timer - since) / periodOf(match);
+    if (match.phase === 'run') return match.arena.tick + (match.acc + since) / periodOf(match);
+    return null;
   };
 
   const reset = () => {
@@ -227,6 +268,14 @@ function Cycles() {
       seats,
       bots: online ? online.bots.map((b) => b.seat).filter((seat) => seats.includes(seat)) : [],
       onlineRound: online?.round ?? 0,
+      delay: 0,
+      delayGuess: false,
+      thought: [],
+      frameAt: 0,
+      lockstep: false,
+      sent: 0,
+      ahead: null,
+      shown: 0,
     };
     m.current = match;
     gone.current.clear();
@@ -284,13 +333,22 @@ function Cycles() {
     return () => window.clearTimeout(t);
   }, [notice]);
 
+  /** Where a rider's head is (on a guest, as it is on the host now) and the way it is heading once its waiting turns are made. */
+  const headOf = (match: Match, id: number) => {
+    const r = match.arena.riders[id];
+    const q = match.queue[id];
+    const ahead = match.ahead;
+    const going = ahead ? ahead.next[id] : r.next;
+    return { x: ahead ? ahead.x[id] : r.x, y: ahead ? ahead.y[id] : r.y, heading: (q?.length ? q[q.length - 1].dir : going) as Dir };
+  };
+
   const push = (rider: number, d: Dir) => {
     const match = m.current;
     if (!match || match.phase !== 'run') return;
     const r = match.arena.riders[rider];
     if (online) {
       if (rider < 0 || rider !== mine()) return;
-      if (online.seat !== 0) {
+      if (online.seat !== 0 && !match.lockstep) {
         if (r?.alive) sfx.play('tick', 0.8);
         online.send({ game: 'lightcycles', type: 'turn', dir: d });
         return;
@@ -298,11 +356,26 @@ function Cycles() {
     }
     const q = match.queue[rider];
     if (!q || !r?.alive) return;
-    const last = q.length ? q[q.length - 1] : r.next;
-    if (q.length < 2 && last !== d && d !== ((last + 2) % 4)) {
-      q.push(d);
-      sfx.play('tick', 0.8);
+    if (!online) {
+      if (queueTurn(q, r.next, { dir: d, at: 0 })) sfx.play('tick', 0.8);
+      return;
     }
+    // Online the turn lands the input delay from what is on screen now, and everyone hears of it before it does.
+    const period = periodOf(match);
+    const after = q.length ? q[q.length - 1].at : 0;
+    if (online.seat === 0) {
+      const at = landing(match.arena.tick + match.acc / period, match.delay / period, after);
+      if (!queueTurn(q, r.next, { dir: d, at })) return;
+      sfx.play('tick', 0.8);
+      online.send({ game: 'lightcycles', type: 'plan', id: rider, at, dir: d, r: match.round });
+      return;
+    }
+    if (!match.ahead) return;
+    const turn: Turn = { dir: d, at: landing(match.shown, match.delay / period, after), n: match.sent + 1, heard: false };
+    if (!queueTurn(q, headOf(match, rider).heading, turn)) return;
+    match.sent++;
+    sfx.play('tick', 0.8);
+    online.send({ game: 'lightcycles', type: 'turn', dir: d, at: turn.at, n: turn.n, r: match.round });
   };
 
   useKeys((code) => {
@@ -341,10 +414,9 @@ function Cycles() {
     // A tap: turn toward it, relative to where the rider is heading after any turns already queued.
     const r = match.arena.riders[t.rider];
     if (!r?.alive) return;
-    const q = match.queue[t.rider];
-    const heading = (q?.length ? q[q.length - 1] : r.next) as Dir;
+    const head = headOf(match, t.rider);
     const { ox, oy, cell: size } = view.current;
-    const d = tapDir(heading, e.nativeEvent.offsetX - (ox + (r.x + 0.5) * size), e.nativeEvent.offsetY - (oy + (r.y + 0.5) * size), size * 0.5);
+    const d = tapDir(head.heading, e.nativeEvent.offsetX - (ox + (head.x + 0.5) * size), e.nativeEvent.offsetY - (oy + (head.y + 0.5) * size), size * 0.5);
     if (d !== null) push(t.rider, d);
   };
   const onPointerCancel = (e: RPointerEvent<HTMLCanvasElement>) => {
@@ -358,16 +430,47 @@ function Cycles() {
       game?: unknown; type?: unknown; dir?: unknown; cols?: unknown; rows?: unknown; players?: unknown; seats?: unknown; bots?: unknown;
       wins?: unknown; round?: unknown; speed?: unknown; longest?: unknown; tick?: unknown; riders?: unknown;
       crashes?: unknown; phase?: unknown; timer?: unknown; acc?: unknown; banner?: unknown; sub?: unknown;
-      lastWinner?: unknown; ff?: unknown;
+      lastWinner?: unknown; ff?: unknown; delay?: unknown; at?: unknown; n?: unknown; r?: unknown; id?: unknown; t?: unknown;
+      rtt?: unknown; ph?: unknown;
     };
     if (message.game !== 'lightcycles') return;
     const match = m.current;
     if (!match) return;
     const id = match.seats.indexOf(from);
-    if (online.seat === 0 && message.type === 'turn' && Number.isInteger(message.dir) && match.arena.riders[id] && !match.arena.riders[id].cpu) {
+    const isDir = (v: unknown): v is Dir => v === 0 || v === 1 || v === 2 || v === 3;
+    // (turns, plans and pongs say which of the match's rounds they belong to; older clients' say nothing)
+    const thisRound = message.r === undefined || message.r === match.round;
+    if (online.seat === 0 && message.type === 'turn' && isDir(message.dir) && match.arena.riders[id] && !match.arena.riders[id].cpu) {
       const queue = match.queue[id];
-      const direction = message.dir as Dir;
-      if (queue && queue.length < 2 && queue[queue.length - 1] !== direction) queue.push(direction);
+      if (!queue || !thisRound) return;
+      // A guest from before stamps says nothing of when: its turn lands on the next step, as it always did.
+      const at = Number.isSafeInteger(message.at) ? (message.at as number) : undefined;
+      const n = Number.isSafeInteger(message.n) ? (message.n as number) : undefined;
+      const land = takeTurn(queue, message.dir, at, match.arena.tick);
+      if (land !== null) online.send({ game: 'lightcycles', type: 'plan', id, at: land, dir: message.dir, n, r: match.round });
+      else if (n !== undefined) online.send({ game: 'lightcycles', type: 'plan', id, at: -1, dir: message.dir, n, r: match.round }, { to: from });
+      return;
+    }
+    if (online.seat === 0 && message.type === 'ping' && typeof message.t === 'number') {
+      if (typeof message.rtt === 'number' && message.rtt >= 0 && message.rtt < 5000) {
+        trips.current.set(from, message.rtt);
+        // (the delay settles before anyone moves, and once more if the round started on a guess)
+        if ((match.phase === 'ready' && match.arena.tick === 0) || match.delayGuess) setDelay(match);
+      }
+      online.send({ game: 'lightcycles', type: 'pong', t: message.t, r: match.round, ph: hostPhase(match), delay: match.delay }, { to: from });
+      return;
+    }
+    if (online.seat !== 0 && message.type === 'pong' && typeof message.t === 'number') {
+      clock.current.pong(message.t / 1000, thisRound && typeof message.ph === 'number' ? message.ph : null, performance.now() / 1000);
+      if (thisRound && match.lockstep && typeof message.delay === 'number') match.delay = Math.max(0, Math.min(0.5, message.delay));
+      return;
+    }
+    if (online.seat !== 0 && message.type === 'plan' && Number.isSafeInteger(message.id) && Number.isSafeInteger(message.at) && thisRound) {
+      const rider = message.id as number;
+      const queue = match.queue[rider];
+      if (!queue) return;
+      if (rider === mine() && Number.isSafeInteger(message.n)) heard(queue, message.n as number, message.at as number);
+      else if (rider !== mine() && isDir(message.dir) && (message.at as number) > match.arena.tick) planned(queue, message.dir, message.at as number);
       return;
     }
     if (online.seat !== 0 && message.type === 'round' && Number.isInteger(message.cols) && Number.isInteger(message.rows) && Number.isInteger(message.players)) {
@@ -386,6 +489,11 @@ function Cycles() {
       match.speed = Number(message.speed) || match.speed;
       match.longest = Number(message.longest) || 0;
       match.queue = match.arena.riders.map(() => []);
+      // Hosts that stamp turns say what the input delay is; with one from before, a guest just shows what it's sent.
+      match.lockstep = typeof message.delay === 'number';
+      match.delay = match.lockstep ? Math.max(0, Math.min(0.5, message.delay as number)) : 0;
+      match.ahead = null;
+      match.shown = 0;
       match.phase = 'ready';
       match.timer = READY;
       match.acc = 0;
@@ -396,24 +504,15 @@ function Cycles() {
       match.banner = `Round ${match.round}`;
       match.sub = match.round === 1 ? hint() : scoreLine(match);
       setBanner({ text: match.banner, sub: match.sub, count: 3 });
+      clock.current.reset(periodOf(match));
+      glide.current.clear();
       return;
     }
     if (online.seat !== 0 && message.type === 'tick' && Array.isArray(message.riders)) {
       const arena = match.arena;
-      const riders = message.riders as { id: number; x: number; y: number; dir: Dir; next: Dir; alive: boolean }[];
-      for (const snapshot of riders) {
-        const rider = arena.riders[snapshot.id];
-        if (!rider) continue;
-        if (snapshot.x !== rider.x || snapshot.y !== rider.y) {
-          const head = cell(arena, snapshot.x, snapshot.y);
-          if (arena.cells[head] === 0) {
-            arena.cells[head] = rider.id + 1;
-            rider.trail.push(head);
-          }
-        }
-        Object.assign(rider, snapshot);
-      }
-      arena.tick = Number(message.tick) || arena.tick;
+      applyTick(arena, message.riders as RiderState[], Number(message.tick));
+      if (typeof message.delay === 'number') match.delay = Math.max(0, Math.min(0.5, message.delay));
+      prune(match.queue, arena.tick, mine());
       match.phase = message.phase === 'ready' || message.phase === 'run' || message.phase === 'crash' || message.phase === 'done' ? message.phase : match.phase;
       match.wins = Array.isArray(message.wins) ? message.wins as number[] : match.wins;
       match.round = Number(message.round) || match.round;
@@ -422,6 +521,7 @@ function Cycles() {
       match.longest = Number(message.longest) || match.longest;
       match.lastWinner = typeof message.lastWinner === 'number' ? message.lastWinner : null;
       match.ff = message.ff === true;
+      if (match.lockstep && !match.ff) clock.current.tick(arena.tick + match.acc / periodOf(match), performance.now() / 1000);
       if (typeof message.banner === 'string') {
         match.banner = message.banner;
         match.sub = typeof message.sub === 'string' ? message.sub : '';
@@ -432,6 +532,16 @@ function Cycles() {
       sparks(match);
     }
   }), [online?.onMessage, online?.seat, shell.touch]);
+
+  // A guest pings the host now and then: the round trips set everyone's input delay, and the answers its clock.
+  const send = online && !online.isHost ? online.send : null;
+  useEffect(() => {
+    if (!send) return;
+    const ping = () => send({ game: 'lightcycles', type: 'ping', t: performance.now(), rtt: clock.current.trip ?? undefined });
+    ping();
+    const timer = window.setInterval(ping, PING_MS);
+    return () => window.clearInterval(timer);
+  }, [send]);
 
   const crashed = (match: Match, id: number, x: number, y: number) => {
     const color = COLORS[id] ?? '#fff';
@@ -474,9 +584,10 @@ function Cycles() {
 
   const periodOf = (match: Match) => 1 / ((match.speed + (match.round - 1) * 0.6) * (match.ff ? 3 : 1));
 
-  const update = (dt: number) => {
+  const update = (dt: number, now: number) => {
     const match = m.current;
     if (!match) return;
+    match.frameAt = now / 1000;
     match.flash = Math.max(0, match.flash - dt * 2.4);
     match.shake = Math.max(0, match.shake - dt * 1.6);
     for (let i = 0; i < match.fade.length; i++) match.fade[i] = Math.max(0, match.fade[i] - dt * 1.4);
@@ -494,6 +605,9 @@ function Cycles() {
     if (match.phase === 'ready') {
       const before = Math.ceil(match.timer / BEAT);
       match.timer -= dt;
+      // (a guest counts down with the host's clock once it has it, rather than a one-way trip behind)
+      const est = online && online.seat !== 0 && match.lockstep ? clock.current.phase(now / 1000) : null;
+      if (est !== null) match.timer = Math.min(match.timer, -est * periodOf(match));
       const count = Math.ceil(match.timer / BEAT);
       if (match.timer <= 0) {
         match.phase = 'run';
@@ -533,22 +647,29 @@ function Cycles() {
     if (match.phase !== 'run') return;
 
     match.acc += dt;
-    if (online && online.seat !== 0) return;
+    if (online && online.seat !== 0) {
+      // A guest shows the arena as it is on the host now: its last tick, carried on by the turns everyone has coming.
+      const a = match.arena;
+      if (!match.lockstep || match.ff || roundOver(a)) {
+        match.ahead = null;
+        return;
+      }
+      const period = periodOf(match);
+      const view = guestView(a, match.queue, mine(), clock.current.phase(now / 1000) ?? a.tick + Math.min(1, match.acc / period), period);
+      match.ahead = view.ahead;
+      match.shown = view.shown;
+      return;
+    }
     while (match.acc >= periodOf(match) && match.phase === 'run') {
       match.acc -= periodOf(match);
       const a = match.arena;
       for (const r of a.riders) {
         if (!r.alive) continue;
-        if (r.cpu) steer(r, think(a, r, cfg.current.level));
-        else {
-          const q = match.queue[r.id];
-          while (q.length) {
-            const d = q.shift()!;
-            if (d !== r.dir && d !== ((r.dir + 2) % 4)) {
-              steer(r, d);
-              break;
-            }
-          }
+        if (r.cpu) {
+          if (match.thought[r.id] !== a.tick) steer(r, think(a, r, cfg.current.level));
+        } else {
+          const d = dueTurn(match.queue[r.id], r.dir, a.tick + 1);
+          if (d !== null) steer(r, d);
         }
       }
       const crashes = step(a);
@@ -585,17 +706,31 @@ function Cycles() {
         setBanner({ text: match.banner, sub: '', toast: true });
         note = true;
       }
-      if (online?.seat === 0) online.send({
-        game: 'lightcycles', type: 'tick', tick: a.tick,
-        riders: a.riders.map(({ id, x, y, dir, next, alive }) => ({ id, x, y, dir, next, alive })),
-        crashes, phase: match.phase, round: match.round, wins: match.wins, timer: match.timer,
-        acc: match.acc, speed: match.speed, longest: match.longest, lastWinner: match.lastWinner, ff: match.ff,
-        ...(note ? { banner: match.banner, sub: match.sub } : {}),
-      });
+      if (online?.seat === 0) {
+        // Bots' next moves are worked out now rather than as the next step starts (the arena is the same until then),
+        // so they go out with this tick and guests see them coming.
+        if (match.phase === 'run') {
+          for (const r of a.riders) {
+            if (!r.alive || !r.cpu) continue;
+            steer(r, think(a, r, cfg.current.level));
+            match.thought[r.id] = a.tick;
+          }
+        }
+        online.send({
+          game: 'lightcycles', type: 'tick', tick: a.tick,
+          riders: a.riders.map(({ id, x, y, dir, next, alive }) => ({ id, x, y, dir, next, alive })),
+          crashes, phase: match.phase, round: match.round, wins: match.wins, timer: match.timer,
+          acc: match.acc, speed: match.speed, longest: match.longest, lastWinner: match.lastWinner, ff: match.ff, delay: match.delay,
+          ...(note ? { banner: match.banner, sub: match.sub } : {}),
+        });
+      }
     }
   };
 
   const render = () => {
+    const t = performance.now();
+    const dt = Math.max(0, Math.min(0.25, (t - drawnAt.current) / 1000));
+    drawnAt.current = t;
     const c = ctx();
     const match = m.current;
     const { w, h } = sizeRef.current;
@@ -650,16 +785,24 @@ function Cycles() {
     c.restore();
 
     // Trails: a soft glow, a solid wall and a bright core, like a lit tube.
-    const frac = match.phase === 'run' ? Math.min(1, match.acc / periodOf(match)) : 0;
+    const ahead = match.phase === 'run' ? match.ahead : null;
+    const frac = ahead ? Math.max(0, Math.min(1, match.shown - ahead.to)) : match.phase === 'run' ? Math.min(1, match.acc / periodOf(match)) : 0;
     c.lineCap = 'round';
     c.lineJoin = 'round';
     for (const r of a.riders) {
       const color = COLORS[r.id];
-      const pts = r.trail;
+      const pts = ahead?.cells[r.id].length ? r.trail.concat(ahead.cells[r.id]) : r.trail;
       const fade = match.fade[r.id] ?? 0;
       const base = r.alive ? 1 : 0.3 + 0.7 * fade;
-      const hx = px(r.x + 0.5 + DX[r.dir] * frac);
-      const hy = py(r.y + 0.5 + DY[r.dir] * frac);
+      // Online, heads move toward the cell they are going to next (a guest's as it has them on the host now, holding
+      // at a wall until the host says), so a turn shows as soon as it's known; offline along the way they last went.
+      const x0 = ahead ? ahead.x[r.id] : r.x;
+      const y0 = ahead ? ahead.y[r.id] : r.y;
+      const way = ahead ? ahead.next[r.id] : online?.isHost ? (r.cpu ? r.next : nextWay(match.queue[r.id] ?? [], r.dir, a.tick + 1)) : r.dir;
+      const f = ahead?.blocked[r.id] ? Math.min(frac, 0.5) : frac;
+      const head = online && match.phase === 'run' && r.alive ? glide.current.at(r.id, x0 + DX[way] * f, y0 + DY[way] * f, dt, 1 / periodOf(match)) : { x: x0 + DX[way] * f, y: y0 + DY[way] * f };
+      const hx = px(head.x + 0.5);
+      const hy = py(head.y + 0.5);
       c.beginPath();
       for (let i = 0; i < pts.length; i++) {
         const x = px((pts[i] % a.w) + 0.5);
@@ -667,7 +810,7 @@ function Cycles() {
         if (i === 0) c.moveTo(x, y);
         else c.lineTo(x, y);
       }
-      if (r.alive && frac > 0) c.lineTo(hx, hy);
+      if (r.alive && (f > 0 || head.x !== x0 || head.y !== y0)) c.lineTo(hx, hy);
       c.strokeStyle = color;
       c.globalAlpha = base * 0.2;
       c.lineWidth = cell * 1.25;
@@ -682,7 +825,7 @@ function Cycles() {
         c.stroke();
       }
       c.globalAlpha = 1;
-      if (r.alive) drawCycle(c, hx, hy, r.dir, cell, color);
+      if (r.alive) drawCycle(c, hx, hy, ahead || online?.isHost ? (f > 0 ? way : ahead ? ahead.dir[r.id] : r.dir) : r.dir, cell, color);
     }
 
     // Who is who, while the countdown runs.
