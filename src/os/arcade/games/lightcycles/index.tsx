@@ -918,7 +918,8 @@ function Cycles() {
     }
   };
 
-  useGameLoop(update, render);
+  // (online, a slow frame is caught up in steps rather than played slow, so this rider keeps to everyone else's clock)
+  useGameLoop(update, render, { realtime: !!online });
 
   return (
     <div className={`g-lightcycles-stage${size.h && size.h < 300 ? ' is-short' : ''}`}>
