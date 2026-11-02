@@ -1,6 +1,10 @@
 // Online packets. Every client drives its own car and reports it; the host relays everyone to everyone (rooms are a
 // star around the host), drives the bots, picks the laps and the start time, and calls the result. Pure and testable.
-import type { NetCar } from './race.ts';
+//
+// Every car says when its owner sampled it (`t`, the owner's race time; every race clock follows the host's countdown,
+// so they agree to within a link's delay), and a receiver places it on its own race clock by the least delayed report
+// of that car (CarClock), not by when it happened to arrive, so jitter in the link does not pull it about.
+import { applyNet, type NetCar, type Race, type Runner } from './race.ts';
 
 export type Packet =
   /** Host state: seconds to lights out (negative once racing), laps, the grid by seat, and every car. */
@@ -20,16 +24,66 @@ const r3 = (n: number) => Math.round(n * 1000) / 1000;
 
 export const LAP_CHOICES = [3, 5, 10] as const;
 
-/** A car packed into a short array. */
+/** A car packed into a short array (its sample time last: older clients read the first fifteen and stop). */
 export function packCar(c: NetCar): number[] {
-  return [r2(c.x), r2(c.y), r3(c.yaw), r2(c.vx), r2(c.vy), r3(c.r), r3(c.steer), Math.round(c.rpm), c.gear, r2(c.brake), c.drs ? 1 : 0, c.lap, r1(c.dist), Math.round(c.fin), Math.round(c.best)];
+  const a = [r2(c.x), r2(c.y), r3(c.yaw), r2(c.vx), r2(c.vy), r3(c.r), r3(c.steer), Math.round(c.rpm), c.gear, r2(c.brake), c.drs ? 1 : 0, c.lap, r1(c.dist), Math.round(c.fin), Math.round(c.best)];
+  if (c.t !== undefined && Number.isFinite(c.t)) a.push(r3(c.t));
+  return a;
 }
 
 export function unpackCar(a: unknown): NetCar | null {
   if (!Array.isArray(a) || a.length < 15 || !a.every(num)) return null;
-  const [x, y, yaw, vx, vy, r, steer, rpm, gear, brake, drs, lap, dist, fin, best] = a as number[];
+  const [x, y, yaw, vx, vy, r, steer, rpm, gear, brake, drs, lap, dist, fin, best, t] = a as number[];
   if (Math.abs(x) > 1e5 || Math.abs(y) > 1e5 || Math.abs(vx) > 150 || Math.abs(vy) > 150) return null;
-  return { x, y, yaw, vx, vy, r, steer, rpm, gear: Math.max(-1, Math.min(8, Math.round(gear))), brake, drs: drs === 1, lap: Math.max(0, Math.round(lap)), dist, fin, best };
+  const car: NetCar = { x, y, yaw, vx, vy, r, steer, rpm, gear: Math.max(-1, Math.min(8, Math.round(gear))), brake, drs: drs === 1, lap: Math.max(0, Math.round(lap)), dist, fin, best };
+  if (t !== undefined && Math.abs(t) < 1e6) car.t = t;
+  return car;
+}
+
+/** A runner as the network sees it, sampled at race time t. */
+export const netCar = (rn: Runner, t: number): NetCar => ({
+  x: rn.car.x,
+  y: rn.car.y,
+  yaw: rn.car.yaw,
+  vx: rn.car.vx,
+  vy: rn.car.vy,
+  r: rn.car.r,
+  steer: rn.car.steer,
+  rpm: rn.car.rpm,
+  gear: rn.car.gear,
+  brake: rn.car.brake,
+  drs: rn.car.drs,
+  lap: rn.lap,
+  dist: rn.dist,
+  fin: rn.fin === null ? -1 : rn.fin * 1000,
+  best: rn.best ? rn.best.time * 1000 : -1,
+  t,
+});
+
+/** A gap this much wider than the least delayed one is a clock that jumped (a page in the background, a countdown re-read), not the link. */
+const CLOCK_JUMP = 0.5;
+/** How fast the gap follows a link that has got slower for good: this share of the difference each report. */
+const DRIFT = 0.02;
+
+/**
+ * One car's reports against our race clock. `at` takes our race time and the report's sample time and gives the race
+ * time it is taken to be current at here: its sample time plus the least delayed gap seen lately (which drifts up
+ * slowly, so a link that got slower is followed too), never later than now. Null for a report no newer than one
+ * already taken (fast packets can pass each other), unless it is far older: then its owner's clock went back (the
+ * countdown re-read), and it starts afresh.
+ */
+export class CarClock {
+  private gap: number | null = null;
+  private last = -Infinity;
+  at(local: number, sample: number): number | null {
+    if (sample < this.last - CLOCK_JUMP) this.gap = null;
+    else if (!(sample > this.last)) return null;
+    this.last = sample;
+    const gap = local - sample;
+    if (this.gap === null || gap < this.gap || gap - this.gap > CLOCK_JUMP) this.gap = gap;
+    else this.gap += (gap - this.gap) * DRIFT;
+    return Math.min(local, sample + this.gap);
+  }
 }
 
 export const hostState = (round: number, go: number, laps: number, roster: number[], teams: number[], cars: [number, NetCar][]) => ({
@@ -92,3 +146,20 @@ export function finishOrder(rows: { seat: number; fin: number; dist: number }[])
 
 /** The winner seat, or null when nobody finished. */
 export const winnerOf = (order: [number, number][]) => (order.length && order[0][1] >= 0 ? order[0][0] : null);
+
+/**
+ * A packet for remote runner rn: placed by when its owner sampled it where it says (by when it arrived where it does
+ * not, as from an older client). False for one older than what we have, which is dropped.
+ */
+export function takeCar(r: Race, rn: Runner, car: NetCar, clocks: Map<number, CarClock>): boolean {
+  let at = r.time;
+  if (car.t !== undefined) {
+    let clock = clocks.get(rn.entry.seat);
+    if (!clock) clocks.set(rn.entry.seat, (clock = new CarClock()));
+    const when = clock.at(r.time, car.t);
+    if (when === null) return false;
+    at = when;
+  }
+  applyNet(r, rn, car, at);
+  return true;
+}

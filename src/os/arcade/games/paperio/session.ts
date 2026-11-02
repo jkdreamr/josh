@@ -8,6 +8,12 @@
 // own-trail crashes so those feel instant, draw everyone else 100 ms in the past between states, and compare a board
 // hash with the host's now and then; anything out of step (a gap in the ops, a hash that disagrees twice) asks the
 // host for a snapshot of the whole board.
+//
+// Timing. Heads are drawn on the round's tick clock, never by when packets happened to arrive (which jitter would
+// bunch up and spread out). A guest's report says which of its ticks its newest point was taken at, and the host
+// places it on its own tick clock by the least delayed report (ClockGap); when it passes a guest's head on, it says how
+// long before the state's tick it heard it, so the other guests place it right too. A guest follows the host's tick
+// clock the same way, from the least delayed state.
 import type { Level } from './bots.ts';
 import { lerpPose, type Ctl, type Net, type Pose } from './ctl.ts';
 import { HUMAN_RESPAWN, createMatch, finish, matchTick, standings, type Match } from './match.ts';
@@ -25,6 +31,7 @@ import {
   quant,
   resyncPacket,
   snapshotPackets,
+  ClockGap,
   splitOp,
   statePacket,
   type HeadState,
@@ -171,13 +178,15 @@ export function hostCtl(net: Net, opts: OnlineOpts): Ctl {
   for (const p of w.players) if (p.seat >= 0) bySeat.set(p.seat, p.id);
   const lives = new Int32Array(16);
   const lastSample = new Int32Array(16).fill(-1);
+  // remote heads, on the round's tick clock (seconds): each guest's clock against it, and when its newest point was taken
   const tracks = Array.from({ length: 16 }, () => new Track());
+  const gaps = Array.from({ length: 16 }, () => new ClockGap());
+  const heardAt = new Float64Array(16).fill(-1);
   const gone = new Set<number>();
   let pending: NetOp[] = [];
   let seq = 0;
   let snap = 0;
   let go = GO;
-  let clock = 0;
   let stateIn = 0;
   let hashIn = 0;
   let result: { winner: number | null; order: number[]; winnerSeat: number | null } | null = null;
@@ -197,6 +206,7 @@ export function hostCtl(net: Net, opts: OnlineOpts): Ctl {
     if (op.k === 'spawn') {
       lives[op.id]++;
       lastSample[op.id] = -1;
+      heardAt[op.id] = -1;
       tracks[op.id].reset();
     }
     pending.push(op);
@@ -236,6 +246,9 @@ export function hostCtl(net: Net, opts: OnlineOpts): Ctl {
     const p = w.players[id];
     if (!p || p.kind !== 'remote' || pk.life !== lives[id]) return;
     const count = pk.pts.length / 2;
+    // when the newest point was taken, on our tick clock (an older guest does not say: then as it arrives)
+    const now = w.tick * TICK;
+    const newest = pk.tick === undefined ? now : gaps[id].at(now, pk.tick * TICK);
     for (let i = 0; i < count; i++) {
       const s = pk.seq - (count - 1 - i);
       if (s <= lastSample[id]) continue;
@@ -252,7 +265,9 @@ export function hostCtl(net: Net, opts: OnlineOpts): Ctl {
         y = quant(w.c + (dy / dd) * lim);
       }
       driveTo(w, p, x, y, pk.h);
-      tracks[id].push(clock, x, y, pk.h, (p.alive ? F_ALIVE : 0) | (p.out ? F_OUT : 0));
+      const at = pk.tick === undefined ? now : newest - (count - 1 - i) * 2 * TICK;
+      tracks[id].push(at, x, y, pk.h, (p.alive ? F_ALIVE : 0) | (p.out ? F_OUT : 0));
+      heardAt[id] = at;
       if (!p.alive) break;
     }
     if (pk.dead && p.alive) kill(w, p, -1, 'self');
@@ -315,7 +330,6 @@ export function hostCtl(net: Net, opts: OnlineOpts): Ctl {
       conclude();
     },
     frame(dt) {
-      clock += dt;
       // players who left the room are out for good
       const now = net.players();
       if (now !== seen) {
@@ -336,7 +350,9 @@ export function hostCtl(net: Net, opts: OnlineOpts): Ctl {
         heads.length = 0;
         for (const p of w.players) {
           if (!p) continue;
-          heads.push({ id: p.id, x: p.x, y: p.y, h: p.h, f: (p.alive ? F_ALIVE : 0) | (p.out ? F_OUT : 0), kills: p.kills, life: lives[p.id] });
+          // a guest's head is where it last said, as of a moment before this tick
+          const age = p.kind === 'remote' && heardAt[p.id] >= 0 ? Math.max(0, (w.tick * TICK - heardAt[p.id]) * 1000) : 0;
+          heads.push({ id: p.id, x: p.x, y: p.y, h: p.h, f: (p.alive ? F_ALIVE : 0) | (p.out ? F_OUT : 0), kills: p.kills, life: lives[p.id], age });
         }
         const hash = hashIn <= 0 ? ownerHash(w) : null;
         if (hashIn <= 0) hashIn = HASH_EVERY;
@@ -347,7 +363,7 @@ export function hostCtl(net: Net, opts: OnlineOpts): Ctl {
     winner: () => m.winner,
     pose(p, alpha, out) {
       if (p.kind === 'remote' && tracks[p.id].size) {
-        tracks[p.id].sample(clock - DELAY, out);
+        tracks[p.id].sample((w.tick + alpha) * TICK - DELAY, out);
         out.alive = p.alive;
         out.out = p.out;
         return;
@@ -398,12 +414,16 @@ export function guestCtl(net: Net, opts: OnlineOpts): Ctl {
   let duration = Infinity;
   let elapsed = 0;
   let go = GO;
+  /** The host's tick clock as of now (seconds), from our clock and the least delayed state's gap to it (-1 before the round runs). */
   let hostClock = -1;
+  const hostGap = new ClockGap();
   let applied = 0;
   const buffer = new Map<number, NetOp>();
   let gapSince = -1;
   let life = 0;
   let sampleSeq = 0;
+  /** Our world tick when the newest sample was taken (they are two ticks apart). */
+  let sampleTick = 0;
   let ticks = 0;
   const samples: number[] = [];
   const tracks = Array.from({ length: 16 }, () => new Track());
@@ -592,9 +612,12 @@ export function guestCtl(net: Net, opts: OnlineOpts): Ctl {
     if (pk.k === 'S') {
       if (!inited) return;
       stateAt = clock;
-      const t = pk.tick / 60;
-      if (hostClock < 0 || Math.abs(hostClock - t) > 0.5) hostClock = t;
-      else if (t > hostClock) hostClock += (t - hostClock) * 0.15;
+      const t = pk.tick * TICK;
+      // (the host's ticks only run once the round does: during the countdown there is nothing to follow)
+      if (pk.go <= 0) {
+        hostGap.at(clock, t);
+        hostClock = clock - hostGap.value!;
+      }
       go = pk.go;
       if (Math.abs(elapsed - pk.elapsed) > 0.25) elapsed = pk.elapsed;
       for (const hs of pk.heads) {
@@ -628,7 +651,8 @@ export function guestCtl(net: Net, opts: OnlineOpts): Ctl {
             }
           }
         } else aliveDiff[hs.id] = -1;
-        if (hs.id !== me) tracks[hs.id].push(t, hs.x, hs.y, hs.h, hs.f);
+        // (a guest's head as the host last heard it, a moment before this state)
+        if (hs.id !== me) tracks[hs.id].push(t - (hs.age ?? 0) / 1000, hs.x, hs.y, hs.h, hs.f);
       }
       // compare boards when we are exactly where the host was and nothing of ours is still in flight
       if (pk.hash !== null && snapLoaded && pk.seq === applied && predicted === 0 && clock - predictedAt > 1.5) {
@@ -655,7 +679,7 @@ export function guestCtl(net: Net, opts: OnlineOpts): Ctl {
 
   function sendMove(p: Player, dead: boolean) {
     sampleSeq++;
-    net.send(movePacket(round, life, sampleSeq, samples, p.h, dead), { fast: true });
+    net.send(movePacket(round, life, sampleSeq, samples, p.h, dead, sampleTick), { fast: true });
   }
 
   return {
@@ -692,12 +716,13 @@ export function guestCtl(net: Net, opts: OnlineOpts): Ctl {
         predictedAt = clock;
       }
       samples.push(qx, qy);
+      sampleTick = w.tick;
       if (samples.length > 6) samples.splice(0, samples.length - 6);
       sendMove(p, !p.alive);
     },
     frame(dt) {
       clock += dt;
-      if (hostClock >= 0) hostClock += dt;
+      if (hostGap.value !== null) hostClock = clock - hostGap.value;
       if (!inited || !snapLoaded) {
         helloIn -= dt;
         if (helloIn <= 0) {

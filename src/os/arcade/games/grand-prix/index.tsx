@@ -8,7 +8,7 @@ import { HowToPlay } from './howto.tsx';
 import { Hud, fmtLap, fmtSec, type HudApi } from './hud.tsx';
 import { P1, P2, SOLO, newDriver, readInput, type Driver as KeyDriver } from './input.ts';
 import { meta } from './meta';
-import { configOf, endOf, finishOrder, guestState, hostState, parsePacket, winnerOf } from './net.ts';
+import { CarClock, configOf, endOf, finishOrder, guestState, hostState, netCar, parsePacket, takeCar, winnerOf } from './net.ts';
 import { createRace, resetCar, stepRace, world, type Entry, type NetCar, type Race, type RaceEvent, type Runner } from './race.ts';
 import { CAM_MODES, createWorld, type CamMode, type GhostPose, type ViewSpec, type World3D } from './scene.ts';
 import { DRIVERS, TEAMS } from './teams.ts';
@@ -331,6 +331,8 @@ function Play({ mode }: { mode: StageMode }) {
     end: null as { w: number | null; order: [number, number][] } | null,
     endSends: 0,
     reported: false,
+    /** Each remote car's reports against our race clock. */
+    clocks: new Map<number, CarClock>(),
   });
 
   // the 3D world, rebuilt only when three.js arrives or the device class changes
@@ -441,24 +443,6 @@ function Play({ mode }: { mode: StageMode }) {
   const finishRef = useRef(finishOnline);
   finishRef.current = finishOnline;
 
-  const toNet = (rn: Runner): NetCar => ({
-    x: rn.car.x,
-    y: rn.car.y,
-    yaw: rn.car.yaw,
-    vx: rn.car.vx,
-    vy: rn.car.vy,
-    r: rn.car.r,
-    steer: rn.car.steer,
-    rpm: rn.car.rpm,
-    gear: rn.car.gear,
-    brake: rn.car.brake,
-    drs: rn.car.drs,
-    lap: rn.lap,
-    dist: rn.dist,
-    fin: rn.fin === null ? -1 : rn.fin * 1000,
-    best: rn.best ? rn.best.time * 1000 : -1,
-  });
-
   useEffect(() => {
     if (!live) return;
     const n = net.current;
@@ -477,10 +461,7 @@ function Play({ mode }: { mode: StageMode }) {
       if (p.k === 's') {
         if (!o.isHost) return;
         const rn = bySeat(from);
-        if (rn && rn.entry.kind === 'remote') {
-          rn.net = p.car;
-          rn.netAt = r.time;
-        }
+        if (rn && rn.entry.kind === 'remote') takeCar(r, rn, p.car, n.clocks);
       } else if (p.k === 'S') {
         if (o.isHost || from !== 0) return;
         if (!n.synced) {
@@ -500,9 +481,7 @@ function Play({ mode }: { mode: StageMode }) {
         for (const [seat, car] of p.cars) {
           if (seat === o.seat) continue;
           const rn = rr.runners.find((x) => x.entry.seat === seat);
-          if (!rn) continue;
-          rn.net = car;
-          rn.netAt = rr.time;
+          if (rn?.entry.kind === 'remote') takeCar(rr, rn, car, n.clocks);
         }
       } else if (p.k === 'end') {
         if (from !== 0 || o.isHost || n.end) return;
@@ -519,12 +498,13 @@ function Play({ mode }: { mode: StageMode }) {
       if (!o.isHost) {
         // someone who left the room drops out here too, rather than freezing on track
         for (const rn of r.runners) if (rn.entry.kind === 'remote' && !o.players.some((p) => p.seat === rn.entry.seat) && !o.bots.some((b) => b.seat === rn.entry.seat)) rn.out = true;
-        if (me) o.send(guestState(o.round, toNet(me)), { fast: n.ticks % 5 !== 0 && me.fin === null });
+        if (me) o.send(guestState(o.round, netCar(me, r.time)), { fast: n.ticks % 5 !== 0 && me.fin === null });
         return;
       }
       // people who left the room drop out of the race
       for (const rn of r.runners) if (rn.entry.kind === 'remote' && !o.players.some((p) => p.seat === rn.entry.seat)) rn.out = true;
-      const cars: [number, NetCar][] = r.runners.filter((x) => !x.out && (x.entry.kind !== 'remote' || x.net)).map((x) => [x.entry.seat, x.entry.kind === 'remote' ? x.net! : toNet(x)]);
+      // (a guest's car goes out as it last said, with the time it sampled it)
+      const cars: [number, NetCar][] = r.runners.filter((x) => !x.out && (x.entry.kind !== 'remote' || x.net)).map((x) => [x.entry.seat, x.entry.kind === 'remote' ? x.net! : netCar(x, r.time)]);
       o.send(hostState(o.round, -r.time, r.laps, n.roster, n.teams, cars), { fast: n.ticks % 5 !== 0 });
       // the race is called once every person still here has finished, or a minute after the winner
       const people = r.runners.filter((x) => !x.out && x.entry.kind !== 'ai');
@@ -760,7 +740,9 @@ function Play({ mode }: { mode: StageMode }) {
       if (!v || !r || v.lost()) return;
       v.render(viewsFor(r).map((vw, k) => ({ ...vw, back: backHeld.current[k] })));
     },
-    { always: mode === 'idle' },
+    // online, a slow frame is caught up rather than run in slow motion, which would leave this car (and, on the host,
+    // the bots and the race clock) behind everyone else's
+    { always: mode === 'idle', realtime: live },
   );
   const r = race.current!;
   const ps = mode === 'idle' ? [] : players(r);

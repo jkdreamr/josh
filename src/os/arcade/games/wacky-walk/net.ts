@@ -4,10 +4,12 @@ import type { Body, BodyState, Collider, Entrant, Phase, RaceId } from './types.
 export type PackedBody = [number, number, number, number, number, number, number, number, number];
 export type Sample = { x: number; y: number; z: number; vx: number; vy: number; vz: number; yaw: number; state: BodyState; squash: number };
 type Base = { t: 'wacky-walk'; r: number };
-type Move = Base & { k: 'm'; rd: number; b: PackedBody };
+/** `c`: the guest's course clock when it sampled its body (newer guests say; the host places it by that, see ClockGap). */
+type Move = Base & { k: 'm'; rd: number; b: PackedBody; c?: number };
 type Result = Base & { k: 'fin' | 'fall'; rd: number };
 type TileEvent = Base & { k: 'tile'; rd: number; id: number; at: number };
-type PlayerState = Base & { k: 'P'; rd: number; c: number; b: [number, ...PackedBody][] };
+/** `a`: for each body, how long before `c` it was sampled (ms; a guest's body as the host last heard it, from newer hosts). */
+type PlayerState = Base & { k: 'P'; rd: number; c: number; b: [number, ...PackedBody][]; a?: number[] };
 export type ShowPacket = Base & {
   k: 'S'; seed: number; race: RaceId; ent: [number, number, string, 0 | 1, number, number][];
   rd: number; ph: Phase; pt: number; c: number; inr: number[]; out: number[]; fin: number[]; ql: number[];
@@ -23,7 +25,10 @@ const integer = (value: unknown, min: number, max: number): value is number => N
 const phaseOk = (value: unknown): value is Phase => value === 'intro' || value === 'count' || value === 'play' || value === 'outro' || value === 'done';
 const raceOk = (value: unknown): value is RaceId => value === 'oval' || value === 'fountain' || value === 'palm';
 
-export function packBody(body: Pick<Body, 'x' | 'y' | 'z' | 'vx' | 'vy' | 'vz' | 'yaw' | 'state' | 'squash'>): PackedBody {
+/** What goes over the wire of a body (a whole Body, or a Sample of one). */
+type Packable = Pick<Body, 'x' | 'y' | 'z' | 'vx' | 'vy' | 'vz' | 'yaw' | 'state' | 'squash'>;
+
+export function packBody(body: Packable): PackedBody {
   return [
     round2(body.x), round2(body.y), round2(body.z), round2(body.vx), round2(body.vy), round2(body.vz),
     round2(wrapYaw(body.yaw)), stateCodes.indexOf(body.state), round2(body.squash),
@@ -38,16 +43,25 @@ export function unpackBody(packed: readonly number[]): Sample {
   };
 }
 
-export const movePacket = (round: number, rd: number, body: Body): Move => ({ t: 'wacky-walk', k: 'm', r: round, rd, b: packBody(body) });
+const round3 = (value: number) => Math.round(value * 1000) / 1000;
+
+export function movePacket(round: number, rd: number, body: Body, clock?: number): Move {
+  const packet: Move = { t: 'wacky-walk', k: 'm', r: round, rd, b: packBody(body) };
+  if (clock !== undefined && Number.isFinite(clock)) packet.c = round3(clock);
+  return packet;
+}
 export const finishPacket = (round: number, rd: number): Result => ({ t: 'wacky-walk', k: 'fin', r: round, rd });
 export const fallPacket = (round: number, rd: number): Result => ({ t: 'wacky-walk', k: 'fall', r: round, rd });
 export const tilePacket = (round: number, rd: number, id: number, at: number): TileEvent => ({ t: 'wacky-walk', k: 'tile', r: round, rd, id, at: round2(at) });
 
-export function playersPacket(round: number, rd: number, clock: number, bodies: readonly { id: number; body: Body }[]): PlayerState {
-  return {
-    t: 'wacky-walk', k: 'P', r: round, rd, c: round2(clock),
-    b: bodies.slice(0, 20).map(({ id, body }) => [id, ...packBody(body)] as [number, ...PackedBody]),
+export function playersPacket(round: number, rd: number, clock: number, bodies: readonly { id: number; body: Packable; age?: number }[]): PlayerState {
+  const list = bodies.slice(0, 20);
+  const packet: PlayerState = {
+    t: 'wacky-walk', k: 'P', r: round, rd, c: round3(clock),
+    b: list.map(({ id, body }) => [id, ...packBody(body)] as [number, ...PackedBody]),
   };
+  if (list.some((item) => item.age)) packet.a = list.map((item) => Math.max(0, Math.min(5000, Math.round(item.age ?? 0))));
+  return packet;
 }
 
 export function showPacket(
@@ -155,7 +169,9 @@ export function parsePacket(value: unknown): Packet | null {
   const r = packet.r;
   if (packet.k === 'm') {
     if (!integer(packet.rd, 0, 2) || !packedOk(packet.b)) return null;
-    return { t: 'wacky-walk', k: 'm', r, rd: packet.rd, b: packet.b };
+    const move: Move = { t: 'wacky-walk', k: 'm', r, rd: packet.rd, b: packet.b };
+    if (finite(packet.c) && packet.c >= 0 && packet.c <= 1000) move.c = packet.c;
+    return move;
   }
   if (packet.k === 'fin' || packet.k === 'fall') {
     if (!integer(packet.rd, 0, 2)) return null;
@@ -175,7 +191,9 @@ export function parsePacket(value: unknown): Packet | null {
       ids.add(row[0]);
       bodies.push([row[0], ...row.slice(1)] as [number, ...PackedBody]);
     }
-    return { t: 'wacky-walk', k: 'P', r, rd: packet.rd, c: packet.c, b: bodies };
+    const state: PlayerState = { t: 'wacky-walk', k: 'P', r, rd: packet.rd, c: packet.c, b: bodies };
+    if (Array.isArray(packet.a) && packet.a.length === bodies.length && packet.a.every((age) => integer(age, 0, 5000))) state.a = packet.a as number[];
+    return state;
   }
   if (packet.k === 'S') return parsedShow(packet, r);
   return null;
@@ -183,6 +201,11 @@ export function parsePacket(value: unknown): Packet | null {
 
 export class Interp {
   private samples: { time: number; value: Sample }[] = [];
+
+  /** The newest sample and the time it is placed at, or null. */
+  latest(): { time: number; value: Sample } | null {
+    return this.samples[this.samples.length - 1] ?? null;
+  }
 
   push(time: number, sample: Sample): void {
     if (!Number.isFinite(time)) return;
@@ -224,5 +247,57 @@ export class Interp {
     out.vx = last.value.vx; out.vy = last.value.vy; out.vz = last.value.vz;
     out.yaw = last.value.yaw; out.state = last.value.state; out.squash = last.value.squash;
     return true;
+  }
+}
+
+/** A gap this much wider than the least delayed one is a clock that stopped or jumped (a new round, a page away), not the link. */
+const CLOCK_JUMP = 0.5;
+/** How fast the gap follows a link that has got slower for good: this share of the difference each report. */
+const DRIFT = 0.02;
+
+/**
+ * A guest's course clock against the host's (seconds), from when its moves were sampled and when they arrived. The
+ * least delayed move sets the gap (it drifts up slowly, so a link that got slower is followed too), so the host places
+ * a guest's moves by when they were sampled rather than by when they happened to arrive: jitter no longer bunches them
+ * up and spreads them out, which drew the guest speeding up and stopping (and passed that on to everyone else).
+ */
+export class ClockGap {
+  private gap: number | null = null;
+  /** A move sampled at `sent` on the guest's clock arrived at `local` on ours: when it is taken to be current here (never after it arrived). */
+  at(local: number, sent: number): number {
+    const gap = local - sent;
+    if (this.gap === null || gap < this.gap || gap - this.gap > CLOCK_JUMP) this.gap = gap;
+    else this.gap += (gap - this.gap) * DRIFT;
+    return Math.min(local, sent + this.gap);
+  }
+}
+
+/** A guest's course clock a step of dt on: its own step, eased toward the host's latest word on it (or onto it, when far off). */
+export function followClock(clock: number, remote: number, dt: number): number {
+  const next = clock + dt;
+  const error = remote - next;
+  return Math.abs(error) > 0.5 ? remote : next + error * dt * 0.1;
+}
+
+/** On the host: a guest's move into its track, placed by when it was sampled (as it arrives, from an older guest). */
+export function takeMove(interp: Interp, gap: ClockGap, clock: number, packet: Extract<Packet, { k: 'm' }>) {
+  interp.push(packet.c === undefined ? clock : gap.at(clock, packet.c), unpackBody(packet.b));
+}
+
+/**
+ * On the host: what it passes on of a guest's body (the newest word on it, rather than where it draws it, a moment
+ * further back), and how long before `clock` that was sampled (ms).
+ */
+export function relayOf(interp: Interp, clock: number): { body: Sample; age: number } | null {
+  const latest = interp.latest();
+  return latest ? { body: latest.value, age: Math.max(0, (clock - latest.time) * 1000) } : null;
+}
+
+/** On a guest: everyone else's bodies from a players packet into their tracks, each at when it was sampled. */
+export function takePlayers(packet: Extract<Packet, { k: 'P' }>, mine: number | null, track: (id: number) => Interp) {
+  for (let i = 0; i < packet.b.length; i++) {
+    const row = packet.b[i];
+    if (row[0] === mine) continue;
+    track(row[0]).push(packet.c - (packet.a?.[i] ?? 0) / 1000, unpackBody(row.slice(1)));
   }
 }
