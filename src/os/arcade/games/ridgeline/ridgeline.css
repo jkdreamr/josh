@@ -1206,3 +1206,14 @@
     animation: none;
   }
 }
+
+.g-ridgeline .g-ridgeline-wait {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #0d1114;
+  color: #c9d3da;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
