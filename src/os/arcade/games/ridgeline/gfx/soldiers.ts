@@ -25,17 +25,17 @@ const DM_COLORS = [0x7cc6ff, 0xff7a5c, 0xffd23c, 0x7cff6a, 0xff6ad5, 0x6af0ff, 0
 const DM_KITS = ['multicam', 'black', 'ranger', 'coyote', 'woodland', 'urban', 'multicam', 'black'];
 
 export function paletteOf(m: Match, a: Actor) {
-  return { band: m.mode === 'uplink' ? (a.team === 0 ? 0x7cc6ff : 0xff7a5c) : DM_COLORS[a.id % DM_COLORS.length] };
+  return { band: m.mode === 'breach' ? (a.team === 0 ? 0x7cc6ff : 0xff7a5c) : DM_COLORS[a.id % DM_COLORS.length] };
 }
 
 /** The kit an actor wears. */
 export function kitOf(m: Match, a: Actor) {
-  return m.mode === 'uplink' ? (a.team === 0 ? 'multicam' : 'black') : DM_KITS[a.id % DM_KITS.length];
+  return m.mode === 'breach' ? (a.team === 0 ? 'multicam' : 'black') : DM_KITS[a.id % DM_KITS.length];
 }
 
 /** Which side's version of a gun an actor carries (the other team fields AKs and Berettas). */
 export function sideOf(m: Match, a: Actor) {
-  return m.mode === 'uplink' ? a.team : a.id % 2;
+  return m.mode === 'breach' ? a.team : a.id % 2;
 }
 
 export type Soldiers = {

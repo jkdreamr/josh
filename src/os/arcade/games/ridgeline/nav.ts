@@ -1,15 +1,35 @@
 // Path finding for the bots: a 2 m grid over the arena marking where a body fits and can walk (no cliffs, deep water,
 // walls, crates, trunks or rocks), searched with A* and smoothed into a few straight legs.
 import { clamp } from './noise.ts';
-import { blockedAt } from './physics.ts';
-import { floorAt, heightAt } from './terrain.ts';
+import { blockedAt, groundAt } from './physics.ts';
+import { floorAt, heightAt, normalAt } from './terrain.ts';
 import type { World } from './world.ts';
 
 export const NAV_CELL = 2;
 /** The most the ground may rise or fall between neighboring cells. */
 const CLIMB = 1.5;
+/** Ground steeper than this (the normal's up part) is out: the body slides off at 0.62, and a bot steering step by step
+ * will not head up a rise steeper than about 0.85 m a meter (0.76), so nothing in between gets planned through. */
+const STEEP = 0.77;
+const nrm = { x: 0, y: 1, z: 0 };
+/** Can a body stand on the bare ground around (x, z)? (Ice is flat whatever lies under it.) */
+function standable(w: World, x: number, z: number) {
+  const t = w.terrain;
+  for (const [ox, oz] of [
+    [0, 0],
+    [0.7, 0],
+    [-0.7, 0],
+    [0, 0.7],
+    [0, -0.7],
+  ]) {
+    if (t.ice && heightAt(t, x + ox, z + oz) < t.water) continue;
+    if (normalAt(t, x + ox, z + oz, nrm).y < STEEP) return false;
+  }
+  return true;
+}
 
 export type Nav = {
+  w: World;
   n: number;
   /** Half the side covered (the world's arena). */
   a: number;
@@ -55,7 +75,9 @@ function build(w: World): Nav {
       const g = floorAt(t, x, z);
       h[j * n + i] = g;
       const deep = t.hasWater && !t.ice && heightAt(t, x, z) < t.water - 1;
-      ok[j * n + i] = !deep && !blockedAt(w, x, z, g, 0.7) ? 1 : 0;
+      // a floor above the ground (a building's) is level whatever the slope under it
+      const onFloor = groundAt(w, x, z, g + 3) > g + 0.3;
+      ok[j * n + i] = !deep && !blockedAt(w, x, z, g, 0.7) && (onFloor || standable(w, x, z)) ? 1 : 0;
     }
   // a 2 m grid misses most doorways: carve a line of cells through each one, on the door's own axis
   const door = new Int32Array(n * n).fill(-1);
@@ -74,23 +96,40 @@ function build(w: World): Nav {
       pts.push(x, z);
     }
   }
-  return { n, a: A, door, doorPts: new Float32Array(pts), h, ok, g: new Float32Array(n * n), from: new Int32Array(n * n), seen: new Uint32Array(n * n), shut: new Uint32Array(n * n), search: 0, heap: new Int32Array(n * n * 8), hf: new Float32Array(n * n * 8) };
+  return { w, n, a: A, door, doorPts: new Float32Array(pts), h, ok, g: new Float32Array(n * n), from: new Int32Array(n * n), seen: new Uint32Array(n * n), shut: new Uint32Array(n * n), search: 0, heap: new Int32Array(n * n * 8), hf: new Float32Array(n * n * 8) };
 }
 
-/** Nearest walkable cell to a point, searching a few cells out. */
+/** Nearest walkable cell to a point, searching a few cells out. Of the cells equally near, one reached without
+ * passing through a wall or a box (a cell just across a thin wall is near, but not where you are). */
 function nearestOk(nav: Nav, x: number, z: number) {
   const n = nav.n;
   const ci = cellOf(nav.a, n, x);
   const cj = cellOf(nav.a, n, z);
-  for (let r = 0; r <= 4; r++)
+  // (off the walkable ground, on a slope too steep to stand on say, the way out is down it: the lowest cell near)
+  for (let r = 0; r <= 4; r++) {
+    let first = -1;
+    let low = -1;
     for (let dj = -r; dj <= r; dj++)
       for (let di = -r; di <= r; di++) {
         if (Math.max(Math.abs(di), Math.abs(dj)) !== r) continue;
         const i = ci + di;
         const j = cj + dj;
-        if (i >= 0 && j >= 0 && i < n && j < n && nav.ok[j * n + i]) return j * n + i;
+        if (i < 0 || j < 0 || i >= n || j >= n || !nav.ok[j * n + i]) continue;
+        const c = j * n + i;
+        if (r === 0) return c;
+        if (reachable(nav, x, z, centerOf(nav.a, i), centerOf(nav.a, j), nav.h[c]) && (low < 0 || nav.h[c] < nav.h[low])) low = c;
+        if (first < 0) first = c;
       }
+    if (low >= 0) return low;
+    if (first >= 0) return first;
+  }
   return -1;
+}
+
+/** Nothing solid on the short straight way from (x, z) to (cx, cz)? */
+function reachable(nav: Nav, x: number, z: number, cx: number, cz: number, y: number) {
+  for (const k of [0.25, 0.5, 0.75, 1]) if (blockedAt(nav.w, x + (cx - x) * k, z + (cz - z) * k, y, 0.12)) return false;
+  return true;
 }
 
 const NB: [number, number, number][] = [
@@ -108,20 +147,29 @@ const NB_DI = Int8Array.from(NB.map((v) => v[0]));
 const NB_DJ = Int8Array.from(NB.map((v) => v[1]));
 const NB_COST = Float32Array.from(NB.map((v) => v[2]));
 
-/** Can a body walk straight from cell a to cell b (all cells under the line walkable, no cliff between)? */
+/** Can a body walk straight from a to b (all cells under the line walkable, no cliff between, and nothing solid on
+ * the line itself: the 2 m grid alone can miss the end of a thin wall)? */
 function walkLine(nav: Nav, ax: number, az: number, bx: number, bz: number) {
   const n = nav.n;
   const d = Math.hypot(bx - ax, bz - az);
-  const steps = Math.ceil(d / (NAV_CELL * 0.5));
+  const steps = Math.ceil(d / (NAV_CELL * 0.25));
   let prev = nav.h[cellOf(nav.a, n, az) * n + cellOf(nav.a, n, ax)];
   for (let s = 1; s <= steps; s++) {
     const k = s / steps;
-    const c = cellOf(nav.a, n, az + (bz - az) * k) * n + cellOf(nav.a, n, ax + (bx - ax) * k);
+    const x = ax + (bx - ax) * k;
+    const z = az + (bz - az) * k;
+    const c = cellOf(nav.a, n, z) * n + cellOf(nav.a, n, x);
     if (!nav.ok[c]) return false;
     if (Math.abs(nav.h[c] - prev) > CLIMB * 0.75) return false;
     prev = nav.h[c];
+    if (blockedAt(nav.w, x, z, nav.h[c], 0.3)) return false;
   }
   return true;
+}
+
+/** Can a body walk straight from (ax, az) to (bx, bz)? */
+export function canWalk(w: World, ax: number, az: number, bx: number, bz: number) {
+  return walkLine(navOf(w), ax, az, bx, bz);
 }
 
 /**
@@ -259,6 +307,12 @@ export function findPath(w: World, sx: number, sz: number, gx: number, gz: numbe
     pts[pts.length - 2] = gx;
     pts[pts.length - 1] = gz;
   }
+  // standing off to one side of its cell (by the end of a wall, say), the first leg may not be a straight walk from
+  // where the body really is: step to the middle of the cell first
+  if (pts.length >= 2 && !walkLine(nav, sx, sz, pts[0], pts[1])) {
+    const [cx, cz] = at(cells[0]);
+    if (Math.hypot(cx - sx, cz - sz) > 0.3) pts.unshift(cx, cz);
+  }
   return pts;
 }
 
@@ -359,6 +413,7 @@ export function fieldStep(w: World, f: Field, x: number, z: number, look = 8): [
   const n = nav.n;
   let c = nearestOk(nav, x, z);
   if (c < 0 || !Number.isFinite(f[c])) return null;
+  const start = c;
   const chain: number[] = [];
   for (let s = 0; s < look; s++) {
     const ci = c % n;
@@ -368,6 +423,8 @@ export function fieldStep(w: World, f: Field, x: number, z: number, look = 8): [
       const i = ci + di;
       const j = cj + dj;
       if (i < 0 || j < 0 || i >= n || j >= n) continue;
+      // the same corner rule as the field itself: no cutting diagonally past a blocked cell
+      if (di !== 0 && dj !== 0 && (!nav.ok[cj * n + i] || !nav.ok[j * n + ci])) continue;
       const nc = j * n + i;
       if (f[nc] < f[best]) best = nc;
     }
@@ -376,13 +433,18 @@ export function fieldStep(w: World, f: Field, x: number, z: number, look = 8): [
     chain.push(c);
   }
   if (!chain.length) return null;
-  for (let k = chain.length - 1; k > 0; k--) {
+  for (let k = chain.length - 1; k >= 0; k--) {
     const cc = chain[k];
     const ci = cc % n;
     const px = centerOf(nav.a, ci);
     const pz = centerOf(nav.a, (cc - ci) / n);
     if (walkLine(nav, x, z, px, pz)) return [px, pz];
   }
+  // nothing ahead is a straight walk from here (tucked into a corner): first to the middle of the cell it stands in
+  const si = start % n;
+  const sx = centerOf(nav.a, si);
+  const sz = centerOf(nav.a, (start - si) / n);
+  if (Math.hypot(sx - x, sz - z) > 0.4) return [sx, sz];
   const ci = chain[0] % n;
   return [centerOf(nav.a, ci), centerOf(nav.a, (chain[0] - ci) / n)];
 }

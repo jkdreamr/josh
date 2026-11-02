@@ -169,56 +169,32 @@
   text-transform: uppercase;
   opacity: 0.75;
 }
-.g-ridgeline .g-ridgeline-cap {
+.g-ridgeline .g-ridgeline-clock {
   position: relative;
-  width: 112px;
-  height: 18px;
-  margin-top: 5px;
-  display: grid;
-  grid-template-columns: 18px 1fr;
-  grid-template-rows: 1fr 1fr;
-  column-gap: 5px;
-  row-gap: 2px;
-  align-items: center;
 }
-.g-ridgeline .g-ridgeline-capLetter {
-  grid-row: 1 / 3;
-  display: grid;
-  place-items: center;
-  width: 18px;
-  height: 18px;
-  font-weight: 800;
-  font-size: 11px;
-  color: #111;
-  background: var(--g-ridgeline-gold);
-  transform: rotate(45deg) scale(0.78);
+.g-ridgeline .g-ridgeline-clock[data-planted='1'] b {
+  color: #ff5a3c;
+  animation: g-ridgeline-pulse 0.5s ease-in-out infinite alternate;
 }
-.g-ridgeline .g-ridgeline-capBar {
-  height: 4px;
-  border-radius: 2px;
-  min-width: 2px;
-  background: var(--g-ridgeline-you);
-  transition: width 0.12s linear;
-}
-.g-ridgeline .g-ridgeline-capBar.is-them {
-  background: var(--g-ridgeline-them);
-}
-.g-ridgeline .g-ridgeline-cap em {
+.g-ridgeline .g-ridgeline-side {
   position: absolute;
-  top: 22px;
+  top: calc(100% + 4px);
   left: 50%;
   transform: translateX(-50%);
-  white-space: nowrap;
-  font-style: normal;
-  font-size: 11px;
-  color: var(--g-ridgeline-gold);
+  padding: 1px 7px;
+  border-radius: 2px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  color: #111;
+  background: var(--g-ridgeline-you);
 }
-.g-ridgeline .g-ridgeline-cap[data-contest='1'] .g-ridgeline-capLetter {
-  animation: g-ridgeline-pulse 0.5s ease-in-out infinite alternate;
+.g-ridgeline .g-ridgeline-side[data-side='defend'] {
+  background: var(--g-ridgeline-gold);
 }
 @keyframes g-ridgeline-pulse {
   to {
-    background: #fff;
+    opacity: 0.55;
   }
 }
 
@@ -576,6 +552,19 @@
 .g-ridgeline .g-ridgeline-mark small {
   font-size: 10px;
   opacity: 0.85;
+}
+.g-ridgeline .g-ridgeline-mark.is-charge b {
+  display: grid;
+  place-items: center;
+  min-width: 26px;
+  height: 22px;
+  padding: 0 4px;
+  border-radius: 3px;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 800;
+  text-shadow: none;
+  background: #d8432c;
 }
 .g-ridgeline .g-ridgeline-mark.is-mate b {
   font-size: 11px;
@@ -1024,6 +1013,50 @@
   border-radius: 2px;
   background: #7be38a;
 }
+.g-ridgeline .g-ridgeline-work {
+  width: 220px;
+}
+.g-ridgeline .g-ridgeline-work::after {
+  content: '';
+  grid-row: 2;
+  grid-column: 1;
+  justify-self: stretch;
+  width: 100%;
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(255, 255, 255, 0.18);
+}
+.g-ridgeline .g-ridgeline-work i {
+  grid-row: 2;
+  grid-column: 1;
+  z-index: 1;
+  height: 6px;
+  border-radius: 3px;
+  background: #ff7a5c;
+}
+.g-ridgeline .g-ridgeline-work[data-work='defuse'] i {
+  background: var(--g-ridgeline-you);
+}
+.g-ridgeline .g-ridgeline-work em {
+  grid-row: 2;
+  grid-column: 1;
+  z-index: 2;
+  justify-self: start;
+  position: relative;
+  width: 2px;
+  height: 10px;
+  background: #fff;
+}
+/* on touch the buttons fill the lower right: prompts and progress go just above the crosshair instead */
+.g-ridgeline .g-ridgeline-hud[data-touch='1'] .g-ridgeline-prompt:not(.is-drop) {
+  top: calc(50% - 96px);
+}
+.g-ridgeline .g-ridgeline-hud[data-touch='1'] .g-ridgeline-healing {
+  top: calc(50% - 62px);
+}
+.g-ridgeline .g-ridgeline-prompt.is-charge kbd {
+  background: #ffd56a;
+}
 .g-ridgeline .g-ridgeline-outside {
   position: absolute;
   left: 50%;
@@ -1070,9 +1103,6 @@
   }
   .g-ridgeline .g-ridgeline-clock b {
     font-size: 20px;
-  }
-  .g-ridgeline .g-ridgeline-cap {
-    width: 92px;
   }
   .g-ridgeline .g-ridgeline-feed {
     top: auto;

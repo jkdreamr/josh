@@ -496,7 +496,7 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
         const g = m.nades[i];
         mesh.visible = !!g;
         if (!g) return;
-        const look = fragLook[m.mode === 'uplink' ? (m.actors[g.owner]?.team ?? 0) : g.owner % 2];
+        const look = fragLook[m.mode === 'breach' ? (m.actors[g.owner]?.team ?? 0) : g.owner % 2];
         mesh.geometry = g.kind === 'frag' ? look.geo : smokeGeo;
         mesh.material = g.kind === 'frag' ? look.mat : smokeMat;
         mesh.position.set(g.x, g.y, g.z);

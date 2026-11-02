@@ -1,6 +1,6 @@
 // Sound on the arcade synth: gunshots by gun (a close crack and thump, a far rumble that arrives late at the speed of
-// sound), footsteps you can hear coming, hits, knockouts, reloads, grenades, the round cues, and a royale's pickups,
-// heals, jump, canopy and zone warnings.
+// sound), footsteps you can hear coming, hits, knockouts, reloads, grenades, the round cues, a breach charge being
+// planted, beeping its fuse away and defused, and a royale's pickups, heals, jump, canopy and zone warnings.
 import { sfx } from '../../kit';
 import type { Ev, Match } from './match.ts';
 import { WEAPONS, type WeaponClass } from './weapons.ts';
@@ -75,6 +75,22 @@ export function boomSound(dist: number) {
   const delay = Math.min(0.7, dist / 343);
   sfx.noise(0.6 + (1 - k) * 0.5, 0.35 * k + 0.03, delay);
   sfx.tone({ freq: 70, to: 25, dur: 0.6, type: 'sine', vol: 0.35 * k, delay });
+}
+
+/** The planted charge's beep, faster as its fuse runs down: call once a frame. Heard across the map, louder near. */
+const beepAt = new WeakMap<Match, number>();
+export function chargeBeeps(m: Match, ex: number, ez: number) {
+  const c = m.charge;
+  if (m.mode !== 'breach' || c.state !== 'planted') {
+    beepAt.delete(m);
+    return;
+  }
+  const next = beepAt.get(m) ?? m.time;
+  if (m.time < next) return;
+  const gap = c.fuse > 20 ? 1 : c.fuse > 10 ? 0.5 : c.fuse > 5 ? 0.25 : 0.12;
+  beepAt.set(m, m.time + gap);
+  const k = Math.max(0, 1 - Math.hypot(c.x - ex, c.z - ez) / 70);
+  sfx.tone({ freq: 1760, dur: 0.06, type: 'sine', vol: 0.025 + 0.09 * k });
 }
 
 /** Plays what this frame's events sound like from where you are. */
@@ -163,6 +179,43 @@ export function playEvents(m: Match, evs: Ev[], ex: number, ez: number, you: num
           sfx.noise(0.18, 0.12);
           sfx.tone({ freq: 140, to: 70, dur: 0.25, type: 'sine', vol: 0.1 });
         }
+        break;
+      case 'plant': {
+        const a = m.actors[e.a];
+        const k = a ? Math.max(0, 1 - d(a.body.x, a.body.z) / 40) : 0;
+        if (e.done) {
+          // armed: a rising chime everyone hears
+          sfx.tone({ freq: 880, dur: 0.12, type: 'triangle', vol: 0.12 });
+          sfx.tone({ freq: 1320, dur: 0.16, type: 'triangle', vol: 0.12, delay: 0.12 });
+          sfx.tone({ freq: 1760, dur: 0.22, type: 'triangle', vol: 0.12, delay: 0.26 });
+        } else if (e.a === you || k > 0) {
+          // keying it in: a few soft clicks
+          for (let i = 0; i < 4; i++) sfx.tone({ freq: 1100 + i * 90, dur: 0.03, type: 'square', vol: (e.a === you ? 0.05 : 0.04 * k), delay: i * 0.5 });
+        }
+        break;
+      }
+      case 'defuse': {
+        const a = m.actors[e.a];
+        const k = a ? Math.max(0, 1 - d(a.body.x, a.body.z) / 40) : 0;
+        if (e.done) {
+          sfx.tone({ freq: 1320, to: 440, dur: 0.4, type: 'triangle', vol: 0.12 });
+          sfx.tone({ freq: 660, dur: 0.25, type: 'sine', vol: 0.08, delay: 0.4 });
+        } else if (e.a === you || k > 0) sfx.noise(0.25, e.a === you ? 0.06 : 0.05 * k);
+        break;
+      }
+      case 'carry':
+        if (e.a === you) sfx.tone({ freq: 520, to: 780, dur: 0.12, type: 'triangle', vol: 0.08 });
+        break;
+      case 'blast': {
+        // on top of the boom: a long low roll the whole map hears
+        const dist = d(e.x, e.z);
+        const delay = Math.min(0.5, dist / 343);
+        sfx.tone({ freq: 48, to: 20, dur: 1.6, type: 'sine', vol: 0.3, delay });
+        sfx.noise(1.8, 0.16, delay + 0.1);
+        break;
+      }
+      case 'sides':
+        sfx.play('tick');
         break;
       case 'zone':
         if (e.shrinking) {
