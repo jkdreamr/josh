@@ -175,21 +175,31 @@ attribute vec4 iC;
 attribute float iW;
 varying vec2 vUv;
 varying vec4 vC;
+varying float vFade;
 void main() {
   vec3 p = mix(iA, iB, position.x);
-  vec3 side = normalize(cross(iB - iA, p - cameraPosition));
-  p += side * position.y * iW * (0.6 + length(p - cameraPosition) * 0.004);
+  vec3 toCam = p - cameraPosition;
+  // (a line seen end on, or of no length, has no side: it collapses to nothing rather than to NaN, which some GPUs
+  // draw as black streaks that the bloom then smears)
+  vec3 c = cross(iB - iA, toCam);
+  float l = length(c);
+  vec3 side = l > 1e-6 ? c / l : vec3(0.0);
+  float d = length(toCam);
+  p += side * position.y * iW * (0.6 + d * 0.004);
   vUv = position.xy;
   vC = iC;
+  // never right in front of the eye
+  vFade = smoothstep(2.0, 6.0, d);
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 }
 `;
 const TFRAG = /* glsl */ `
 varying vec2 vUv;
 varying vec4 vC;
+varying float vFade;
 void main() {
-  float a = (1.0 - abs(vUv.y)) * smoothstep(0.0, 0.6, vUv.x);
-  gl_FragColor = vec4(vC.rgb * a * vC.a, 1.0);
+  float a = clamp((1.0 - abs(vUv.y)) * smoothstep(0.0, 0.6, vUv.x) * vFade, 0.0, 1.0);
+  gl_FragColor = vec4(max(vC.rgb * a * vC.a, vec3(0.0)), 1.0);
 }
 `;
 
@@ -468,6 +478,8 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
       const W = tW.array as Float32Array;
       for (const b of m.bullets) {
         if (n >= TMAX) break;
+        // your own shots draw no line (the flash and where they land say enough); others' show where fire comes from
+        if (b.owner === you) continue;
         const len = Math.hypot(b.vx, b.vy, b.vz) || 1;
         let o = origins.get(b);
         if (!o) {
@@ -480,20 +492,19 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
           o = v.y > -500 && Math.hypot(v.x - sx, v.y - sy, v.z - sz) < 3 ? [v.x, v.y, v.z] : [sx, sy, sz];
           origins.set(b, o);
         }
-        const tail = Math.min(b.dist + 0.001, 26);
+        const tail = Math.min(b.dist + 0.001, 12);
         let ax = b.x - (b.vx / len) * tail;
         let ay = b.y - (b.vy / len) * tail;
         let az = b.z - (b.vz / len) * tail;
-        if (b.dist < 26) {
+        if (b.dist < 12) {
           ax = o[0];
           ay = o[1];
           az = o[2];
         }
         A.set([ax, ay, az], n * 3);
         Bv.set([b.x, b.y, b.z], n * 3);
-        const mine = b.owner === you;
-        C.set(mine ? [6, 4.6, 2.4, 0.5] : [7, 5, 2.6, 0.75], n * 4);
-        W[n] = 0.012;
+        C.set([4.2, 3.2, 1.8, 0.45], n * 4);
+        W[n] = 0.008;
         n++;
       }
       tg.instanceCount = n;
