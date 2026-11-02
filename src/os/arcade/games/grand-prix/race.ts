@@ -51,9 +51,10 @@ export type Runner = {
   drsOk: boolean;
   /** Time at every 10 m of the lap in progress, for the live delta. */
   trace: Float32Array;
-  /** Remote cars: the latest packet and when it arrived. */
+  /** Remote cars: the latest packet, the race time it is taken to be current at, and how far off the car was showing when it came (faded out, see followNet). */
   net: NetCar | null;
   netAt: number;
+  netErr: { x: number; y: number; yaw: number };
   /** Bests are only counted for laps started properly (not the out lap of a time trial). */
   flying: boolean;
   /** A car out of the race (left the room). */
@@ -80,6 +81,8 @@ export type NetCar = {
   /** Finish time in ms, -1 still racing. */
   fin: number;
   best: number;
+  /** The owner's race time when it sampled the car (s); older clients do not say. */
+  t?: number;
 };
 
 export type RaceEvent =
@@ -163,6 +166,7 @@ function makeRunner(r: Pick<Race, 'c' | 'line'>, idx: number, entry: Entry, assi
     trace: new Float32Array(Math.ceil(r.c.length / TRACE_STEP) + 1).fill(-1),
     net: null,
     netAt: 0,
+    netErr: { x: 0, y: 0, yaw: 0 },
     flying: false,
     out: false,
     stuck: 0,
@@ -413,21 +417,57 @@ function crossLine(r: Race, rn: Runner, at: number) {
   }
 }
 
-/** Remote cars glide along their last known velocity and ease toward each new packet. */
+/** The longest a remote car is carried on from its latest packet (s): any older and it waits where that put it. */
+const NET_AGE = 0.5;
+/** How long the gap between where a remote car was showing and where a new packet puts it takes to fade (s). */
+const NET_FADE = 0.2;
+/** A new packet this far from where the car shows (m) is a reset or a long silence: the car just goes there. */
+const NET_SNAP = 25;
+
+/** Where packet n has the car `age` seconds after it was sampled: on along its velocity, turning at its yaw rate. */
+function carried(n: NetCar, age: number) {
+  const yaw = n.yaw + n.r * age;
+  // (the velocity is in the car's frame: turned to the heading halfway through, which follows the arc closely)
+  const mid = n.yaw + n.r * age * 0.5;
+  const cos = Math.cos(mid);
+  const sin = Math.sin(mid);
+  return { x: n.x + (cos * n.vx - sin * n.vy) * age, y: n.y + (sin * n.vx + cos * n.vy) * age, yaw };
+}
+
+/**
+ * A new packet for a remote car, current at race time `at` (when its owner sampled it, on our clock; see CarClock).
+ * The car keeps showing where it was: the gap to where the packet puts it now is kept, and fades out (followNet).
+ */
+export function applyNet(r: Race, rn: Runner, n: NetCar, at: number) {
+  const err = rn.netErr;
+  if (rn.net) {
+    const p = carried(n, Math.max(0, Math.min(NET_AGE, r.time - at)));
+    err.x = rn.car.x - p.x;
+    err.y = rn.car.y - p.y;
+    err.yaw = Math.atan2(Math.sin(rn.car.yaw - p.yaw), Math.cos(rn.car.yaw - p.yaw));
+    if (Math.hypot(err.x, err.y) > NET_SNAP) err.x = err.y = err.yaw = 0;
+  } else err.x = err.y = err.yaw = 0;
+  rn.net = n;
+  rn.netAt = at;
+}
+
+/**
+ * Remote cars are carried on from their latest packet to now, the way they were going, plus whatever gap there was
+ * when it came, fading out: so a car is where its owner had it (as of the least delayed link) and never jumps.
+ */
 function followNet(r: Race, rn: Runner, dt: number) {
   const n = rn.net;
   const car = rn.car;
   if (!n) return;
-  const age = Math.min(0.5, r.time - rn.netAt);
-  const cos = Math.cos(n.yaw + n.r * age);
-  const sin = Math.sin(n.yaw + n.r * age);
-  const px = n.x + (Math.cos(n.yaw) * n.vx - Math.sin(n.yaw) * n.vy) * age;
-  const py = n.y + (Math.sin(n.yaw) * n.vx + Math.cos(n.yaw) * n.vy) * age;
-  const k = Math.min(1, dt * 10);
-  car.x += (px - car.x) * k;
-  car.y += (py - car.y) * k;
-  const dyaw = Math.atan2(sin, cos) - car.yaw;
-  car.yaw += Math.atan2(Math.sin(dyaw), Math.cos(dyaw)) * k;
+  const p = carried(n, Math.max(0, Math.min(NET_AGE, r.time - rn.netAt)));
+  const err = rn.netErr;
+  const k = Math.exp(-dt / NET_FADE);
+  err.x *= k;
+  err.y *= k;
+  err.yaw *= k;
+  car.x = p.x + err.x;
+  car.y = p.y + err.y;
+  car.yaw = p.yaw + err.yaw;
   car.vx = n.vx;
   car.vy = n.vy;
   car.r = n.r;
