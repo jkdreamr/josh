@@ -1,5 +1,6 @@
-// Everything drawn over the 3D view: the round bar, health and ammo, the kill feed, the minimap, markers for the
-// uplink and your team, the buy menu, the scoreboard, banners, the crosshair, hit markers and the scope.
+// Everything drawn over the 3D view: the round bar (or a royale's players left and zone clock), health, armor and ammo,
+// the kill feed, the minimap with the zone, markers for the uplink and your team, the buy menu, the scoreboard,
+// banners, pick up and heal prompts, the crosshair, hit markers and the scope.
 import { forwardRef, useEffect, useImperativeHandle, useRef, type ReactNode } from 'react';
 import type { Mode, Phase, ShopItem } from './match.ts';
 import { ARMOR, NADES, WEAPONS, type WeaponId } from './weapons.ts';
@@ -22,7 +23,7 @@ export type Hud = {
   credits: number;
   gun: { name: string; mag: number; reserve: number; max: number; cls: string } | null;
   slot: number;
-  guns: [WeaponId | null, WeaponId | null];
+  guns: (WeaponId | null)[];
   frags: number;
   smokes: number;
   canBuy: boolean;
@@ -35,6 +36,29 @@ export type Hud = {
   reload: number;
   rows: Row[];
   owned: Partial<Record<ShopItem, boolean>>;
+  royale: RoyaleHud | null;
+};
+
+export type RoyaleHud = {
+  alive: number;
+  total: number;
+  kills: number;
+  /** Seconds to the next zone change, and whether it is closing now; -1 once it has closed. */
+  zoneT: number;
+  closing: boolean;
+  /** How far outside the zone you are (0 inside), and its damage there. */
+  outside: number;
+  dps: number;
+  place: number;
+  /** 1 aboard the transport, 2 in freefall, 3 under the canopy, 0 down. */
+  drop: number;
+  vest: number;
+  helmet: number;
+  bandages: number;
+  kits: number;
+  heal: number;
+  healName: string | null;
+  pickup: string | null;
 };
 
 export const blankHud = (mode: Mode): Hud => ({
@@ -52,7 +76,7 @@ export const blankHud = (mode: Mode): Hud => ({
   credits: 0,
   gun: null,
   slot: 1,
-  guns: [null, null],
+  guns: [null, null, null],
   frags: 0,
   smokes: 0,
   canBuy: false,
@@ -65,6 +89,7 @@ export const blankHud = (mode: Mode): Hud => ({
   reload: 0,
   rows: [],
   owned: {},
+  royale: null,
 });
 
 const clock = (t: number) => {
@@ -73,6 +98,25 @@ const clock = (t: number) => {
 };
 
 export function TopBar({ h }: { h: Hud }) {
+  const r = h.royale;
+  if (h.mode === 'royale' && r) {
+    return (
+      <div className="g-ridgeline-top">
+        <div className="g-ridgeline-score is-you">
+          <b>{r.alive}</b>
+          <small>alive</small>
+        </div>
+        <div className="g-ridgeline-clock">
+          <b>{r.zoneT >= 0 ? clock(r.zoneT) : '-'}</b>
+          <small>{r.zoneT < 0 ? 'zone closed' : r.closing ? 'zone closing' : 'zone holds'}</small>
+        </div>
+        <div className="g-ridgeline-score is-them">
+          <b>{r.kills}</b>
+          <small>kills</small>
+        </div>
+      </div>
+    );
+  }
   if (h.mode === 'dm' && h.dm) {
     return (
       <div className="g-ridgeline-top">
@@ -133,6 +177,16 @@ export function Vitals({ h }: { h: Hud }) {
         </svg>
         <b>{Math.ceil(h.armor)}</b>
       </div>
+      {h.royale && (
+        <div className="g-ridgeline-kit">
+          <span data-on={h.royale.helmet ? '1' : '0'}>helmet {h.royale.helmet || '-'}</span>
+          <span data-on={h.royale.vest ? '1' : '0'}>vest {h.royale.vest || '-'}</span>
+          <span data-on={h.royale.bandages ? '1' : '0'}>
+            <kbd>H</kbd>bandage {h.royale.bandages}
+          </span>
+          <span data-on={h.royale.kits ? '1' : '0'}>kit {h.royale.kits}</span>
+        </div>
+      )}
       {h.mode === 'uplink' && (
         <div className="g-ridgeline-credits">
           <span>¤</span>
@@ -162,17 +216,20 @@ export function Ammo({ h }: { h: Hud }) {
         </>
       )}
       <div className="g-ridgeline-slots">
-        {h.guns.map((id, i) => (
-          <span key={i} className={i === h.slot ? 'is-on' : ''} data-empty={id ? '0' : '1'}>
-            <kbd>{i + 1}</kbd>
-            {id ? WEAPONS[id].name : '-'}
-          </span>
-        ))}
+        {(h.mode === 'royale' ? [0, 2, 1] : [0, 1]).map((k, i) => {
+          const id = h.guns[k];
+          return (
+            <span key={k} className={k === h.slot ? 'is-on' : ''} data-empty={id ? '0' : '1'}>
+              <kbd>{i + 1}</kbd>
+              {id ? WEAPONS[id].name : '-'}
+            </span>
+          );
+        })}
         <span data-empty={h.frags ? '0' : '1'}>
-          <kbd>3</kbd>frag {h.frags}
+          <kbd>{h.mode === 'royale' ? 4 : 3}</kbd>frag {h.frags}
         </span>
         <span data-empty={h.smokes ? '0' : '1'}>
-          <kbd>4</kbd>smoke {h.smokes}
+          <kbd>{h.mode === 'royale' ? 5 : 4}</kbd>smoke {h.smokes}
         </span>
       </div>
     </div>
@@ -264,6 +321,46 @@ export function BuyMenu({ h, onBuy, onClose }: { h: Hud; onBuy: (i: ShopItem) =>
   );
 }
 
+/** Royale prompts: what to do in the air, what is at your feet, a heal under way, and the zone when you are out of it. */
+export function RoyalePrompts({ h, touch }: { h: Hud; touch: boolean }) {
+  const r = h.royale;
+  if (!r || !h.alive) return null;
+  const key = (k: string, t: string) => (touch ? t : k);
+  return (
+    <>
+      {r.drop === 1 && (
+        <div className="g-ridgeline-prompt is-drop">
+          <b>{key('Space', 'Jump')}</b> to jump out
+          <small>pick your spot on the map ({key('M', 'Map')}). the transport flies on its line, everyone left aboard at the end jumps</small>
+        </div>
+      )}
+      {r.drop === 2 && (
+        <div className="g-ridgeline-prompt is-drop">
+          <b>{key('W', 'Push forward')}</b> and look down to dive, <b>{key('Space', 'Jump')}</b> opens the canopy early
+        </div>
+      )}
+      {r.drop === 3 && <div className="g-ridgeline-prompt is-drop">steer to your spot. the canopy glides down</div>}
+      {!r.drop && r.pickup && (
+        <div className="g-ridgeline-prompt">
+          <kbd>{touch ? 'Grab' : 'F'}</kbd>
+          {r.pickup}
+        </div>
+      )}
+      {r.heal > 0 && r.healName && (
+        <div className="g-ridgeline-healing">
+          <span>{r.healName}</span>
+          <i style={{ width: `${r.heal * 100}%` }} />
+        </div>
+      )}
+      {r.outside > 0 && !r.drop && (
+        <div className="g-ridgeline-outside">
+          outside the zone, -{r.dps} health a second. {Math.ceil(r.outside)} m to safety
+        </div>
+      )}
+    </>
+  );
+}
+
 export function Scoreboard({ rows, mode }: { rows: Row[]; mode: Mode }) {
   const teams = mode === 'uplink' ? [0, 1] : [-1];
   return (
@@ -310,7 +407,7 @@ export function DeathPanel({ h, touch }: { h: Hud; touch: boolean }) {
         {h.dead.w}
         {h.dead.head ? ', headshot' : ''}
       </span>
-      {h.mode === 'dm' ? <em>back in {Math.max(0, Math.ceil(h.dead.respawn))}</em> : h.watching ? <em>watching {h.watching}{touch ? ', tap to switch' : ', click to switch'}</em> : <em>your team is out</em>}
+      {h.royale ? <em>you finished #{h.royale.place} of {h.royale.total}</em> : h.mode === 'dm' ? <em>back in {Math.max(0, Math.ceil(h.dead.respawn))}</em> : h.watching ? <em>watching {h.watching}{touch ? ', tap to switch' : ', click to switch'}</em> : <em>your team is out</em>}
     </div>
   );
 }
@@ -402,7 +499,18 @@ export const Reticle = forwardRef<FastHud, { shotgun: boolean }>(function Reticl
 
 /** The minimap: the baked map picture, uplinks, your team, enemies your team can see, and you. Drawn on demand. */
 export type MinimapApi = { draw(s: MapState): void };
-export type MapState = { x: number; z: number; yaw: number; site: number; live: boolean; mates: { x: number; z: number }[]; foes: { x: number; z: number }[] };
+export type MapState = {
+  x: number;
+  z: number;
+  yaw: number;
+  site: number;
+  live: boolean;
+  mates: { x: number; z: number }[];
+  foes: { x: number; z: number }[];
+  /** Royale: the zone now and next, and the transport's line with where it is. */
+  zone?: { x: number; z: number; r: number; nx: number; nz: number; nr: number } | null;
+  plane?: { ax: number; az: number; bx: number; bz: number; x: number; z: number } | null;
+};
 export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(function Minimap({ world, big }, ref) {
   const cv = useRef<HTMLCanvasElement>(null);
   const img = useRef<HTMLCanvasElement | null>(null);
@@ -424,7 +532,7 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
       if (!g) return;
       const size = c.width;
       const mm = world.minimap;
-      const view = big ? mm.span : 70;
+      const view = big ? mm.span : s.zone !== undefined ? 120 : 70;
       const scale = size / (2 * view);
       const cx = big ? 0 : s.x;
       const cz = big ? 0 : s.z;
@@ -439,7 +547,34 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
       const k = mm.size / (2 * mm.span);
       g.imageSmoothingEnabled = true;
       g.drawImage(src, (cx - view + mm.span) * k, (cz - view + mm.span) * k, 2 * view * k, 2 * view * k, 0, 0, size, size);
-      world.sites.forEach((site, i) => {
+      if (s.zone) {
+        const z = s.zone;
+        g.lineWidth = big ? 2.5 : 2;
+        g.strokeStyle = 'rgba(255,255,255,0.95)';
+        g.beginPath();
+        g.arc(toX(z.nx), toY(z.nz), Math.max(1, z.nr * scale), 0, Math.PI * 2);
+        g.stroke();
+        g.strokeStyle = 'rgba(230,110,60,0.95)';
+        g.beginPath();
+        g.arc(toX(z.x), toY(z.z), Math.max(1, z.r * scale), 0, Math.PI * 2);
+        g.stroke();
+      }
+      if (s.plane) {
+        const p = s.plane;
+        g.setLineDash([6, 5]);
+        g.strokeStyle = 'rgba(255,255,255,0.8)';
+        g.lineWidth = 2;
+        g.beginPath();
+        g.moveTo(toX(p.ax), toY(p.az));
+        g.lineTo(toX(p.bx), toY(p.bz));
+        g.stroke();
+        g.setLineDash([]);
+        g.beginPath();
+        g.arc(toX(p.x), toY(p.z), big ? 6 : 4, 0, Math.PI * 2);
+        g.fillStyle = '#ffd56a';
+        g.fill();
+      }
+      if (s.zone === undefined) world.sites.forEach((site, i) => {
         const on = s.live && i === s.site;
         g.fillStyle = on ? '#ffd56a' : 'rgba(255,255,255,0.75)';
         g.strokeStyle = 'rgba(0,0,0,0.6)';

@@ -334,8 +334,10 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
     return f ? { geo: f.geo, mat: worldMaterial(THREE, f.mat, shared) } : { geo: fragGeo, mat: nadeMat };
   });
   const smokeMat = new THREE.MeshStandardMaterial({ color: 0x8a8f94, roughness: 0.5, metalness: 0.4 });
-  const nades = Array.from({ length: 8 }, () => {
-    const mesh: T.Mesh<T.BufferGeometry, T.Material> = new THREE.Mesh(fragGeo, nadeMat);
+  // each starts in one of the looks a grenade can take, so the shader warm up compiles every one of them
+  const nades = Array.from({ length: 8 }, (_, i) => {
+    const look = i < 3 ? fragLook[0] : i < 6 ? fragLook[1] : { geo: smokeGeo, mat: smokeMat };
+    const mesh: T.Mesh<T.BufferGeometry, T.Material> = new THREE.Mesh(look.geo, look.mat);
     mesh.visible = false;
     mesh.castShadow = true;
     group.add(mesh);
@@ -459,13 +461,18 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
       const W = tW.array as Float32Array;
       for (const b of m.bullets) {
         if (n >= TMAX) break;
+        const len = Math.hypot(b.vx, b.vy, b.vz) || 1;
         let o = origins.get(b);
         if (!o) {
+          // the tracer starts at the shooter's muzzle, unless that is unknown or not where this bullet came from
+          // (a soldier far off is posed now and then): then where the bullet really started
+          const sx = b.x - (b.vx / len) * b.dist;
+          const sy = b.y - (b.vy / len) * b.dist;
+          const sz = b.z - (b.vz / len) * b.dist;
           muzzleOf(b.owner, v);
-          o = v.y > -500 ? [v.x, v.y, v.z] : [b.px, b.py, b.pz];
+          o = v.y > -500 && Math.hypot(v.x - sx, v.y - sy, v.z - sz) < 3 ? [v.x, v.y, v.z] : [sx, sy, sz];
           origins.set(b, o);
         }
-        const len = Math.hypot(b.vx, b.vy, b.vz) || 1;
         const tail = Math.min(b.dist + 0.001, 26);
         let ax = b.x - (b.vx / len) * tail;
         let ay = b.y - (b.vy / len) * tail;

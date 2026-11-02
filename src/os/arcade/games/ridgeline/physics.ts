@@ -158,7 +158,7 @@ function circle(b: Body, cx: number, cz: number, rr: number) {
 const tmpN = { x: 0, y: 1, z: 0 };
 
 /** Moves a body by its velocity for dt seconds: gravity, ground, slopes, water and every collider. */
-export function stepBody(w: World, b: Body, dt: number, bound = ARENA) {
+export function stepBody(w: World, b: Body, dt: number, bound = w.arena) {
   const t = w.terrain;
   const speed = Math.hypot(b.vx, b.vy, b.vz);
   const n = Math.min(10, Math.max(1, Math.ceil((speed * dt) / 0.12)));

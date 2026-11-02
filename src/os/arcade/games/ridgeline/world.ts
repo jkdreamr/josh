@@ -5,8 +5,11 @@ import { MAPS, type MapDef, type MapId, type Style, type TreeKind } from './maps
 import { Noise2, clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
 import { CELL, T_HALF, T_RES, T_SIZE, flattenRect, generateTerrain, heightAt, meanHeight, normalAt, type Terrain } from './terrain.ts';
 
-/** Half the side of the square everyone plays in. */
+/** Half the side of the square everyone plays in (uplink and deathmatch). */
 export const ARENA = 160;
+const ARENA_CLASSIC = ARENA;
+/** The same for a royale: nearly all of the shaped land. */
+export const ROYALE_ARENA = 330;
 /** Uplink capture radius. */
 export const SITE_R = 9;
 /** Where a team waits out the buy phase. */
@@ -65,6 +68,14 @@ export type World = {
   /** RGBA per terrain vertex: sun visibility, ambient occlusion, far object shadow, bare ground. */
   light: Uint8Array;
   minimap: Minimap;
+  /** Half the side of the playable square. */
+  arena: number;
+  /** 1 on terrain vertices of the ground you can walk across (see walkRegion). */
+  region: Uint8Array;
+  /** Where loot can lie: x, y, z per spot (building floors first, then by cover). */
+  loot: Float32Array;
+  /** Doorways: center x, z and the wall's normal x, z per door, so the bots' paths can go through them. */
+  doors: Float32Array;
 };
 
 export const KIND = 1 << 22;
@@ -102,6 +113,10 @@ type Ctx = {
   colliders: Box[];
   /** Its own random stream for clutter, so the layout doesn't depend on it. */
   deco: Rng;
+  arena: number;
+  /** Loot spots, x, y, z each. */
+  loot: number[];
+  doors: number[];
 };
 
 const STYLE_WALLS: Record<Style, number[]> = {
@@ -173,6 +188,12 @@ class Frame {
     const r = this.rect(lx0, lz0, lx1, lz1);
     this.c.pieces.push({ x0: r.x0, y0, z0: r.z0, x1: r.x1, y1, z1: r.z1, part, color, solid });
   }
+  /** Notes a doorway at a local point with its wall's local normal. */
+  door(lx: number, lz: number, nlx: number, nlz: number) {
+    const [x, z] = this.xz(lx, lz);
+    const [ax, az] = this.xz(lx + nlx, lz + nlz);
+    this.c.doors.push(x, z, ax - x, az - z);
+  }
   gable(lx0: number, lz0: number, lx1: number, lz1: number, y: number, h: number, alongLocalX: boolean, color: number, wall: number) {
     const r = this.rect(lx0, lz0, lx1, lz1);
     this.c.gables.push({ ...r, y, h, alongX: (this.rot & 1) === 0 ? alongLocalX : !alongLocalX, color, wall });
@@ -182,11 +203,30 @@ class Frame {
 type Opening = { c: number; w: number; b: number; t: number };
 
 /** A wall along local x (from xa to xb, between z0 and z1) from y0 to y1 with door and window holes. */
-function wallX(f: Frame, xa: number, xb: number, z0: number, z1: number, y0: number, y1: number, holes: Opening[], part: Part, color: number) {
+/** Frames round a wall's openings, standing a little proud of both faces: jambs and a lintel, and a sill under a window. */
+function trims(f: Frame, alongX: boolean, holes: Opening[], t0: number, t1: number, y0: number, color: number) {
+  if (color < 0) return;
+  const box = (a0: number, ya: number, a1: number, yb: number, out: number) =>
+    alongX ? f.box(a0, ya, t0 - out, a1, yb, t1 + out, 'trim', color, false) : f.box(t0 - out, ya, a0, t1 + out, yb, a1, 'trim', color, false);
+  for (const o of holes) {
+    const a = o.c - o.w / 2;
+    const b = o.c + o.w / 2;
+    const door = o.b <= y0 + 0.05;
+    const bottom = door ? o.b : o.b - 0.02;
+    box(a - 0.08, bottom, a, o.t, 0.035);
+    box(b, bottom, b + 0.08, o.t, 0.035);
+    box(a - 0.1, o.t, b + 0.1, o.t + 0.11, 0.045);
+    if (!door) box(a - 0.12, o.b - 0.08, b + 0.12, o.b, 0.07);
+  }
+}
+
+function wallX(f: Frame, xa: number, xb: number, z0: number, z1: number, y0: number, y1: number, holes: Opening[], part: Part, color: number, trim = -1) {
+  trims(f, true, holes, z0, z1, y0, trim);
   let cur = xa;
   for (const o of [...holes].sort((a, b) => a.c - b.c)) {
     const a = o.c - o.w / 2;
     const b = o.c + o.w / 2;
+    if (o.b <= y0 + 0.05) f.door(o.c, (z0 + z1) / 2, 0, 1);
     if (a > cur) f.box(cur, y0, z0, a, y1, z1, part, color);
     if (o.b > y0) f.box(a, y0, z0, b, o.b, z1, part, color);
     if (o.t < y1) f.box(a, o.t, z0, b, y1, z1, part, color);
@@ -196,11 +236,13 @@ function wallX(f: Frame, xa: number, xb: number, z0: number, z1: number, y0: num
 }
 
 /** The same along local z, between x0 and x1. */
-function wallZ(f: Frame, za: number, zb: number, x0: number, x1: number, y0: number, y1: number, holes: Opening[], part: Part, color: number) {
+function wallZ(f: Frame, za: number, zb: number, x0: number, x1: number, y0: number, y1: number, holes: Opening[], part: Part, color: number, trim = -1) {
+  trims(f, false, holes, x0, x1, y0, trim);
   let cur = za;
   for (const o of [...holes].sort((a, b) => a.c - b.c)) {
     const a = o.c - o.w / 2;
     const b = o.c + o.w / 2;
+    if (o.b <= y0 + 0.05) f.door((x0 + x1) / 2, o.c, 1, 0);
     if (a > cur) f.box(x0, y0, cur, x1, y1, a, part, color);
     if (o.b > y0) f.box(x0, y0, a, x1, o.b, b, part, color);
     if (o.t < y1) f.box(x0, o.t, a, x1, y1, b, part, color);
@@ -237,6 +279,17 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
   const trim = style === 'cabin' ? 0x3a2a1e : style === 'adobe' ? 0x6b4a2e : 0xd8d2c4;
 
   f.box(-hw, base, -hd, hw, floorTop, hd, 'floor', style === 'adobe' ? 0xa08466 : 0x8a6a4a);
+  // a plinth round the foot of the walls, a hand proud of them, so the house sits on the ground instead of in it
+  // (a ring under the walls only, so the floor inside stays the floor)
+  if (kind !== 'ruin') {
+    const pc = style === 'adobe' ? 0x8a7458 : 0x8d8a84;
+    const pt = y + 0.13;
+    const o = 0.06;
+    f.box(-hw - o, base, -hd - o, hw + o, pt, -hd + T, 'concrete', pc, false);
+    f.box(-hw - o, base, hd - T, hw + o, pt, hd + o, 'concrete', pc, false);
+    f.box(-hw - o, base, -hd + T, -hw + T, pt, hd - T, 'concrete', pc, false);
+    f.box(hw - T, base, -hd + T, hw + o, pt, hd - T, 'concrete', pc, false);
+  }
   const door = (cpos: number, wide = 1.3, tall = 2.3): Opening => ({ c: cpos, w: wide, b: base, t: y + tall });
   const win = (cpos: number, wide = 1.3): Opening => ({ c: cpos, w: wide, b: y + 1, t: y + 2.15 });
   const ruin = kind === 'ruin';
@@ -244,8 +297,8 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
 
   if (kind === 'barn') {
     const bd: Opening = { c: 0, w: 3.8, b: base, t: y + 4 };
-    wallX(f, -hw, hw, -hd, -hd + T, base, top, [bd], wallPart, wc);
-    wallX(f, -hw, hw, hd - T, hd, base, top, [{ ...bd }], wallPart, wc);
+    wallX(f, -hw, hw, -hd, -hd + T, base, top, [bd], wallPart, wc, trim);
+    wallX(f, -hw, hw, hd - T, hd, base, top, [{ ...bd }], wallPart, wc, trim);
     const hi: Opening[] = [-hd * 0.5, 0, hd * 0.5].map((z) => ({ c: z, w: 1.6, b: y + 2.6, t: y + 3.6 }));
     wallZ(f, -hd + T, hd - T, -hw, -hw + T, base, top, [...hi, door(hd * 0.25, 1.4)], wallPart, wc);
     wallZ(f, -hd + T, hd - T, hw - T, hw, base, top, hi, wallPart, wc);
@@ -271,10 +324,10 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
       zp.forEach(([a, b], i) => r() > 0.25 && f.box(-hw, base, a, -hw + T, wallTop(i + 2), b, 'wall', wc));
       zp.forEach(([a, b], i) => r() > 0.3 && f.box(hw - T, base, a, hw, wallTop(i), b, 'wall', wc));
     } else {
-      wallX(f, -hw, hw, -hd, -hd + T, base, top, frontHoles, wallPart, wc);
-      wallX(f, -hw, hw, hd - T, hd, base, top, backHoles, wallPart, wc);
-      wallZ(f, -hd + T, hd - T, -hw, -hw + T, base, top, sideA, wallPart, wc);
-      wallZ(f, -hd + T, hd - T, hw - T, hw, base, top, sideB, wallPart, wc);
+      wallX(f, -hw, hw, -hd, -hd + T, base, top, frontHoles, wallPart, wc, ruin ? -1 : trim);
+      wallX(f, -hw, hw, hd - T, hd, base, top, backHoles, wallPart, wc, ruin ? -1 : trim);
+      wallZ(f, -hd + T, hd - T, -hw, -hw + T, base, top, sideA, wallPart, wc, ruin ? -1 : trim);
+      wallZ(f, -hd + T, hd - T, hw - T, hw, base, top, sideB, wallPart, wc, ruin ? -1 : trim);
       // sills under the windows
       for (const o of frontHoles) if (o.b > y) f.box(o.c - o.w / 2 - 0.05, o.b - 0.08, -hd - 0.08, o.c + o.w / 2 + 0.05, o.b, -hd + 0.05, 'trim', trim, false);
       for (const o of backHoles) if (o.b > y) f.box(o.c - o.w / 2 - 0.05, o.b - 0.08, hd - 0.05, o.c + o.w / 2 + 0.05, o.b, hd + 0.08, 'trim', trim, false);
@@ -306,6 +359,12 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
     }
   }
   const rr = f.rect(-hw, -hd, hw, hd);
+  // loot on the floor, more in the bigger buildings
+  const spots = Math.min(7, 2 + Math.floor((w * d) / 16));
+  for (let k = 0; k < spots; k++) {
+    const [lx, lz] = f.xz((c.deco() - 0.5) * (w - 1.8), (c.deco() - 0.5) * (d - 1.8));
+    c.loot.push(lx, floorTop + 0.02, lz);
+  }
   if (!ruin) {
     c.interiors.push({ x0: rr.x0 + T, y0: y - 0.5, z0: rr.z0 + T, x1: rr.x1 - T, y1: top, z1: rr.z1 - T });
     c.blocks.push({ x0: rr.x0, y0: y, z0: rr.z0, x1: rr.x1, y1: top + (style === 'adobe' ? 0.8 : 1.2), z1: rr.z1 });
@@ -465,6 +524,11 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number) {
     f.box(-w / 2, y, -d / 2, w / 2, hi + 0.95, d / 2, 'sandbag', col);
     if (r() < 0.5) f.box(w / 2 - 0.8, y, d / 2, w / 2, hi + 0.95, d / 2 + 1.8, 'sandbag', col);
   }
+  // loot by the cover, on the side away from its middle
+  if (kind !== 'truck' && c.deco() < 0.5) {
+    const [lx, lz] = f.xz((c.deco() - 0.5) * (w - 0.8), (c.deco() < 0.5 ? -1 : 1) * (d / 2 + 0.7));
+    c.loot.push(lx, heightAt(c.t, lx, lz) + 0.02, lz);
+  }
   // odds and ends left behind cover
   if ((kind === 'sandbags' || kind === 'hesco' || kind === 'pile' || kind === 'container') && c.deco() < 0.45) {
     const n = 1 + Math.floor(c.deco() * 2);
@@ -478,10 +542,10 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number) {
  * The walkable ground inside the arena that hangs together: 1 on vertices of the biggest region you can walk across
  * without climbing a cliff or swimming deep water, 0 elsewhere. Spawns, uplinks and respawns only go on it.
  */
-export function walkRegion(t: Terrain): Uint8Array {
+export function walkRegion(t: Terrain, arena = ARENA): Uint8Array {
   const lab = new Int32Array(T_RES * T_RES).fill(-1);
-  const lo = Math.floor((T_HALF - ARENA) / CELL);
-  const hi = Math.ceil((T_HALF + ARENA) / CELL);
+  const lo = Math.floor((T_HALF - arena) / CELL);
+  const hi = Math.ceil((T_HALF + arena) / CELL);
   const ok = (k: number) => t.ice || t.h[k] > t.water - 1.1;
   const sizes: number[] = [];
   const queue = new Int32Array(T_RES * T_RES);
@@ -525,14 +589,14 @@ export function walkRegion(t: Terrain): Uint8Array {
 const onRegion = (region: Uint8Array, x: number, z: number) => region[Math.round((z + T_HALF) / CELL) * T_RES + Math.round((x + T_HALF) / CELL)] === 1;
 
 /** Best spot near (x, z) for a pad: dry, flat, reachable and inside the arena. `along` limits the search to one axis. */
-function findSpot(t: Terrain, region: Uint8Array, x: number, z: number, radius: number, along?: [number, number]) {
+function findSpot(t: Terrain, region: Uint8Array, x: number, z: number, radius: number, along?: [number, number], arena = ARENA) {
   let best = { x, z, score: Infinity };
   for (let a = -radius; a <= radius; a += 4)
     for (let b = -radius; b <= radius; b += 4) {
       if (along && Math.abs(a * along[0] + b * along[1]) > 6) continue;
       const px = x + a;
       const pz = z + b;
-      if (Math.abs(px) > ARENA - 20 || Math.abs(pz) > ARENA - 20) continue;
+      if (Math.abs(px) > arena - 20 || Math.abs(pz) > arena - 20) continue;
       if (!onRegion(region, px, pz)) continue;
       let lo = Infinity;
       let hi = -Infinity;
@@ -616,10 +680,26 @@ function buildGrid(boxes: Box[], trunks: Trunk[], rocks: RockCol[]): Grid {
 
 const SURFACE: Record<Part, Surface> = { wall: 'stone', trim: 'stone', roof: 'stone', floor: 'wood', wood: 'wood', metal: 'metal', sandbag: 'dirt', concrete: 'stone', hesco: 'dirt' };
 
-export function buildWorld(id: MapId): World {
+/** Loot spots minus any that ended up inside something solid (a crate in a barn, a truck, a tree trunk). */
+function clearSpots(spots: number[], boxes: Box[], trunks: Trunk[]) {
+  const out: number[] = [];
+  for (let i = 0; i < spots.length; i += 3) {
+    const x = spots[i];
+    const y = spots[i + 1];
+    const z = spots[i + 2];
+    const inBox = boxes.some((b) => x > b.x0 - 0.25 && x < b.x1 + 0.25 && z > b.z0 - 0.25 && z < b.z1 + 0.25 && b.y0 < y + 0.6 && b.y1 > y + 0.05);
+    const inTrunk = trunks.some((t) => Math.hypot(t.x - x, t.z - z) < t.r + 0.3);
+    if (!inBox && !inTrunk) out.push(x, y, z);
+  }
+  return out;
+}
+
+/** Builds a map: the uplink arena, or with `royale` the whole land, with many more towns, cover and loot. */
+export function buildWorld(id: MapId, royale = false): World {
   const def = MAPS[id];
   const t = generateTerrain(def);
-  const c: Ctx = { def, t, rng: mulberry32(def.seed * 7 + 3), n: new Noise2(def.seed + 99), pieces: [], gables: [], interiors: [], taken: [], pads: [], roadSegs: [], roads: [], blocks: [], vehicles: [], models: [], colliders: [], deco: mulberry32(def.seed * 13 + 5) };
+  const ARENA = royale ? ROYALE_ARENA : ARENA_CLASSIC;
+  const c: Ctx = { def, t, rng: mulberry32(def.seed * 7 + 3), n: new Noise2(def.seed + 99), pieces: [], gables: [], interiors: [], taken: [], pads: [], roadSegs: [], roads: [], blocks: [], vehicles: [], models: [], colliders: [], deco: mulberry32(def.seed * 13 + 5), arena: ARENA, loot: [], doors: [] };
   const r = c.rng;
 
   // the axis between the spawns
@@ -628,7 +708,7 @@ export function buildWorld(id: MapId): World {
   const uz = Math.sin(th);
   const vx = -uz;
   const vz = ux;
-  const region = walkRegion(t);
+  const region = walkRegion(t, ARENA);
   const spawnAt = [-1, 1].map((sgn) => findSpot(t, region, sgn * 120 * ux, sgn * 120 * uz, 24));
   const siteAt = [-1, 0, 1].map((k) => findSpot(t, region, k * 82 * vx, k * 82 * vz, 24, [ux, uz]));
 
@@ -672,9 +752,24 @@ export function buildWorld(id: MapId): World {
     const p = findSpot(t, region, sgn * 135 * vx, sgn * 135 * vz, 18, [ux, uz]);
     towns.push({ name: def.pois[sgn < 0 ? 3 : 4], x: p.x, z: p.z, site: -1 });
   }
+  if (royale) {
+    // a royale spreads towns over the whole land, each joined by a road to the nearest one already there
+    const names = ['Brook', 'Mill', 'Quarry', 'Pines', 'Harbor', 'Crossing', 'Depot', 'Farm', 'Outlook', 'Station'];
+    for (let k = 0, made = 0; k < 160 && made < 9; k++) {
+      const a = r() * Math.PI * 2;
+      const d = 130 + r() * 170;
+      const p = findSpot(t, region, Math.cos(a) * d, Math.sin(a) * d, 26, undefined, ARENA);
+      if (!Number.isFinite(p.score) || towns.some((q) => Math.hypot(q.x - p.x, q.z - p.z) < 85)) continue;
+      let near = towns[0];
+      for (const q of towns) if (Math.hypot(q.x - p.x, q.z - p.z) < Math.hypot(near.x - p.x, near.z - p.z)) near = q;
+      roadLine(c, near.x, near.z, p.x, p.z);
+      towns.push({ name: `${def.pois[k % def.pois.length]} ${names[made % names.length]}`, x: p.x, z: p.z, site: -2 });
+      made++;
+    }
+  }
   const kinds: Kind[] = ['house', 'house', 'house', 'shed', 'ruin', 'barn'];
   for (const town of towns) {
-    const want = town.site >= 0 ? 6 : 4;
+    const want = town.site >= 0 ? 6 : town.site === -2 ? 7 : 4;
     let placed = 0;
     for (let tries = 0; tries < 120 && placed < want; tries++) {
       const a = r() * Math.PI * 2;
@@ -684,7 +779,7 @@ export function buildWorld(id: MapId): World {
   }
   for (let k = 0; k < 3; k++) {
     const a = r() * Math.PI * 2;
-    const d = ARENA + 50 + r() * 120;
+    const d = ARENA_CLASSIC + 50 + r() * 120;
     const x = Math.cos(a) * d;
     const z = Math.sin(a) * d;
     if (heightAt(t, x, z) < t.water + 2) continue;
@@ -697,7 +792,7 @@ export function buildWorld(id: MapId): World {
     }
   }
   // lone buildings out in the open
-  for (let k = 0, placed = 0; k < 80 && placed < 7; k++)
+  for (let k = 0, placed = 0; k < (royale ? 400 : 80) && placed < (royale ? 30 : 7); k++)
     if (tryBuilding(c, r() < 0.5 ? 'ruin' : 'shed', (r() * 2 - 1) * (ARENA - 15), (r() * 2 - 1) * (ARENA - 15), ARENA - 4)) placed++;
 
   // cover: around the uplinks, at the spawns and across the lanes
@@ -728,7 +823,13 @@ export function buildWorld(id: MapId): World {
       const a = r() * Math.PI * 2;
       if (tryProp(c, 'container', s.x + Math.cos(a) * 19, s.z + Math.sin(a) * 19, ARENA - 3)) placed++;
     }
-  for (let k = 0, placed = 0; k < 400 && placed < 34; k++)
+  if (royale)
+    for (let k = 0, placed = 0; k < 400 && placed < 6; k++) {
+      const a = r() * Math.PI * 2;
+      const d = 60 + r() * 250;
+      if (tryProp(c, 'truck', Math.cos(a) * d, Math.sin(a) * d, ARENA - 4)) placed++;
+    }
+  for (let k = 0, placed = 0; k < (royale ? 1600 : 400) && placed < (royale ? 120 : 34); k++)
     if (tryProp(c, propKinds[Math.floor(r() * propKinds.length)], (r() * 2 - 1) * (ARENA - 8), (r() * 2 - 1) * (ARENA - 8), ARENA - 3)) placed++;
 
   // later pads blend into earlier ones at their edges: put every pad back exactly
@@ -842,6 +943,10 @@ export function buildWorld(id: MapId): World {
     models: c.models,
     light: new Uint8Array(0),
     minimap: { size: 0, span: 0, data: new Uint8ClampedArray(0) },
+    arena: ARENA,
+    region,
+    loot: new Float32Array(clearSpots(c.loot, boxes, trunks)),
+    doors: new Float32Array(c.doors),
   };
   world.light = bakeLight(world, c.blocks);
   world.minimap = paintMinimap(world);
@@ -1042,6 +1147,7 @@ const mix3 = (a: [number, number, number], b: [number, number, number], k: numbe
 
 /** A top-down picture of the arena: ground colors with hill shading, water, roads, trees and roofs. */
 function paintMinimap(w: World): Minimap {
+  const ARENA = w.arena;
   const size = 256;
   const span = ARENA + 24;
   const data = new Uint8ClampedArray(size * size * 4);
@@ -1100,19 +1206,20 @@ function paintMinimap(w: World): Minimap {
   return { size, span, data };
 }
 
-const cache = new Map<MapId, World>();
+const cache = new Map<string, World>();
 /** The world for a map, built once per page. Rounds change nothing in it. */
-export function worldFor(id: MapId): World {
-  let w = cache.get(id);
+const keyOf = (id: MapId, royale: boolean) => (royale ? `${id}:royale` : id);
+export function worldFor(id: MapId, royale = false): World {
+  let w = cache.get(keyOf(id, royale));
   if (!w) {
-    w = buildWorld(id);
-    cache.set(id, w);
+    w = buildWorld(id, royale);
+    cache.set(keyOf(id, royale), w);
   }
   return w;
 }
 export function cacheWorld(w: World) {
-  cache.set(w.id, w);
+  cache.set(keyOf(w.id, w.arena > ARENA), w);
 }
-export function cachedWorld(id: MapId) {
-  return cache.get(id) ?? null;
+export function cachedWorld(id: MapId, royale = false) {
+  return cache.get(keyOf(id, royale)) ?? null;
 }

@@ -32,6 +32,8 @@ export type ViewModel = {
   camera: T.PerspectiveCamera;
   update(st: ViewState, dt: number, main: T.Camera): void;
   fire(): void;
+  /** Builds every gun (and the arms) now and shows them, so their shaders compile before play; hidden again on update. */
+  prewarm(kit: string): void;
   /** Where the muzzle is, in the view's own space (add the camera position for the world). */
   muzzle(out: T.Vector3): T.Vector3;
   setEnv(tex: T.Texture | null, intensity: number): void;
@@ -184,6 +186,8 @@ export function viewModel(THREE: Three, sunDir: [number, number, number], sunCol
   rig.add(flash);
 
   let cur: WeaponId | null = null;
+  /** Every gun is showing from a prewarm: hide them on the next update. */
+  let warmed = false;
   let swayX = 0;
   let swayY = 0;
   let svx = 0;
@@ -210,8 +214,9 @@ export function viewModel(THREE: Three, sunDir: [number, number, number], sunCol
       sun.intensity = sunIntensity * st.sun;
       scene.environmentIntensity = st.ambient;
       if (st.kit !== armsKit) buildArms(st.kit);
-      if (st.gun !== cur) {
-        if (cur) gunFor(cur).group.visible = false;
+      if (st.gun !== cur || warmed) {
+        for (const g of guns.values()) g.group.visible = false;
+        warmed = false;
         cur = st.gun;
         if (cur) gunFor(cur).group.visible = true;
       }
@@ -280,6 +285,15 @@ export function viewModel(THREE: Three, sunDir: [number, number, number], sunCol
         a.sleeve.quaternion.copy(q);
         a.sleeve.scale.set(1, 1, len);
       });
+    },
+    prewarm(kit) {
+      warmed = true;
+      if (kit !== armsKit) buildArms(kit);
+      for (const id of Object.keys(WEAPONS) as WeaponId[]) gunFor(id).group.visible = true;
+      rig.visible = true;
+      rig.position.set(0.15, -0.2, -0.4);
+      rig.updateMatrixWorld(true);
+      cur = null;
     },
     fire() {
       kick = Math.min(0.06, kick + 0.018);

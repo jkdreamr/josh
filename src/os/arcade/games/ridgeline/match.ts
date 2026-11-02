@@ -1,15 +1,17 @@
-// The rules. Uplink: two teams of five, one life a round, a buy phase, credits, and an uplink to hold. Deathmatch:
+// The rules. Royale: a hundred players drop from a transport, loot the land, and fight inside a shrinking zone until one
+// is left. Uplink: two teams of five, one life a round, a buy phase, credits, and an uplink to hold. Deathmatch:
 // everyone for themselves with quick respawns. Players and bots both act through the same Input, so the rules treat
 // them alike. Pure TS: the renderer, the sound and the HUD read the state and the events after each step.
 import { DM_HUBS, botInput, newBrain, type Brain, type BotLevel } from './bots.ts';
 import { fieldTo, navOf } from './nav.ts';
 import { clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
 import { CROUCH_H, GRAVITY, STAND_H, newHit, raySphere, rayWorld, stepBody, type Body } from './physics.ts';
+import { AMMO_KINDS, AMMO_MAX, AMMO_OF, CHUTE_GLIDE, CHUTE_OPEN, CHUTE_VY, FALL_FAST, FALL_SLOW, FALL_VY, HEAL, HELMET, NADE_MAX, ROYALE_PLAYERS, VEST, ZONES, nextCircle, planeAt, planePath, spawnLoot, type AmmoKind, type HealKind, type Item, type Plane, type Zone as Circle } from './royale.ts';
 import { floorAt } from './terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, LOSS_STREAK_BONUS, MAX_CREDITS, NADES, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, interval, kickOf, rangeMul, type WeaponId } from './weapons.ts';
 import { ARENA, SITE_R, SPAWN_R, yawTo, type Surface, type World } from './world.ts';
 
-export type Mode = 'uplink' | 'dm';
+export type Mode = 'royale' | 'uplink' | 'dm';
 export type Level = BotLevel;
 export type Zone = 'head' | 'body' | 'leg';
 export type ShopItem = WeaponId | 'light' | 'heavy' | 'frag' | 'smoke';
@@ -42,12 +44,16 @@ export type Input = {
   walk: boolean;
   jump: boolean;
   reload: boolean;
-  /** Switch to the primary (0) or the sidearm (1), or -1. */
+  /** Switch to the primary (0), the sidearm (1) or the second primary (2), or -1. */
   slot: number;
   throw: 'frag' | 'smoke' | null;
   buy: ShopItem | null;
+  /** Pick up what's at your feet (royale). */
+  use: boolean;
+  /** Patch yourself up (royale). */
+  heal: boolean;
 };
-export const idleInput = (yaw = 0, pitch = 0): Input => ({ mx: 0, mz: 0, yaw, pitch, fire: false, ads: false, crouch: false, walk: false, jump: false, reload: false, slot: -1, throw: null, buy: null });
+export const idleInput = (yaw = 0, pitch = 0): Input => ({ mx: 0, mz: 0, yaw, pitch, fire: false, ads: false, crouch: false, walk: false, jump: false, reload: false, slot: -1, throw: null, buy: null, use: false, heal: false });
 
 export type Gun = { id: WeaponId; mag: number; reserve: number; fresh: boolean };
 
@@ -66,9 +72,9 @@ export type Actor = {
   alive: boolean;
   hp: number;
   armor: number;
-  /** Primary and sidearm. */
-  guns: [Gun | null, Gun | null];
-  slot: 0 | 1;
+  /** Primary, sidearm, and (royale) a second primary. */
+  guns: [Gun | null, Gun | null, Gun | null];
+  slot: 0 | 1 | 2;
   frags: number;
   smokes: number;
   fireCd: number;
@@ -96,7 +102,7 @@ export type Actor = {
   hurtFrom: number;
   deathT: number;
   killer: number;
-  killedWith: WeaponId | 'frag' | null;
+  killedWith: WeaponId | 'frag' | 'zone' | null;
   killedHead: boolean;
   respawnT: number;
   shield: number;
@@ -104,13 +110,28 @@ export type Actor = {
   /** Walk cycle phase for the animation. */
   phase: number;
   dmPick: WeaponId;
+  /** Royale: rounds carried per ammo kind, vest and helmet levels, heals, a heal under way, the drop and the place. */
+  ammo: Record<AmmoKind, number>;
+  vest: number;
+  helmet: number;
+  bandages: number;
+  kits: number;
+  healT: number;
+  healKind: HealKind | null;
+  /** 0 on the ground, 1 aboard the transport, 2 in freefall, 3 under the canopy. */
+  drop: 0 | 1 | 2 | 3;
+  /** Seconds in the air while dropping; once down, when it landed. */
+  dropT: number;
+  zoneT: number;
+  /** Finishing place (royale), 0 while still in. */
+  place: number;
 };
 
 export type Bullet = { x: number; y: number; z: number; px: number; py: number; pz: number; vx: number; vy: number; vz: number; owner: number; w: WeaponId; life: number; dist: number; live: boolean };
 export type Nade = { kind: 'frag' | 'smoke'; x: number; y: number; z: number; vx: number; vy: number; vz: number; fuse: number; owner: number; rest: boolean; spin: number };
 export type Smoke = { x: number; y: number; z: number; age: number; life: number; r: number };
 export type Sound = { x: number; z: number; t: number; team: number; range: number; who: number };
-export type Kill = { t: number; killer: number; victim: number; w: WeaponId | 'frag'; head: boolean };
+export type Kill = { t: number; killer: number; victim: number; w: WeaponId | 'frag' | 'zone'; head: boolean };
 
 export type Ev =
   | { t: 'shot'; a: number; w: WeaponId; x: number; y: number; z: number; dx: number; dy: number; dz: number }
@@ -131,7 +152,12 @@ export type Ev =
   | { t: 'phase'; phase: Phase }
   | { t: 'round'; winner: number; why: 'elim' | 'cap' | 'time' }
   | { t: 'capture'; team: number }
-  | { t: 'spawn'; a: number };
+  | { t: 'spawn'; a: number }
+  | { t: 'pickup'; a: number; item: Item }
+  | { t: 'heal'; a: number; done: boolean }
+  | { t: 'jumpout'; a: number }
+  | { t: 'chute'; a: number }
+  | { t: 'zone'; i: number; shrinking: boolean };
 
 export type Phase = 'buy' | 'live' | 'end' | 'over';
 
@@ -164,9 +190,17 @@ export type Match = {
   winner: number;
   /** Deathmatch clock. */
   clock: number;
+  /** Royale: what lies around (bumped `lootVer` whenever it changes), the zone, the transport and who's left. */
+  loot: Item[];
+  lootVer: number;
+  zone: Circle | null;
+  plane: Plane | null;
+  alive: number;
 };
 
 const BOT_NAMES = ['Vega', 'Rook', 'Sable', 'Juno', 'Kite', 'Onyx', 'Mako', 'Pike', 'Wren', 'Ash', 'Bishop', 'Cobalt', 'Drift', 'Ember', 'Flint', 'Haze', 'Ivy', 'Jett', 'Lark', 'Moss', 'Nova', 'Quill', 'Reed', 'Slate'];
+/** Royale needs a hundred: callsigns plus the names above. */
+const MORE_NAMES = ['Atlas', 'Badger', 'Brick', 'Canyon', 'Cedar', 'Cinder', 'Comet', 'Coyote', 'Crane', 'Dagger', 'Delta', 'Dusk', 'Echo', 'Falcon', 'Fable', 'Fox', 'Frost', 'Gale', 'Garnet', 'Ghost', 'Granite', 'Grizzly', 'Harbor', 'Hawk', 'Hollow', 'Hunter', 'Iron', 'Jackal', 'Jasper', 'Keel', 'Kestrel', 'Lancer', 'Lynx', 'Maple', 'Marsh', 'Mesa', 'Mustang', 'Nomad', 'North', 'Oak', 'Orbit', 'Otter', 'Pilot', 'Prairie', 'Quarry', 'Raven', 'Ridge', 'Rider', 'Rogue', 'Rust', 'Saber', 'Sage', 'Scout', 'Shadow', 'Shale', 'Sierra', 'Spruce', 'Storm', 'Summit', 'Talon', 'Thorn', 'Tundra', 'Valor', 'Viper', 'Volt', 'Warden', 'Whisky', 'Willow', 'Wolf', 'Yukon', 'Zephyr', 'Birch', 'Basalt', 'Condor', 'Delmar', 'Granger'];
 
 function newActor(id: number, name: string, team: number, bot: boolean, level: Level, look: number): Actor {
   return {
@@ -183,7 +217,7 @@ function newActor(id: number, name: string, team: number, bot: boolean, level: L
     alive: true,
     hp: 100,
     armor: 0,
-    guns: [null, gun('wren')],
+    guns: [null, gun('wren'), null],
     slot: 1,
     frags: 0,
     smokes: 0,
@@ -216,6 +250,17 @@ function newActor(id: number, name: string, team: number, bot: boolean, level: L
     stepDist: 0,
     phase: 0,
     dmPick: 'kestrel',
+    ammo: { light: 0, rifle: 0, shells: 0, magnum: 0, sniper: 0 },
+    vest: 0,
+    helmet: 0,
+    bandages: 0,
+    kits: 0,
+    healT: 0,
+    healKind: null,
+    drop: 0,
+    dropT: 0,
+    zoneT: 0,
+    place: 0,
   };
 }
 
@@ -223,8 +268,8 @@ export const gun = (id: WeaponId): Gun => ({ id, mag: WEAPONS[id].mag, reserve: 
 
 export function createMatch(world: World, mode: Mode, level: Level, opts: { name?: string; seed?: number; dmPick?: WeaponId } = {}): Match {
   const rng = mulberry32(opts.seed ?? Math.floor(Math.random() * 2 ** 31));
-  const names = [...BOT_NAMES].sort(() => rng() - 0.5);
-  const count = mode === 'uplink' ? 10 : 8;
+  const names = [...BOT_NAMES, ...(mode === 'royale' ? MORE_NAMES : [])].sort(() => rng() - 0.5);
+  const count = mode === 'royale' ? ROYALE_PLAYERS : mode === 'uplink' ? 10 : 8;
   const actors: Actor[] = [];
   for (let i = 0; i < count; i++) {
     const team = mode === 'uplink' ? (i < 5 ? 0 : 1) : i;
@@ -236,7 +281,7 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
   // the bots' map knowledge, built now so no frame pays for it mid round
   navOf(world);
   if (mode === 'uplink') world.sites.forEach((s, k) => fieldTo(world, `site${k}`, s.x, s.z));
-  else world.dmSpawns.slice(0, DM_HUBS).forEach((p, k) => fieldTo(world, `dm${k}`, p.x, p.z));
+  else if (mode === 'dm') world.dmSpawns.slice(0, DM_HUBS).forEach((p, k) => fieldTo(world, `dm${k}`, p.x, p.z));
   const m: Match = {
     mode,
     level,
@@ -263,8 +308,14 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
     spotT: 0,
     winner: -1,
     clock: 0,
+    loot: [],
+    lootVer: 0,
+    zone: null,
+    plane: null,
+    alive: count,
   };
-  if (mode === 'uplink') startRound(m);
+  if (mode === 'royale') startRoyale(m, opts.seed ?? Math.floor(rng() * 1e9));
+  else if (mode === 'uplink') startRound(m);
   else {
     m.phase = 'live';
     m.phaseT = DM_TIME;
@@ -277,7 +328,9 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
 }
 
 export const eyeY = (a: Actor) => a.body.y + a.body.height - 0.14;
-export const currentGun = (a: Actor) => a.guns[a.slot] ?? a.guns[1] ?? a.guns[0];
+export const currentGun = (a: Actor) => a.guns[a.slot] ?? a.guns[1] ?? a.guns[0] ?? a.guns[2];
+/** Rounds left to reload a gun from: endless in deathmatch, the carried ammo in a royale, else the gun's own. */
+export const spareOf = (m: Match, a: Actor, g: Gun) => (m.mode === 'dm' ? Infinity : m.mode === 'royale' ? a.ammo[AMMO_OF[g.id]] : g.reserve);
 export const isEnemy = (a: Actor, b: Actor) => a.team !== b.team;
 export const me = (m: Match) => m.actors[0];
 
@@ -300,7 +353,7 @@ function hitActors(m: Match, b: Bullet, dx: number, dy: number, dz: number, len:
   let best: { a: Actor; t: number; zone: Zone } | null = null;
   const shooter = m.actors[b.owner];
   for (const a of m.actors) {
-    if (!a.alive || a.id === b.owner || (shooter && !isEnemy(shooter, a))) continue;
+    if (!a.alive || a.drop === 1 || a.id === b.owner || (shooter && !isEnemy(shooter, a))) continue;
     const cx = a.body.x;
     const cz = a.body.z;
     const h = a.body.height;
@@ -383,11 +436,15 @@ function stepBullets(m: Match, dt: number) {
 function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'frag', zone: Zone, x: number, y: number, z: number) {
   if (!v.alive || raw <= 0) return;
   if (v.shield > 0) return;
+  if (zone === 'head') raw *= HELMET[v.helmet];
+  v.healT = 0;
+  v.healKind = null;
   const before = v.hp + v.armor;
   const res = applyDamage(v.hp, v.armor, raw, w === 'frag' ? 1 : WEAPONS[w].armorPen);
   const hadArmor = v.armor > 0;
   v.hp = res.hp;
   v.armor = Math.max(0, res.armor);
+  if (v.armor <= 0) v.vest = 0;
   const dealt = Math.min(before, raw);
   const att = m.actors[from];
   if (att && att !== v) {
@@ -402,7 +459,7 @@ function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'fr
   if (kill) die(m, v, from, w, zone === 'head');
 }
 
-function die(m: Match, v: Actor, from: number, w: WeaponId | 'frag', head: boolean) {
+function die(m: Match, v: Actor, from: number, w: WeaponId | 'frag' | 'zone', head: boolean) {
   v.alive = false;
   v.hp = 0;
   v.deathT = m.time;
@@ -433,7 +490,12 @@ function die(m: Match, v: Actor, from: number, w: WeaponId | 'frag', head: boole
     v.armor = 0;
     v.frags = 0;
     v.smokes = 0;
-  } else v.respawnT = RESPAWN;
+  } else if (m.mode === 'dm') v.respawnT = RESPAWN;
+  else {
+    v.place = m.alive;
+    m.alive--;
+    dropAll(m, v);
+  }
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -481,7 +543,7 @@ export function startRound(m: Match) {
     const s = w.spawns[a.team];
     const slot = s.slots[seen[a.team]++ % s.slots.length];
     if (!a.alive) {
-      a.guns = [null, gun('wren')];
+      a.guns = [null, gun('wren'), null];
       a.armor = 0;
     }
     for (const g of a.guns) if (g) {
@@ -537,7 +599,7 @@ function respawn(m: Match, a: Actor) {
   a.alive = true;
   a.hp = 100;
   a.armor = 25;
-  a.guns = [gun(a.dmPick), gun('wren')];
+  a.guns = [gun(a.dmPick), gun('wren'), null];
   a.slot = 0;
   a.frags = 1;
   a.smokes = 0;
@@ -548,10 +610,342 @@ function respawn(m: Match, a: Actor) {
   m.events.push({ t: 'spawn', a: a.id });
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// royale
+
+function startRoyale(m: Match, seed: number) {
+  const w = m.world;
+  m.phase = 'live';
+  m.loot = spawnLoot(w, seed);
+  for (const it of m.loot) if (it.kind === 'gun') it.n = WEAPONS[it.what as WeaponId].mag;
+  m.lootVer++;
+  m.plane = planePath(w, m.rng);
+  const z0 = ZONES[0];
+  const r0 = w.arena * 1.45;
+  const [nx, nz] = nextCircle(w, m.rng, 0, 0, r0 * 0.75, z0.r);
+  m.zone = { i: 0, t: z0.wait, shrinking: false, x: 0, z: 0, r: r0, fx: 0, fz: 0, fr: r0, nx, nz, nr: z0.r, dps: z0.dps };
+  const p = planeAt(m.plane, 0);
+  const yaw = yawTo(m.plane.bx - m.plane.ax, m.plane.bz - m.plane.az);
+  for (const a of m.actors) {
+    a.guns = [null, null, null];
+    a.slot = 0;
+    a.armor = 0;
+    a.frags = 0;
+    a.smokes = 0;
+    a.drop = 1;
+    a.body.x = p.x;
+    a.body.z = p.z;
+    a.body.y = m.plane.y;
+    a.body.vx = a.body.vy = a.body.vz = 0;
+    a.body.onGround = false;
+    a.yaw = yaw;
+    a.pitch = -0.4;
+    // a hundred bots at uplink sharpness would end it in a minute: slower to react, a little less sure of aim
+    if (a.brain) {
+      a.brain.react *= 1.45;
+      a.brain.skill *= 0.88;
+    }
+  }
+}
+
+/** Puts something on the ground. */
+function dropItem(m: Match, kind: Item['kind'], what: string, n: number, x: number, z: number, y: number) {
+  m.loot.push({ id: m.loot.length, kind, what, n, x, y, z, live: true });
+}
+
+/** Everything a fallen player carried, spread on the ground around them. */
+function dropAll(m: Match, v: Actor) {
+  const b = v.body;
+  const y = floorAt(m.world.terrain, b.x, b.z) > b.y + 0.6 ? floorAt(m.world.terrain, b.x, b.z) : Math.max(b.y, floorAt(m.world.terrain, b.x, b.z)) + 0.02;
+  const things: [Item['kind'], string, number][] = [];
+  for (const g of v.guns) if (g) things.push(['gun', g.id, g.mag]);
+  for (const k of AMMO_KINDS) if (v.ammo[k] > 0) things.push(['ammo', k, v.ammo[k]]);
+  if (v.vest > 0 && v.armor > 0) things.push(['vest', String(v.vest), 1]);
+  if (v.helmet > 0) things.push(['helmet', String(v.helmet), 1]);
+  if (v.kits > 0) things.push(['heal', 'kit', v.kits]);
+  if (v.bandages > 0) things.push(['heal', 'bandage', v.bandages]);
+  if (v.frags > 0) things.push(['nade', 'frag', v.frags]);
+  if (v.smokes > 0) things.push(['nade', 'smoke', v.smokes]);
+  things.forEach(([kind, what, n], i) => {
+    const a = (i / Math.max(1, things.length)) * Math.PI * 2 + v.id;
+    const r = 0.5 + (i % 2) * 0.4;
+    const x = b.x + Math.cos(a) * r;
+    const z = b.z + Math.sin(a) * r;
+    dropItem(m, kind, what, n, x, z, Math.max(y, floorAt(m.world.terrain, x, z) + 0.02));
+  });
+  v.guns = [null, null, null];
+  for (const k of AMMO_KINDS) v.ammo[k] = 0;
+  v.vest = v.helmet = v.kits = v.bandages = v.frags = v.smokes = 0;
+  v.armor = 0;
+  m.lootVer++;
+}
+
+/** The item an actor would pick up now: close, the one most in front, and (for bots) one it actually wants. */
+export function lootNear(m: Match, a: Actor, reach = 2.1, wantedOnly = false): Item | null {
+  if (m.mode !== 'royale' || !a.alive || a.drop) return null;
+  const b = a.body;
+  const f = viewDir(a.yaw, 0);
+  let best: Item | null = null;
+  let bestS = Infinity;
+  for (const it of m.loot) {
+    if (!it.live) continue;
+    const dx = it.x - b.x;
+    const dz = it.z - b.z;
+    if (Math.abs(dx) > reach || Math.abs(dz) > reach) continue;
+    const d = Math.hypot(dx, dz);
+    if (d > reach || it.y < b.y - 1.2 || it.y > b.y + 1.4) continue;
+    const useful = wants(a, it);
+    if (wantedOnly && !useful) continue;
+    // something you can use beats something you can't, then the closest and most in front
+    const s = d - (d > 0.01 ? ((dx * f.x + dz * f.z) / d) * 0.9 : 0.9) - (useful ? 3 : 0);
+    if (s < bestS) {
+      bestS = s;
+      best = it;
+    }
+  }
+  return best;
+}
+
+/** Would picking this up help (a better vest, ammo with room for it, a gun, ...)? */
+export function wants(a: Actor, it: Item) {
+  switch (it.kind) {
+    case 'gun': {
+      const id = it.what as WeaponId;
+      if (a.guns.some((g) => g?.id === id)) return false;
+      if (WEAPONS[id].slot === 'secondary') return !a.guns[1];
+      return !a.guns[0] || !a.guns[2] || (a.guns[0].id !== id && WEAPONS[id].price > Math.min(WEAPONS[a.guns[0].id].price, WEAPONS[a.guns[2].id].price) + 400);
+    }
+    case 'ammo':
+      return a.ammo[it.what as AmmoKind] < AMMO_MAX[it.what as AmmoKind];
+    case 'vest':
+      return Number(it.what) > a.vest || (Number(it.what) === a.vest && a.armor < VEST[a.vest] * 0.6);
+    case 'helmet':
+      return Number(it.what) > a.helmet;
+    case 'heal':
+      return it.what === 'kit' ? a.kits < HEAL.kit.max : a.bandages < HEAL.bandage.max;
+    default:
+      return it.what === 'frag' ? a.frags < NADE_MAX.frag : a.smokes < NADE_MAX.smoke;
+  }
+}
+
+function pickup(m: Match, a: Actor, it: Item) {
+  if (!it.live) return;
+  const b = a.body;
+  switch (it.kind) {
+    case 'gun': {
+      const id = it.what as WeaponId;
+      const g: Gun = { id, mag: Math.min(it.n, WEAPONS[id].mag), reserve: 0, fresh: false };
+      // a long gun takes a free slot; with both full a player swaps the one in hand, a bot the cheaper one
+      const cheaper = WEAPONS[a.guns[0]?.id ?? 'wren'].price <= WEAPONS[a.guns[2]?.id ?? 'wren'].price ? 0 : 2;
+      const k: 0 | 1 | 2 = WEAPONS[id].slot === 'secondary' ? 1 : !a.guns[0] ? 0 : !a.guns[2] ? 2 : a.bot ? cheaper : a.slot === 2 ? 2 : 0;
+      const old = a.guns[k];
+      if (old) dropItem(m, 'gun', old.id, old.mag, b.x, b.z, it.y);
+      a.guns[k] = g;
+      if (k !== 1 || !a.guns[a.slot] || a.slot === 1) {
+        a.slot = k;
+        a.switchT = WEAPONS[id].equip;
+        a.reloadT = 0;
+        a.ads = 0;
+      }
+      it.live = false;
+      break;
+    }
+    case 'ammo': {
+      const k = it.what as AmmoKind;
+      const take = Math.min(it.n, AMMO_MAX[k] - a.ammo[k]);
+      if (take <= 0) return;
+      a.ammo[k] += take;
+      it.n -= take;
+      if (it.n <= 0) it.live = false;
+      break;
+    }
+    case 'vest': {
+      const lv = Number(it.what);
+      if (a.vest > 0 && a.armor > 0) dropItem(m, 'vest', String(a.vest), 1, b.x, b.z, it.y);
+      a.vest = lv;
+      a.armor = VEST[lv];
+      it.live = false;
+      break;
+    }
+    case 'helmet': {
+      if (a.helmet > 0) dropItem(m, 'helmet', String(a.helmet), 1, b.x, b.z, it.y);
+      a.helmet = Number(it.what);
+      it.live = false;
+      break;
+    }
+    case 'heal': {
+      const kit = it.what === 'kit';
+      const room = kit ? HEAL.kit.max - a.kits : HEAL.bandage.max - a.bandages;
+      const take = Math.min(room, it.n);
+      if (take <= 0) return;
+      if (kit) a.kits += take;
+      else a.bandages += take;
+      it.n -= take;
+      if (it.n <= 0) it.live = false;
+      break;
+    }
+    default: {
+      const frag = it.what === 'frag';
+      const room = frag ? NADE_MAX.frag - a.frags : NADE_MAX.smoke - a.smokes;
+      const take = Math.min(room, it.n);
+      if (take <= 0) return;
+      if (frag) a.frags += take;
+      else a.smokes += take;
+      it.n -= take;
+      if (it.n <= 0) it.live = false;
+    }
+  }
+  m.lootVer++;
+  m.events.push({ t: 'pickup', a: a.id, item: it });
+}
+
+/** Which heal a press uses: a kit when badly hurt, a bandage while it still helps, else a kit. */
+export function healPick(a: Actor): HealKind | null {
+  if (a.hp >= 100) return null;
+  if (a.kits > 0 && (a.hp < 55 || (a.hp >= HEAL.bandage.to && a.bandages >= 0))) return 'kit';
+  if (a.bandages > 0 && a.hp < HEAL.bandage.to) return 'bandage';
+  return a.kits > 0 ? 'kit' : null;
+}
+
+/** The zone's own damage: straight to health, armor doesn't help. */
+function hurtZone(m: Match, a: Actor, dmg: number) {
+  if (!a.alive) return;
+  a.hp -= dmg;
+  a.hurtT = m.time;
+  a.healT = 0;
+  a.healKind = null;
+  m.events.push({ t: 'hit', a: -1, v: a.id, dmg, zone: 'body', armor: false, x: a.body.x, y: a.body.y + 1, z: a.body.z, kill: a.hp <= 0 });
+  if (a.hp <= 0) die(m, a, -1, 'zone', false);
+}
+
+function stepRoyale(m: Match, dt: number) {
+  const z = m.zone!;
+  const w = m.world;
+  // the zone: hold, then close toward the next circle
+  if (z.i < ZONES.length) {
+    z.t -= dt;
+    if (!z.shrinking && z.t <= 0) {
+      z.shrinking = true;
+      z.t = ZONES[z.i].shrink;
+      z.fx = z.x;
+      z.fz = z.z;
+      z.fr = z.r;
+      z.dps = ZONES[z.i].dps;
+      m.events.push({ t: 'zone', i: z.i, shrinking: true });
+    } else if (z.shrinking) {
+      const k = 1 - Math.max(0, z.t) / ZONES[z.i].shrink;
+      z.x = lerp(z.fx, z.nx, k);
+      z.z = lerp(z.fz, z.nz, k);
+      z.r = lerp(z.fr, z.nr, k);
+      if (z.t <= 0) {
+        z.i++;
+        z.shrinking = false;
+        if (z.i < ZONES.length) {
+          const ph = ZONES[z.i];
+          z.t = ph.wait;
+          const [nx, nz] = nextCircle(w, m.rng, z.x, z.z, z.r, ph.r);
+          z.nx = nx;
+          z.nz = nz;
+          z.nr = ph.r;
+          z.dps = ph.dps;
+        }
+        m.events.push({ t: 'zone', i: z.i, shrinking: false });
+      }
+    }
+  }
+  // outside it hurts, once a second
+  for (const a of m.actors) {
+    if (!a.alive || a.drop) continue;
+    if (Math.hypot(a.body.x - z.x, a.body.z - z.z) > z.r) {
+      a.zoneT += dt;
+      if (a.zoneT >= 1) {
+        a.zoneT -= 1;
+        hurtZone(m, a, z.dps);
+      }
+    } else a.zoneT = 0;
+  }
+  // the transport flies on; whoever is still aboard at the far edge jumps
+  if (m.plane) {
+    const p = planeAt(m.plane, m.time);
+    for (const a of m.actors) {
+      if (a.drop !== 1) continue;
+      a.body.x = p.x;
+      a.body.z = p.z;
+      a.body.y = m.plane.y;
+      if (p.k >= 0.93) jumpOut(m, a);
+    }
+    if (p.k >= 1) m.plane = null;
+  }
+  // the end: you're out, or one is left
+  const you = m.actors[0];
+  if (!you.alive || m.alive <= 1) {
+    m.phase = 'over';
+    let last: Actor | null = null;
+    for (const a of m.actors) if (a.alive) last = a;
+    m.winner = last ? last.id : -1;
+    if (last) last.place = 1;
+    you.cs += Math.round((ROYALE_PLAYERS - you.place + 1) * 12) + (you.place === 1 ? 600 : 0);
+    m.events.push({ t: 'phase', phase: 'over' });
+  }
+}
+
+function jumpOut(m: Match, a: Actor) {
+  if (a.drop !== 1 || !m.plane) return;
+  const p = m.plane;
+  a.drop = 2;
+  a.dropT = 0;
+  const l = p.len || 1;
+  a.body.vx = ((p.bx - p.ax) / l) * p.speed * 0.5;
+  a.body.vz = ((p.bz - p.az) / l) * p.speed * 0.5;
+  a.body.vy = -2;
+  m.events.push({ t: 'jumpout', a: a.id });
+}
+
+/** Freefall and parachute: steered by the move keys, landing ends it. */
+function stepDrop(m: Match, a: Actor, inp: Input, dt: number) {
+  const b = a.body;
+  a.dropT += dt;
+  const ground = floorAt(m.world.terrain, b.x, b.z);
+  const above = b.y - ground;
+  if (a.drop === 2 && (above < CHUTE_OPEN || (inp.jump && a.dropT > 0.8 && above < CHUTE_OPEN * 2.6))) {
+    a.drop = 3;
+    m.events.push({ t: 'chute', a: a.id });
+  }
+  const sy = Math.sin(a.yaw);
+  const cy = Math.cos(a.yaw);
+  const mx = clamp(inp.mx, -1, 1);
+  const mz = clamp(inp.mz, -1, 1);
+  const chute = a.drop === 3;
+  // diving forward (looking down, pushing ahead) falls faster and covers more ground; under the canopy you glide
+  const fwd = chute ? CHUTE_GLIDE * (0.45 + 0.55 * Math.max(0, mz)) : mz > 0 ? FALL_FAST * mz : FALL_SLOW * mz;
+  const side = (chute ? 5 : FALL_SLOW) * mx;
+  const tx = -sy * fwd + cy * side;
+  const tz = -cy * fwd - sy * side;
+  const k = 1 - Math.exp(-(chute ? 1.6 : 1.1) * dt);
+  b.vx += (tx - b.vx) * k;
+  b.vz += (tz - b.vz) * k;
+  const vy = chute ? CHUTE_VY - Math.max(0, mz) * 1.2 : FALL_VY * (0.75 + 0.25 * Math.max(0, mz)) * (0.6 + 0.4 * clamp(-a.pitch * 1.6, 0, 1));
+  b.vy += (vy - b.vy) * (1 - Math.exp(-(chute ? 2.5 : 0.9) * dt));
+  // the body steps with gravity: hand it back so the set fall speed holds
+  b.vy += GRAVITY * dt;
+  stepBody(m.world, b, dt, m.world.arena);
+  if (b.onGround || b.swim) {
+    a.drop = 0;
+    // from here on dropT holds the landing time
+    a.dropT = m.time;
+    b.vy = 0;
+    m.events.push({ t: 'land', a: a.id });
+  }
+}
+
 const teamAlive = (m: Match, team: number) => m.actors.reduce((n, a) => n + (a.alive && a.team === team ? 1 : 0), 0);
 export const aliveOf = teamAlive;
 
 function stepRules(m: Match, dt: number) {
+  if (m.mode === 'royale') {
+    stepRoyale(m, dt);
+    return;
+  }
   if (m.mode === 'dm') {
     m.clock += dt;
     m.phaseT = Math.max(0, DM_TIME - m.clock);
@@ -756,7 +1150,7 @@ function startReload(m: Match, a: Actor) {
   const g = currentGun(a);
   if (!g || a.reloadT > 0 || a.switchT > 0) return;
   const w = WEAPONS[g.id];
-  const spare = m.mode === 'dm' ? Infinity : g.reserve;
+  const spare = spareOf(m, a, g);
   if (g.mag >= w.mag || spare <= 0) return;
   a.reloadT = w.reload;
   a.ads = Math.min(a.ads, 0.3);
@@ -876,10 +1270,53 @@ function act(m: Match, a: Actor, inp: Input, dt: number) {
   a.yaw = inp.yaw;
   a.pitch = clamp(inp.pitch, -1.45, 1.45);
   if (!a.alive) return;
+  // royale: aboard the transport, falling or under the canopy
+  if (a.drop) {
+    if (a.drop === 1) {
+      if (inp.jump) jumpOut(m, a);
+      return;
+    }
+    stepDrop(m, a, inp, dt);
+    return;
+  }
   // buying
   if (inp.buy) buy(m, a, inp.buy);
+  // picking up and healing
+  if (m.mode === 'royale') {
+    if (inp.use) {
+      const it = lootNear(m, a, 2.1, a.bot);
+      if (it) pickup(m, a, it);
+    }
+    if (inp.heal && a.healT <= 0) {
+      const kind = healPick(a);
+      if (kind) {
+        a.healKind = kind;
+        a.healT = HEAL[kind].time;
+        a.reloadT = 0;
+        a.ads = 0;
+        m.events.push({ t: 'heal', a: a.id, done: false });
+      }
+    }
+    if (a.healT > 0) {
+      if (inp.fire || inp.slot >= 0 || inp.jump || inp.throw) {
+        a.healT = 0;
+        a.healKind = null;
+      } else {
+        a.healT -= dt;
+        if (a.healT <= 0 && a.healKind) {
+          const h = HEAL[a.healKind];
+          a.hp = Math.min(100, Math.max(a.hp, Math.min(h.to, a.hp + h.add)));
+          if (a.healKind === 'kit') a.kits--;
+          else a.bandages--;
+          a.healT = 0;
+          a.healKind = null;
+          m.events.push({ t: 'heal', a: a.id, done: true });
+        }
+      }
+    }
+  }
   // weapon switch
-  if ((inp.slot === 0 || inp.slot === 1) && inp.slot !== a.slot && a.guns[inp.slot]) {
+  if ((inp.slot === 0 || inp.slot === 1 || inp.slot === 2) && inp.slot !== a.slot && a.guns[inp.slot]) {
     a.slot = inp.slot;
     const nw = WEAPONS[a.guns[inp.slot]!.id];
     a.switchT = nw.equip;
@@ -901,9 +1338,10 @@ function act(m: Match, a: Actor, inp: Input, dt: number) {
       const cg = currentGun(a);
       if (cg) {
         const need = WEAPONS[cg.id].mag - cg.mag;
-        const take = m.mode === 'dm' ? need : Math.min(need, cg.reserve);
+        const take = Math.min(need, spareOf(m, a, cg));
         cg.mag += take;
-        if (m.mode !== 'dm') cg.reserve -= take;
+        if (m.mode === 'royale') a.ammo[AMMO_OF[cg.id]] -= take;
+        else if (m.mode !== 'dm') cg.reserve -= take;
       }
     }
   }
@@ -931,7 +1369,7 @@ function act(m: Match, a: Actor, inp: Input, dt: number) {
     mx /= ml;
     mz /= ml;
   }
-  let speed = b.swim ? 2.4 : a.crouch > 0.5 ? CROUCH_SPEED : inp.walk ? WALK : RUN;
+  let speed = b.swim ? 2.4 : a.crouch > 0.5 ? CROUCH_SPEED : inp.walk || a.healT > 0 ? WALK : RUN;
   speed *= w.weight * (a.ads > 0.5 ? 0.78 : 1);
   const sy = Math.sin(a.yaw);
   const cy = Math.cos(a.yaw);
@@ -981,13 +1419,17 @@ function act(m: Match, a: Actor, inp: Input, dt: number) {
     }
   }
   // fighting is off until the round goes live
-  const armed = m.mode === 'dm' || m.phase === 'live';
+  const armed = m.mode !== 'uplink' || m.phase === 'live';
   if (!armed) {
     a.fireHeld = inp.fire;
     return;
   }
   if (inp.throw) throwNade(m, a, inp.throw);
   if (inp.reload) startReload(m, a);
+  if (a.healT > 0) {
+    a.fireHeld = inp.fire;
+    return;
+  }
   if (inp.fire && a.switchT <= 0 && a.reloadT <= 0 && a.fireCd <= 0 && g && (w.auto || !a.fireHeld)) fire(m, a);
   else if (inp.fire && g && g.mag <= 0 && a.reloadT <= 0 && !a.fireHeld) fire(m, a);
   if (a.fireCd < 0) a.fireCd = 0;

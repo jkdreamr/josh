@@ -947,6 +947,111 @@
   background: rgba(255, 213, 106, 0.5);
 }
 
+/* royale: kit, prompts, healing, the zone warning, and the extra touch buttons */
+.g-ridgeline .g-ridgeline-kit {
+  display: grid;
+  gap: 2px;
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.g-ridgeline .g-ridgeline-kit span {
+  opacity: 0.45;
+}
+.g-ridgeline .g-ridgeline-kit span[data-on='1'] {
+  opacity: 1;
+}
+.g-ridgeline .g-ridgeline-kit kbd {
+  margin-right: 4px;
+  padding: 0 3px;
+  border-radius: 2px;
+  font: inherit;
+  background: rgba(255, 255, 255, 0.18);
+}
+.g-ridgeline .g-ridgeline-prompt {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 46px);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-size: 14px;
+  white-space: nowrap;
+  background: var(--g-ridgeline-plate);
+}
+.g-ridgeline .g-ridgeline-prompt kbd {
+  padding: 1px 6px;
+  border-radius: 3px;
+  font: inherit;
+  font-weight: 700;
+  color: #111;
+  background: #f2efe6;
+}
+.g-ridgeline .g-ridgeline-prompt.is-drop {
+  top: auto;
+  bottom: 24%;
+  display: grid;
+  justify-items: center;
+  gap: 2px;
+  white-space: normal;
+  max-width: min(92%, 520px);
+  text-align: center;
+}
+.g-ridgeline .g-ridgeline-prompt.is-drop small {
+  font-size: 12px;
+  opacity: 0.75;
+}
+.g-ridgeline .g-ridgeline-healing {
+  position: absolute;
+  left: 50%;
+  top: calc(50% + 80px);
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  width: 180px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.g-ridgeline .g-ridgeline-healing i {
+  display: block;
+  justify-self: start;
+  height: 4px;
+  border-radius: 2px;
+  background: #7be38a;
+}
+.g-ridgeline .g-ridgeline-outside {
+  position: absolute;
+  left: 50%;
+  top: 92px;
+  transform: translateX(-50%);
+  padding: 5px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #fff;
+  background: rgba(190, 70, 30, 0.82);
+  white-space: nowrap;
+}
+.g-ridgeline .g-ridgeline-btn.is-use {
+  right: 220px;
+  bottom: 70px;
+}
+.g-ridgeline .g-ridgeline-btn.is-use[data-on='1'] {
+  background: rgba(124, 227, 138, 0.55);
+}
+.g-ridgeline .g-ridgeline-btn.is-heal {
+  right: 222px;
+  bottom: 0;
+}
+.g-ridgeline .g-ridgeline-btn.is-map {
+  right: 0;
+  bottom: 214px;
+}
+
 /* small windows and phones */
 @container g-ridgeline-stage (max-width: 640px) {
   .g-ridgeline .g-ridgeline-minimap {

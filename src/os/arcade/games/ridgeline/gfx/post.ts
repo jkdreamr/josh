@@ -230,6 +230,10 @@ export class Post {
   }
 
   /** Render size in device pixels. */
+  /** Turns the bloom off (to save its passes) or back on, where it was built at all. */
+  setBloom(on: boolean) {
+    this.bloomOn = on && this.down.length > 0;
+  }
   setSize(w: number, h: number) {
     w = Math.max(2, Math.round(w));
     h = Math.max(2, Math.round(h));

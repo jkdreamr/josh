@@ -482,6 +482,8 @@ export type Pose = {
   /** Gun in hand, or none. */
   gun: GunModel | null;
   pistol: boolean;
+  /** Dropping in: 1 in freefall (spread out, the body tipped face down by the caller), 2 hanging under a canopy. */
+  sky?: number;
 };
 
 /** Poses one soldier's bones (the gun group, a child of the chest bone, is placed too). */
@@ -571,6 +573,21 @@ export function makePoser(THREE: Three, build: Build = LOFT_BUILD) {
       bones[BONE.shinR].rotation.set(-0.3, 0, 0);
       bones[BONE.shinL].rotation.set(-0.15, 0, 0);
       bones[BONE.head].rotation.set(0.3, 0.4, 0);
+      if (gunGroup) gunGroup.visible = false;
+      return;
+    }
+    if (p.sky) {
+      const free = p.sky === 1;
+      // freefall: arms and legs spread wide, knees bent; under the canopy: hands up on the toggles, legs hanging
+      bones[BONE.armR].rotation.set(free ? 0.2 : -0.1, 0, free ? 1.1 + build.armRest : 2.55);
+      bones[BONE.armL].rotation.set(free ? 0.2 : -0.1, 0, free ? -1.1 - build.armRest : -2.55);
+      bones[BONE.foreR].rotation.set(free ? -0.7 : -0.4, 0, 0);
+      bones[BONE.foreL].rotation.set(free ? -0.7 : -0.4, 0, 0);
+      bones[BONE.thighR].rotation.set(free ? -0.25 : 0.15, 0, build.splay + (free ? 0.25 : 0));
+      bones[BONE.thighL].rotation.set(free ? -0.25 : 0.05, 0, -build.splay - (free ? 0.25 : 0));
+      bones[BONE.shinR].rotation.set(free ? -0.9 : -0.2, 0, 0);
+      bones[BONE.shinL].rotation.set(free ? -0.9 : -0.35, 0, 0);
+      bones[BONE.head].rotation.set(free ? -0.9 : 0.25, 0, 0);
       if (gunGroup) gunGroup.visible = false;
       return;
     }
