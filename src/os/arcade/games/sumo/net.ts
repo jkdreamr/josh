@@ -8,30 +8,58 @@ export const CAR_OUT = 4;
 export const CAR_DASH = 8;
 export const CAR_BOT = 16;
 export const CAR_LEFT = 32;
-export type StatePacket = { k: 'S'; r: number; ph: Phase; tm: number; rad: number; rn: number; wins: number[]; roster: number[]; names?: string[]; lv: Level; cars: PackedCar[] };
+/** A stick change: from this guest step on, the stick reads x, y with dash held (1) or not (0). */
+export type StickChange = [number, number, number, 0 | 1];
+/**
+ * A guest's stick. Newer guests number their steps: q is the step this stick is for, and h the latest changes before
+ * it (so a lost packet's change still arrives, at the step it happened), which lets the host apply each change at the
+ * same step of the guest's own game (see netsync).
+ */
+export type InputPacket = { k: 'i'; r: number; x: number; y: number; d: boolean; q?: number; h?: StickChange[] };
+/**
+ * What newer hosts add to a state, for guests that forecast it (see netsync): the host's step n, and for each car the
+ * guest step its stick was at in that step (ak, -1 for a car no guest numbers), the stick it drove with (ci: x, y,
+ * dash 0 or 1) and the rest of its dash (cx: dash time left, cooldown, dash held 0 or 1).
+ */
+export type StateNet = { n: number; ak: number[]; ci: [number, number, 0 | 1][]; cx: [number, number, 0 | 1][] };
+export type StatePacket = { k: 'S'; r: number; ph: Phase; tm: number; rad: number; rn: number; wins: number[]; roster: number[]; names?: string[]; lv: Level; cars: PackedCar[] } & Partial<StateNet>;
 export type Packet =
-  | { k: 'i'; r: number; x: number; y: number; d: boolean }
+  | InputPacket
   | StatePacket
   | { k: 'end'; r: number; w: number | null; wins: number[]; names?: string[] }
   | { k: 'cfg'; r: number; lv: Level };
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
+const clamp = (n: number, low: number, high: number) => Math.max(low, Math.min(high, n));
+const wrap = (angle: number) => Math.atan2(Math.sin(angle), Math.cos(angle));
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+const stepOk = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0 && (value as number) <= 1_000_000_000;
+const stickOk = (x: unknown, y: unknown) => finite(x) && finite(y) && Math.abs(x) <= 1 && Math.abs(y) <= 1 && Math.hypot(x, y) <= 1.01;
+const bit = (value: unknown): value is 0 | 1 => value === 0 || value === 1;
 const roundOk = (value: unknown): value is number => Number.isSafeInteger(value) && (value as number) >= 0;
 const seatOk = (value: unknown): value is number => Number.isInteger(value) && (value as number) >= 0 && (value as number) <= 15;
 const levelOk = (value: unknown): value is Level => value === 0 || value === 1 || value === 2;
 const phaseOk = (value: unknown): value is Phase => value === 'count' || value === 'fight' || value === 'over' || value === 'done';
 
-export const inputOf = (round: number, input: Input) => {
+/** A stick as the wire carries it (hundredths, inside the unit disc): a guest drives its own car with exactly this, as the host will. */
+export function wireInput(input: Input): Input {
   const magnitude = Math.hypot(input.x, input.y);
   const scale = magnitude > 1 ? 1 / magnitude : 1;
+  const x = Number.isFinite(input.x) ? round2(input.x * scale) : 0;
+  const y = Number.isFinite(input.y) ? round2(input.y * scale) : 0;
+  return { x: x || 0, y: y || 0, dash: input.dash === true };
+}
+
+export const inputOf = (round: number, input: Input, steps?: { q: number; h: StickChange[] }) => {
+  const { x, y, dash } = wireInput(input);
   return {
     t: 'sumo',
     r: round,
     k: 'i',
-    x: round2(input.x * scale),
-    y: round2(input.y * scale),
-    d: input.dash,
+    x,
+    y,
+    d: dash,
+    ...(steps ? { q: steps.q, h: steps.h } : {}),
   };
 };
 
@@ -46,6 +74,7 @@ export const hostState = (
   lv: Level,
   cars: PackedCar[],
   names: string[],
+  net?: StateNet,
 ) => ({
   t: 'sumo',
   r: round,
@@ -58,7 +87,18 @@ export const hostState = (
   roster,
   names,
   lv,
-  cars: cars.map((car) => [round2(car.x), round2(car.z), round2(car.y), round2(car.vx), round2(car.vz), round2(car.yaw), round2(car.charge), car.flags]),
+  // (held inside what parsePacket takes: a car that has spun round a few times, or been knocked very fast, would
+  // otherwise get the whole state thrown away)
+  cars: cars.map((car) => [
+    round2(clamp(car.x, -30, 30)), round2(clamp(car.z, -30, 30)), round2(clamp(car.y, -10, 1)),
+    round2(clamp(car.vx, -50, 50)), round2(clamp(car.vz, -50, 50)), round2(wrap(car.yaw)), round2(clamp(car.charge, 0, 1)), car.flags,
+  ]),
+  ...(net ? {
+    n: net.n,
+    ak: net.ak,
+    ci: net.ci.map(([x, y, d]) => [round2(x), round2(y), d]),
+    cx: net.cx.map(([dashT, cool, held]) => [round2(clamp(dashT, 0, 1)), round2(clamp(cool, 0, 2)), held]),
+  } : {}),
 });
 
 export const endOf = (round: number, winner: number | null, wins: number[], names: string[]) => ({ t: 'sumo', r: round, k: 'end', w: winner, wins, names });
@@ -80,6 +120,28 @@ function rosterOf(value: unknown): number[] | null {
   if (!Array.isArray(value) || value.length > 8 || !value.every(seatOk)) return null;
   if (new Set(value).size !== value.length) return null;
   return [...value] as number[];
+}
+
+function changesOf(value: unknown, q: number): StickChange[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || value.length > 12) return null;
+  let last = -1;
+  for (const change of value) {
+    if (!Array.isArray(change) || change.length !== 4 || !stepOk(change[0]) || change[0] <= last || change[0] > q || !stickOk(change[1], change[2]) || !bit(change[3])) return null;
+    last = change[0];
+  }
+  return value.map((change) => [...change] as StickChange);
+}
+
+/** A newer host's additions to a state (all of them, or none), or null when they are there but wrong. */
+function stateNetOf(packet: Record<string, unknown>, cars: number): StateNet | null | undefined {
+  const { n, ak, ci, cx } = packet;
+  if (n === undefined && ak === undefined && ci === undefined && cx === undefined) return undefined;
+  if (!stepOk(n) || !Array.isArray(ak) || !Array.isArray(ci) || !Array.isArray(cx) || ak.length !== cars || ci.length !== cars || cx.length !== cars) return null;
+  if (!ak.every((step) => step === -1 || stepOk(step))) return null;
+  if (!ci.every((stick) => Array.isArray(stick) && stick.length === 3 && stickOk(stick[0], stick[1]) && bit(stick[2]))) return null;
+  if (!cx.every((dash) => Array.isArray(dash) && dash.length === 3 && finite(dash[0]) && dash[0] >= 0 && dash[0] <= 1 && finite(dash[1]) && dash[1] >= 0 && dash[1] <= 2 && bit(dash[2]))) return null;
+  return { n, ak: [...ak], ci: ci.map((stick) => [...stick] as [number, number, 0 | 1]), cx: cx.map((dash) => [...dash] as [number, number, 0 | 1]) };
 }
 
 const NAME_MAX = 24;
@@ -116,8 +178,13 @@ export function parsePacket(value: unknown): Packet | null {
   if (packet.t !== 'sumo' || !roundOk(packet.r)) return null;
   const r = packet.r;
   if (packet.k === 'i') {
-    if (!finite(packet.x) || !finite(packet.y) || typeof packet.d !== 'boolean' || Math.abs(packet.x) > 1 || Math.abs(packet.y) > 1 || Math.hypot(packet.x, packet.y) > 1.01) return null;
-    return { k: 'i', r, x: packet.x, y: packet.y, d: packet.d };
+    if (!stickOk(packet.x, packet.y) || typeof packet.d !== 'boolean') return null;
+    const x = packet.x as number;
+    const y = packet.y as number;
+    if (packet.q === undefined) return { k: 'i', r, x, y, d: packet.d };
+    if (!stepOk(packet.q)) return null;
+    const h = changesOf(packet.h, packet.q);
+    return h ? { k: 'i', r, x, y, d: packet.d, q: packet.q, h } : null;
   }
   if (packet.k === 'S') {
     const wins = winsOf(packet.wins);
@@ -125,8 +192,9 @@ export function parsePacket(value: unknown): Packet | null {
     if (!phaseOk(packet.ph) || !finite(packet.tm) || packet.tm < 0 || packet.tm > 120 || !finite(packet.rad) || packet.rad < 2.5 || packet.rad > 15 || !roundOk(packet.rn) || !wins || !roster || !levelOk(packet.lv) || !Array.isArray(packet.cars) || packet.cars.length > 8 || packet.cars.length !== roster.length || wins.length !== roster.length) return null;
     const cars = packet.cars.map(packedCar);
     const names = namesOf(packet.names, roster.length);
-    if (cars.some((car) => car === null) || names === null) return null;
-    return { k: 'S', r, ph: packet.ph, tm: packet.tm, rad: packet.rad, rn: packet.rn, wins, roster, ...(names ? { names } : {}), lv: packet.lv, cars: cars as PackedCar[] };
+    const net = stateNetOf(packet, roster.length);
+    if (cars.some((car) => car === null) || names === null || net === null) return null;
+    return { k: 'S', r, ph: packet.ph, tm: packet.tm, rad: packet.rad, rn: packet.rn, wins, roster, ...(names ? { names } : {}), lv: packet.lv, cars: cars as PackedCar[], ...(net ?? {}) };
   }
   if (packet.k === 'end') {
     const wins = winsOf(packet.wins);
