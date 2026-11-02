@@ -4,6 +4,7 @@ import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, getSettin
 import type { GameProps } from '../../types';
 import { createGL, damp, disposeTree, type GL } from './gl';
 import { GOAL_W, L, MALLET_R, PUCK_R, TO_WIN, W, aiHit, create, moveMalletTo, nudgeMallet, step, stepAI, type Difficulty, type Event, type Mode, type State, type V2 } from './logic';
+import { HostClock, frame, guestEvents, guestHears, hearPass, hostHears, legacyReport, newNet, shownPuck, shownThem, SEND_S, type EventsMsg, type MalletMsg, type Net, type PassMsg, type SnapshotMsg } from './net';
 import { meta } from './meta';
 import './airhockey.css';
 
@@ -402,10 +403,12 @@ function Play() {
   const lastTick = useRef(0);
   const lastHit = useRef(0);
   const lastWall = useRef(0);
-  const remoteTarget = useRef<{ x: number; z: number } | null>(null);
+  /** A guest following an older host's snapshots (and a spectator): the host's latest table. */
   const remoteState = useRef<State | null>(null);
   const sendAt = useRef(0);
-  const snapshotAt = useRef(0);
+  /** Online play (net.ts): the host always, a guest once its host's snapshots carry the clock. A guest's reading of the host's clock outlasts a match. */
+  const clock = useRef(new HostClock());
+  const net = useRef<Net>(newNet(0));
   const shared = !online && mode === '2p';
   const cfg = useRef({ mode: online ? ('2p' as Mode) : mode, difficulty });
   cfg.current = { mode: online ? '2p' : mode, difficulty };
@@ -414,10 +417,9 @@ function Play() {
   useEffect(() => {
     if (shell.status !== 'ready') return;
     state.current = create(online ? '2p' : mode, difficulty);
-    remoteTarget.current = null;
+    net.current = newNet(online && online.seat !== 0 ? 1 : 0, clock.current);
     remoteState.current = null;
     sendAt.current = 0;
-    snapshotAt.current = 0;
     setScore([0, 0]);
     setTouched(false);
     seen.current = false;
@@ -502,21 +504,51 @@ function Play() {
     if (!online || !data || typeof data !== 'object') return;
     const message = data as { game?: unknown; type?: unknown; x?: unknown; z?: unknown; state?: unknown; event?: unknown };
     if (message.game !== 'airhockey') return;
+    const local = performance.now() / 1000;
+    const guest = !online.watching && online.seat !== 0;
+    const s = state.current;
     if (online.seat === 0 && from !== 0 && message.type === 'mallet' && typeof message.x === 'number' && typeof message.z === 'number') {
-      remoteTarget.current = { x: message.x, z: message.z };
+      hostPlay(hostHears(net.current, s, message as MalletMsg, local), s);
+    } else if (online.seat === 0 && from !== 0 && message.type === 'pass') {
+      hostPlay(hearPass(net.current, s, message as PassMsg), s);
+    } else if (guest && from === 0 && message.type === 'pass') {
+      show(hearPass(net.current, s, message as PassMsg), s);
     } else if (online.seat !== 0 && from === 0 && message.type === 'snapshot' && message.state && typeof message.state === 'object') {
-      remoteState.current = message.state as State;
+      // a guest whose host keeps the clock plays its own half (net.ts); otherwise it follows the host's snapshots
+      const heard = guest ? guestHears(net.current, s, message as SnapshotMsg, local) : null;
+      if (heard) show(heard, s);
+      else remoteState.current = message.state as State;
     } else if (online.seat !== 0 && from === 0 && message.type === 'events' && message.event && typeof message.event === 'object') {
-      if (message.state && typeof message.state === 'object') remoteState.current = message.state as State;
-      const event = message.event as Event;
-      const s = state.current;
-      fx(event);
-      if (event.goal !== undefined && remoteState.current) {
-        s.score = [...remoteState.current.score];
-        announce(event, s);
+      if (guest && net.current.live) show(guestEvents(net.current, s, message as EventsMsg), s);
+      else {
+        if (message.state && typeof message.state === 'object') remoteState.current = message.state as State;
+        const event = message.event as Event;
+        fx(event);
+        if (event.goal !== undefined && remoteState.current) {
+          s.score = [...remoteState.current.score];
+          announce(event, s);
+        }
       }
     }
+    flush();
   }), [online?.onMessage, online?.seat, online?.players, shell.round, shell.gameOver]);
+
+  /** Sends what the netcode has queued. */
+  const flush = () => {
+    if (!online) return;
+    for (const o of net.current.out.splice(0)) online.send(o.data, { fast: o.fast, reliable: o.reliable });
+  };
+  /** Sound, light, score and the end of the match for what just happened here. */
+  const show = (ev: Event, s: State) => {
+    fx(ev);
+    announce(ev, s);
+  };
+  /** Host: shows it, and tells everyone about anything loud (with the table it left, for guests that call their own half). */
+  const hostPlay = (ev: Event, s: State) => {
+    show(ev, s);
+    const loud = ev.goal !== undefined || (ev.hit !== undefined && (ev.power ?? 0) > SOFT) || (ev.wall && (ev.wallPower ?? 0) > 0.5);
+    if (online?.seat === 0 && loud) online.send({ game: 'airhockey', type: 'events', event: ev, state: s, at: Math.round(net.current.t * 1000), turn: net.current.turn } satisfies EventsMsg);
+  };
 
   useEffect(() => {
     if (shell.status !== 'playing') lastTick.current = 0;
@@ -722,15 +754,21 @@ function Play() {
     }
     // keyboard: WASD for blue and arrows for pink when sharing a screen, either set when playing alone
     if (!driven.has(0)) keyDrive(s, 0, kb[0] + (solo ? kb[2] : 0), kb[1] + (solo ? kb[3] : 0), dt);
-    if (online?.seat === 0) {
-      if (remoteTarget.current) moveMalletTo(s, 1, remoteTarget.current, dt, 9);
-      else {
-        s.mallets[1].vx = 0;
-        s.mallets[1].vz = 0;
-      }
-    } else if (s.mode === '2p' && !online) {
+    if (s.mode === '2p' && !online) {
       if (!driven.has(1)) keyDrive(s, 1, kb[2], kb[3], dt);
     } else stepAI(s, dt);
+  };
+
+  /** Online: this player's own mallet for one step, by pointer or keys (the second seat looks from the top end, so its keys are turned around). */
+  const driveOwn = (s: State, side: 0 | 1, h: number) => {
+    const kb = [...wasd(), ...arrows()];
+    const keyed = kb.some(Boolean);
+    // a key press takes over from a hovering mouse
+    if (keyed) pointers.current.delete(-1);
+    const pointer = [...pointers.current.values()].find((item) => item.side === side);
+    const flip = side === 1 ? -1 : 1;
+    if (pointer && (side === 0 || !keyed)) moveMalletTo(s, side, pointer, h, 9);
+    else keyDrive(s, side, flip * (kb[0] + kb[2]), flip * (kb[1] + kb[3]), h);
   };
 
   useGameLoop(
@@ -738,10 +776,17 @@ function Play() {
       const w = world.current;
       const s = state.current;
       if (!w) return;
-      sendAt.current += dt;
-      snapshotAt.current += dt;
-      // a guest draws the host's table, and so does a spectator (seat -1), who moves neither mallet
-      const viewer = !!online && online.seat !== 0;
+      const n = net.current;
+      // online with the host's clock: each screen plays the puck in its own half and its own mallet exactly (net.ts)
+      const live = !!online && !online.watching && n.live;
+      // a guest following an older host draws the host's table, and so does a spectator (seat -1), who moves neither mallet
+      const viewer = !!online && online.seat !== 0 && !live;
+      if (live) {
+        const ev = frame(n, s, performance.now() / 1000, dt, driveOwn);
+        if (online.seat === 0) hostPlay(ev, s);
+        else show(ev, s);
+        flush();
+      }
       if (viewer && remoteState.current) {
         const target = remoteState.current;
         const t = Math.min(1, dt * 18);
@@ -761,17 +806,13 @@ function Play() {
         s.winner = target.winner;
         setScore((old) => (old[0] === s.score[0] && old[1] === s.score[1] ? old : [s.score[0], s.score[1]]));
       }
-      if (online?.seat === 1) {
-        // the guest looks from the top end, so its keys are turned around
-        const pointer = [...pointers.current.values()].find((item) => item.side === 1);
-        const kb = [...wasd(), ...arrows()];
-        if (kb.some(Boolean)) pointers.current.delete(-1);
-        if (pointer && !kb.some(Boolean)) moveMalletTo(s, 1, pointer, dt, 9);
-        else keyDrive(s, 1, -(kb[0] + kb[2]), -(kb[1] + kb[3]), dt);
-        if (sendAt.current >= 0.05) {
-          const mallet = s.mallets[1];
-          online.send({ game: 'airhockey', type: 'mallet', x: mallet.x, z: mallet.z }, { fast: true });
-          sendAt.current %= 0.05;
+      if (viewer && online.seat === 1) {
+        driveOwn(s, 1, dt);
+        // (still sending its clock, so a newer host can be read and this guest can take over its half)
+        sendAt.current += dt;
+        if (sendAt.current >= SEND_S) {
+          online.send(legacyReport(s, performance.now() / 1000), { fast: true });
+          sendAt.current %= SEND_S;
         }
       }
       // simulate real elapsed time (capped) in fixed sub-steps, so slow devices play at full speed
@@ -780,12 +821,12 @@ function Play() {
       const gap = lastTick.current ? (now - lastTick.current) / 1000 : dt;
       lastTick.current = now;
       const simDt = gap > 0.5 ? dt : Math.min(0.25, Math.max(dt, gap));
-      if (s.winner === null && !viewer) {
-        const n = Math.max(1, Math.ceil(simDt / SUBSTEP));
-        const h = simDt / n;
+      if (s.winner === null && !viewer && !live) {
+        const steps = Math.max(1, Math.ceil(simDt / SUBSTEP));
+        const h = simDt / steps;
         const ev: Event = {};
         const aiTop = s.mode === 'cpu';
-        for (let i = 0; i < n && s.winner === null; i++) {
+        for (let i = 0; i < steps && s.winner === null; i++) {
           driveMallets(s, h);
           const e = step(s, h);
           if (e.hit === 1 && aiTop && (e.power ?? 0) > SOFT) aiHit(s);
@@ -801,20 +842,15 @@ function Play() {
           if (e.goal !== undefined) ev.goal = e.goal;
           if (e.win !== undefined) ev.win = e.win;
         }
-        fx(ev);
-        announce(ev, s);
-        const loud = ev.goal !== undefined || (ev.hit !== undefined && (ev.power ?? 0) > SOFT) || (ev.wall && (ev.wallPower ?? 0) > 0.5);
-        if (online?.seat === 0 && loud) online.send({ game: 'airhockey', type: 'events', event: ev, state: s });
+        show(ev, s);
       }
-      if (online?.seat === 0 && snapshotAt.current >= 0.05) {
-        online.send({ game: 'airhockey', type: 'snapshot', state: s }, { fast: true });
-        snapshotAt.current %= 0.05;
-      }
-      // visuals
-      w.puck.position.x = s.puck.x;
-      w.puck.position.z = s.puck.z;
-      w.shadows[0].position.set(s.puck.x + 0.012, 0.0008, s.puck.z + 0.012);
-      s.mallets.forEach((m, i) => {
+      // visuals (online, a correction from the other screen fades out rather than jumps)
+      const puck = live ? shownPuck(n, s) : s.puck;
+      w.puck.position.x = puck.x;
+      w.puck.position.z = puck.z;
+      w.shadows[0].position.set(puck.x + 0.012, 0.0008, puck.z + 0.012);
+      s.mallets.forEach((mallet, i) => {
+        const m = live && i !== n.me ? shownThem(n, s) : mallet;
         const sq = (w.squash[i] = Math.max(0, w.squash[i] - dt * 5));
         w.mallets[i].position.x = m.x;
         w.mallets[i].position.z = m.z;
@@ -826,7 +862,7 @@ function Play() {
         w.shadows[i + 1].position.set(m.x + 0.02, 0.0008, m.z + 0.02);
       });
       // a short fading trail behind a fast puck
-      w.trailPts.unshift({ x: s.puck.x, z: s.puck.z });
+      w.trailPts.unshift({ x: puck.x, z: puck.z });
       if (w.trailPts.length > TRAIL + 1) w.trailPts.length = TRAIL + 1;
       const speed = Math.hypot(s.puck.vx, s.puck.vz);
       const strength = Math.min(1, Math.max(0, (speed - 1.8) / 4.5));

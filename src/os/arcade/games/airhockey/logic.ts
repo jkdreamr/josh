@@ -231,7 +231,13 @@ function touch(s: State, ev: Event) {
   }
 }
 
-export function step(s: State, dt: number): Event {
+/**
+ * Online, each screen calls the goals into its own end (see net.ts): `hold` names the ends (by the side that defends
+ * them) whose goals are called on the other screen, where a puck that goes in waits in the mouth for word.
+ */
+export type StepOpts = { hold?: readonly [boolean, boolean] };
+
+export function step(s: State, dt: number, opts?: StepOpts): Event {
   const ev: Event = {};
   if (s.winner !== null) return ev;
   s.t += dt;
@@ -273,7 +279,7 @@ export function step(s: State, dt: number): Event {
   const inMouth = Math.abs(p.x) < GOAL_W / 2 - p.r * 0.3;
   if (p.z + p.r > L / 2) {
     if (inMouth) {
-      if (p.z - p.r > L / 2) return goal(s, 1, ev);
+      if (p.z - p.r > L / 2) return opts?.hold?.[0] ? held(p, 1) : goal(s, 1, ev);
     } else {
       wall(p.vz);
       p.z = L / 2 - p.r;
@@ -281,7 +287,7 @@ export function step(s: State, dt: number): Event {
     }
   } else if (p.z - p.r < -L / 2) {
     if (inMouth) {
-      if (p.z + p.r < -L / 2) return goal(s, 0, ev);
+      if (p.z + p.r < -L / 2) return opts?.hold?.[1] ? held(p, -1) : goal(s, 0, ev);
     } else {
       wall(p.vz);
       p.z = -L / 2 + p.r;
@@ -292,7 +298,16 @@ export function step(s: State, dt: number): Event {
   return ev;
 }
 
-function goal(s: State, scorer: 0 | 1, ev: Event): Event {
+/** A puck in a goal this screen doesn't call: it waits just inside the mouth, still headed in (so it counts once this screen does call it). */
+function held(p: State['puck'], end: 1 | -1): Event {
+  p.z = end * (L / 2 + p.r);
+  p.vx = 0;
+  p.vz = end * Math.max(0.5, Math.abs(p.vz));
+  return {};
+}
+
+/** `scorer` scores: the other side gets the puck to serve, or the match is won. */
+export function goal(s: State, scorer: 0 | 1, ev: Event = {}): Event {
   s.score[scorer]++;
   ev.goal = scorer;
   if (s.score[scorer] >= TO_WIN) {
