@@ -7,8 +7,8 @@
 import { DM_HUBS, botInput, callout, newBrain, type Brain, type BotLevel } from './bots.ts';
 import { fieldTo, navOf } from './nav.ts';
 import { clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
-import { CROUCH_H, GRAVITY, STAND_H, clearLine, groundAt, newHit, raySphere, rayWorld, stepBody, type Body } from './physics.ts';
-import { AMMO_KINDS, AMMO_MAX, AMMO_OF, CHUTE_GLIDE, CHUTE_OPEN, CHUTE_VY, FALL_FAST, FALL_SLOW, FALL_VY, HEAL, HELMET, NADE_MAX, ROYALE_PLAYERS, VEST, ZONES, nextCircle, planeAt, planePath, spawnLoot, type AmmoKind, type HealKind, type Item, type Plane, type Zone as Circle } from './royale.ts';
+import { CROUCH_H, GRAVITY, STAND_H, blockedAt, clearLine, groundAt, newHit, raySphere, rayWorld, stepBody, type Body } from './physics.ts';
+import { AMMO_KINDS, AMMO_MAX, AMMO_OF, CHUTE_GLIDE, CHUTE_OPEN, CHUTE_VY, FALL_FAST, FALL_SLOW, FALL_VY, HEAL, HELMET, NADE_MAX, RED_EVERY, RED_FIRST, RED_GAP, RED_LIVE, RED_R, RED_WARN, ROYALE_PLAYERS, SHELL_DMG, SHELL_R, SUPPLY_FALL, SUPPLY_HIGH, SUPPLY_MAX, VEST, ZONES, nextCircle, onLand, planeAt, planePath, spawnLoot, supplyContents, type AmmoKind, type HealKind, type Item, type Plane, type Red, type Supply, type Zone as Circle } from './royale.ts';
 import { floorAt, heightAt } from './terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, LOSS_STREAK_BONUS, MAX_CREDITS, NADES, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, interval, kickOf, rangeMul, type WeaponId } from './weapons.ts';
 import { ARENA, SITE_R, SPAWN_R, yawTo, type Surface, type World } from './world.ts';
@@ -166,7 +166,8 @@ export type Bullet = { x: number; y: number; z: number; px: number; py: number; 
 export type Nade = { kind: NadeKind; x: number; y: number; z: number; vx: number; vy: number; vz: number; fuse: number; owner: number; rest: boolean; spin: number };
 export type Smoke = { x: number; y: number; z: number; age: number; life: number; r: number };
 export type Sound = { x: number; z: number; t: number; team: number; range: number; who: number };
-export type Cause = WeaponId | 'frag' | 'zone' | 'blast';
+/** What took someone out: a gun, a frag, the zone, the breach charge, or (royale) a bombardment shell. */
+export type Cause = WeaponId | 'frag' | 'zone' | 'blast' | 'shell';
 export type Kill = { t: number; killer: number; victim: number; w: Cause; head: boolean };
 export type Why = 'elim' | 'time' | 'blast' | 'defuse';
 /** Breach highlights: first blood, a headshot kill, two to five kills in a round (five is the whole team, an ace), and a
@@ -228,7 +229,12 @@ export type Ev =
   | { t: 'heal'; a: number; done: boolean }
   | { t: 'jumpout'; a: number }
   | { t: 'chute'; a: number }
-  | { t: 'zone'; i: number; shrinking: boolean };
+  | { t: 'zone'; i: number; shrinking: boolean }
+  // royale only (never sent online): a supply crate on its way or landed, a bombardment marked, started or over,
+  // and one of its shells going off
+  | { t: 'supply'; x: number; z: number; landed: boolean }
+  | { t: 'redzone'; x: number; z: number; r: number; stage: 'warn' | 'live' | 'clear' }
+  | { t: 'shell'; x: number; y: number; z: number };
 
 export type Phase = 'buy' | 'live' | 'end' | 'over';
 
@@ -282,6 +288,11 @@ export type Match = {
   zone: Circle | null;
   plane: Plane | null;
   alive: number;
+  /** Royale: supply crates dropped so far (falling or landed), the bombardment under way (or null), and the seconds
+   * until the next one is marked. */
+  supplies: Supply[];
+  red: Red | null;
+  redT: number;
   /** Which actor is played on this machine, whether this machine runs the rules (solo and the online host) or only
    * mirrors them (an online guest), and a guest's line to the host. */
   me: number;
@@ -442,6 +453,9 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
     zone: null,
     plane: null,
     alive: count,
+    supplies: [],
+    red: null,
+    redT: 0,
     me,
     authority: true,
     net: null,
@@ -598,7 +612,7 @@ export const PERSON_HEALTH = 1.5;
  * survives long enough to react, turn and fight back. */
 export const BOT_HITS_PEOPLE: Record<Level, number> = { easy: 0.45, normal: 0.6, hard: 0.8 };
 
-function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'frag' | 'blast', zone: Zone, x: number, y: number, z: number) {
+function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'frag' | 'blast' | 'shell', zone: Zone, x: number, y: number, z: number) {
   if (!v.alive || raw <= 0) return;
   if (v.shield > 0) return;
   if (zone === 'head') raw *= HELMET[v.helmet];
@@ -607,7 +621,7 @@ function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'fr
   v.healT = 0;
   v.healKind = null;
   const before = v.hp + v.armor;
-  const res = applyDamage(v.hp, v.armor, raw, w === 'frag' || w === 'blast' ? 1 : WEAPONS[w].armorPen);
+  const res = applyDamage(v.hp, v.armor, raw, w === 'frag' || w === 'blast' || w === 'shell' ? 1 : WEAPONS[w].armorPen);
   const hadArmor = v.armor > 0;
   v.hp = res.hp;
   v.armor = Math.max(0, res.armor);
@@ -846,6 +860,7 @@ function startRoyale(m: Match, seed: number) {
   const r0 = w.arena * 1.45;
   const [nx, nz] = nextCircle(w, m.rng, 0, 0, r0 * 0.75, z0.r);
   m.zone = { i: 0, t: z0.wait, shrinking: false, x: 0, z: 0, r: r0, fx: 0, fz: 0, fr: r0, nx, nz, nr: z0.r, dps: z0.dps };
+  m.redT = RED_FIRST[0] + m.rng() * (RED_FIRST[1] - RED_FIRST[0]);
   const p = planeAt(m.plane, 0);
   const yaw = yawTo(m.plane.bx - m.plane.ax, m.plane.bz - m.plane.az);
   for (const a of m.actors) {
@@ -1089,9 +1104,13 @@ function stepRoyale(m: Match, dt: number) {
           z.dps = ph.dps;
         }
         m.events.push({ t: 'zone', i: z.i, shrinking: false });
+        // each of the first few closes sends a supply crate down somewhere inside the next circle
+        if (z.i <= SUPPLY_MAX && z.i < ZONES.length) dropSupply(m, z.nx, z.nz, z.nr);
       }
     }
   }
+  stepSupplies(m, dt);
+  stepRed(m, dt);
   // outside it hurts, once a second
   for (const a of m.actors) {
     if (!a.alive || a.drop) continue;
@@ -1125,6 +1144,150 @@ function stepRoyale(m: Match, dt: number) {
     if (last) last.place = 1;
     you.cs += Math.round((ROYALE_PLAYERS - you.place + 1) * 12) + (you.place === 1 ? 600 : 0);
     m.events.push({ t: 'phase', phase: 'over' });
+  }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// royale: supply drops and the bombardment
+
+const roofHit = newHit();
+/** Is there a roof (a floor above, a ceiling, any solid box) over this point? Trees and rocks don't count. */
+export function underRoof(w: World, x: number, y: number, z: number) {
+  rayWorld(w, x, y, z, 0, 1, 0, 40, roofHit);
+  return roofHit.kind === 'box';
+}
+
+/** Sends a supply crate down somewhere inside the circle (x, z, r): on open land, clear of buildings and roofs. */
+export function dropSupply(m: Match, cx: number, cz: number, cr: number) {
+  if (m.supplies.length >= SUPPLY_MAX) return null;
+  const w = m.world;
+  const t = w.terrain;
+  let x = cx;
+  let z = cz;
+  for (let k = 0; k < 40; k++) {
+    const a = m.rng() * Math.PI * 2;
+    const d = Math.sqrt(m.rng()) * Math.max(0, cr * 0.7);
+    const tx = cx + Math.cos(a) * d;
+    const tz = cz + Math.sin(a) * d;
+    if (!onLand(w, tx, tz) || (t.hasWater && !t.ice && heightAt(t, tx, tz) < t.water + 0.3)) continue;
+    const g = floorAt(t, tx, tz);
+    if (blockedAt(w, tx, tz, g, 2.2) || underRoof(w, tx, g + 0.5, tz)) continue;
+    x = tx;
+    z = tz;
+    break;
+  }
+  const ground = floorAt(t, x, z);
+  const s: Supply = { id: m.supplies.length, x, y: ground + SUPPLY_HIGH, z, ground, landed: -1, items: [] };
+  m.supplies.push(s);
+  m.events.push({ t: 'supply', x, z, landed: false });
+  return s;
+}
+
+/** Crates fall under their canopies; one that lands puts its loot out in a ring around it. */
+function stepSupplies(m: Match, dt: number) {
+  for (const s of m.supplies) {
+    if (s.landed >= 0) continue;
+    s.y -= SUPPLY_FALL * dt;
+    if (s.y > s.ground) continue;
+    s.y = s.ground;
+    s.landed = m.time;
+    const things = supplyContents(m.rng);
+    things.forEach(([kind, what, n], i) => {
+      const a = (i / things.length) * Math.PI * 2 + s.id;
+      const x = s.x + Math.cos(a) * 1.15;
+      const z = s.z + Math.sin(a) * 1.15;
+      s.items.push(m.loot.length);
+      dropItem(m, kind, what, kind === 'gun' ? WEAPONS[what as WeaponId].mag : n, x, z, floorAt(m.world.terrain, x, z) + 0.02);
+    });
+    m.lootVer++;
+    m.events.push({ t: 'supply', x: s.x, z: s.z, landed: true });
+  }
+}
+
+/** Is anything left in a crate (or is it still on its way down)? */
+export const supplyLeft = (m: Match, s: Supply) => s.landed < 0 || s.items.some((i) => m.loot[i]?.live);
+
+/** Marks a bombardment: a circle inside the zone, where the most players are of a few spots tried, but never over
+ * the player on this machine. Null when none fits (the zone has got too small for one). */
+export function markRed(m: Match) {
+  const z = m.zone;
+  if (!z) return null;
+  const w = m.world;
+  const you = m.actors[m.me];
+  const r = RED_R[0] + m.rng() * (RED_R[1] - RED_R[0]);
+  const room = z.r * 0.95 - r;
+  if (room < 8) return null;
+  let best: Red | null = null;
+  let bestN = -1;
+  for (let k = 0; k < 24; k++) {
+    const a = m.rng() * Math.PI * 2;
+    const d = Math.sqrt(m.rng()) * room;
+    const x = z.x + Math.cos(a) * d;
+    const rz = z.z + Math.sin(a) * d;
+    if (Math.abs(x) > w.arena || Math.abs(rz) > w.arena || !onLand(w, x, rz)) continue;
+    if (you.alive && Math.hypot(you.body.x - x, you.body.z - rz) < r + 6) continue;
+    let n = 0;
+    for (const o of m.actors) if (o.alive && !o.drop && Math.hypot(o.body.x - x, o.body.z - rz) < r) n++;
+    if (n > bestN) {
+      bestN = n;
+      best = { x, z: rz, r, warn: RED_WARN, left: RED_LIVE, next: 0 };
+    }
+  }
+  if (!best) return null;
+  m.red = best;
+  m.events.push({ t: 'redzone', x: best.x, z: best.z, r: best.r, stage: 'warn' });
+  return best;
+}
+
+/** The bombardment: wait for the next one, warn, then shell the circle until it is over. */
+function stepRed(m: Match, dt: number) {
+  const red = m.red;
+  if (!red) {
+    m.redT -= dt;
+    if (m.redT > 0) return;
+    m.redT = RED_GAP[0] + m.rng() * (RED_GAP[1] - RED_GAP[0]);
+    // (none in the last circles: there is no room for one)
+    if (m.zone && m.zone.i < ZONES.length - 1) markRed(m);
+    return;
+  }
+  if (red.warn > 0) {
+    red.warn -= dt;
+    if (red.warn <= 0) m.events.push({ t: 'redzone', x: red.x, z: red.z, r: red.r, stage: 'live' });
+    return;
+  }
+  red.left -= dt;
+  red.next -= dt;
+  while (red.next <= 0 && red.left > 0) {
+    red.next += RED_EVERY[0] + m.rng() * (RED_EVERY[1] - RED_EVERY[0]);
+    const a = m.rng() * Math.PI * 2;
+    const d = Math.sqrt(m.rng()) * red.r;
+    shell(m, red.x + Math.cos(a) * d, red.z + Math.sin(a) * d);
+  }
+  if (red.left <= 0) {
+    m.red = null;
+    m.events.push({ t: 'redzone', x: red.x, z: red.z, r: red.r, stage: 'clear' });
+  }
+}
+
+/** One shell lands at (x, z), on whatever is there (a roof takes it): it hurts everyone near it who has no roof over
+ * their head, less through a wall. */
+function shell(m: Match, x: number, z: number) {
+  const w = m.world;
+  const y = groundAt(w, x, z, floorAt(w.terrain, x, z) + 60);
+  m.events.push({ t: 'shell', x, y, z });
+  for (const a of m.actors) {
+    if (!a.alive || a.drop === 1) continue;
+    const dx = a.body.x - x;
+    const dz = a.body.z - z;
+    if (Math.abs(dx) > SHELL_R || Math.abs(dz) > SHELL_R) continue;
+    const cy = a.body.y + a.body.height * 0.55;
+    const dy = cy - (y + 0.3);
+    const d = Math.hypot(dx, dy, dz);
+    if (d > SHELL_R || underRoof(w, a.body.x, eyeY(a), a.body.z)) continue;
+    const l = d || 1;
+    rayWorld(w, x, y + 0.3, z, dx / l, dy / l, dz / l, l, nadeHit);
+    const cover = nadeHit.kind === 'none' ? 1 : 0.3;
+    damage(m, a, SHELL_DMG * Math.pow(1 - d / SHELL_R, 1.2) * cover, -1, 'shell', 'body', a.body.x, cy, a.body.z);
   }
 }
 

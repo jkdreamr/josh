@@ -13,6 +13,7 @@ import { DEFUSE_HALF, DEFUSE_TIME, DEG, PERSON_HEALTH, PLANT_TIME, type Medal, c
 import { HEAL, ROYALE_PLAYERS, ZONES, itemName, planeAt } from './royale.ts';
 import { newBrain } from './bots.ts';
 import { Session, type OnlineApi } from './online.ts';
+import { supplyLeft, underRoof } from './match.ts';
 import { floorAt } from './terrain.ts';
 import { WEAPONS, type WeaponId } from './weapons.ts';
 import { buildWorld, cacheWorld, cachedWorld, type World } from './world.ts';
@@ -335,6 +336,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
   const overAt = useRef<number | null>(null);
   const finished = useRef(false);
   const feedId = useRef(0);
+  /** When to announce a supply drop (0 none pending). */
+  const supplyNote = useRef(0);
   const time = useRef(0);
   const lastLook = useRef({ yaw: 0, pitch: 0 });
   const lastRender = useRef(0);
@@ -421,6 +424,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       finished.current = false;
       spec.current = 0;
       firstBuy.current = true;
+      supplyNote.current = 0;
       setFeed([]);
       setBuyOpen(false);
       setHud(blankHud(m.mode));
@@ -705,7 +709,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           const ka = m.actors[kk.killer];
           const va = m.actors[kk.victim];
           const blast = kk.w === 'blast';
-          const item: FeedItem = { id: ++feedId.current, killer: blast ? 'The charge' : (ka?.name ?? (kk.w === 'zone' ? 'The zone' : '?')), victim: va.name, kc: ka && !blast ? nameColor(m, ka) : '#e8743a', vc: nameColor(m, va), w: kk.w === 'frag' ? 'Frag' : kk.w === 'zone' ? 'Zone' : kk.w === 'blast' ? 'Blast' : WEAPONS[kk.w].name, head: kk.head, mine: kk.killer === m.me || kk.victim === m.me };
+          const item: FeedItem = { id: ++feedId.current, killer: blast ? 'The charge' : (ka?.name ?? (kk.w === 'zone' ? 'The zone' : kk.w === 'shell' ? 'The bombardment' : '?')), victim: va.name, kc: ka && !blast ? nameColor(m, ka) : '#e8743a', vc: nameColor(m, va), w: kk.w === 'frag' ? 'Frag' : kk.w === 'zone' ? 'Zone' : kk.w === 'blast' ? 'Blast' : kk.w === 'shell' ? 'Shell' : WEAPONS[kk.w].name, head: kk.head, mine: kk.killer === m.me || kk.victim === m.me };
           setFeed((f) => [...f.slice(-5), item]);
           if (kk.victim === m.me) {
             deathLook.current = { yaw: you.yaw, pitch: you.pitch };
@@ -735,6 +739,9 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           if (e.shrinking) pushBanner('The zone is closing', 'get inside the white circle', 'loss');
           else if (e.i < ZONES.length) pushBanner('Next zone marked', `it closes in ${Math.round(m.zone.t)} s. check the map`, 'info');
         }
+        // (a supply drop comes with a zone closing: its banner follows on a moment later, so both get read)
+        if (e.t === 'supply' && !e.landed) supplyNote.current = time.current + 3.2;
+        if (e.t === 'redzone' && e.stage === 'warn' && you.alive) pushBanner('Bombardment marked', 'get under cover or out of the red', 'loss');
         if (e.t === 'round') {
           const won = e.winner === you.team;
           const why = e.why === 'blast' ? 'the charge went off' : e.why === 'defuse' ? 'the charge was defused' : e.why === 'elim' ? (won ? 'all knocked out' : 'your team is out') : 'time ran out before a plant';
@@ -750,6 +757,10 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         if (e.t === 'dropcharge' && m.attack === you.team && you.alive) pushBanner('The charge is down', 'pick it up: walk over it', 'info');
         if (e.t === 'sides') pushBanner('Switching sides', 'everyone keeps their guns and gear', 'info');
         if (e.t === 'medal' && e.a === m.me) setMedal({ ...medalText(e.kind, e.n), key: Date.now() + Math.random() });
+      }
+      if (supplyNote.current > 0 && time.current >= supplyNote.current) {
+        supplyNote.current = 0;
+        if (you.alive) pushBanner('Supply drop incoming', 'top gear inside. follow the blue smoke, or check the map', 'info');
       }
       damageFx.current = Math.max(0, damageFx.current - dt * 1.4);
       flashFx.current = Math.max(0, flashFx.current - dt * 3);
@@ -896,6 +907,14 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           if (c.state === 'planted') pin('charge', 'charge', c.x, c.y + 1.2, c.z, `${Math.ceil(c.fuse)}`, atk ? 'guard' : 'defuse');
           else if (c.state === 'dropped' && atk) pin('charge', 'charge', c.x, c.y + 1.2, c.z, 'charge', `${Math.round(Math.hypot(c.x - eye.x, c.z - eye.z))} m`);
         }
+        if (m.mode === 'royale')
+          for (const s of m.supplies) {
+            // a supply crate with loot left: where it is (once it is down) and how far
+            if (s.landed < 0 || !supplyLeft(m, s)) continue;
+            view.project(s.x, s.y + 2.2, s.z, pt);
+            const on = pt.z < 1 && pt.x > 0 && pt.x < W && pt.y > 0 && pt.y < H;
+            list.push({ key: `s${s.id}`, kind: 'supply', x: pt.x, y: pt.y, on, text: 'supply', sub: `${Math.round(Math.hypot(s.x - eye.x, s.z - eye.z))} m` });
+          }
         if (m.mode === 'breach')
           for (const o of m.actors) {
             if (o.team !== you.team || o === a || !o.alive) continue;
@@ -925,6 +944,9 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           const at = planeAt(m.plane, m.time);
           ms.plane = { ax: m.plane.ax, az: m.plane.az, bx: m.plane.bx, bz: m.plane.bz, x: at.x, z: at.z };
         } else ms.plane = null;
+        ms.red = m.red ? { x: m.red.x, z: m.red.z, r: m.red.r, live: m.red.warn <= 0 } : null;
+        ms.drops = [];
+        for (const s of m.supplies) if (supplyLeft(m, s)) ms.drops.push({ x: s.x, z: s.z, landed: s.landed >= 0 });
       }
       for (const o of m.actors) {
         if (o === a || !o.alive) continue;
@@ -970,7 +992,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       blind: a.alive && a.blindT > 0 ? Math.min(1, a.blindT / Math.min(1.2, a.blind0)) : 0,
       canBuy: canShop(m, you),
       alive: you.alive,
-      dead: !you.alive ? { by: you.killedWith === 'zone' ? 'the zone' : you.killedWith === 'blast' ? 'the charge' : killer && killer !== you ? killer.name : 'yourself', w: you.killedWith === 'frag' ? 'Frag' : you.killedWith === 'zone' ? 'out in the open too long' : you.killedWith === 'blast' ? 'caught in the blast' : you.killedWith ? WEAPONS[you.killedWith].name : '', head: you.killedHead, respawn: you.respawnT } : null,
+      dead: !you.alive ? { by: you.killedWith === 'zone' ? 'the zone' : you.killedWith === 'blast' ? 'the charge' : you.killedWith === 'shell' ? 'the bombardment' : killer && killer !== you ? killer.name : 'yourself', w: you.killedWith === 'frag' ? 'Frag' : you.killedWith === 'zone' ? 'out in the open too long' : you.killedWith === 'blast' ? 'caught in the blast' : you.killedWith === 'shell' ? 'caught in the open under the shells' : you.killedWith ? WEAPONS[you.killedWith].name : '', head: you.killedHead, respawn: you.respawnT } : null,
       watching: !you.alive && a !== you ? a.name : null,
       feed: [],
       dm: m.mode === 'dm' ? { kills: you.kills, top: top === you ? (st[1]?.kills ?? 0) : top.kills, topName: top === you ? (st[1]?.name ?? '') : top.name, place: st.indexOf(you) + 1, total: m.actors.length } : null,
@@ -1006,6 +1028,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
     const z = m.zone!;
     const out = Math.max(0, Math.hypot(you.body.x - z.x, you.body.z - z.z) - z.r);
     const near = lootNear(m, you);
+    const red = m.red;
+    const redEdge = red ? red.r - Math.hypot(you.body.x - red.x, you.body.z - red.z) : -1;
     return {
       alive: m.alive,
       total: m.actors.length,
@@ -1024,6 +1048,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       healName: you.healKind ? HEAL[you.healKind].name : null,
       // (everything else is taken by walking over it: F is for swapping the gun in hand)
       pickup: near ? `${near.kind === 'gun' && (WEAPONS[near.what as WeaponId].slot === 'secondary' ? you.guns[1] : you.guns[0] && you.guns[2]) ? 'swap for ' : ''}${itemName(near, (id) => WEAPONS[id].name)}` : null,
+      red: red && redEdge > -2 ? { edge: Math.max(0, redEdge) + 2, live: red.warn <= 0, t: red.warn, cover: underRoof(m.world, you.body.x, eyeY(you), you.body.z) } : null,
     };
   };
 

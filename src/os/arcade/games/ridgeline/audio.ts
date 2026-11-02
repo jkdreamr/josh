@@ -1,8 +1,9 @@
 // Ridgeline's sound, built on the arcade's audio graph with filters and stereo placement, so it sounds like a
 // battlefield and not a chip synth: gunshots by class (a sharp crack, a body and a low thump close up; a dull report
 // that arrives late from far away), footsteps by surface (soft, muffled, heel then toe), hits, headshots and kills,
-// reloads, grenades and the charge. Every sound off to one side comes from that side, and distance muffles it.
-// Nothing plays while the arcade is muted (graph() is null then).
+// reloads, grenades and the charge, and in a royale the bombardment's shells (heard from far off) and supply drops.
+// Every sound off to one side comes from that side, and distance muffles it. Nothing plays while the arcade is muted
+// (graph() is null then).
 import { sfx } from '../../kit';
 import { echoOfMine, type Ev, type Match } from './match.ts';
 import type { Surface } from './world.ts';
@@ -206,6 +207,7 @@ export function playEvents(m: Match, evs: Ev[], ear: Ear, you: number) {
   // a hundred players can fire a lot at once: a few distant shots and steps a frame are enough to hear a fight
   let far = 0;
   let steps = 0;
+  let shells = 0;
   for (const e of evs) {
     switch (e.t) {
       case 'shot': {
@@ -284,6 +286,35 @@ export function playEvents(m: Match, evs: Ev[], ear: Ear, you: number) {
         if (p) boom(g, p, false);
         break;
       }
+      case 'shell': {
+        // a bombardment shell: a full blast close by, a low rumble from across the map (two a frame at most)
+        if (shells >= 2) break;
+        const p = placeAt(ear, e.x, e.z, 900);
+        if (!p) break;
+        shells++;
+        boom(g, p, p.muffle > 0.75);
+        break;
+      }
+      case 'redzone':
+        if (e.stage === 'warn') {
+          // a bombardment marked: a siren, rising twice
+          for (let i = 0; i < 2; i++) osc(g, HERE, { type: 'sawtooth', freq: 330, to: 620, attack: 0.15, hold: 0.6, decay: 0.5, vol: 0.05, lowpass: 1400, at: i * 1.35 });
+        }
+        break;
+      case 'supply':
+        if (!e.landed) {
+          // the drop plane passing high over: a low drone
+          osc(g, HERE, { type: 'sawtooth', freq: 82, attack: 1.2, hold: 1.4, decay: 2.2, vol: 0.05, lowpass: 360 });
+          osc(g, HERE, { type: 'sawtooth', freq: 83.5, attack: 1.2, hold: 1.4, decay: 2.2, vol: 0.04, lowpass: 360 });
+        } else {
+          // the crate hits the ground
+          const p = placeAt(ear, e.x, e.z, 160);
+          if (p) {
+            osc(g, p, { freq: 80, to: 40, decay: 0.25, vol: 0.4 });
+            burst(g, p, { type: 'lowpass', freq: 900, decay: 0.2, vol: 0.3 });
+          }
+        }
+        break;
       case 'blast': {
         const p = placeAt(ear, e.x, e.z, 400) ?? { pan: 0, gain: 0.15, delay: 0.5, muffle: 0.2 };
         boom(g, p, true);

@@ -2,7 +2,8 @@
 // with its credits, plays its side in a breach (the attack pushes a site together, plants and guards the charge; the
 // defense holds both sites, rotates on a call and retakes to defuse), and aims like a person: a reaction delay, an error that settles, a
 // limited turn speed that has to fight the recoil, and (on harder levels) stopping before it shoots. In a royale they
-// pick a landing spot, jump when the transport passes it, loot what they need, heal up, and keep ahead of the zone.
+// pick a landing spot, jump when the transport passes it, loot what they need, heal up, and keep ahead of the zone;
+// the bolder ones go for a supply drop that comes down near them, and everyone gets out from under a bombardment.
 import {
   DEFUSE_TIME,
   DEG,
@@ -24,6 +25,8 @@ import {
   spareOf,
   spawnOf,
   spreadOf,
+  supplyLeft,
+  underRoof,
   viewDir,
   wants,
   type Actor,
@@ -35,7 +38,7 @@ import { clamp, mulberry32, type Rng } from './noise.ts';
 import { canWalk, fieldDist, fieldStep, fieldTo, findPath } from './nav.ts';
 import { blockedAt, clearLine } from './physics.ts';
 import { floorAt, heightAt } from './terrain.ts';
-import { planeAt } from './royale.ts';
+import { RED_WARN, planeAt } from './royale.ts';
 import { WEAPONS, type WeaponId } from './weapons.ts';
 import { SITE_R, type World } from './world.ts';
 
@@ -131,6 +134,9 @@ export type Brain = {
   loot: number;
   lootT: number;
   healNow: boolean;
+  /** Royale: the supply crate it is going for (-1 none), and a bit per crate it has already made up its mind on. */
+  supply: number;
+  supplySeen: number;
 };
 
 const LEVELS: Record<BotLevel, { skill: number; react: number; turn: number }> = {
@@ -218,6 +224,8 @@ export function newBrain(level: BotLevel, seed: number): Brain {
     loot: -1,
     lootT: 0,
     healNow: false,
+    supply: -1,
+    supplySeen: 0,
   };
 }
 
@@ -578,8 +586,56 @@ function siteSpot(m: Match, k: number, fromX: number, fromZ: number, spread: num
   return { x: s.x + Math.sin(ang) * out, z: s.z + Math.cos(ang) * out };
 }
 
-/** Where the bot wants to go when nobody is in sight. */
+/** Royale: inside (or at the edge of) a bombardment? */
+const inRed = (m: Match, a: Actor) => !!m.red && Math.hypot(a.body.x - m.red.x, a.body.z - m.red.z) < m.red.r + 4;
+
+/** Where the bot wants to go when nobody is in sight (or, in a royale, when it has to get out from under shells). */
 function plan(m: Match, a: Actor, br: Brain) {
+  if (m.mode !== 'royale') {
+    planAny(m, a, br);
+    return;
+  }
+  br.rush = false;
+  if (fleeRed(m, a, br)) return;
+  planAny(m, a, br);
+  // whatever it planned, not into a bombardment (one already inside it gets out once it reacts, above)
+  const red = m.red;
+  if (red && !inRed(m, a)) {
+    const dx = br.goalX - red.x;
+    const dz = br.goalZ - red.z;
+    const d = Math.hypot(dx, dz);
+    if (d < red.r + 6) {
+      const k = (red.r + 8) / (d || 1);
+      setGoal(m, br, red.x + (d ? dx : 1) * k, red.z + dz * k);
+      br.loot = -1;
+    }
+  }
+}
+
+/** A bombardment marked over it: stay put under a roof, else run for the nearest edge (shooting on the way if it
+ * must). The sharper ones react sooner after the warning. */
+function fleeRed(m: Match, a: Actor, br: Brain) {
+  const red = m.red;
+  if (!red || !inRed(m, a) || red.warn > RED_WARN - 0.6 - (1 - br.skill) * 2.5) return false;
+  const b = a.body;
+  if (underRoof(m.world, b.x, eyeY(a), b.z)) {
+    setGoal(m, br, b.x, b.z);
+    br.loot = -1;
+    return true;
+  }
+  const dx = b.x - red.x;
+  const dz = b.z - red.z;
+  const d = Math.hypot(dx, dz) || 1;
+  const k = (red.r + 10) / d;
+  setGoal(m, br, red.x + (d > 0.5 ? dx : 1) * k, red.z + (d > 0.5 ? dz : 0) * k);
+  br.loot = -1;
+  br.supply = -1;
+  br.rush = true;
+  return true;
+}
+
+/** Where the bot wants to go when nobody is in sight, in any mode. */
+function planAny(m: Match, a: Actor, br: Brain) {
   const r = br.rng;
   if (m.mode === 'breach') {
     planBreach(m, a, br);
@@ -1012,6 +1068,26 @@ function planRoyale(m: Match, a: Actor, br: Brain) {
     setGoal(m, br, b.x, b.z);
     return;
   }
+  // a supply crate coming down near it: the bolder ones with a gun go for it (and the fight that comes with it)
+  for (const s of m.supplies) {
+    const bit = 1 << s.id;
+    if (br.supplySeen & bit) continue;
+    br.supplySeen |= bit;
+    const d = Math.hypot(s.x - b.x, s.z - b.z);
+    if (br.supply < 0 && d < 170 && (a.guns[0] || a.guns[2]) && r() < (0.2 + br.skill * 0.5) * (1 - d / 220)) br.supply = s.id;
+  }
+  if (br.supply >= 0) {
+    const s = m.supplies[br.supply];
+    const d = Math.hypot(s.x - b.x, s.z - b.z);
+    // there (the loot below takes it from here), emptied, or the zone has left it outside
+    if ((d < 3 && s.landed >= 0) || !supplyLeft(m, s) || Math.hypot(s.x - z.x, s.z - z.z) > z.r - 4) br.supply = -1;
+    else {
+      // still coming down: wait near where it will land
+      if (s.landed < 0 && d < 7) setGoal(m, br, b.x, b.z);
+      else setGoal(m, br, s.x, s.z);
+      return;
+    }
+  }
   // the loot it is after still there and still wanted?
   const cur = br.loot >= 0 ? m.loot[br.loot] : null;
   if (cur && (!cur.live || !wants(a, cur))) br.loot = -1;
@@ -1029,6 +1105,7 @@ function planRoyale(m: Match, a: Actor, br: Brain) {
       const dd = d * (it.kind === 'gun' ? need : 1);
       if (dd >= bestD) continue;
       if (Math.hypot(it.x - z.x, it.z - z.z) > z.r - 4 || !wants(a, it)) continue;
+      if (m.red && Math.hypot(it.x - m.red.x, it.z - m.red.z) < m.red.r + 4) continue;
       bestD = dd;
       best = it.id;
     }
@@ -1220,8 +1297,8 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     // far from you in a royale nobody sees the difference: think half as often
     if (m.mode === 'royale' && br.target < 0 && Math.hypot(a.body.x - m.actors[0].body.x, a.body.z - m.actors[0].body.z) > 160) br.think *= 2;
     perceive(m, a, br);
-    // empty handed in a royale: keep looking for a gun even with someone in sight
-    if (br.target < 0 || (m.mode === 'royale' && !currentGun(a))) plan(m, a, br);
+    // empty handed in a royale: keep looking for a gun even with someone in sight; under a bombardment, get out
+    if (br.target < 0 || (m.mode === 'royale' && (!currentGun(a) || inRed(m, a) || br.rush))) plan(m, a, br);
     route(m, a, br);
     if (br.detourT <= 0) steer(m, a, br);
     // stuck: walked under a second's worth less than half a meter while trying to move

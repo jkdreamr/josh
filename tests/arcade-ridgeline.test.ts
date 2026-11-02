@@ -5,9 +5,9 @@ import { DM_HUBS, newBrain } from '../src/os/arcade/games/ridgeline/bots.ts';
 import { fieldDist, fieldTo, findPath } from '../src/os/arcade/games/ridgeline/nav.ts';
 import { STAND_H, blockedAt, clearLine, newHit, rayWorld, stepBody, type Body } from '../src/os/arcade/games/ridgeline/physics.ts';
 import { CELL, T_HALF, T_RES, floorAt, generateTerrain, heightAt, rayTerrain } from '../src/os/arcade/games/ridgeline/terrain.ts';
-import { ARMOR, KILL_REWARD, LOSS_REWARD, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul } from '../src/os/arcade/games/ridgeline/weapons.ts';
+import { ARMOR, KILL_REWARD, LOSS_REWARD, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
 import { ARENA, ROYALE_ARENA, SITE_R, worldFor } from '../src/os/arcade/games/ridgeline/world.ts';
-import { AMMO_MAX, AMMO_PACK, ROYALE_PLAYERS, VEST, ZONES } from '../src/os/arcade/games/ridgeline/royale.ts';
+import { AMMO_MAX, AMMO_OF, AMMO_PACK, RED_LIVE, RED_WARN, ROYALE_PLAYERS, VEST, ZONES, type AmmoKind } from '../src/os/arcade/games/ridgeline/royale.ts';
 import {
   BLAST_R,
   BULLET_G,
@@ -25,13 +25,17 @@ import {
   canDefuse,
   canShop,
   createMatch,
+  dropSupply,
   eyeY,
   idleInput,
   lootNear,
+  markRed,
   plantSite,
   spawnOf,
   startRound,
   step,
+  supplyLeft,
+  underRoof,
   type Input,
   type Match,
 } from '../src/os/arcade/games/ridgeline/match.ts';
@@ -587,6 +591,155 @@ test('aim assist: a shot just off a target lands, a clear miss stays a miss, and
   };
   assert.ok(shoot(0.9), 'just off: drawn onto them');
   assert.ok(!shoot(3), 'a clear miss stays a miss');
+});
+
+/** A royale with only the given actors left in it (the rest out of the way, though still counted, so the match runs
+ * on), each standing on the ground where put, and none of them a bot (they stand still). */
+function quietRoyale(seed: number, put: [number, number, number][]) {
+  const m = createMatch(worldFor('mesa', true), 'royale', 'normal', { seed });
+  m.redT = 1e9;
+  for (const a of m.actors) a.alive = false;
+  put.forEach(([x, y, z], i) => {
+    const a = m.actors[i];
+    a.alive = true;
+    a.bot = false;
+    a.drop = 0;
+    a.body.x = x;
+    a.body.y = y;
+    a.body.z = z;
+    a.body.onGround = true;
+  });
+  return m;
+}
+
+test('royale: a supply crate comes down inside the next circle, with the best gear, and can be looted', () => {
+  const m = quietRoyale(31, []);
+  const z = m.zone!;
+  const s = dropSupply(m, z.nx, z.nz, z.nr)!;
+  assert.ok(s, 'a crate is on its way');
+  assert.ok(Math.hypot(s.x - z.nx, s.z - z.nz) <= z.nr, 'inside the next circle');
+  assert.ok(s.y > s.ground + 100 && s.landed < 0, 'from high up');
+  assert.ok(m.events.some((e) => e.t === 'supply' && !e.landed), 'announced');
+  assert.ok(supplyLeft(m, s));
+  // you wait a little way off
+  const you = m.actors[0];
+  you.alive = true;
+  you.bot = false;
+  you.drop = 0;
+  you.body.x = s.x + 8;
+  you.body.z = s.z;
+  you.body.y = floorAt(m.world.terrain, you.body.x, you.body.z) + 0.05;
+  let landed = false;
+  for (let i = 0; i < 60 * 40 && s.landed < 0; i++) {
+    step(m, DT, idleInput());
+    if (m.events.some((e) => e.t === 'supply' && e.landed)) landed = true;
+  }
+  assert.ok(landed && s.landed > 0 && s.y === s.ground, 'it lands');
+  // what is in it: one of the best guns full, all its ammo, the best vest and helmet, and med kits
+  const items = s.items.map((i) => m.loot[i]);
+  assert.ok(items.every((it) => it.live && Math.hypot(it.x - s.x, it.z - s.z) < 1.5), 'laid out round the crate');
+  const gun = items.find((it) => it.kind === 'gun')!;
+  assert.ok(['longbow', 'lancer', 'kestrel'].includes(gun.what));
+  assert.equal(gun.n, WEAPONS[gun.what as WeaponId].mag);
+  const ammo = items.find((it) => it.kind === 'ammo')!;
+  assert.equal(ammo.what, AMMO_OF[gun.what as WeaponId]);
+  assert.equal(ammo.n, AMMO_MAX[ammo.what as AmmoKind]);
+  assert.ok(items.some((it) => it.kind === 'vest' && it.what === '3'));
+  assert.ok(items.some((it) => it.kind === 'helmet' && it.what === '3'));
+  assert.ok(items.some((it) => it.kind === 'heal' && it.what === 'kit'));
+  // walk up to it and everything is taken
+  you.body.x = s.x;
+  you.body.z = s.z;
+  you.body.y = s.ground + 0.05;
+  for (let i = 0; i < 90; i++) step(m, DT, idleInput(you.yaw, you.pitch));
+  assert.equal(you.guns[0]?.id, gun.what, 'the gun');
+  assert.equal(you.ammo[ammo.what as AmmoKind], AMMO_MAX[ammo.what as AmmoKind], 'its ammo');
+  assert.equal(you.vest, 3);
+  assert.equal(you.armor, VEST[3]);
+  assert.equal(you.helmet, 3);
+  assert.ok(you.kits >= 1);
+  assert.ok(!supplyLeft(m, s), 'emptied');
+});
+
+test('royale: a bombardment hurts those in the open inside it once the warning is over, not under a roof or outside', () => {
+  const w = worldFor('mesa', true);
+  // a spot indoors (loot on a building's floor, clear to stand on, with a roof over it), and open ground round it
+  let cx = 0;
+  let cy = 0;
+  let cz = 0;
+  for (let i = 0; i < w.loot.length; i += 3) {
+    const [x, y, z] = [w.loot[i], w.loot[i + 1], w.loot[i + 2]];
+    if (Math.abs(x) < 250 && Math.abs(z) < 250 && underRoof(w, x, y + 1.6, z) && !blockedAt(w, x, z, y)) {
+      [cx, cy, cz] = [x, y, z];
+      break;
+    }
+  }
+  assert.ok(cy !== 0, 'a spot under a roof');
+  const R = 40;
+  const open: [number, number, number][] = [];
+  for (let k = 0; k < 400 && open.length < 8; k++) {
+    const a = k * 2.399;
+    const d = 8 + (k % 23);
+    const x = cx + Math.cos(a) * d;
+    const z = cz + Math.sin(a) * d;
+    const y = floorAt(w.terrain, x, z);
+    if (!blockedAt(w, x, z, y) && !underRoof(w, x, y + 1.6, z) && open.every(([ox, , oz]) => Math.hypot(ox - x, oz - z) > 3)) open.push([x, y + 0.05, z]);
+  }
+  assert.ok(open.length >= 4, `open ground near the room (${open.length})`);
+  let far: [number, number, number] | null = null;
+  for (let k = 0; k < 200 && !far; k++) {
+    const x = cx + Math.cos(k) * (R + 25);
+    const z = cz + Math.sin(k) * (R + 25);
+    const y = floorAt(w.terrain, x, z);
+    if (!blockedAt(w, x, z, y) && !underRoof(w, x, y + 1.6, z)) far = [x, y + 0.05, z];
+  }
+  assert.ok(far, 'open ground outside it');
+  // you stand outside it; one inside the room; the rest in the open inside the circle
+  const m = quietRoyale(37, [far!, [cx, cy + 0.05, cz], ...open]);
+  const outside = m.actors[0];
+  const indoors = m.actors[1];
+  const exposed = m.actors.slice(2, 2 + open.length);
+  m.red = { x: cx, z: cz, r: R, warn: RED_WARN, left: RED_LIVE, next: 0 };
+  const everyone = [outside, indoors, ...exposed];
+  let shells = 0;
+  for (let i = 0; i < Math.floor((RED_WARN - 0.05) * 60); i++) {
+    step(m, DT, idleInput());
+    for (const e of m.events) if (e.t === 'shell') shells++;
+  }
+  assert.equal(shells, 0, 'nothing falls during the warning');
+  assert.ok(everyone.every((a) => a.hp === 100), 'nobody hurt during the warning');
+  for (let i = 0; i < (RED_LIVE + 1) * 60; i++) {
+    step(m, DT, idleInput());
+    for (const e of m.events) if (e.t === 'shell') shells++;
+  }
+  assert.ok(shells > 20, `shells fell (${shells})`);
+  assert.equal(m.red, null, 'and it is over');
+  assert.ok(exposed.some((a) => a.hp < 100), 'those in the open were hit');
+  assert.equal(outside.hp, 100, 'not outside it');
+  assert.ok(Math.hypot(indoors.body.x - cx, indoors.body.z - cz) < 0.5, 'indoors the whole time');
+  assert.equal(indoors.hp, 100, 'not under a roof');
+});
+
+test('royale: a bombardment is marked inside the zone and never over you', () => {
+  const m = createMatch(worldFor('vale', true), 'royale', 'normal', { seed: 41 });
+  const you = m.actors[0];
+  const z = m.zone!;
+  z.r = 200;
+  you.drop = 0;
+  for (let k = 0; k < 30; k++) {
+    you.body.x = z.x + Math.cos(k) * 60;
+    you.body.z = z.z + Math.sin(k) * 60;
+    m.red = null;
+    const red = markRed(m);
+    if (!red) continue;
+    assert.ok(red.r * 2 >= 60 && red.r * 2 <= 90, 'sixty to ninety meters across');
+    assert.ok(Math.hypot(red.x - z.x, red.z - z.z) + red.r <= z.r, 'inside the zone');
+    assert.ok(Math.hypot(red.x - you.body.x, red.z - you.body.z) > red.r, 'not on you');
+  }
+  // too small a zone has no room for one
+  z.r = 40;
+  m.red = null;
+  assert.equal(markRed(m), null);
 });
 
 test('royale: a hundred drop in, loot, fight and the zone closes to one left standing', () => {
