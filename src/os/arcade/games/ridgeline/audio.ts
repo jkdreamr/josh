@@ -411,7 +411,7 @@ export function playEvents(m: Match, evs: Ev[], ear: Ear, you: number) {
         if (e.a === you) osc(g, HERE, { type: 'triangle', freq: 600, to: 900, decay: 0.12, vol: 0.08 });
         break;
       case 'pickup':
-        if (e.a === you) burst(g, HERE, { type: 'bandpass', freq: e.item.kind === 'gun' ? 1400 : 2600, q: 3, decay: 0.05, vol: 0.16 });
+        if (e.a === you) burst(g, HERE, { type: 'bandpass', freq: e.item.kind === 'gun' || e.item.kind === 'att' ? 1400 : 2600, q: 3, decay: 0.05, vol: 0.16 });
         break;
       case 'heal':
         if (e.a === you) burst(g, HERE, { type: 'lowpass', freq: e.done ? 1600 : 900, attack: 0.03, decay: e.done ? 0.25 : 0.12, vol: 0.12 });

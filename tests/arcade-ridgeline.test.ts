@@ -7,7 +7,7 @@ import { RADIUS, STAND_H, blockedAt, clearLine, groundAt, newHit, rayWorld, step
 import { CELL, T_HALF, T_RES, floorAt, generateTerrain, heightAt, rayTerrain } from '../src/os/arcade/games/ridgeline/terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
 import { ARENA, ROYALE_ARENA, SITE_R, worldFor } from '../src/os/arcade/games/ridgeline/world.ts';
-import { AMMO_MAX, AMMO_OF, AMMO_PACK, RED_LIVE, RED_WARN, ROYALE_PLAYERS, VEST, ZONES, type AmmoKind } from '../src/os/arcade/games/ridgeline/royale.ts';
+import { AMMO_MAX, AMMO_OF, AMMO_PACK, BOOST, BOOST_DRAIN, HEAL, NADE_MAX, RED_LIVE, RED_WARN, ROYALE_PLAYERS, VEST, X4_ZOOM, ZONES, ammoCap, fits, gunLabel, healCap, magOf, richness, scopeOf, spawnLoot, zoomOf, type AmmoKind, type Item } from '../src/os/arcade/games/ridgeline/royale.ts';
 import {
   BLAST_R,
   BULLET_G,
@@ -648,6 +648,9 @@ test('royale: a supply crate comes down inside the next circle, with the best ge
   assert.ok(items.some((it) => it.kind === 'vest' && it.what === '3'));
   assert.ok(items.some((it) => it.kind === 'helmet' && it.what === '3'));
   assert.ok(items.some((it) => it.kind === 'heal' && it.what === 'kit'));
+  assert.ok(items.some((it) => it.kind === 'pack' && it.what === '3'), 'a level 3 backpack');
+  assert.ok(items.some((it) => it.kind === 'att' && it.what === 'x4'), 'a 4x scope');
+  assert.ok(items.some((it) => it.kind === 'att' && it.what === 'ext'), 'an extended magazine');
   // walk up to it and everything is taken
   you.body.x = s.x;
   you.body.z = s.z;
@@ -659,7 +662,12 @@ test('royale: a supply crate comes down inside the next circle, with the best ge
   assert.equal(you.armor, VEST[3]);
   assert.equal(you.helmet, 3);
   assert.ok(you.kits >= 1);
-  assert.ok(!supplyLeft(m, s), 'emptied');
+  assert.equal(you.pack, 3, 'the backpack');
+  assert.ok(you.guns[0]?.mods?.ext, 'the extended magazine went on the gun');
+  // (all of it, but a 4x scope when the gun is the Longbow, which has a scope of its own)
+  const left = s.items.map((i) => m.loot[i]).filter((it) => it.live);
+  assert.ok(left.every((it) => it.kind === 'att' && !fits(gun.what as WeaponId, it.what as 'x4')), `emptied (${left.map((it) => it.what)})`);
+  assert.equal(supplyLeft(m, s), left.length > 0);
 });
 
 test('royale: a bombardment hurts those in the open inside it once the warning is over, not under a roof or outside', () => {
@@ -750,18 +758,28 @@ test('royale: a hundred drop in, loot, fight and the zone closes to one left sta
   let kills = 0;
   let shots = 0;
   let landed = 0;
+  // the new gear: backpacks and attachments taken, boosts used, and guns seen with attachments on
+  let packs = 0;
+  let atts = 0;
+  let boosts = 0;
+  let modded = 0;
   const step2 = 1 / 30;
   while (m.phase !== 'over' && m.time < 900) {
     // you stay in it to the end (unhurt) so the bots play the whole match out
     m.actors[0].shield = 99;
     m.actors[0].hp = 100;
+    const had = m.actors.map((a) => a.drinks + a.pills);
     step(m, step2, idleInput());
     for (const e of m.events) {
       if (e.t === 'pickup') picks++;
+      if (e.t === 'pickup' && e.item.kind === 'pack') packs++;
+      if (e.t === 'pickup' && e.item.kind === 'att') atts++;
       if (e.t === 'kill') kills++;
       if (e.t === 'shot') shots++;
       if (e.t === 'land') landed++;
+      if (e.t === 'heal' && e.done && m.actors[e.a].drinks + m.actors[e.a].pills < had[e.a]) boosts++;
     }
+    if (Math.floor(m.time) !== Math.floor(m.time - step2)) modded = Math.max(modded, m.actors.filter((a) => a.alive && a.guns.some((g) => g?.mods)).length);
   }
   assert.equal(m.phase, 'over');
   assert.equal(m.alive, 1);
@@ -769,6 +787,245 @@ test('royale: a hundred drop in, loot, fight and the zone closes to one left sta
   assert.ok(picks > 150, `they looted (${picks})`);
   assert.ok(shots > 300, `they fought (${shots} shots)`);
   assert.equal(kills, ROYALE_PLAYERS - 1);
+  assert.ok(packs > 10, `backpacks taken (${packs})`);
+  assert.ok(atts > 10, `attachments taken (${atts})`);
+  assert.ok(modded > 5, `guns with attachments on (${modded} at once)`);
+  assert.ok(boosts > 5, `boosts used when hurt (${boosts})`);
+});
+
+/** A royale with only you in it, on open flat ground near the middle of the zone, with nothing lying near you. */
+function gearRoyale(seed: number) {
+  const w = worldFor('mesa', true);
+  const probe = createMatch(w, 'royale', 'normal', { seed });
+  const z = probe.zone!;
+  const t = w.terrain;
+  let at: [number, number, number] = [z.x, floorAt(t, z.x, z.z) + 0.05, z.z];
+  for (let k = 0; k < 400; k++) {
+    const x = z.x + Math.cos(k * 2.399) * k * 0.6;
+    const zz = z.z + Math.sin(k * 2.399) * k * 0.6;
+    const y = floorAt(t, x, zz);
+    let clear = true;
+    for (let d = -4; d <= 4 && clear; d++) clear = !blockedAt(w, x + d, zz, y) && Math.abs(floorAt(t, x + d, zz) - y) < 0.4;
+    if (clear) {
+      at = [x, y + 0.05, zz];
+      break;
+    }
+  }
+  const m = quietRoyale(seed, [at]);
+  const you = m.actors[0];
+  for (let i = 0; i < 30; i++) step(m, DT, idleInput());
+  for (const it of m.loot) if (Math.hypot(it.x - you.body.x, it.z - you.body.z) < 12) it.live = false;
+  const put = (kind: Item['kind'], what: string, n = 1, dx = 0.4) => {
+    const it: Item = { id: m.loot.length, kind, what, n, x: you.body.x + dx, y: you.body.y + 0.02, z: you.body.z, live: true };
+    m.loot.push(it);
+    m.lootVer++;
+    return it;
+  };
+  const walk = (secs = 0.5) => {
+    for (let i = 0; i < secs * 60; i++) step(m, DT, idleInput(you.yaw, you.pitch));
+  };
+  const press = (k: 'use' | 'heal' | 'boost' | 'reload') => {
+    const inp = idleInput(you.yaw, you.pitch);
+    inp[k] = true;
+    step(m, DT, inp);
+  };
+  return { m, you, put, walk, press };
+}
+
+test('royale: a backpack raises what you carry, and a worse one leaves the overflow on the ground', () => {
+  const { m, you, put, walk, press } = gearRoyale(51);
+  assert.equal(you.pack, 0);
+  // without one: the plain caps
+  you.ammo.rifle = AMMO_MAX.rifle;
+  you.bandages = HEAL.bandage.max;
+  you.frags = NADE_MAX.frag;
+  const box = put('ammo', 'rifle', AMMO_PACK.rifle);
+  walk();
+  assert.ok(box.live, 'no room without a backpack');
+  // a level 3 backpack, walked over: everything carries more
+  put('pack', '3');
+  walk();
+  assert.equal(you.pack, 3);
+  assert.ok(ammoCap(3, 'rifle') > AMMO_MAX.rifle && healCap(3, 'bandage') > HEAL.bandage.max);
+  walk();
+  assert.ok(!box.live && you.ammo.rifle === AMMO_MAX.rifle + AMMO_PACK.rifle, 'the box fits now');
+  put('heal', 'bandage', 6);
+  put('nade', 'frag', 2);
+  put('boost', 'drink', BOOST.drink.max + 3);
+  walk(1.5);
+  assert.equal(you.bandages, HEAL.bandage.max + 6);
+  assert.equal(you.frags, NADE_MAX.frag + 2);
+  assert.equal(you.drinks, BOOST.drink.max + 3, 'more drinks than without one');
+  you.ammo.rifle = ammoCap(3, 'rifle');
+  // a worse one is not taken by walking over it
+  const one = put('pack', '1');
+  walk();
+  assert.ok(one.live && you.pack === 3);
+  // F on it: swapped, and what no longer fits drops at your feet (the old backpack too)
+  const before = m.loot.length;
+  const rifle = you.ammo.rifle;
+  press('use');
+  assert.equal(you.pack, 1);
+  assert.ok(!one.live);
+  const dropped = m.loot.slice(before).filter((it) => it.live);
+  assert.ok(dropped.some((it) => it.kind === 'pack' && it.what === '3'), 'the old backpack is on the ground');
+  assert.equal(you.ammo.rifle, ammoCap(1, 'rifle'));
+  assert.equal(dropped.find((it) => it.kind === 'ammo' && it.what === 'rifle')?.n, rifle - ammoCap(1, 'rifle'), 'the rounds that no longer fit');
+  assert.equal(you.bandages, healCap(1, 'bandage'));
+  assert.ok(dropped.some((it) => it.kind === 'heal' && it.what === 'bandage'));
+  assert.ok(dropped.some((it) => it.kind === 'boost' && it.what === 'drink'));
+  // and walking about on it all doesn't take any of it back by itself
+  walk(1);
+  assert.equal(you.pack, 1);
+  assert.ok(dropped.every((it) => it.live));
+  // a better one still is: walked over, it replaces the level 1
+  put('pack', '2', 1, -0.4);
+  walk();
+  assert.equal(you.pack, 2);
+});
+
+test('royale: a boost mends you over time, runs you faster while high, and drains away', () => {
+  const { m, you, walk, press } = gearRoyale(52);
+  you.hp = 50;
+  you.bandages = 1;
+  you.drinks = 2;
+  you.pills = 1;
+  // H heals first while a heal helps
+  press('heal');
+  assert.equal(you.healKind, 'bandage');
+  walk(HEAL.bandage.time + 0.2);
+  assert.equal(you.bandages, 0);
+  assert.equal(you.hp, 65, 'bandaged');
+  // the boost key: painkillers with the meter empty, then a drink on top
+  press('boost');
+  assert.equal(you.healKind, 'pills');
+  walk(BOOST.pills.time + 0.1);
+  assert.equal(you.pills, 0);
+  assert.ok(you.boost > 55 && you.boost <= 60, `boost filled (${you.boost})`);
+  press('boost');
+  assert.equal(you.healKind, 'drink');
+  walk(BOOST.drink.time + 0.1);
+  assert.equal(you.drinks, 1);
+  assert.ok(you.boost > 90, `topped up (${you.boost})`);
+  // it mends you a little at a time while it drains
+  const hp0 = you.hp;
+  const b0 = you.boost;
+  walk(10);
+  assert.ok(you.hp > hp0 + 6, `health comes back (${hp0} to ${you.hp})`);
+  assert.ok(Math.abs(b0 - you.boost - BOOST_DRAIN * 10) < 0.3, `the meter drains (${b0} to ${you.boost})`);
+  // high up, a run is a little faster than with it empty
+  const run = (dir: number) => {
+    for (let i = 0; i < 30; i++) step(m, DT, { ...idleInput(-Math.PI / 2 * dir, 0), mz: 1 });
+    const v = Math.hypot(you.body.vx, you.body.vz);
+    walk(0.3);
+    return v;
+  };
+  const fast = run(1);
+  const keep = you.boost;
+  you.boost = 0;
+  const plain = run(-1);
+  you.boost = keep;
+  assert.ok(fast > plain * 1.04, `faster with the boost up (${fast.toFixed(2)} against ${plain.toFixed(2)})`);
+  // it never mends past 100, and once it runs out the mending stops
+  walk(120);
+  assert.equal(you.boost, 0, 'drained');
+  assert.ok(you.hp <= 100);
+  you.hp = 80;
+  walk(5);
+  assert.equal(you.hp, 80, 'nothing more without a boost');
+  // H at full health takes a boost when no heal helps
+  you.hp = 100;
+  press('heal');
+  assert.equal(you.healKind, 'drink');
+});
+
+test('royale: attachments go on a gun they fit, change its zoom and magazine, and go with it', () => {
+  const { m, you, put, walk, press } = gearRoyale(53);
+  you.guns = [{ id: 'kestrel', mag: WEAPONS.kestrel.mag, reserve: 0, fresh: false }, null, { id: 'lancer', mag: WEAPONS.lancer.mag, reserve: 0, fresh: false }];
+  you.slot = 0;
+  you.ammo.rifle = 200;
+  const kestrel = you.guns[0]!;
+  const lancer = you.guns[2]!;
+  assert.equal(zoomOf(kestrel), WEAPONS.kestrel.zoom);
+  assert.ok(!scopeOf(kestrel));
+  // a 4x scope onto the gun in hand: zoom 4 and the scope view
+  put('att', 'x4');
+  walk();
+  assert.equal(kestrel.mods?.sight, 'x4');
+  assert.equal(zoomOf(kestrel), X4_ZOOM);
+  assert.ok(scopeOf(kestrel));
+  // an extended magazine: half as many rounds again, filled on a reload
+  put('att', 'ext');
+  walk();
+  assert.ok(kestrel.mods?.ext);
+  assert.equal(magOf(kestrel), Math.round(WEAPONS.kestrel.mag * 1.5));
+  press('reload');
+  walk(WEAPONS.kestrel.reload + 0.3);
+  assert.equal(kestrel.mag, magOf(kestrel), 'reloaded into the longer magazine');
+  // a compensator: less bloom from a shot
+  put('att', 'comp');
+  walk();
+  assert.ok(kestrel.mods?.comp);
+  you.bloom = 0;
+  step(m, DT, { ...idleInput(you.yaw, you.pitch), fire: true });
+  assert.ok(Math.abs(you.bloom - WEAPONS.kestrel.bloom * 0.6) < 0.01, `less bloom (${you.bloom})`);
+  walk(0.5);
+  // a red dot fits neither now (the kestrel has a sight, the lancer a scope of its own): it stays where it is
+  const dot = put('att', 'dot');
+  walk();
+  assert.ok(dot.live, 'nowhere for it to go');
+  dot.live = false;
+  // a second 4x goes on the other long gun it fits
+  put('att', 'x4');
+  walk();
+  assert.equal(lancer.mods?.sight, 'x4');
+  assert.equal(gunLabel(kestrel), 'Kestrel · 4x · ext · comp');
+  // swapped for a gun on the ground (F): the kestrel lies there with all of it on
+  const mauler = put('gun', 'mauler', WEAPONS.mauler.mag, 0.3);
+  const mag = kestrel.mag;
+  press('use');
+  assert.equal(you.guns[0]?.id, 'mauler');
+  assert.ok(!mauler.live);
+  const lying = m.loot.find((it) => it.live && it.kind === 'gun' && it.what === 'kestrel' && it.by === you.id)!;
+  assert.ok(lying, 'the kestrel is on the ground');
+  assert.deepEqual(lying.mods, { sight: 'x4', ext: true, comp: true });
+  assert.equal(lying.n, mag);
+  walk(1);
+  assert.ok(lying.live, 'not taken back by walking over it');
+  // and picked up again, it comes back with them and its rounds
+  press('use');
+  const back = you.guns.find((g) => g?.id === 'kestrel');
+  assert.ok(back, 'picked up again');
+  assert.deepEqual(back.mods, { sight: 'x4', ext: true, comp: true });
+  assert.equal(back.mag, mag);
+  // what fits where, and a dot's zoom
+  assert.ok(fits('hornet', 'dot') && fits('mauler', 'dot') && !fits('longbow', 'x4') && !fits('wren', 'ext') && !fits('mauler', 'comp'));
+  assert.equal(zoomOf({ id: 'hornet', mods: { sight: 'dot', ext: false, comp: false } }), 1.4);
+  // guns elsewhere carry none: breach and deathmatch play as before
+  const b = createMatch(worldFor('vale'), 'breach', 'normal', { seed: 3 });
+  assert.ok(b.actors.every((a) => a.guns.every((g) => !g?.mods)));
+});
+
+test('royale: loot holds the new gear, with the best of it more often in the bigger places', () => {
+  const w = worldFor('vale', true);
+  const loot = spawnLoot(w, 9);
+  const count = (f: (it: Item) => boolean) => loot.filter(f).length;
+  assert.ok(count((it) => it.kind === 'pack') > 10, 'backpacks');
+  assert.ok(count((it) => it.kind === 'boost' && it.what === 'drink') > 5 && count((it) => it.kind === 'boost' && it.what === 'pills') > 3, 'boosts');
+  for (const k of ['dot', 'x4', 'ext', 'comp']) assert.ok(count((it) => it.kind === 'att' && it.what === k) > 2, `attachments (${k})`);
+  // level 3 armor and backpacks lie where the loot is richer than level 1 does, on average
+  const rich = richness(w.loot);
+  const richAt = (it: Item) => {
+    for (let i = 0; i < w.loot.length; i += 3) if (w.loot[i] === it.x && w.loot[i + 2] === it.z) return rich[i / 3];
+    return -1;
+  };
+  const mean = (lv: string) => {
+    const xs = loot.filter((it) => (it.kind === 'vest' || it.kind === 'helmet' || it.kind === 'pack') && it.what === lv).map(richAt);
+    return xs.reduce((s, x) => s + x, 0) / xs.length;
+  };
+  assert.ok(mean('3') > mean('1'), `richer places, better gear (${mean('3').toFixed(2)} against ${mean('1').toFixed(2)})`);
+  // the same seed gives the same loot
+  assert.deepEqual(spawnLoot(w, 9), loot);
 });
 
 /** A royale with only you in it, on the ground, and only its first vehicle (the bots and the rest put away). */
