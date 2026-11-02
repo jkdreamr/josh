@@ -466,16 +466,22 @@ function clutter(c: Ctx, f: Frame, lx: number, lz: number, key?: ModelKey, y?: n
   c.models.push({ key: key ?? CLUTTER[Math.floor(c.deco() * CLUTTER.length)], x, y: y ?? heightAt(c.t, x, z), z, yaw: c.deco() * Math.PI * 2 });
 }
 
-function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number) {
+/** A screen across a road: quarter turns, baskets long, and two high (over head height). */
+type Screen = { turn: number; units: number };
+
+/** Places a piece of cover if it fits; a screen stands on a road, and `roadside` cover may stand at a road's edge. */
+function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number, screen?: Screen, roadside = false) {
   const r = c.rng;
-  const rot = Math.floor(r() * 4);
-  const units = kind === 'hesco' ? 3 + Math.floor(r() * 3) : 1;
+  const roll = Math.floor(r() * 4);
+  const rot = screen ? screen.turn : roll;
+  const roll2 = kind === 'hesco' ? 3 + Math.floor(r() * 3) : 1;
+  const units = screen ? screen.units : roll2;
   const [w, d] = kind === 'hesco' ? [units * 1.06, 1.06] : PROP_SIZE[kind];
   const hx = (rot & 1 ? d : w) / 2;
   const hz = (rot & 1 ? w : d) / 2;
   if (Math.abs(x) + hx > bound || Math.abs(z) + hz > bound) return false;
   if (overlaps(c, x - hx - 1.5, z - hz - 1.5, x + hx + 1.5, z + hz + 1.5)) return false;
-  if (roadDist(c, x, z) < 2.5 + Math.max(hx, hz)) return false;
+  if (!screen && roadDist(c, x, z) < (roadside ? 3.4 + Math.max(hx, hz) * 0.3 : 2.5 + Math.max(hx, hz))) return false;
   let lo = Infinity;
   let hi = -Infinity;
   // (on ice the frozen surface is the ground: cover may stand out on a frozen lake, but not in open water)
@@ -491,7 +497,7 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number) {
     lo = Math.min(lo, h);
     hi = Math.max(hi, h);
   }
-  if (hi - lo > (kind === 'container' ? 2.2 : kind === 'truck' ? 1.4 : MODEL_COVER[kind] ? 0.7 : 1.2) || (!c.t.ice && lo < c.t.water + 0.3)) return false;
+  if (hi - lo > (kind === 'container' ? 2.2 : kind === 'truck' ? 1.4 : MODEL_COVER[kind] ? 0.7 : screen ? 2.4 : 1.2) || (!c.t.ice && lo < c.t.water + 0.3)) return false;
   if (iced && (kind === 'truck' || hi - lo > 0.3)) return false;
   const f = new Frame(c, x, z, rot);
   let y = lo - 0.15;
@@ -520,8 +526,9 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number) {
     for (let k = 0; k < units; k++) {
       const lx = -w / 2 + 0.53 + k * 1.06;
       f.box(lx - 0.52, y, -0.52, lx + 0.52, hi + 1.35, 0.52, 'hesco', col);
+      if (screen) f.box(lx - 0.52, hi + 1.35, -0.52, lx + 0.52, hi + 2.7, 0.52, 'hesco', col);
     }
-    c.blocks.push({ x0: x - hx, y0: y, z0: z - hz, x1: x + hx, y1: hi + 1.35, z1: z + hz });
+    c.blocks.push({ x0: x - hx, y0: y, z0: z - hz, x1: x + hx, y1: hi + (screen ? 2.7 : 1.35), z1: z + hz });
   } else if (kind === 'crates') {
     crates(c, f, -0.6, 0, y + 0.15);
     if (c.deco() < 0.35) clutter(c, f, -0.6, 0, c.deco() < 0.5 ? 'cup' : 'helmet', y + 1.25);
@@ -983,6 +990,48 @@ function clearSpots(spots: number[], boxes: Box[], trunks: Trunk[]) {
   return out;
 }
 
+/** Breach: across each spawn's road into each site, a wall or two short of the site, standing out from either
+ * side by turns, so the way in bends round them and nobody holding the site sees all the way down the road. Drawn
+ * from its own random stream. */
+function screens(c: Ctx, sites: Site[], marks: number[], open = false) {
+  const keep = [c.rng, c.deco];
+  c.rng = mulberry32(c.def.seed * 23 + 5 + marks[0]);
+  c.deco = mulberry32(c.def.seed * 29 + 3 + marks[0]);
+  for (let i = 0; i < 4; i++) {
+    const pts = c.roads[i];
+    const site = sites[i % 2];
+    marks.forEach((mark, n) => {
+      // a little nearer or further along if the first spot is taken
+      for (const d of [mark, mark + 4, mark - 3, mark + 8]) {
+        const p = alongRoad(pts, d);
+        if (!p || Math.hypot(p.x - site.x, p.z - site.z) < 15) continue;
+        // (further out, only where the road runs through open ground)
+        if (open && solidNear(c, p.x, p.z, 8)) continue;
+        // square across the road, pushed out to one side
+        const out = (n + i) % 2 ? 2.4 : -2.4;
+        if (tryProp(c, 'hesco', p.x - p.dz * out, p.z + p.dx * out, ARENA_CLASSIC - 3, { turn: Math.abs(p.dx) > Math.abs(p.dz) ? 1 : 0, units: 5 })) break;
+      }
+    });
+  }
+  [c.rng, c.deco] = keep;
+}
+
+/** The point `d` meters back along a road from its far end, and the road's heading there (a unit x, z). */
+function alongRoad(pts: number[], d: number) {
+  let along = 0;
+  for (let k = pts.length - 2; k >= 2; k -= 2) {
+    const ax = pts[k];
+    const az = pts[k + 1];
+    const seg = Math.hypot(pts[k - 2] - ax, pts[k - 1] - az);
+    if (along + seg >= d && seg > 0) {
+      const f = (d - along) / seg;
+      return { x: lerp(ax, pts[k - 2], f), z: lerp(az, pts[k - 1], f), dx: (pts[k - 2] - ax) / seg, dz: (pts[k - 1] - az) / seg };
+    }
+    along += seg;
+  }
+  return null;
+}
+
 /** Builds a map: the breach arena, or with `royale` the whole land, with many more towns, cover and loot. */
 export function buildWorld(id: MapId, royale = false): World {
   const def = MAPS[id];
@@ -1065,6 +1114,7 @@ export function buildWorld(id: MapId, royale = false): World {
     // and each spawn is a walled yard you leave by its roads, so nobody sees across from spawn to spawn or into a
     // site the moment a round starts
     for (const sp of spawns) spawnYard(c, sp.x, sp.z);
+    screens(c, sites, [21, 34]);
   }
 
   // the site masts: a waist high concrete block to hide behind and an antenna
@@ -1175,6 +1225,32 @@ export function buildWorld(id: MapId, royale = false): World {
         if (solidNear(c, x, z, 9)) continue;
         for (let k = 0; k < 5; k++) if (tryProp(c, fill[Math.floor(r() * fill.length)], x + (r() - 0.5) * 5, z + (r() - 0.5) * 5, ARENA - 3)) break;
       }
+    // further out along the ways in, more of the same where they cross open ground (a frozen lake, a bare field)
+    screens(c, sites, [48, 62, 76], true);
+    // and round each site, where the roads in all meet and leave the ground bare, cover at the roads' edges to hold
+    // the site from and to fight over it (from its own random stream, which leaves everything else as it was)
+    const keep = [c.rng, c.deco];
+    c.rng = mulberry32(def.seed * 31 + 17);
+    c.deco = mulberry32(def.seed * 37 + 1);
+    const q = c.rng;
+    // (a few on the site itself too, clear of the mast, so the site has its own corners to play)
+    const near: PropKind[] = ['crates', 'sandbags', 'hesco', 'barrier', 'pile', 'crates', 'hesco'];
+    const pads = c.taken.filter((p) => sites.some((s) => p.x0 === s.x - 13 && p.z0 === s.z - 13));
+    c.taken = c.taken.filter((p) => !pads.includes(p));
+    for (const s of sites)
+      for (const [lo, span, want] of [
+        [5, 6, 3],
+        [14, 10, 3],
+      ])
+        for (let k = 0, placed = 0; k < 40 && placed < want; k++) {
+          const a = q() * Math.PI * 2;
+          const d = lo + q() * span;
+          const x = s.x + Math.cos(a) * d;
+          const z = s.z + Math.sin(a) * d;
+          if (!solidNear(c, x, z, 4.5) && tryProp(c, near[Math.floor(q() * near.length)], x, z, ARENA - 3, undefined, true)) placed++;
+        }
+    c.taken.push(...pads);
+    [c.rng, c.deco] = keep;
   }
 
   // later pads blend into earlier ones at their edges: put every pad back exactly
