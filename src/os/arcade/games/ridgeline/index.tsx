@@ -1013,7 +1013,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       kits: you.kits,
       heal: you.healT > 0 && you.healKind ? 1 - you.healT / HEAL[you.healKind].time : 0,
       healName: you.healKind ? HEAL[you.healKind].name : null,
-      pickup: near ? itemName(near, (id) => WEAPONS[id].name) : null,
+      // (everything else is taken by walking over it: F is for swapping the gun in hand)
+      pickup: near ? `${near.kind === 'gun' && (WEAPONS[near.what as WeaponId].slot === 'secondary' ? you.guns[1] : you.guns[0] && you.guns[2]) ? 'swap for ' : ''}${itemName(near, (id) => WEAPONS[id].name)}` : null,
     };
   };
 

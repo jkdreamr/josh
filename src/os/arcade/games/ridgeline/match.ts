@@ -7,7 +7,7 @@
 import { DM_HUBS, botInput, callout, newBrain, type Brain, type BotLevel } from './bots.ts';
 import { fieldTo, navOf } from './nav.ts';
 import { clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
-import { CROUCH_H, GRAVITY, STAND_H, groundAt, newHit, raySphere, rayWorld, stepBody, type Body } from './physics.ts';
+import { CROUCH_H, GRAVITY, STAND_H, clearLine, groundAt, newHit, raySphere, rayWorld, stepBody, type Body } from './physics.ts';
 import { AMMO_KINDS, AMMO_MAX, AMMO_OF, CHUTE_GLIDE, CHUTE_OPEN, CHUTE_VY, FALL_FAST, FALL_SLOW, FALL_VY, HEAL, HELMET, NADE_MAX, ROYALE_PLAYERS, VEST, ZONES, nextCircle, planeAt, planePath, spawnLoot, type AmmoKind, type HealKind, type Item, type Plane, type Zone as Circle } from './royale.ts';
 import { floorAt, heightAt } from './terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, LOSS_STREAK_BONUS, MAX_CREDITS, NADES, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, interval, kickOf, rangeMul, type WeaponId } from './weapons.ts';
@@ -925,6 +925,23 @@ export function lootNear(m: Match, a: Actor, reach = 2.1, wantedOnly = false): I
   return best;
 }
 
+/** What a person walking by picks up on their own: anything that helps without giving something up. */
+function autoLoot(m: Match, a: Actor): Item | null {
+  if (!a.alive || a.drop || a.healT > 0) return null;
+  const b = a.body;
+  for (const it of m.loot) {
+    if (!it.live) continue;
+    const dx = it.x - b.x;
+    const dz = it.z - b.z;
+    if (Math.abs(dx) > 1.6 || Math.abs(dz) > 1.6 || dx * dx + dz * dz > 1.6 * 1.6 || it.y < b.y - 1.2 || it.y > b.y + 1.4) continue;
+    if (!wants(a, it)) continue;
+    // a gun only into an empty slot: swapping the one you carry is your call (F)
+    if (it.kind === 'gun' && (WEAPONS[it.what as WeaponId].slot === 'secondary' ? !!a.guns[1] : !!a.guns[0] && !!a.guns[2])) continue;
+    return it;
+  }
+  return null;
+}
+
 /** Would picking this up help (a better vest, ammo with room for it, a gun, ...)? */
 export function wants(a: Actor, it: Item) {
   switch (it.kind) {
@@ -1458,10 +1475,11 @@ function fire(m: Match, a: Actor) {
   a.fireCd += interval(w);
   a.shield = 0;
   const spread = spreadOf(a);
-  const d = viewDir(a.yaw, a.pitch);
   const ex = a.body.x;
   const ey = eyeY(a);
   const ez = a.body.z;
+  // a person's shot is drawn a little toward someone just off the crosshair (bots aim on their own)
+  const d = a.bot ? viewDir(a.yaw, a.pitch) : assisted(m, a, viewDir(a.yaw, a.pitch), ex, ey, ez);
   const zero = w.cls === 'pistol' || w.cls === 'smg' || w.cls === 'shotgun' ? 40 : 100;
   const lift = (BULLET_G * (zero / w.speed)) / 2;
   const vel: number[] = [];
@@ -1484,6 +1502,51 @@ function fire(m: Match, a: Actor) {
   a.lastShot = m.time;
   m.events.push({ t: 'shot', a: a.id, w: g.id, x: ex, y: ey, z: ez, dx: d.x, dy: d.y, dz: d.z, v: vel });
   m.sounds.push({ x: ex, z: ez, t: m.time, team: a.team, range: w.cls === 'sniper' ? 160 : 90, who: a.id });
+}
+
+/**
+ * Aim assist: a shot that would pass just beside someone (within about half a metre of their chest or head, a few
+ * degrees at most) is turned part of the way toward them. It never turns a shot toward someone behind a wall or a
+ * smoke, and a clean miss by more than that stays a miss: it helps, it doesn't aim for you.
+ */
+const ASSIST_PULL = 0.65;
+function assisted(m: Match, a: Actor, d: { x: number; y: number; z: number }, ex: number, ey: number, ez: number) {
+  let best = 0;
+  let bx = 0;
+  let by = 0;
+  let bz = 0;
+  for (const o of m.actors) {
+    if (o === a || !o.alive || o.drop || !isEnemy(a, o)) continue;
+    const dx = o.body.x - ex;
+    const dz = o.body.z - ez;
+    const flat = Math.hypot(dx, dz);
+    if (flat < 0.5 || flat > 140) continue;
+    // ahead of the crosshair at all?
+    if ((dx * d.x + dz * d.z) / flat < 0.9) continue;
+    const reach = clamp(Math.atan2(0.55, flat), 0.9 * DEG, 4 * DEG);
+    for (const h of [o.body.height * 0.66, o.body.height - 0.13]) {
+      const ty = o.body.y + h - ey;
+      const len = Math.hypot(dx, ty, dz);
+      const cos = (dx * d.x + ty * d.y + dz * d.z) / len;
+      const off = Math.acos(Math.min(1, cos));
+      if (off > reach) continue;
+      // the nearer to the crosshair, the better (and a head counts as a little nearer)
+      const score = (reach - off) / reach + (h > o.body.height * 0.8 ? 0.05 : 0);
+      if (score <= best) continue;
+      if (!clearLine(m.world, ex, ey, ez, o.body.x, o.body.y + h, o.body.z) || smokeBlocks(m, ex, ey, ez, o.body.x, o.body.y + h, o.body.z)) continue;
+      best = score;
+      bx = dx / len;
+      by = ty / len;
+      bz = dz / len;
+    }
+  }
+  if (best <= 0) return d;
+  const k = ASSIST_PULL * (0.85 + a.ads * 0.15);
+  const x = d.x + (bx - d.x) * k;
+  const y = d.y + (by - d.y) * k;
+  const z = d.z + (bz - d.z) * k;
+  const n = Math.hypot(x, y, z);
+  return { x: x / n, y: y / n, z: z / n };
 }
 
 function startReload(m: Match, a: Actor) {
@@ -1668,6 +1731,10 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
   if (m.mode === 'royale') {
     if (inp.use) {
       const it = lootNear(m, a, 2.1, a.bot);
+      if (it) pickup(m, a, it);
+    } else if (!a.bot && Math.floor(m.time * 8) !== Math.floor((m.time - dt) * 8)) {
+      // walk over it to take it: ammo, heals, grenades, better armor, and a gun for an empty slot (F swaps a gun)
+      const it = autoLoot(m, a);
       if (it) pickup(m, a, it);
     }
     if (inp.heal && a.healT <= 0) {
