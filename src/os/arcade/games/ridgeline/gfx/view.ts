@@ -11,6 +11,7 @@ import { ARENA, type World } from '../world.ts';
 import { AMBIENT_K, SUN_K, disposeTree, lin, makeShared, type T, type Three } from './common.ts';
 import { effects, type Fx } from './fx.ts';
 import { Post } from './post.ts';
+import { carsView } from './cars.ts';
 import { buildings, markers } from './props.ts';
 import { skyDome, skyEnv } from './sky.ts';
 import { disposeGuns, installRealGuns } from './guns.ts';
@@ -207,6 +208,8 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
   const troops = soldiers(THREE, shared, Q.shadows > 0, modelOf(THREE, assets, 'soldier')?.parts[0] ?? null, modelOf(THREE, assets, 'soldier-lod')?.parts[0] ?? null);
   const royale = royaleFx(THREE, shared, assets, Q.shadows > 0);
   scene.add(royale.group);
+  const cars = carsView(THREE, shared, Q.shadows > 0);
+  scene.add(cars.group);
   scene.add(troops.group);
 
   // baked sun visibility and occlusion on the CPU, for the gun's lighting and the particles
@@ -394,6 +397,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
       if (m) {
         troops.update(m, f.hide, m.time, camera);
         royale.update(m, camera, f.time);
+        cars.update(m);
         const you = me(m);
         const c = m.charge;
         const down = m.mode === 'breach' && (c.state === 'dropped' || c.state === 'planted' || c.state === 'defused');
@@ -407,7 +411,10 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
           eyeZ: f.eye.z,
         });
         fx.update(m, f.dt, camera, muzzleOf, f.hide);
-      } else mark.update({ sites: false, charge: null, barrier: false, mine: 0, time: f.time, eyeX: f.eye.x, eyeZ: f.eye.z });
+      } else {
+        mark.update({ sites: false, charge: null, barrier: false, mine: 0, time: f.time, eyeX: f.eye.x, eyeZ: f.eye.z });
+        cars.group.visible = false;
+      }
       // the gun's light: in the open sun or under cover, how much sky it sees
       occlT -= f.dt;
       if (occlT <= 0) {
@@ -460,6 +467,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
       vm.dispose();
       troops.dispose();
       royale.dispose();
+      cars.dispose();
       disposeGuns(THREE);
       post.dispose();
       env.dispose();

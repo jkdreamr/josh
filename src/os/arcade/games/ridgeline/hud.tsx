@@ -1,7 +1,7 @@
 // Everything drawn over the 3D view: the round bar (or a royale's players left and zone clock), health, armor and ammo,
 // the kill feed, the minimap with the sites, the charge and the zone, markers for the sites, the charge and your team,
-// the buy menu, the scoreboard, banners, plant, defuse, pick up and heal prompts, the crosshair, hit markers and the
-// scope.
+// the buy menu, the scoreboard, banners, plant, defuse, pick up and heal prompts, a vehicle's speed and health, the
+// crosshair, hit markers and the scope.
 import { forwardRef, useEffect, useImperativeHandle, useRef, type ReactNode } from 'react';
 import type { Mode, Phase, ShopItem } from './match.ts';
 import { ARMOR, NADES, WEAPONS, type WeaponId } from './weapons.ts';
@@ -86,6 +86,10 @@ export type RoyaleHud = {
   /** A bombardment you are inside: meters out to its edge, whether shells are falling yet (else the seconds until
    * they do), and whether a roof keeps you safe where you stand. Null when you are clear of it. */
   red: { edge: number; live: boolean; t: number; cover: boolean } | null;
+  /** In a vehicle: what it is, its speed in km/h, its health (0 to 1), and whether you drive it. */
+  car: { name: string; kmh: number; hp: number; driving: boolean } | null;
+  /** A vehicle at hand: what F does there ('drive Jeep', 'ride in Jeep'). */
+  drive: string | null;
 };
 
 export const blankHud = (mode: Mode): Hud => ({
@@ -421,10 +425,31 @@ export function RoyalePrompts({ h, touch }: { h: Hud; touch: boolean }) {
         </div>
       )}
       {r.drop === 3 && <div className="g-ridgeline-prompt is-drop">steer to your spot. the canopy glides down</div>}
-      {!r.drop && r.pickup && (
+      {!r.drop && !r.car && r.drive && (
+        <div className="g-ridgeline-prompt is-car">
+          <kbd>{touch ? 'Drive' : 'F'}</kbd>
+          {r.drive}
+        </div>
+      )}
+      {!r.drop && !r.car && !r.drive && r.pickup && (
         <div className="g-ridgeline-prompt">
           <kbd>{touch ? 'Grab' : 'F'}</kbd>
           {r.pickup}
+        </div>
+      )}
+      {r.car && (
+        <div className="g-ridgeline-car" data-low={r.car.hp < 0.3 ? '1' : '0'}>
+          <b>
+            {Math.round(r.car.kmh)}
+            <small>km/h</small>
+          </b>
+          <span className="g-ridgeline-carHp">
+            <i style={{ width: `${Math.max(0, r.car.hp) * 100}%` }} />
+          </span>
+          <em>
+            {r.car.name}
+            {touch ? '. Exit to get out' : r.car.driving ? '. F get out, Space handbrake' : '. F get out'}
+          </em>
         </div>
       )}
       {r.heal > 0 && r.healName && (
@@ -712,6 +737,8 @@ export type MapState = {
   /** Royale: a bombardment marked (shells falling once live), and supply crates with loot left (falling or down). */
   red?: { x: number; z: number; r: number; live: boolean } | null;
   drops?: { x: number; z: number; landed: boolean }[];
+  /** Royale: the vehicles (x, z, heading, a wreck or not, a bike or not); the same list every frame, refilled. */
+  cars?: { x: number; z: number; yaw: number; wreck: boolean; bike: boolean }[];
 };
 export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(function Minimap({ world, big }, ref) {
   const cv = useRef<HTMLCanvasElement>(null);
@@ -846,6 +873,25 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
             g.strokeStyle = '#3fb6ff';
             g.strokeRect(px - half + 1, py - half + 1, half * 2 - 2, half * 2 - 2);
           }
+        }
+      // vehicles: a small block along the way each one faces (grey once burnt out)
+      if (s.cars)
+        for (const c of s.cars) {
+          const px = toX(c.x);
+          const py = toY(c.z);
+          if (px < -8 || py < -8 || px > size + 8 || py > size + 8) continue;
+          // (true to size where the map is close enough, never smaller than a mark you can see)
+          const l = Math.max(c.bike ? 4 : 7, (c.bike ? 2.2 : 4.4) * scale);
+          const wd = Math.max(c.bike ? 2.5 : 4, (c.bike ? 0.9 : 2) * scale);
+          g.save();
+          g.translate(px, py);
+          g.rotate(-c.yaw);
+          g.fillStyle = c.wreck ? 'rgba(90,90,90,0.8)' : '#e8d36a';
+          g.strokeStyle = 'rgba(0,0,0,0.75)';
+          g.lineWidth = 1;
+          g.fillRect(-wd / 2, -l / 2, wd, l);
+          g.strokeRect(-wd / 2, -l / 2, wd, l);
+          g.restore();
         }
       for (const p of s.mates) dot(p.x, p.z, '#4fb4ff', big ? 4 : 3.5);
       for (const p of s.foes) dot(p.x, p.z, '#ff5a3c', big ? 4 : 3.5);

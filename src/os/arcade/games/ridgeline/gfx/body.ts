@@ -484,6 +484,8 @@ export type Pose = {
   pistol: boolean;
   /** Dropping in: 1 in freefall (spread out, the body tipped face down by the caller), 2 hanging under a canopy. */
   sky?: number;
+  /** In a vehicle: 1 at the wheel (both hands on it), 2 riding along (seated, the gun up as usual). */
+  seat?: number;
 };
 
 /** Poses one soldier's bones (the gun group, a child of the chest bone, is placed too). */
@@ -610,14 +612,27 @@ export function makePoser(THREE: Three, build: Build = LOFT_BUILD) {
     const bodyPitch = hipLean + spineX + chestX;
     bones[BONE.neck].rotation.set((p.pitch - bodyPitch) * 0.45, twist * 0.45, 0);
     bones[BONE.head].rotation.set((p.pitch - bodyPitch) * 0.55, twist * 0.55, 0);
-    // legs: a walk cycle, bent for a crouch, tucked in the air
-    for (const side of [1, -1]) {
+    // legs: seated, or a walk cycle, bent for a crouch, tucked in the air
+    if (p.seat)
+      for (const side of [1, -1]) {
+        bones[side > 0 ? BONE.thighR : BONE.thighL].rotation.set(1.42, 0, side * (build.splay + 0.12));
+        bones[side > 0 ? BONE.shinR : BONE.shinL].rotation.x = -1.35;
+        bones[side > 0 ? BONE.footR : BONE.footL].rotation.x = -0.05;
+      }
+    else for (const side of [1, -1]) {
       const s = Math.sin(ph + (side > 0 ? 0 : Math.PI));
       const swing = s * 0.55 * sp + p.crouch * 1.05 + air * 0.4 - hipLean;
       const knee = Math.max(0, -Math.cos(ph + (side > 0 ? 0 : Math.PI))) * 0.95 * sp + p.crouch * 1.85 + air * 0.75;
       bones[side > 0 ? BONE.thighR : BONE.thighL].rotation.set(swing, 0, side * build.splay);
       bones[side > 0 ? BONE.shinR : BONE.shinL].rotation.x = -knee;
       bones[side > 0 ? BONE.footR : BONE.footL].rotation.x = knee - swing - hipLean * 0.5;
+    }
+    if (p.seat === 1) {
+      // both hands on the wheel, out in front of the chest
+      if (gunGroup) gunGroup.visible = false;
+      reach(bones, 1, target.set(0.19, -0.16, -0.42), poleR, handQ.identity());
+      reach(bones, -1, target.set(-0.19, -0.16, -0.42), poleL, handQ.identity());
+      return;
     }
     if (!gunGroup || !p.gun) {
       bones[BONE.armR].rotation.set(0.15, 0, build.armRest);

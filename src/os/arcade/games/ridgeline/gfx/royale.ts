@@ -11,7 +11,7 @@ import { gunLiteGeometry, gunModel } from './guns.ts';
 import { modelOf, worldMaterial, type Part } from './models.ts';
 
 /** Merges geometries (all non indexed) into one with vertex colors. */
-function merged(THREE: Three, parts: [T.BufferGeometry, number][]) {
+export function merged(THREE: Three, parts: [T.BufferGeometry, number][]) {
   const flat = parts.map(([g, c]) => {
     const f = g.index ? g.toNonIndexed() : g;
     if (!f.attributes.normal) f.computeVertexNormals();

@@ -1246,6 +1246,63 @@
 .g-ridgeline .g-ridgeline-prompt.is-charge kbd {
   background: #ffd56a;
 }
+/* royale vehicles: the prompt to get in, and the speed and health plate while in one */
+.g-ridgeline .g-ridgeline-prompt.is-car kbd {
+  background: #e8d36a;
+}
+.g-ridgeline .g-ridgeline-car {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  min-width: 190px;
+  padding: 6px 14px 7px;
+  border-radius: 4px;
+  color: #fff;
+  background: var(--g-ridgeline-plate);
+  pointer-events: none;
+}
+.g-ridgeline .g-ridgeline-car b {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.g-ridgeline .g-ridgeline-car b small {
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+.g-ridgeline .g-ridgeline-carHp {
+  display: block;
+  width: 160px;
+  height: 5px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.18);
+}
+.g-ridgeline .g-ridgeline-carHp i {
+  display: block;
+  height: 100%;
+  background: #7be38a;
+}
+.g-ridgeline .g-ridgeline-car[data-low='1'] .g-ridgeline-carHp i {
+  background: #ff6a4a;
+}
+.g-ridgeline .g-ridgeline-car em {
+  font-size: 11px;
+  font-style: normal;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+.g-ridgeline .g-ridgeline-hud[data-touch='1'] .g-ridgeline-car {
+  top: 130px;
+  bottom: auto;
+}
 .g-ridgeline .g-ridgeline-outside {
   position: absolute;
   left: 50%;

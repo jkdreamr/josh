@@ -50,7 +50,7 @@ export function forEachNear(w: World, x0: number, z0: number, x1: number, z1: nu
 }
 
 /** Height of the top of a rock collider at a horizontal distance. */
-const rockTop = (r: number, cy: number, d: number) => cy + Math.sqrt(Math.max(0, r * r - d * d)) * 0.92;
+export const rockTop = (r: number, cy: number, d: number) => cy + Math.sqrt(Math.max(0, r * r - d * d)) * 0.92;
 
 /** The highest surface under (x, z) that a body standing at y can be on: ground, ice, a box top or a rock. */
 export function groundAt(w: World, x: number, z: number, y: number) {
