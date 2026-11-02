@@ -475,15 +475,17 @@
   height: 0;
   opacity: 0;
   transition: opacity 0.12s;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.85));
 }
 .g-ridgeline .g-ridgeline-hit i {
   position: absolute;
-  left: -1px;
-  top: 6px;
-  width: 2px;
-  height: 7px;
+  left: -1.5px;
+  top: 7px;
+  width: 3px;
+  height: 11px;
+  border-radius: 1px;
   background: #fff;
-  transform-origin: 1px -6px;
+  transform-origin: 1.5px -7px;
 }
 .g-ridgeline .g-ridgeline-hit i:nth-child(1) {
   transform: rotate(45deg);
@@ -502,7 +504,66 @@
 }
 .g-ridgeline .g-ridgeline-hit[data-kind='kill'] i {
   background: #ff4a3a;
-  height: 10px;
+  height: 15px;
+}
+
+/* damage numbers and the health bar over whoever you hit */
+.g-ridgeline .g-ridgeline-hitinfo {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.g-ridgeline .g-ridgeline-hitinfo b {
+  position: absolute;
+  left: 0;
+  top: 0;
+  font: 800 19px/1 system-ui, sans-serif;
+  color: #fff;
+  text-shadow: 0 0 3px #000, 0 1px 2px #000;
+  letter-spacing: 0.02em;
+  will-change: transform, opacity;
+  animation: g-ridgeline-pop 0.18s ease-out;
+}
+.g-ridgeline .g-ridgeline-hitinfo b[data-kind='head'] {
+  color: var(--g-ridgeline-gold);
+  font-size: 23px;
+}
+.g-ridgeline .g-ridgeline-hitinfo b[data-kind='kill'] {
+  color: #ff5a46;
+  font-size: 25px;
+}
+@keyframes g-ridgeline-pop {
+  from {
+    font-size: 30px;
+  }
+}
+.g-ridgeline .g-ridgeline-hpbar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 64px;
+  height: 7px;
+  margin-top: -8px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.6);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.g-ridgeline .g-ridgeline-hpbar i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+}
+.g-ridgeline .g-ridgeline-hpbar i:first-child {
+  background: #fff;
+}
+.g-ridgeline .g-ridgeline-hpbar i:last-child {
+  background: #ff5a46;
+}
+.g-ridgeline .g-ridgeline-hpbar[data-dead='1'] {
+  background: rgba(255, 90, 70, 0.5);
 }
 .g-ridgeline .g-ridgeline-arcs {
   position: absolute;
