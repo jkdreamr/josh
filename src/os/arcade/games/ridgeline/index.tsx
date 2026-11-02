@@ -178,7 +178,13 @@ function OnlineStage() {
     if (s.map) setMapId(s.map);
     s.onMap = (id) => setMapId(id);
     setSession(s);
+    // until the host's match is in, ask for it again now and then (the first ask can arrive before the host is ready)
+    const ask = window.setInterval(() => s.wait(), 1000);
+    // dev only: lets the online harness look into the session
+    if (import.meta.env.DEV) (window as unknown as { __rlSession?: Session }).__rlSession = s;
     return () => {
+      if (import.meta.env.DEV) delete (window as unknown as { __rlSession?: Session }).__rlSession;
+      window.clearInterval(ask);
       s.onMap = null;
       s.dispose();
     };
@@ -421,8 +427,9 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       // the first round's buy phase starts with the match, before any frame could report it
       if (m.mode === 'breach') {
         const atk = m.attack === m.actors[m.me].team;
-        setBanner({ title: atk ? 'Round 1. You attack' : 'Round 1. You defend', sub: atk ? 'plant the charge on A or B, or knock them all out' : 'stop the plant, or defuse the charge. buy first', tone: 'info', key: Date.now() });
-        if (!touchRef.current) {
+        // (online, a guest can arrive any round)
+        setBanner({ title: `Round ${m.round}. You ${atk ? 'attack' : 'defend'}`, sub: atk ? 'plant the charge on A or B, or knock them all out' : 'stop the plant, or defuse the charge. buy first', tone: 'info', key: Date.now() });
+        if (!touchRef.current && canShop(m, m.actors[m.me])) {
           firstBuy.current = false;
           setBuyOpen(true);
         }

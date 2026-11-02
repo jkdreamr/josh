@@ -1217,3 +1217,11 @@
   font-size: 15px;
   letter-spacing: 0.02em;
 }
+
+/* The room's Direct/Relayed pill: under the sound buttons, clear of the round timer and the scores. */
+.g-ridgeline .arcade-online-status {
+  top: 52px;
+  left: auto;
+  right: 12px;
+  transform: none;
+}

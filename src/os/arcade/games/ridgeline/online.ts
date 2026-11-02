@@ -342,6 +342,8 @@ export type SessionOpts = {
   /** The clock, seconds (a test runs its own). */
   now?: () => number;
   botNames?: string[];
+  /** The match's seed (a test fixes it; otherwise a fresh one). */
+  seed?: number;
 };
 
 type Peer = { clock: Clock; track: Track; lastMove: number; budget: { t: number; n: number }[]; epoch: number };
@@ -387,6 +389,7 @@ export class Session {
     this.map = api.isHost ? opts.map : null;
     this.level = opts.level;
     this.now = opts.now ?? (() => (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000);
+    if (opts.seed !== undefined) this.seed = opts.seed >>> 0;
     this.botNames = opts.botNames ?? ['Vega', 'Rook', 'Sable', 'Juno', 'Kite', 'Onyx', 'Mako', 'Pike', 'Ash', 'Bishop'];
     this.off = api.onMessage((from, d) => this.receive(from, d));
     if (!api.isHost) this.hello();
@@ -394,6 +397,11 @@ export class Session {
 
   get isHost() {
     return this.api.isHost;
+  }
+
+  /** A guest still waiting for the host's match asks again now and then (call it on a timer until there is one). */
+  wait() {
+    if (!this.api.isHost && !this.match) this.hello();
   }
 
   dispose() {
@@ -826,6 +834,8 @@ export class Session {
 
   /** Each frame, before the rules step: where everyone shown on this machine is. */
   before(m: Match) {
+    // only ever the session's own match (a stale one from before is left alone)
+    if (m !== this.match) return;
     const t = this.now();
     if (this.api.isHost) {
       // remote players: drawn (and judged) a little in the past, smoothly
@@ -870,6 +880,7 @@ export class Session {
   after(m: Match) {
     const t = this.now();
     if (this.api.isHost) {
+      if (m !== this.match) return;
       const box = this.inbox;
       this.inbox = [];
       for (const x of box) this.hostReceive(x.from, x.k, x.pk);
@@ -905,6 +916,7 @@ export class Session {
       this.hello();
       return;
     }
+    if (m !== this.match) return;
     for (const e of this.inEv) this.applyEvent(m, e);
     this.inEv = [];
     const me = m.actors[m.me];
