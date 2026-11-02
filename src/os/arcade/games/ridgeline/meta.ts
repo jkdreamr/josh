@@ -12,7 +12,7 @@ export const meta: GameMeta = {
     'Attacking, your team carries the charge. Get it onto site A or B and hold F on the site for 4 seconds to plant it. Once planted it goes off in 40 seconds: guard it. If its carrier falls, any attacker picks it up by walking over it.',
     'Defending, hold the two sites. Stop the plant, or get to the planted charge and hold F for 7 seconds to defuse it (half way, the progress is kept). Knocking out the whole other team also wins the round.',
     'Every round opens with a buy phase in your spawn. Spend credits on guns, armor, frags, smokes and flashbangs (turn away from a flash, or be blinded). Kills, plants and rounds earn more, and a gun you survive with stays yours.',
-    'Guns are only accurate when you stand still. Running throws your shots wide, so stop, then shoot. Crouch and aim down sights for tighter groups, and pull down against the recoil when you spray.',
+    'Your shots go where the crosshair is: the view never climbs when you fire. Holding the trigger opens the spread a little, and running throws shots wider, so for long shots walk (Shift) or stop, crouch and aim down sights.',
     'Bullets take time to fly and drop over distance: aim a touch high and lead moving targets far away. Headshots hit hardest, and armor soaks up part of every hit until it breaks.',
     'Royale: a hundred players, you and 99 bots. Jump out of the transport where you like, walk over guns, ammo, armor and heals to take them (F swaps a gun once both slots are full), and stay inside the closing zone. The last one standing wins.',
     'Deathmatch: everyone for themselves, any gun you like, quick respawns. First to 25 knockouts wins.',
