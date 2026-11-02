@@ -160,8 +160,8 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /** Everyone's place: 9 numbers each. */
 const POS_N = 9;
-/** Everything else about each of them: 18 numbers each. */
-const TAB_N = 18;
+/** Everything else about each of them: 19 numbers each. */
+const TAB_N = 19;
 
 function encodePos(m: Match): number[] {
   const out: number[] = [];
@@ -209,6 +209,7 @@ function encodeTab(m: Match): Tab {
       Math.round(o.roundDmg),
       o.alive ? 1 : 0,
       Math.round(o.blindT * 10),
+      gunCode(o.guns[2]?.id),
     );
   return {
     phase: m.phase,
@@ -556,7 +557,7 @@ export class Session {
       n.reloading = !!(flags & 16);
       n.crouch = Math.min(1, Math.max(0, crouch));
       n.ads = Math.min(1, Math.max(0, ads));
-      if ((slot === 0 || slot === 1) && a.guns[slot]) a.slot = slot;
+      if ((slot === 0 || slot === 1 || slot === 2) && a.guns[slot]) a.slot = slot;
       return;
     }
     if (k === 'fire') {
@@ -706,6 +707,7 @@ export class Session {
       a.armor = v[o + 1];
       const g0 = gunOf(v[o + 3]);
       const g1 = gunOf(v[o + 4]);
+      const g2 = gunOf(v[o + 18]);
       const epoch = v[o + 5];
       a.credits = v[o + 6];
       a.kills = v[o + 7];
@@ -730,8 +732,8 @@ export class Session {
           a.yaw = this.mine.yaw;
           a.pitch = 0;
           a.alive = alive;
-          a.guns = [g0 ? gun(g0) : null, g1 ? gun(g1) : null, null];
-          a.slot = a.guns[0] ? 0 : 1;
+          a.guns = [g0 ? gun(g0) : null, g1 ? gun(g1) : null, g2 ? gun(g2) : null];
+          a.slot = a.guns[0] ? 0 : a.guns[2] ? 2 : 1;
           a.reloadT = a.switchT = a.blindT = 0;
           a.lastX = b.x;
           a.lastZ = b.z;
@@ -740,15 +742,17 @@ export class Session {
           for (const [k, id] of [
             [0, g0],
             [1, g1],
+            [2, g2],
           ] as const) {
             if ((a.guns[k]?.id ?? null) !== id) a.guns[k] = id ? gun(id) : null;
           }
           if (alive && !a.alive) a.alive = true;
         }
       } else {
-        a.slot = (v[o + 2] === 0 || v[o + 2] === 1 ? v[o + 2] : 1) as 0 | 1;
+        a.slot = (v[o + 2] === 0 || v[o + 2] === 1 || v[o + 2] === 2 ? v[o + 2] : 1) as 0 | 1 | 2;
         if ((a.guns[0]?.id ?? null) !== g0) a.guns[0] = g0 ? gun(g0) : null;
         if ((a.guns[1]?.id ?? null) !== g1) a.guns[1] = g1 ? gun(g1) : null;
+        if ((a.guns[2]?.id ?? null) !== g2) a.guns[2] = g2 ? gun(g2) : null;
         a.blindT = v[o + 17] / 10;
         if (alive && !a.alive) {
           a.alive = true;

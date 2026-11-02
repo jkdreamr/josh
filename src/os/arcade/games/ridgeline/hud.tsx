@@ -273,7 +273,7 @@ export function Ammo({ h }: { h: Hud }) {
         </>
       )}
       <div className="g-ridgeline-slots">
-        {(h.mode === 'royale' ? [0, 2, 1] : [0, 1]).map((k, i) => {
+        {[0, 2, 1].map((k, i) => {
           const id = h.guns[k];
           return (
             <span key={k} className={k === h.slot ? 'is-on' : ''} data-empty={id ? '0' : '1'}>
@@ -283,14 +283,14 @@ export function Ammo({ h }: { h: Hud }) {
           );
         })}
         <span data-empty={h.frags ? '0' : '1'}>
-          <kbd>{h.mode === 'royale' ? 4 : 3}</kbd>frag {h.frags}
+          <kbd>4</kbd>frag {h.frags}
         </span>
         <span data-empty={h.smokes ? '0' : '1'}>
-          <kbd>{h.mode === 'royale' ? 5 : 4}</kbd>smoke {h.smokes}
+          <kbd>5</kbd>smoke {h.smokes}
         </span>
         {h.mode === 'breach' && (
           <span data-empty={h.flashes ? '0' : '1'}>
-            <kbd>5</kbd>flash {h.flashes}
+            <kbd>6</kbd>flash {h.flashes}
           </span>
         )}
       </div>
