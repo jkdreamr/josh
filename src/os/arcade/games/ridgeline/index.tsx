@@ -648,27 +648,24 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         inp.reload = k.pressed('KeyR') || t.reload;
         inp.fire = (locked && mouse.current.fire) || t.fire !== null;
         inp.ads = (locked && mouse.current.ads) || t.ads;
-        if (m.mode === 'royale') {
-          // 1 and 2 the long guns, 3 the sidearm; the wheel steps through what you carry
-          ROYALE_SLOTS.forEach((k2, i) => k.pressed(`Digit${i + 1}`) && (inp.slot = k2));
-          if (mouse.current.wheel !== 0 || t.swap) {
-            const have = ROYALE_SLOTS.filter((k2) => you.guns[k2]);
-            if (have.length > 1) {
-              const at = have.indexOf(you.slot as 0 | 1 | 2);
-              inp.slot = have[(at + (mouse.current.wheel < 0 ? -1 : 1) + have.length) % have.length];
-            }
+        // every mode: 1 and 2 the long guns, 3 the sidearm; the wheel steps through what you carry
+        ROYALE_SLOTS.forEach((k2, i) => k.pressed(`Digit${i + 1}`) && you.guns[k2] && (inp.slot = k2));
+        if (mouse.current.wheel !== 0 || t.swap) {
+          const have = ROYALE_SLOTS.filter((k2) => you.guns[k2]);
+          if (have.length > 1) {
+            const at = have.indexOf(you.slot as 0 | 1 | 2);
+            inp.slot = have[(at + (mouse.current.wheel < 0 ? -1 : 1) + have.length) % have.length];
           }
+        }
+        if (m.mode === 'royale') {
           if (k.pressed('Digit4', 'KeyG') || t.frag) inp.throw = 'frag';
           if (k.pressed('Digit5', 'KeyQ') || t.smoke) inp.throw = 'smoke';
           inp.use = k.pressed('KeyF', 'KeyE') || t.use;
           inp.heal = k.pressed('KeyH') || t.heal;
         } else {
-          if (k.pressed('Digit1')) inp.slot = 0;
-          if (k.pressed('Digit2')) inp.slot = 1;
-          if (mouse.current.wheel !== 0 || t.swap) inp.slot = you.slot === 0 ? 1 : 0;
-          if (k.pressed('Digit3', 'KeyG') || t.frag) inp.throw = 'frag';
-          if (k.pressed('Digit4', 'KeyQ') || t.smoke) inp.throw = 'smoke';
-          if (k.pressed('Digit5', 'KeyX') || t.flash) inp.throw = 'flash';
+          if (k.pressed('Digit4', 'KeyG') || t.frag) inp.throw = 'frag';
+          if (k.pressed('Digit5', 'KeyQ') || t.smoke) inp.throw = 'smoke';
+          if (k.pressed('Digit6', 'KeyX') || t.flash) inp.throw = 'flash';
           // plant and defuse: held
           inp.use = k.down('KeyF', 'KeyE') || t.hold;
         }
@@ -714,7 +711,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           if (e.phase === 'buy') {
             const atk = m.attack === you.team;
             const point = m.score[0] === 6 || m.score[1] === 6;
-            pushBanner(`Round ${m.round}. You ${atk ? 'attack' : 'defend'}`, `${point ? 'match point. ' : ''}${m.round === 7 ? 'sides swapped, pistols again. ' : ''}buy phase`, 'info');
+            pushBanner(`Round ${m.round}. You ${atk ? 'attack' : 'defend'}`, `${point ? 'match point. ' : ''}${m.round === 7 ? 'sides swapped. ' : ''}buy phase. what you have carries over`, 'info');
             if (firstBuy.current && !touchRef.current) {
               firstBuy.current = false;
               openBuy(true);
@@ -746,7 +743,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         }
         if (e.t === 'carry' && e.a === m.me) pushBanner('You have the charge', 'plant it on A or B: stand on the site and hold F', 'info');
         if (e.t === 'dropcharge' && m.attack === you.team && you.alive) pushBanner('The charge is down', 'pick it up: walk over it', 'info');
-        if (e.t === 'sides') pushBanner('Switching sides', 'everyone starts over with a pistol', 'info');
+        if (e.t === 'sides') pushBanner('Switching sides', 'everyone keeps their guns and gear', 'info');
         if (e.t === 'medal' && e.a === m.me) setMedal({ ...medalText(e.kind, e.n), key: Date.now() + Math.random() });
       }
       damageFx.current = Math.max(0, damageFx.current - dt * 1.4);

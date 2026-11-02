@@ -148,11 +148,16 @@ test('the buy phase: credits, shop rules, refunds and the spawn barrier', () => 
   assert.equal(you.armor, ARMOR.light.amount);
   assert.equal(you.credits, START_CREDITS - ARMOR.light.price);
   assert.ok(!buy(m, you, 'kestrel'), 'too expensive');
-  you.credits = 5000;
+  you.credits = 9000;
   assert.ok(buy(m, you, 'hornet'));
-  assert.ok(buy(m, you, 'kestrel'), 'swapping a gun bought this round refunds it');
-  assert.equal(you.credits, 5000 - WEAPONS.kestrel.price);
-  assert.equal(you.guns[0]?.id, 'kestrel');
+  assert.ok(buy(m, you, 'kestrel'), 'a second long gun');
+  assert.equal(you.guns[0]?.id, 'hornet');
+  assert.equal(you.guns[2]?.id, 'kestrel', 'goes into the second long slot');
+  assert.equal(you.credits, 9000 - WEAPONS.hornet.price - WEAPONS.kestrel.price);
+  assert.ok(buy(m, you, 'lancer'), 'a third replaces the one in hand');
+  assert.equal(you.guns[2]?.id, 'lancer');
+  assert.equal(you.guns[0]?.id, 'hornet');
+  assert.equal(you.credits, 9000 - WEAPONS.hornet.price - WEAPONS.lancer.price, 'swapping a gun bought this round refunds it');
   // nobody leaves spawn before the round goes live
   const s = spawnOf(m, you.team);
   for (let i = 0; i < 240; i++) step(m, DT, { ...idleInput(you.yaw, 0), mz: 1 });
@@ -341,19 +346,22 @@ test('breach: the defense wins when time runs out with no plant, and the sides s
   // play out to the half
   m.round = HALF;
   m.actors[0].credits = 9000;
+  m.actors[0].guns[0] = { id: 'kestrel', mag: 3, reserve: 0, fresh: false };
   m.phaseT = 0;
   step(m, DT, idleInput());
   assert.equal(m.round, HALF + 1);
   assert.equal(m.attack, 1, 'sides swapped');
-  assert.equal(m.actors[0].credits, START_CREDITS, 'everyone starts over');
-  assert.ok(m.actors.every((a) => !a.guns[0] && a.guns[1]?.id === 'wren'));
+  assert.equal(m.actors[0].credits, 9000, 'credits carry over');
+  assert.equal(m.actors[0].guns[0]?.id, 'kestrel', 'and so do the guns');
+  assert.equal(m.actors[0].guns[0]?.mag, WEAPONS.kestrel.mag);
+  assert.ok(m.actors.every((a) => a.guns[1]?.id === 'wren'));
   // the attack starts at the attack's spawn
   const sp = spawnOf(m, 1);
   assert.ok(Math.hypot(m.actors[5].body.x - sp.x, m.actors[5].body.z - sp.z) < 16);
   assert.equal(m.actors[m.charge.holder].team, 1, 'the charge is with the new attack');
 });
 
-test('a knockout pays the killer, and the dead lose their primary', () => {
+test('a knockout pays the killer, and the knocked out keep their loadout into the next round', () => {
   const m = createMatch(worldFor('isles'), 'breach', 'normal', { seed: 2 });
   while (m.phase === 'buy') step(m, DT, idleInput());
   for (const a of m.actors) {
@@ -373,10 +381,13 @@ test('a knockout pays the killer, and the dead lose their primary', () => {
   assert.ok(!foe.alive);
   assert.equal(you.kills, 1);
   assert.equal(you.credits, c + KILL_REWARD);
-  assert.equal(foe.guns[0], null);
+  assert.equal(foe.guns[0]?.id, 'kestrel', 'a knockout takes nothing');
   assert.ok(m.feed.some((k) => k.killer === 0 && k.victim === 6));
+  foe.guns[0]!.mag = 0;
   startRound(m);
   assert.ok(foe.alive && foe.hp === 100 && foe.guns[1]?.id === 'wren');
+  assert.equal(foe.guns[0]?.id, 'kestrel', 'still theirs');
+  assert.equal(foe.guns[0]?.mag, WEAPONS.kestrel.mag, 'and refilled');
 });
 
 for (const id of MAP_IDS) {
