@@ -4,7 +4,7 @@ import { MAP_IDS } from '../src/os/arcade/games/ridgeline/maps.ts';
 import { DM_HUBS, newBrain } from '../src/os/arcade/games/ridgeline/bots.ts';
 import { fieldDist, fieldTo, findPath } from '../src/os/arcade/games/ridgeline/nav.ts';
 import { STAND_H, blockedAt, clearLine, newHit, rayWorld, stepBody, type Body } from '../src/os/arcade/games/ridgeline/physics.ts';
-import { CELL, T_HALF, T_RES, generateTerrain, heightAt, rayTerrain } from '../src/os/arcade/games/ridgeline/terrain.ts';
+import { CELL, T_HALF, T_RES, floorAt, generateTerrain, heightAt, rayTerrain } from '../src/os/arcade/games/ridgeline/terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul } from '../src/os/arcade/games/ridgeline/weapons.ts';
 import { ARENA, ROYALE_ARENA, SITE_R, worldFor } from '../src/os/arcade/games/ridgeline/world.ts';
 import { AMMO_MAX, AMMO_PACK, ROYALE_PLAYERS, VEST, ZONES } from '../src/os/arcade/games/ridgeline/royale.ts';
@@ -12,6 +12,7 @@ import {
   BLAST_R,
   BULLET_G,
   BUY_TIME,
+  DEG,
   DEFUSE_HALF,
   DEFUSE_TIME,
   DM_KILLS,
@@ -23,6 +24,7 @@ import {
   canDefuse,
   canShop,
   createMatch,
+  eyeY,
   idleInput,
   lootNear,
   plantSite,
@@ -454,6 +456,97 @@ test('royale: pickups fill the slots, the ammo pool caps, vests give armor, and 
   for (let i = 0; i < 60 * 3; i++) step(m, DT, idleInput());
   assert.ok(you.hp < hp, 'the zone hurt');
   assert.ok(ZONES.length >= 5);
+});
+
+test('royale: walking over loot takes it, except a gun that would mean giving one up', () => {
+  const m = createMatch(worldFor('mesa', true), 'royale', 'normal', { seed: 12 });
+  const you = m.actors[0];
+  you.drop = 0;
+  you.body.x = m.zone!.x;
+  you.body.z = m.zone!.z;
+  you.body.y = 200;
+  for (let i = 0; i < 600 && !you.body.onGround; i++) step(m, DT, idleInput());
+  for (const it of m.loot) if (Math.hypot(it.x - you.body.x, it.z - you.body.z) < 6) it.live = false;
+  const put = (kind: 'gun' | 'ammo' | 'heal', what: string, n: number) => {
+    const it = { id: m.loot.length, kind, what, n, x: you.body.x + 0.5, y: you.body.y + 0.02, z: you.body.z, live: true };
+    m.loot.push(it);
+    m.lootVer++;
+    return it;
+  };
+  const walk = () => {
+    for (let i = 0; i < 20; i++) step(m, DT, idleInput(you.yaw, you.pitch));
+  };
+  put('gun', 'kestrel', WEAPONS.kestrel.mag);
+  walk();
+  assert.equal(you.guns[0]?.id, 'kestrel', 'a gun into the empty slot');
+  put('gun', 'lancer', WEAPONS.lancer.mag);
+  walk();
+  assert.equal(you.guns[2]?.id, 'lancer', 'and the second long gun into the second');
+  const third = put('gun', 'longbow', WEAPONS.longbow.mag);
+  walk();
+  assert.ok(third.live, 'with both slots full, a gun waits for F');
+  assert.equal(you.guns[0]?.id, 'kestrel');
+  put('ammo', 'rifle', AMMO_PACK.rifle);
+  put('heal', 'bandage', 2);
+  walk();
+  walk();
+  assert.ok(you.ammo.rifle >= AMMO_PACK.rifle, 'ammo taken');
+  assert.equal(you.bandages, 2, 'heals taken');
+});
+
+test('aim assist: a shot just off a target lands, a clear miss stays a miss, and never through a wall', () => {
+  const m = createMatch(worldFor('vale'), 'breach', 'normal', { seed: 4 });
+  m.phase = 'live';
+  m.phaseT = 999;
+  for (const a of m.actors) {
+    a.alive = false;
+    a.body.x = 9999;
+  }
+  const you = m.actors[0];
+  const t = m.actors[6];
+  const spot = (a: typeof you, x: number, z: number, team: number) => {
+    a.alive = true;
+    a.team = team;
+    a.body.x = x;
+    a.body.z = z;
+    a.body.y = floorAt(m.world.terrain, x, z) + 0.05;
+    a.body.vx = a.body.vz = 0;
+    a.guns = [{ id: 'kestrel', mag: 30, reserve: 90, fresh: false }, null, null];
+    a.slot = 0;
+    a.switchT = 0;
+  };
+  // an open stretch of ground, 30 m
+  let x = 0;
+  let z = 0;
+  for (let k = 0; k < 400; k++) {
+    x = (k * 37) % 120 - 60;
+    z = ((k * 53) % 120) - 60;
+    const y0 = floorAt(m.world.terrain, x, z);
+    const y1 = floorAt(m.world.terrain, x, z - 30);
+    if (Math.abs(y0 - y1) < 1.5 && clearLine(m.world, x, y0 + 1.4, z, x, y1 + 1.1, z - 30) && clearLine(m.world, x, y0 + 0.9, z, x, y1 + 0.9, z - 30)) break;
+  }
+  spot(you, x, z, 0);
+  spot(t, x, z - 30, 1);
+  t.bot = false;
+  t.brain = null;
+  for (let i = 0; i < 40; i++) step(m, DT, idleInput(0, 0));
+  const shoot = (offDeg: number) => {
+    t.hp = 100;
+    const yaw = Math.atan2(-(t.body.x - you.body.x), -(t.body.z - you.body.z)) + offDeg * DEG;
+    const pitch = Math.atan2(t.body.y + t.body.height * 0.66 - eyeY(you), Math.hypot(t.body.x - you.body.x, t.body.z - you.body.z));
+    for (let i = 0; i < 40; i++) step(m, DT, idleInput(yaw, pitch));
+    you.yaw = yaw;
+    you.pitch = pitch;
+    let hit = false;
+    step(m, DT, { ...idleInput(yaw, pitch), fire: true });
+    for (let i = 0; i < 30; i++) {
+      for (const e of m.events) if (e.t === 'hit' && e.a === you.id) hit = true;
+      step(m, DT, idleInput(you.yaw, you.pitch));
+    }
+    return hit;
+  };
+  assert.ok(shoot(0.9), 'just off: drawn onto them');
+  assert.ok(!shoot(3), 'a clear miss stays a miss');
 });
 
 test('royale: a hundred drop in, loot, fight and the zone closes to one left standing', () => {

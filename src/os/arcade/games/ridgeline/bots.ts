@@ -134,9 +134,10 @@ export type Brain = {
 };
 
 const LEVELS: Record<BotLevel, { skill: number; react: number; turn: number }> = {
-  easy: { skill: 0.22, react: 0.62, turn: 3.2 },
-  normal: { skill: 0.55, react: 0.36, turn: 6.5 },
-  hard: { skill: 0.86, react: 0.2, turn: 11 },
+  // (a person should win most fair fights at Normal: slower to react, slower to turn, and their first shots go wide)
+  easy: { skill: 0.14, react: 0.85, turn: 2.6 },
+  normal: { skill: 0.4, react: 0.52, turn: 4.8 },
+  hard: { skill: 0.74, react: 0.3, turn: 8.5 },
 };
 
 export function newBrain(level: BotLevel, seed: number): Brain {
@@ -463,7 +464,7 @@ function perceive(m: Match, a: Actor, br: Brain) {
       // holding an angle (standing still, already looking where they appear) gives a quicker, truer first shot
       const off = Math.abs(angDiff(a.yaw, Math.atan2(-(o.body.x - ex), -(o.body.z - ez))));
       const holding = Math.hypot(a.body.vx, a.body.vz) < 0.8 && off < 0.35;
-      const e = ((1 - br.skill) * 0.09 + 0.012 + d * 0.0002) * (m.mode === 'royale' ? 1.5 : 1) * (holding ? 0.5 : 1);
+      const e = ((1 - br.skill) * 0.12 + 0.016 + d * 0.00026) * (m.mode === 'royale' ? 1.5 : 1) * (holding ? 0.5 : 1);
       br.errY = (br.rng() - 0.5) * 2 * e;
       br.errP = (br.rng() - 0.5) * e;
       br.seenFor = br.target >= 0 && m.time - br.lostAt < 0.8 ? br.react : holding ? br.react * 0.45 : 0;
