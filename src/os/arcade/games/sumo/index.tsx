@@ -3,8 +3,9 @@ import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, levelOpti
 import type { GameProps } from '../../types';
 import { think } from './ai';
 import { CAR_COLORS, createScene, type View } from './scene';
-import { CAR_BOT, CAR_DASH, CAR_FALLING, CAR_IN, CAR_LEFT, CAR_OUT, configOf, drivesIn, endOf, hostState, inputOf, parsePacket, rosterFromState, type PackedCar } from './net';
-import { createWorld, finalTally, matchWinner, roundBanner, step, takeoverDeparted, type CarConfig, type Input, type Level, type World } from './logic';
+import { CAR_BOT, CAR_DASH, CAR_FALLING, CAR_IN, CAR_LEFT, CAR_OUT, configOf, drivesIn, endOf, hostState, inputOf, parsePacket, rosterFromState, wireInput, type PackedCar, type StateNet, type StatePacket } from './net';
+import { Glide, GuestNet, HostNet, KEYFRAME, Pacer, SEND_MS, applyHead, easeOwn, pace, setCar, stepsAt } from './netsync';
+import { createWorld, finalTally, matchWinner, roundBanner, step, takeoverDeparted, type Car, type CarConfig, type Event, type Input, type Level, type World } from './logic';
 import { meta } from './meta';
 import './sumo.css';
 
@@ -172,8 +173,19 @@ function Play({ mode }: { mode: StageMode }) {
   const world = useRef<World | null>(null);
   world.current ??= makeWorld(mode, playMode, rivals, level, online);
   const view = useRef<View | null>(null);
-  const lastSimWall = useRef(performance.now() / 1000);
-  const remoteInput = useRef(new Map<number, Input>());
+  // Online (see netsync): the wall clock both sides step on, the host's view of each guest's stick, a guest's own steps
+  // and forecast of the host's game, a spectator's eased view of it, and whether the host sends what the forecast needs
+  // (an older host doesn't: then a guest eases its car toward the host's word, as it used to).
+  const pacer = useRef(new Pacer(performance.now() / 1000));
+  const hostNet = useRef(new HostNet());
+  const guestNet = useRef(new GuestNet());
+  const glide = useRef(new Glide());
+  const hostKind = useRef<'new' | 'old' | null>(null);
+  /** The world as last drawn (a guest's cars where its forecast and corrections put them), for the name tags. */
+  const drawnWorld = useRef<World | null>(null);
+  /** When each sound last played on a guest (by kind and car), so a forecast played over again doesn't repeat one. */
+  const sounded = useRef(new Map<string, number>());
+  const legacySentAt = useRef(0);
   const synced = useRef(mode !== 'online' || !!online?.isHost);
   const reported = useRef(false);
   const endSends = useRef(0);
@@ -318,13 +330,13 @@ function Play({ mode }: { mode: StageMode }) {
     return callback;
   };
 
+  /** Every car's stick for this frame: solo play, and a guest of an older host (which forecasts only its own car). */
   const inputsForFrame = (): Input[] => {
     const current = world.current!;
     const o = onlineRef.current;
     return current.cars.map((car) => {
       if (car.ai !== null) return think(current, car.id, car.ai);
-      if (mode === 'online' && o && !o.isHost && car.seat !== o.seat) return emptyInput();
-      if (mode === 'online' && o?.isHost && car.seat !== o.seat) return car.left ? emptyInput() : remoteInput.current.get(car.seat) ?? emptyInput();
+      if (mode === 'online' && o && car.seat !== o.seat) return emptyInput();
       return readKeys(car.id);
     });
   };
@@ -352,9 +364,22 @@ function Play({ mode }: { mode: StageMode }) {
     shellRef.current.gameOver(undefined, { title, detail: `${finalTally(current.wins, current.cars.map((_, i) => carName(i)), winnerId)} In ${current.round} Rounds` });
   };
 
-  const eventsFrom = (events: ReturnType<typeof step>) => {
+  /** On a guest, whether a sound may play: not when the same one did just now (the forecast plays some steps over again). */
+  const fresh = (key: string, gap: number) => {
+    const o = onlineRef.current;
+    if (mode !== 'online' || !o || o.isHost) return true;
+    const now = performance.now();
+    if (now - (sounded.current.get(key) ?? -Infinity) < gap) return false;
+    sounded.current.set(key, now);
+    return true;
+  };
+
+  const eventsFrom = (events: Event[]) => {
     const currentView = view.current;
     for (const event of events) {
+      if (event.type === 'hit' && !fresh(`hit:${event.a}:${event.b}`, 250)) continue;
+      if (event.type === 'dash' && !fresh(`dash:${event.car}`, 300)) continue;
+      if (event.type === 'bump' && !fresh('bump', 1500)) continue;
       if (event.type === 'hit') {
         currentView?.hit(event.power);
         sfx.tone({ freq: 140, to: 72, dur: 0.1, type: 'triangle', vol: Math.min(0.28, 0.045 + event.power * 0.012) });
@@ -400,8 +425,43 @@ function Play({ mode }: { mode: StageMode }) {
         }
       }
     }
-    const authoritative = mode !== 'online' || o?.isHost === true;
-    const events = step(current, inputsForFrame(), dt, { authoritative });
+    let events: Event[] = [];
+    if (mode === 'online' && o) {
+      // online, everyone keeps to the wall clock: a slow frame (or a stalled one, caught up from the timer below) is
+      // stepped through rather than played in slow motion, so a slow guest's game keeps pace with the host's
+      const now = performance.now() / 1000;
+      dt = pacer.current.due(now);
+      if (o.isHost) {
+        const own = readKeys(mine());
+        const drive = (car: Car): Input | null => car.ai !== null ? think(current, car.id, car.ai) : car.seat === o.seat ? own : car.left ? emptyInput() : null;
+        pace(current, dt, () => events.push(...hostNet.current.tick(current, drive)));
+      } else if (hostKind.current === 'old') {
+        events = step(current, inputsForFrame(), dt, { authoritative: false });
+        const id = mine();
+        const input = id >= 0 ? readKeys(id) : emptyInput();
+        if (id >= 0 && (now - legacySentAt.current >= SEND_MS / 1000 || dashSent.current !== input.dash)) {
+          legacySentAt.current = now;
+          o.send(inputOf(o.round, input), { fast: true });
+          if (dashSent.current !== input.dash) o.send(inputOf(o.round, input), { fast: false });
+          dashSent.current = input.dash;
+        }
+      } else if (!o.watching) {
+        // a guest's own car answers its stick at once, in the forecast of the host's game; the host hears every change
+        // with the step it came at
+        const id = mine();
+        const input = wireInput(id >= 0 ? readKeys(id) : emptyInput());
+        events = guestNet.current.advance(current, dt, id, input);
+        const out = id >= 0 ? guestNet.current.outgoing(now * 1000) : null;
+        if (out) {
+          const packet = inputOf(o.round, out.stick, out.steps);
+          o.send(packet, { fast: true });
+          if (out.dash) o.send(packet, { fast: false });
+        }
+        guestNet.current.fade(dt);
+      }
+    } else {
+      events = step(current, inputsForFrame(), dt);
+    }
     eventsFrom(events);
     if (toastTimer.current > 0) {
       toastTimer.current -= dt;
@@ -423,7 +483,8 @@ function Play({ mode }: { mode: StageMode }) {
       const winnerId = matchWinner(current);
       if (winnerId !== null) finishGame(winnerId, true);
     }
-    view.current?.update(current, dt, mine());
+    drawnWorld.current = drawn(current);
+    view.current?.update(drawnWorld.current, dt, mine());
     hudTimer.current += dt;
     if (hudTimer.current >= 0.09) {
       hudTimer.current = 0;
@@ -435,11 +496,17 @@ function Play({ mode }: { mode: StageMode }) {
         setTouchCharge(charges);
       }
     }
-    lastSimWall.current = performance.now() / 1000;
+  };
+
+  /** The world as it is drawn: on a guest of a newer host, its cars where the forecast (or a spectator's view) puts them. */
+  const drawn = (current: World): World => {
+    const o = onlineRef.current;
+    if (mode !== 'online' || !o || o.isHost || hostKind.current !== 'new') return current;
+    return { ...current, cars: o.watching ? glide.current.drawn(current, performance.now() / 1000) : guestNet.current.drawn(current) };
   };
 
   const updateTags = () => {
-    const currentWorld = world.current;
+    const currentWorld = drawnWorld.current ?? world.current;
     const currentView = view.current;
     const stage = ref.current;
     if (!currentWorld || !currentView || !stage) return;
@@ -519,10 +586,12 @@ function Play({ mode }: { mode: StageMode }) {
       const current = world.current!;
       if (packet.k === 'i' && o.isHost) {
         const car = current.cars.find((candidate) => candidate.seat === from);
-        if (car && car.ai === null && !car.left) remoteInput.current.set(from, { x: packet.x, y: packet.y, dash: packet.d });
+        if (car && car.ai === null && !car.left) hostNet.current.hear(from, packet, stepsAt(current, pacer.current, performance.now() / 1000));
         return;
       }
       if (packet.k === 'S' && !o.isHost && from === 0) {
+        // (the fast channel can hand over an older state after a newer one; a newer host's states say which is which)
+        if (packet.n !== undefined && guestNet.current.stale(packet.n)) return;
         if (!synced.current) {
           // left out of the host's round (in just as it began) waits for the next; a spectator watches every car
           if (!drivesIn(packet, o.seat) && !o.watching) return;
@@ -531,20 +600,8 @@ function Play({ mode }: { mode: StageMode }) {
           current.cars = rosterFromState(packet, fallback).map(({ left, ...entry }, id) => ({ ...createWorld([entry]).cars[0], id, left }));
           synced.current = true;
         }
-        const previousPhase = current.phase;
-        const previousWins = current.wins;
-        current.round = packet.rn;
-        current.wins = [...packet.wins];
-        current.phase = packet.ph;
-        current.radius = packet.rad;
-        if (packet.ph === 'over' && previousPhase !== 'over') {
-          const winner = packet.wins.findIndex((wins, index) => wins > (previousWins[index] ?? 0));
-          current.roundWinner = winner < 0 ? null : winner;
-        } else if (packet.ph === 'count') {
-          current.roundWinner = null;
-        }
-        if (packet.ph === 'count' || packet.ph === 'over') current.timer = packet.tm;
-        else current.fightTime = packet.tm;
+        hostKind.current = packet.n !== undefined ? 'new' : 'old';
+        const wasOut = current.cars.map((car) => car.out);
         for (let i = 0; i < packet.cars.length; i++) {
           const packed = packet.cars[i];
           const car = current.cars[i];
@@ -556,39 +613,33 @@ function Play({ mode }: { mode: StageMode }) {
             car.left = true;
             if (!(packed.flags & CAR_BOT)) notice(`${car.name} Left`);
           }
-          const mineNow = car.seat === o.seat && !car.left;
-          if (mineNow) {
-            const error = Math.hypot(car.x - packed.x, car.z - packed.z);
-            if (error > 1.5) {
-              car.x = packed.x;
-              car.z = packed.z;
-              car.vx = packed.vx;
-              car.vz = packed.vz;
-            } else {
-              car.x += (packed.x - car.x) * 0.35;
-              car.z += (packed.z - car.z) * 0.35;
-              car.vx += (packed.vx - car.vx) * 0.35;
-              car.vz += (packed.vz - car.vz) * 0.35;
-            }
-          } else {
-            car.x = packed.x;
-            car.z = packed.z;
-            car.vx = packed.vx;
-            car.vz = packed.vz;
-          }
-          car.y = packed.y;
-          car.yaw = packed.yaw;
-          car.charge = packed.charge;
-          car.falling = !!(packed.flags & CAR_FALLING);
-          const wasOut = car.out;
-          car.out = !!(packed.flags & CAR_OUT);
-          if (!wasOut && car.out) view.current?.splash(packed.x, packed.z);
-          car.dashT = packed.flags & CAR_DASH ? 0.2 : 0;
           if (packed.flags & CAR_BOT) {
             if (car.ai === null && car.left) notice(justLeft ? `${car.name} Left, a Bot Took Over` : `A Bot Took ${car.name}'s Seat`);
             car.ai = packet.lv;
           }
         }
+        const own = o.watching ? -1 : mine();
+        if (packet.n !== undefined && !o.watching) {
+          // the host's game as of its step, played on to now with our own stick since (see netsync)
+          eventsFrom(guestNet.current.receive(current, packet as StatePacket & StateNet, own));
+        } else {
+          applyHead(current, packet);
+          packet.cars.forEach((packed, i) => {
+            const car = current.cars[i];
+            if (!car) return;
+            if (i === own && packet.n === undefined) {
+              // an older host, whose word on our car is a round trip old and says nothing of when: eased toward
+              easeOwn(car, packed);
+              const { x, z, vx, vz } = car;
+              setCar(car, packed);
+              Object.assign(car, { x, z, vx, vz });
+            } else setCar(car, packed, packet.cx?.[i]);
+          });
+          if (packet.n !== undefined) glide.current.push(packet.n, current, performance.now() / 1000);
+        }
+        current.cars.forEach((car, i) => {
+          if (!wasOut[i] && car.out) view.current?.splash(packet.cars[i]?.x ?? car.x, packet.cars[i]?.z ?? car.z);
+        });
         return;
       }
       if (packet.k === 'end' && !o.isHost && from === 0 && !reported.current) {
@@ -609,31 +660,11 @@ function Play({ mode }: { mode: StageMode }) {
       const current = world.current;
       if (!o || !current) return;
       if (shellRef.current.status === 'playing') {
-        if (o.isHost) {
-          const now = performance.now() / 1000;
-          let catchup = now - lastSimWall.current;
-          if (catchup > 0.08) {
-            while (catchup > 0.001) {
-              const part = Math.min(0.25, catchup);
-              updateWorld(part);
-              catchup -= part;
-            }
-            lastSimWall.current = now;
-          }
-        }
+        // a stalled frame loop (a tab in the background) is caught up from here, so the game still keeps to the clock
+        // (and a guest's stick still goes out)
+        if (pacer.current.since(performance.now() / 1000) > 0.08) updateWorld(0);
         tickCount.current++;
-        if (!o.isHost) {
-          const id = current.cars.findIndex((car) => car.seat === o.seat);
-          if (id >= 0) {
-            const input = readKeys(id);
-            const packet = inputOf(o.round, input);
-            o.send(packet, { fast: true });
-            if (dashSent.current !== input.dash) {
-              dashSent.current = input.dash;
-              o.send(packet, { fast: false });
-            }
-          }
-        } else {
+        if (o.isHost) {
           const cars: PackedCar[] = current.cars.map((car) => ({
             x: car.x,
             z: car.z,
@@ -645,7 +676,7 @@ function Play({ mode }: { mode: StageMode }) {
             flags: (car.out ? CAR_OUT : CAR_IN) | (car.falling ? CAR_FALLING : 0) | (car.dashT > 0 ? CAR_DASH : 0) | (car.ai !== null ? CAR_BOT : 0) | (car.left ? CAR_LEFT : 0),
           }));
           const tm = current.phase === 'count' || current.phase === 'over' ? current.timer : current.fightTime;
-          o.send(hostState(o.round, current.phase, tm, current.radius, current.round, current.wins, current.cars.map((car) => car.seat), level, cars, current.cars.map((car) => car.name)), { fast: tickCount.current % 5 !== 0 });
+          o.send(hostState(o.round, current.phase, tm, current.radius, current.round, current.wins, current.cars.map((car) => car.seat), level, cars, current.cars.map((car) => car.name), hostNet.current.state(current)), { fast: tickCount.current % KEYFRAME !== 0 });
         }
       }
       if (o.isHost && endPacket.current && endSends.current < 4) {

@@ -53,6 +53,8 @@ export type World = {
   roundWinner: number | null;
   seed: number;
   random: () => number;
+  /** Fixed steps run so far (online, the host numbers its states by it, and a guest its own inputs). */
+  tick: number;
 };
 
 export function finalTally(wins: readonly number[], names: readonly string[], winner: number): string {
@@ -144,6 +146,7 @@ export function createWorld(entries: readonly CarConfig[], seed = 1): World {
     roundWinner: null,
     seed,
     random,
+    tick: 0,
   };
   if (cars.length) beginRound(world);
   return world;
@@ -303,8 +306,50 @@ function finishRound(world: World, winner: number | null, events: Event[]) {
   events.push({ type: 'round', winner });
 }
 
-function simulate(world: World, inputs: Input[], events: Event[], authoritative: boolean) {
-  if (!authoritative) {
+/** A step of the fight: the float shrinks, cars drive, bump and slide off. `lands`: a falling car splashes out (the host). */
+function fight(world: World, inputs: Input[], events: Event[], lands: boolean) {
+  world.fightTime += STEP;
+  world.radius = radiusAt(world);
+  for (const car of world.cars) {
+    if (car.out) continue;
+    if (car.falling) {
+      // (a forecast car that has gone under waits there for the host to call it in the water)
+      if (!lands && car.y <= -2.5) continue;
+      car.y -= 18 * STEP;
+      car.x += car.vx * STEP;
+      car.z += car.vz * STEP;
+      if (car.y < -2.5) {
+        if (lands) {
+          car.out = true;
+          car.falling = false;
+          events.push({ type: 'splash', car: car.id, x: car.x, z: car.z });
+        } else car.y = -2.5;
+      }
+      continue;
+    }
+    moveCar(car, boundedInput(inputs[car.id]), STEP, events);
+    startFall(car, world);
+  }
+
+  for (let i = 0; i < world.cars.length; i++) {
+    const a = world.cars[i];
+    if (a.out || a.falling) continue;
+    for (let j = i + 1; j < world.cars.length; j++) {
+      const b = world.cars[j];
+      if (!b.out && !b.falling) collide(a, b, events);
+    }
+  }
+  for (const car of world.cars) if (!car.out) startFall(car, world);
+}
+
+/**
+ * One fixed step. 'host' runs the whole game. 'physics' only moves and bumps cars mid-fight (an older guest's view).
+ * 'predict' is a guest's forecast of the host's game: the countdown runs out, the float shrinks and cars bump and slide
+ * off the edge as they would on the host, but only the host lands a car in the water or ends a round (a falling car
+ * waits under the surface for the host's word).
+ */
+function simulate(world: World, inputs: Input[], events: Event[], mode: 'host' | 'physics' | 'predict') {
+  if (mode === 'physics') {
     if (world.phase !== 'fight') return;
     for (const car of world.cars) {
       if (!car.out && !car.falling) moveCar(car, boundedInput(inputs[car.id]), STEP, events);
@@ -328,6 +373,10 @@ function simulate(world: World, inputs: Input[], events: Event[], authoritative:
     }
     return;
   }
+  if (mode === 'predict') {
+    if (world.phase === 'fight') fight(world, inputs, events, false);
+    return;
+  }
   if (world.phase === 'over') {
     world.timer -= STEP;
     if (world.timer <= 0) {
@@ -338,34 +387,7 @@ function simulate(world: World, inputs: Input[], events: Event[], authoritative:
   }
   if (world.phase !== 'fight') return;
 
-  world.fightTime += STEP;
-  world.radius = radiusAt(world);
-  for (const car of world.cars) {
-    if (car.out) continue;
-    if (car.falling) {
-      car.y -= 18 * STEP;
-      car.x += car.vx * STEP;
-      car.z += car.vz * STEP;
-      if (car.y < -2.5) {
-        car.out = true;
-        car.falling = false;
-        events.push({ type: 'splash', car: car.id, x: car.x, z: car.z });
-      }
-      continue;
-    }
-    moveCar(car, boundedInput(inputs[car.id]), STEP, events);
-    startFall(car, world);
-  }
-
-  for (let i = 0; i < world.cars.length; i++) {
-    const a = world.cars[i];
-    if (a.out || a.falling) continue;
-    for (let j = i + 1; j < world.cars.length; j++) {
-      const b = world.cars[j];
-      if (!b.out && !b.falling) collide(a, b, events);
-    }
-  }
-  for (const car of world.cars) if (!car.out) startFall(car, world);
+  fight(world, inputs, events, true);
 
   if (world.fightTime >= 100) {
     const remaining = world.cars.filter((car) => !car.out).sort((a, b) => Math.hypot(a.x, a.z) - Math.hypot(b.x, b.z));
@@ -385,7 +407,20 @@ export function step(world: World, inputs: Input[], dt: number, options: { autho
   const events: Event[] = [];
   while (world.acc + 1e-9 >= STEP && (world.phase as Phase) !== 'done') {
     world.acc -= STEP;
-    simulate(world, inputs, events, options.authoritative !== false);
+    world.tick++;
+    simulate(world, inputs, events, options.authoritative !== false ? 'host' : 'physics');
   }
+  return events;
+}
+
+/**
+ * Exactly one fixed step, with that step's own inputs (online play reads them step by step: a guest's input for each
+ * of its steps, the host each guest's for the host's step). `predict`: a guest's forecast (see simulate).
+ */
+export function stepOnce(world: World, inputs: Input[], predict = false): Event[] {
+  if (world.phase === 'done') return [];
+  const events: Event[] = [];
+  world.tick++;
+  simulate(world, inputs, events, predict ? 'predict' : 'host');
   return events;
 }
