@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { GameShell, Segmented, defineSetting, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { meta } from './meta';
-import { chargeBeeps, playEvents } from './audio.ts';
+import { chargeBeeps, engineSounds, playEvents, stopEngines } from './audio.ts';
+import { CARS, carNear } from './cars.ts';
 import { Score, type Mood } from './score.ts';
 import { useAssets } from './assets.ts';
 import { autoQuality, createView, flyover, type Quality, type View } from './gfx/view.ts';
@@ -14,6 +15,7 @@ import { HEAL, ROYALE_PLAYERS, ZONES, itemName, planeAt } from './royale.ts';
 import { newBrain } from './bots.ts';
 import { Session, type OnlineApi } from './online.ts';
 import { supplyLeft, underRoof } from './match.ts';
+import { newHit, rayWorld } from './physics.ts';
 import { floorAt } from './terrain.ts';
 import { WEAPONS, type WeaponId } from './weapons.ts';
 import { buildWorld, cacheWorld, cachedWorld, type World } from './world.ts';
@@ -340,6 +342,10 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
   const supplyNote = useRef(0);
   const time = useRef(0);
   const lastLook = useRef({ yaw: 0, pitch: 0 });
+  /** At the wheel: where you look relative to the car's heading, and how long the mouse has been still. */
+  const carLook = useRef({ off: 0, pitch: -0.2, idle: 0 });
+  const camHit = useRef(newHit());
+  const mapCars = useRef<NonNullable<MapState['cars']>>([]);
   const lastRender = useRef(0);
   /** When the loop last ran (the online host's hidden tab steps the match from a worker's beat instead). */
   const lastFrame = useRef(0);
@@ -350,6 +356,11 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
     if (shell.status !== 'playing') score.current.stop();
   }, [shell.status]);
   useEffect(() => () => score.current.stop(), []);
+  // (the engines too: they hum on until told to stop)
+  useEffect(() => {
+    if (shell.status !== 'playing') stopEngines();
+  }, [shell.status]);
+  useEffect(() => () => stopEngines(), []);
 
   // the world: from the cache, or built in a worker (main thread if workers fail)
   useEffect(() => {
@@ -637,6 +648,26 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       const sensK = (touchRef.current ? 0.0052 : 0.0021) * st.sens * (1 / zoom) * (zoom > 1.01 ? 1.15 : 1);
       let yaw = you.yaw - look.current.dx * sensK;
       let pitch = you.pitch - look.current.dy * sensK;
+      // at the wheel the mouse looks round the car, and the view swings back behind it when left alone
+      const myCar = you.alive && you.car >= 0 && you.carSeat === 0 ? m.cars[you.car] : null;
+      const cl = carLook.current;
+      if (myCar) {
+        const moved = look.current.dx !== 0 || look.current.dy !== 0;
+        cl.off = wrapAngle(cl.off - look.current.dx * sensK);
+        cl.pitch = Math.max(-1.1, Math.min(0.5, cl.pitch - look.current.dy * sensK));
+        cl.idle = moved ? 0 : cl.idle + dt;
+        if (cl.idle > 1.1 && Math.abs(myCar.speed) > 2) {
+          const k = Math.min(1, dt * 2.2);
+          cl.off -= cl.off * k;
+          cl.pitch += (-0.2 - cl.pitch) * k;
+        }
+        yaw = myCar.yaw + cl.off;
+        pitch = cl.pitch;
+      } else {
+        cl.off = 0;
+        cl.pitch = -0.2;
+        cl.idle = 0;
+      }
       look.current.dx = 0;
       look.current.dy = 0;
       pitch = Math.max(-1.45, Math.min(1.45, pitch));
@@ -649,7 +680,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         const stick = Math.hypot(t.mx, t.mz);
         inp.walk = k.down('ShiftLeft', 'ShiftRight') || (t.stick !== null && stick > 0.05 && stick < 0.55);
         inp.crouch = k.down('KeyC') || t.crouch;
-        inp.jump = k.pressed('Space') || t.jump;
+        // (at the wheel Space is the handbrake, held)
+        inp.jump = myCar ? k.down('Space') || t.jump : k.pressed('Space') || t.jump;
         inp.reload = k.pressed('KeyR') || t.reload;
         inp.fire = (locked && mouse.current.fire) || t.fire !== null;
         // aim (or scope in): hold the right mouse button, or Z for a trackpad
@@ -667,6 +699,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           if (k.pressed('Digit4', 'KeyG') || t.frag) inp.throw = 'frag';
           if (k.pressed('Digit5', 'KeyQ') || t.smoke) inp.throw = 'smoke';
           inp.use = k.pressed('KeyF', 'KeyE') || t.use;
+          // F also gets into the vehicle at hand, or out of the one you are in
+          inp.ride = inp.use;
           inp.heal = k.pressed('KeyH') || t.heal;
         } else {
           if (k.pressed('Digit4', 'KeyG') || t.frag) inp.throw = 'frag';
@@ -709,7 +743,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           const ka = m.actors[kk.killer];
           const va = m.actors[kk.victim];
           const blast = kk.w === 'blast';
-          const item: FeedItem = { id: ++feedId.current, killer: blast ? 'The charge' : (ka?.name ?? (kk.w === 'zone' ? 'The zone' : kk.w === 'shell' ? 'The bombardment' : '?')), victim: va.name, kc: ka && !blast ? nameColor(m, ka) : '#e8743a', vc: nameColor(m, va), w: kk.w === 'frag' ? 'Frag' : kk.w === 'zone' ? 'Zone' : kk.w === 'blast' ? 'Blast' : kk.w === 'shell' ? 'Shell' : WEAPONS[kk.w].name, head: kk.head, mine: kk.killer === m.me || kk.victim === m.me };
+          const item: FeedItem = { id: ++feedId.current, killer: blast ? 'The charge' : (ka?.name ?? (kk.w === 'zone' ? 'The zone' : kk.w === 'shell' ? 'The bombardment' : kk.w === 'car' ? 'A wreck' : '?')), victim: va.name, kc: ka && !blast ? nameColor(m, ka) : '#e8743a', vc: nameColor(m, va), w: kk.w === 'frag' ? 'Frag' : kk.w === 'zone' ? 'Zone' : kk.w === 'blast' ? 'Blast' : kk.w === 'shell' ? 'Shell' : kk.w === 'car' ? 'Vehicle' : WEAPONS[kk.w].name, head: kk.head, mine: kk.killer === m.me || kk.victim === m.me };
           setFeed((f) => [...f.slice(-5), item]);
           if (kk.victim === m.me) {
             deathLook.current = { yaw: you.yaw, pitch: you.pitch };
@@ -779,6 +813,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       const ear = { x: eyeA.body.x, z: eyeA.body.z, yaw: eyeA.yaw };
       playEvents(m, m.events, ear, m.me);
       chargeBeeps(m, ear);
+      engineSounds(m, ear, m.me);
       score.current.tick(moodOf(m));
 
       // the HUD, ten or so times a second
@@ -825,6 +860,22 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         camY.current = null;
         hide = -1;
       }
+      // at the wheel: a camera behind and above the car, turned with the mouse, pulled in where something is in between
+      const drivenCar = a === you && you.alive && you.car >= 0 && you.carSeat === 0 ? m.cars[you.car] : null;
+      if (drivenCar) {
+        const tall = drivenCar.kind === 'jeep' ? 2.2 : 1.9;
+        const far = drivenCar.kind === 'jeep' ? 7.5 : 5.5;
+        const d = viewDir(you.yaw, you.pitch);
+        const cx = drivenCar.x;
+        const cy = drivenCar.y + tall;
+        const cz = drivenCar.z;
+        const h = rayWorld(m.world, cx, cy, cz, -d.x, -d.y, -d.z, far, camHit.current);
+        const dist = h.kind === 'none' ? far : Math.max(1.2, h.t - 0.35);
+        eye = { x: cx - d.x * dist, y: cy - d.y * dist, z: cz - d.z * dist, yaw: you.yaw, pitch: you.pitch };
+        eye.y = Math.max(eye.y, floorAt(m.world.terrain, eye.x, eye.z) + 0.5);
+        camY.current = null;
+        hide = -1;
+      }
       if (!you.alive && a === you) {
         // out with nobody to watch: turn toward who did it
         const killer = m.actors[you.killer];
@@ -840,7 +891,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         eye = { x: you.body.x, y: you.body.y + 0.5, z: you.body.z, yaw: dl.yaw, pitch: dl.pitch };
         hide = -1;
       }
-      const g = a.alive && !a.drop ? currentGun(a) : null;
+      const g = a.alive && !a.drop && !drivenCar ? currentGun(a) : null;
       const wdef = g ? WEAPONS[g.id] : null;
       const zoom = wdef ? 1 + (wdef.zoom - 1) * a.ads : 1;
       const fov = (2 * Math.atan(Math.tan((baseV * DEG) / 2) / zoom)) / DEG;
@@ -875,7 +926,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       const fh = fast.current;
       if (fh) {
         const spreadPx = wdef ? (Math.tan(spreadOf(a) * DEG) / Math.tan((fov * DEG) / 2)) * ((host?.clientHeight ?? 600) / 2) : 0;
-        fh.set(spreadPx, a.alive && !scoped && a.ads < 0.6 && !buyRef.current);
+        fh.set(spreadPx, a.alive && !scoped && a.ads < 0.6 && !buyRef.current && !drivenCar);
         fh.tick(dt);
       }
       const hi = hitInfo.current;
@@ -948,6 +999,20 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         ms.drops = [];
         for (const s of m.supplies) if (supplyLeft(m, s)) ms.drops.push({ x: s.x, z: s.z, landed: s.landed >= 0 });
       }
+      if (m.cars.length) {
+        const list = mapCars.current;
+        list.length = m.cars.length;
+        for (let i = 0; i < m.cars.length; i++) {
+          const c = m.cars[i];
+          const e = (list[i] ??= { x: 0, z: 0, yaw: 0, wreck: false, bike: false });
+          e.x = c.x;
+          e.z = c.z;
+          e.yaw = c.yaw;
+          e.wreck = !c.alive;
+          e.bike = c.kind === 'bike';
+        }
+        ms.cars = list;
+      }
       for (const o of m.actors) {
         if (o === a || !o.alive) continue;
         if (m.mode === 'breach' && o.team === you.team) ms.mates.push({ x: o.body.x, z: o.body.z });
@@ -992,7 +1057,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       blind: a.alive && a.blindT > 0 ? Math.min(1, a.blindT / Math.min(1.2, a.blind0)) : 0,
       canBuy: canShop(m, you),
       alive: you.alive,
-      dead: !you.alive ? { by: you.killedWith === 'zone' ? 'the zone' : you.killedWith === 'blast' ? 'the charge' : you.killedWith === 'shell' ? 'the bombardment' : killer && killer !== you ? killer.name : 'yourself', w: you.killedWith === 'frag' ? 'Frag' : you.killedWith === 'zone' ? 'out in the open too long' : you.killedWith === 'blast' ? 'caught in the blast' : you.killedWith === 'shell' ? 'caught in the open under the shells' : you.killedWith ? WEAPONS[you.killedWith].name : '', head: you.killedHead, respawn: you.respawnT } : null,
+      dead: !you.alive ? { by: you.killedWith === 'zone' ? 'the zone' : you.killedWith === 'blast' ? 'the charge' : you.killedWith === 'shell' ? 'the bombardment' : killer && killer !== you ? killer.name : you.killedWith === 'car' ? 'a wreck' : 'yourself', w: you.killedWith === 'frag' ? 'Frag' : you.killedWith === 'zone' ? 'out in the open too long' : you.killedWith === 'blast' ? 'caught in the blast' : you.killedWith === 'shell' ? 'caught in the open under the shells' : you.killedWith === 'car' ? 'a vehicle' : you.killedWith ? WEAPONS[you.killedWith].name : '', head: you.killedHead, respawn: you.respawnT } : null,
       watching: !you.alive && a !== you ? a.name : null,
       feed: [],
       dm: m.mode === 'dm' ? { kills: you.kills, top: top === you ? (st[1]?.kills ?? 0) : top.kills, topName: top === you ? (st[1]?.name ?? '') : top.name, place: st.indexOf(you) + 1, total: m.actors.length } : null,
@@ -1030,6 +1095,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
     const near = lootNear(m, you);
     const red = m.red;
     const redEdge = red ? red.r - Math.hypot(you.body.x - red.x, you.body.z - red.z) : -1;
+    const car = you.alive && you.car >= 0 ? m.cars[you.car] : null;
+    const door = carNear(m, you);
     return {
       alive: m.alive,
       total: m.actors.length,
@@ -1049,6 +1116,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       // (everything else is taken by walking over it: F is for swapping the gun in hand)
       pickup: near ? `${near.kind === 'gun' && (WEAPONS[near.what as WeaponId].slot === 'secondary' ? you.guns[1] : you.guns[0] && you.guns[2]) ? 'swap for ' : ''}${itemName(near, (id) => WEAPONS[id].name)}` : null,
       red: red && redEdge > -2 ? { edge: Math.max(0, redEdge) + 2, live: red.warn <= 0, t: red.warn, cover: underRoof(m.world, you.body.x, eyeY(you), you.body.z) } : null,
+      car: car ? { name: CARS[car.kind].name, kmh: Math.abs(car.speed) * 3.6, hp: car.hp / CARS[car.kind].hp, driving: you.carSeat === 0 } : null,
+      drive: door ? `${door.seats[0] < 0 ? 'drive' : 'ride in'} the ${CARS[door.kind].name.toLowerCase()}` : null,
     };
   };
 
@@ -1281,8 +1350,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
               )}
               {hud.royale && (
                 <>
-                  <button type="button" className="g-ridgeline-btn is-use" data-on={hud.royale.pickup ? '1' : '0'} onPointerDown={tap((t) => (t.use = true))}>
-                    Grab
+                  <button type="button" className="g-ridgeline-btn is-use" data-on={hud.royale.pickup || hud.royale.drive || hud.royale.car ? '1' : '0'} onPointerDown={tap((t) => (t.use = true))}>
+                    {hud.royale.car ? 'Exit' : hud.royale.drive ? 'Drive' : 'Grab'}
                   </button>
                   <button type="button" className="g-ridgeline-btn is-heal" onPointerDown={tap((t) => (t.heal = true))}>
                     Heal

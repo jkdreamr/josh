@@ -204,24 +204,29 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: P
         r.posedAt = time;
         const fallE = fall * fall * (3 - 2 * fall);
         const sky = a.drop === 2 ? 1 : a.drop === 3 ? 2 : 0;
+        // in a vehicle: seated, tilted with it (the driver faces the way it goes, a passenger where they look)
+        const car = !dead && a.car >= 0 ? m.cars[a.car] : null;
+        const seat = car ? (a.carSeat === 0 ? 1 : 2) : 0;
         r.mesh.position.set(b.x, b.y - (b.swim ? 0.25 : 0) - fallE * 0.08, b.z);
-        r.mesh.rotation.set(dead ? fallE * 1.45 : sky === 1 ? -1.25 : 0, a.yaw, 0, 'YXZ');
-        const g = sky ? null : currentGun(a);
+        if (car) r.mesh.rotation.set(car.pitch, seat === 1 ? car.yaw : a.yaw, car.roll, 'YXZ');
+        else r.mesh.rotation.set(dead ? fallE * 1.45 : sky === 1 ? -1.25 : 0, a.yaw, 0, 'YXZ');
+        const g = sky || seat === 1 ? null : currentGun(a);
         const id = g?.id ?? null;
         const side = sideOf(m, a);
         const want = id && !dead && dist < 160 ? gunKey(id, side) : -1;
         for (const [gid, gg] of r.guns) gg.visible = gid === want;
         const gg = want >= 0 && id ? gunFor(r, id, side) : null;
         pose(r.bones, gg, {
-          pitch: a.pitch,
-          crouch: a.crouch,
-          speed: Math.min(1, Math.hypot(b.vx, b.vz) / RUN),
+          pitch: seat === 1 ? 0 : a.pitch,
+          crouch: seat ? 0 : a.crouch,
+          speed: seat ? 0 : Math.min(1, Math.hypot(b.vx, b.vz) / RUN),
           phase: a.phase,
-          air: !b.onGround && !b.swim,
+          air: !seat && !b.onGround && !b.swim,
           dead,
           gun: gg && id ? gunModel(THREE, id, side) : null,
           pistol: !!id && WEAPONS[id].cls === 'pistol',
           sky,
+          seat,
         });
         r.mesh.updateMatrixWorld(true);
         if (gg && id) {

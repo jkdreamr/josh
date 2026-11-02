@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import { MAP_IDS } from '../src/os/arcade/games/ridgeline/maps.ts';
 import { DM_HUBS, newBrain } from '../src/os/arcade/games/ridgeline/bots.ts';
 import { fieldDist, fieldTo, findPath } from '../src/os/arcade/games/ridgeline/nav.ts';
-import { STAND_H, blockedAt, clearLine, newHit, rayWorld, stepBody, type Body } from '../src/os/arcade/games/ridgeline/physics.ts';
+import { RADIUS, STAND_H, blockedAt, clearLine, groundAt, newHit, rayWorld, stepBody, type Body } from '../src/os/arcade/games/ridgeline/physics.ts';
 import { CELL, T_HALF, T_RES, floorAt, generateTerrain, heightAt, rayTerrain } from '../src/os/arcade/games/ridgeline/terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
 import { ARENA, ROYALE_ARENA, SITE_R, worldFor } from '../src/os/arcade/games/ridgeline/world.ts';
@@ -40,6 +40,7 @@ import {
   type Match,
 } from '../src/os/arcade/games/ridgeline/match.ts';
 import { MAPS } from '../src/os/arcade/games/ridgeline/maps.ts';
+import { CARS, carNear, enterCar, hullDist, hurtCar } from '../src/os/arcade/games/ridgeline/cars.ts';
 
 const DT = 1 / 60;
 
@@ -768,4 +769,236 @@ test('royale: a hundred drop in, loot, fight and the zone closes to one left sta
   assert.ok(picks > 150, `they looted (${picks})`);
   assert.ok(shots > 300, `they fought (${shots} shots)`);
   assert.equal(kills, ROYALE_PLAYERS - 1);
+});
+
+/** A royale with only you in it, on the ground, and only its first vehicle (the bots and the rest put away). */
+function carMatch(seed: number) {
+  const m = createMatch(worldFor('vale', true), 'royale', 'normal', { seed });
+  for (const a of m.actors) {
+    a.drop = 0;
+    if (a.id !== 0) {
+      a.alive = false;
+      a.body.x = 9999;
+    }
+  }
+  m.cars.length = 1;
+  // (and no loot: nobody picks up armor on the way)
+  for (const it of m.loot) it.live = false;
+  const c = m.cars[0];
+  const you = m.actors[0];
+  const stand = (x: number, z: number) => {
+    you.body.x = x;
+    you.body.z = z;
+    you.body.y = groundAt(m.world, x, z, floorAt(m.world.terrain, x, z) + 1);
+    you.body.vx = you.body.vz = you.body.vy = 0;
+    you.body.onGround = true;
+  };
+  /** Stands you by the car's right side and gets in with F. */
+  const getIn = () => {
+    stand(c.x + Math.cos(c.yaw) * (CARS[c.kind].hw + 0.6), c.z - Math.sin(c.yaw) * (CARS[c.kind].hw + 0.6));
+    step(m, DT, { ...idleInput(you.yaw, you.pitch), use: true, ride: true });
+  };
+  /** Parks the car at (x, z) facing `yaw`, on the ground. */
+  const park = (x: number, z: number, yaw: number) => {
+    c.x = x;
+    c.z = z;
+    c.y = floorAt(m.world.terrain, x, z);
+    c.yaw = yaw;
+    c.pitch = c.roll = 0;
+    c.vx = c.vz = c.vy = 0;
+    c.sleep = false;
+  };
+  return { m, c, you, stand, getIn, park };
+}
+
+test('royale vehicles: parked on the land, you get in with F and drive, and the car follows the ground', () => {
+  const { m, c, you, getIn } = carMatch(21);
+  const w = m.world;
+  // a royale parks a dozen and more, clear of everything, on dry land
+  const all = createMatch(worldFor('vale', true), 'royale', 'normal', { seed: 21 }).cars;
+  assert.ok(all.length >= 12 && all.length <= 20, `vehicles (${all.length})`);
+  assert.ok(all.some((v) => v.kind === 'jeep') && all.some((v) => v.kind === 'bike'));
+  assert.ok(CARS.jeep.seats.length === 4, 'a four seat jeep');
+  for (const v of all) {
+    assert.ok(Math.abs(v.x) < w.arena && Math.abs(v.z) < w.arena);
+    assert.ok(Math.abs(v.y - floorAt(w.terrain, v.x, v.z)) < 0.3, 'parked on the ground');
+    assert.ok(!blockedAt(w, v.x, v.z, v.y, CARS[v.kind].hw), 'parked clear of walls');
+  }
+  // the breach and deathmatch have none
+  assert.equal(createMatch(worldFor('vale'), 'breach', 'normal', { seed: 1 }).cars.length, 0);
+  getIn();
+  assert.equal(you.car, c.id);
+  assert.equal(you.carSeat, 0, 'an empty car: you take the wheel');
+  assert.equal(c.seats[0], you.id);
+  const x0 = c.x;
+  const z0 = c.z;
+  let top = 0;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let i = 0; i < 60 * 4; i++) {
+    step(m, DT, { ...idleInput(you.yaw, you.pitch), mz: 1 });
+    top = Math.max(top, Math.abs(c.speed));
+    if (c.onGround) assert.ok(Math.abs(c.y - floorAt(w.terrain, c.x, c.z)) < 0.6, `on the ground (${c.y.toFixed(2)} vs ${floorAt(w.terrain, c.x, c.z).toFixed(2)})`);
+    assert.ok(c.y > floorAt(w.terrain, c.x, c.z) - 0.6, 'never under the ground');
+    lo = Math.min(lo, c.y);
+    hi = Math.max(hi, c.y);
+    // you ride along in your seat
+    assert.ok(Math.hypot(you.body.x - c.x, you.body.z - c.z) < 1.5);
+  }
+  assert.ok(Math.hypot(c.x - x0, c.z - z0) > 12, `it drove (${Math.hypot(c.x - x0, c.z - z0).toFixed(1)} m)`);
+  assert.ok(top > 8, `and picked up speed (${top.toFixed(1)} m/s)`);
+  assert.ok(hi - lo > 0.05, 'up and down with the land');
+});
+
+test('royale vehicles: a wall stops a car (it never drives through), a person in the way is knocked out, and getting out puts you beside it', () => {
+  const { m, c, you, getIn, park } = carMatch(22);
+  const w = m.world;
+  const hit = newHit();
+  // a tall wall (a building, a container) across z, with a clear, fairly flat 24 m run up to one side of it (`a`: -1
+  // the run is on its -z side, 1 its +z side), and room to park along the other
+  const RUN = 24;
+  const J = CARS.jeep;
+  let found: { k: number; a: number; x: number; z: number } | null = null;
+  for (let k = 0; k < w.boxes.length && !found; k++) {
+    const o = w.boxes[k];
+    if (o.y1 - o.y0 < 2.4 || o.x1 - o.x0 < 3 || o.z1 - o.z0 > 3 || Math.abs(o.x0) > 250 || Math.abs(o.z0) > 250) continue;
+    for (const a of [-1, 1]) {
+      const x = (o.x0 + o.x1) / 2;
+      const face = a < 0 ? o.z0 : o.z1;
+      const z = face + a * RUN;
+      const g = floorAt(w.terrain, x, z);
+      const pz = a < 0 ? o.z1 + J.hw + 0.25 : o.z0 - J.hw - 0.25;
+      const pg = floorAt(w.terrain, x, pz);
+      if ([-1.2, 0, 1.2].some((d) => blockedAt(w, x + d, pz, pg, J.hw)) || blockedAt(w, x, pz - a * 2.2, pg, 0.5) || Math.abs(pg - floorAt(w.terrain, x - 2.2, pz)) > 0.5) continue;
+      if (Math.abs(g - floorAt(w.terrain, x, face + a)) > 2.5 || (w.terrain.hasWater && heightAt(w.terrain, x, z) < w.terrain.water + 0.5)) continue;
+      let clear = true;
+      for (const dx of [-0.9, 0, 0.9])
+        for (const up of [0.7, 1.2]) {
+          rayWorld(w, x + dx, g + up, z, 0, 0, -a, RUN + 4, hit);
+          if (hit.kind !== 'box' || hit.i !== k || Math.abs(hit.t - RUN) > 0.05) clear = false;
+        }
+      if (clear && [0, 1.2, 2.4].every((d) => !blockedAt(w, x, z + a * d, g, J.hw))) {
+        found = { k, a, x, z };
+        break;
+      }
+    }
+  }
+  assert.ok(found, 'found a wall to drive at');
+  const wall = w.boxes[found.k];
+  const a = found.a;
+  const face = a < 0 ? wall.z0 : wall.z1;
+  // facing the wall (forward is (-sin yaw, -cos yaw))
+  park(found.x, found.z, a < 0 ? Math.PI : 0);
+  getIn();
+  assert.equal(you.car, c.id);
+  // someone standing in the way, 20 m on
+  const v = m.actors[5];
+  v.alive = true;
+  v.bot = false;
+  v.brain = null;
+  v.hp = 100;
+  v.armor = 0;
+  v.body.x = found.x;
+  v.body.z = found.z - a * 20;
+  v.body.y = floorAt(w.terrain, v.body.x, v.body.z);
+  let top = 0;
+  /** From the hull's front to the wall's face (below zero: in it). */
+  const gap = () => a * (c.z - a * J.hl - face);
+  for (let i = 0; i < 60 * 6; i++) {
+    step(m, DT, { ...idleInput(you.yaw, you.pitch), mz: 1 });
+    top = Math.max(top, Math.abs(c.speed));
+    // never into the wall: the hull's front stays this side of it
+    assert.ok(gap() >= -0.06, `stopped by the wall (${gap().toFixed(2)} m short of it)`);
+  }
+  assert.ok(top > 12, `it was going (${top.toFixed(1)} m/s)`);
+  assert.ok(gap() < 0.6, `and got right up to it (${gap().toFixed(2)})`);
+  assert.ok(Math.abs(c.speed) < 1, 'it stopped there');
+  assert.ok(c.hp < J.hp, 'the crash hurt it');
+  assert.ok(!v.alive, `run down at speed: knocked out (hp ${v.hp.toFixed(0)})`);
+  assert.equal(v.killedWith, 'car');
+  assert.equal(v.killer, you.id);
+  // out with F: on the ground beside it, not inside the wall or the car
+  step(m, DT, { ...idleInput(you.yaw, you.pitch), use: true, ride: true });
+  assert.equal(you.car, -1);
+  assert.equal(c.seats[0], -1);
+  for (let i = 0; i < 30; i++) step(m, DT, idleInput(you.yaw, you.pitch));
+  const b = you.body;
+  assert.ok(!blockedAt(w, b.x, b.z, b.y), 'not inside a wall');
+  assert.ok(hullDist(c, b.x, b.z) >= RADIUS - 0.01, 'not inside the car');
+  assert.ok(hullDist(c, b.x, b.z) < 2.5, 'right beside it');
+  assert.ok(a * (b.z - face) > 0, 'on this side of the wall');
+  assert.ok(b.onGround && Math.abs(b.y - groundAt(w, b.x, b.z, b.y + 0.3)) < 0.05, 'standing on the ground');
+  // parked along the other side of the wall with the driver's door against it: out the other way
+  const p = -a;
+  park(found.x, p > 0 ? wall.z1 + J.hw + 0.25 : wall.z0 - J.hw - 0.25, (-p * Math.PI) / 2);
+  for (let i = 0; i < 10; i++) step(m, DT, idleInput(you.yaw, you.pitch));
+  getIn();
+  assert.equal(you.car, c.id);
+  assert.equal(you.carSeat, 0);
+  step(m, DT, { ...idleInput(you.yaw, you.pitch), use: true, ride: true });
+  assert.equal(you.car, -1);
+  assert.ok(!blockedAt(w, b.x, b.z, b.y), 'not inside the wall');
+  assert.ok(hullDist(c, b.x, b.z) >= RADIUS - 0.01, 'nor the car');
+  assert.ok(hullDist(c, b.x, b.z) < 2.5, 'beside it');
+  assert.ok(p * (b.z - (p > 0 ? wall.z1 : wall.z0)) > 0, 'this side of the wall');
+});
+
+test('royale vehicles: bullets and blasts wear a car down, and it blows up, throwing out and hurting its driver', () => {
+  const { m, c, you, getIn } = carMatch(23);
+  getIn();
+  assert.equal(you.car, c.id);
+  you.armor = 0;
+  you.hp = 100;
+  // a shot at the hull from in front and above stops on it and hurts it
+  const shooter = m.actors[3];
+  const fx = -Math.sin(c.yaw);
+  const fz = -Math.cos(c.yaw);
+  const ox = c.x + fx * 9;
+  const oz = c.z + fz * 9;
+  const oy = Math.max(c.y + 4, floorAt(m.world.terrain, ox, oz) + 2);
+  const d = Math.hypot(c.x - ox, c.y + 0.8 - oy, c.z - oz);
+  m.bullets.push({ x: ox, y: oy, z: oz, px: ox, py: oy, pz: oz, vx: ((c.x - ox) / d) * 900, vy: ((c.y + 0.8 - oy) / d) * 900, vz: ((c.z - oz) / d) * 900, owner: shooter.id, w: 'kestrel', life: 1.6, dist: 0, live: true });
+  let metal = false;
+  for (let i = 0; i < 10; i++) {
+    step(m, DT, idleInput(you.yaw, you.pitch));
+    for (const e of m.events) if (e.t === 'impact' && e.s === 'metal') metal = true;
+  }
+  assert.ok(c.hp < CARS.jeep.hp, `the bullet hurt the car (${c.hp})`);
+  assert.ok(metal, 'and rang off its metal');
+  assert.equal(you.hp, 100, 'the hull took it, not you');
+  // someone else at the door takes a passenger seat (the wheel is yours)
+  const mate = m.actors[6];
+  mate.alive = true;
+  mate.bot = false;
+  mate.brain = null;
+  mate.hp = 100;
+  mate.armor = 0;
+  mate.body.x = c.x - Math.cos(c.yaw) * (CARS.jeep.hw + 0.6);
+  mate.body.z = c.z + Math.sin(c.yaw) * (CARS.jeep.hw + 0.6);
+  mate.body.y = floorAt(m.world.terrain, mate.body.x, mate.body.z);
+  // (a step plays only your input, so they get in the way F would get them in)
+  assert.equal(carNear(m, mate), c, 'at the door');
+  assert.ok(enterCar(m, mate, c));
+  assert.equal(mate.car, c.id);
+  assert.ok(mate.carSeat > 0, 'a passenger seat');
+  step(m, DT, idleInput(you.yaw, you.pitch));
+  assert.ok(Math.hypot(mate.body.x - c.x, mate.body.z - c.z) < 1.5, 'riding along');
+  // enough and it goes up: a blast, you thrown out and hurt, the wreck left standing
+  let boom = false;
+  hurtCar(m, c, c.hp + 1, shooter.id);
+  for (const e of m.events) if (e.t === 'boom') boom = true;
+  step(m, DT, idleInput(you.yaw, you.pitch));
+  assert.ok(!c.alive, 'blown up');
+  assert.ok(boom, 'with a blast');
+  assert.equal(you.car, -1, 'you are out of it');
+  assert.ok(you.hp < 100, `and hurt (${you.hp})`);
+  assert.ok(!blockedAt(m.world, you.body.x, you.body.z, you.body.y), 'thrown clear, not into a wall');
+  assert.equal(mate.car, -1);
+  assert.ok(mate.hp < 100, 'the passenger too');
+  if (!you.alive) assert.equal(you.killer, shooter.id, 'the knockout is the one who wrecked it');
+  // a wreck stays put and nobody gets in
+  you.alive = true;
+  you.hp = 100;
+  for (let i = 0; i < 30; i++) step(m, DT, { ...idleInput(), ride: true });
+  assert.equal(you.car, -1);
 });

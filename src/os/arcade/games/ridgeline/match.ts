@@ -5,6 +5,7 @@
 // everyone for themselves with quick respawns. Players and bots both act through the same Input, so the rules treat
 // them alike. Pure TS: the renderer, the sound and the HUD read the state and the events after each step.
 import { DM_HUBS, botInput, callout, newBrain, type Brain, type BotLevel } from './bots.ts';
+import { blastCars, carHit, carNear, enterCar, hurtCar, leaveCar, rayCars, rideInput, spawnCars, stepCars, type Car } from './cars.ts';
 import { fieldTo, navOf } from './nav.ts';
 import { clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
 import { CROUCH_H, GRAVITY, STAND_H, blockedAt, clearLine, groundAt, newHit, raySphere, rayWorld, stepBody, type Body } from './physics.ts';
@@ -66,8 +67,10 @@ export type Input = {
   use: boolean;
   /** Patch yourself up (royale). */
   heal: boolean;
+  /** Pressed: get into the vehicle at hand, or out of the one you are in (royale). */
+  ride: boolean;
 };
-export const idleInput = (yaw = 0, pitch = 0): Input => ({ mx: 0, mz: 0, yaw, pitch, fire: false, ads: false, crouch: false, walk: false, jump: false, reload: false, slot: -1, throw: null, buy: null, use: false, heal: false });
+export const idleInput = (yaw = 0, pitch = 0): Input => ({ mx: 0, mz: 0, yaw, pitch, fire: false, ads: false, crouch: false, walk: false, jump: false, reload: false, slot: -1, throw: null, buy: null, use: false, heal: false, ride: false });
 
 export type Gun = { id: WeaponId; mag: number; reserve: number; fresh: boolean };
 
@@ -159,6 +162,10 @@ export type Actor = {
   lastZ: number;
   /** Finishing place (royale), 0 while still in. */
   place: number;
+  /** Royale: the vehicle it rides in (-1 on foot) and its seat there (0 drives), and when a vehicle last ran it down. */
+  car: number;
+  carSeat: number;
+  runT: number;
 };
 
 /** `vis`: only seen, never hurts anyone (a shot this machine is shown but does not judge, online). */
@@ -166,8 +173,8 @@ export type Bullet = { x: number; y: number; z: number; px: number; py: number; 
 export type Nade = { kind: NadeKind; x: number; y: number; z: number; vx: number; vy: number; vz: number; fuse: number; owner: number; rest: boolean; spin: number };
 export type Smoke = { x: number; y: number; z: number; age: number; life: number; r: number };
 export type Sound = { x: number; z: number; t: number; team: number; range: number; who: number };
-/** What took someone out: a gun, a frag, the zone, the breach charge, or (royale) a bombardment shell. */
-export type Cause = WeaponId | 'frag' | 'zone' | 'blast' | 'shell';
+/** What took someone out: a gun, a frag, the zone, the breach charge, or (royale) a bombardment shell or a vehicle. */
+export type Cause = WeaponId | 'frag' | 'zone' | 'blast' | 'shell' | 'car';
 export type Kill = { t: number; killer: number; victim: number; w: Cause; head: boolean };
 export type Why = 'elim' | 'time' | 'blast' | 'defuse';
 /** Breach highlights: first blood, a headshot kill, two to five kills in a round (five is the whole team, an ace), and a
@@ -234,7 +241,9 @@ export type Ev =
   // and one of its shells going off
   | { t: 'supply'; x: number; z: number; landed: boolean }
   | { t: 'redzone'; x: number; z: number; r: number; stage: 'warn' | 'live' | 'clear' }
-  | { t: 'shell'; x: number; y: number; z: number };
+  | { t: 'shell'; x: number; y: number; z: number }
+  | { t: 'car'; a: number; car: number; on: boolean }
+  | { t: 'crash'; x: number; y: number; z: number; v: number };
 
 export type Phase = 'buy' | 'live' | 'end' | 'over';
 
@@ -293,6 +302,8 @@ export type Match = {
   supplies: Supply[];
   red: Red | null;
   redT: number;
+  /** Royale: the vehicles (none in the other modes). */
+  cars: Car[];
   /** Which actor is played on this machine, whether this machine runs the rules (solo and the online host) or only
    * mirrors them (an online guest), and a guest's line to the host. */
   me: number;
@@ -379,6 +390,9 @@ function newActor(id: number, name: string, team: number, bot: boolean, level: L
     net: null,
     lastX: 0,
     lastZ: 0,
+    car: -1,
+    carSeat: -1,
+    runT: -9,
   };
 }
 
@@ -456,6 +470,7 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
     supplies: [],
     red: null,
     redT: 0,
+    cars: [],
     me,
     authority: true,
     net: null,
@@ -552,7 +567,10 @@ function stepBullets(m: Match, dt: number) {
     dy /= len;
     dz /= len;
     rayWorld(w, b.x, b.y, b.z, dx, dy, dz, len, hit);
-    const wallT = hit.kind === 'none' ? len : hit.t;
+    let wallT = hit.kind === 'none' ? len : hit.t;
+    // a vehicle in the way (never the shooter's own): the hull stops it, short of whoever sits behind it
+    const car = m.cars.length && rayCars(m, b.x, b.y, b.z, dx, dy, dz, wallT, m.actors[b.owner]?.car ?? -1) ? carHit.car : -1;
+    if (car >= 0) wallT = carHit.t;
     const who = hitActors(m, b, dx, dy, dz, wallT);
     if (who) {
       const def = WEAPONS[b.w];
@@ -573,6 +591,16 @@ function stepBullets(m: Match, dt: number) {
       b.y = hy;
       b.z = hz;
       b.live = false;
+      continue;
+    }
+    if (car >= 0) {
+      b.x += dx * wallT;
+      b.y += dy * wallT;
+      b.z += dz * wallT;
+      b.live = false;
+      const def = WEAPONS[b.w];
+      if (!b.vis && m.authority) hurtCar(m, m.cars[car], def.dmg * 0.75 * rangeMul(def, b.dist + wallT), b.owner);
+      m.events.push({ t: 'impact', x: b.x, y: b.y, z: b.z, nx: carHit.nx, ny: carHit.ny, nz: carHit.nz, s: 'metal' });
       continue;
     }
     if (hit.kind !== 'none') {
@@ -612,7 +640,7 @@ export const PERSON_HEALTH = 1.5;
  * survives long enough to react, turn and fight back. */
 export const BOT_HITS_PEOPLE: Record<Level, number> = { easy: 0.45, normal: 0.6, hard: 0.8 };
 
-function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'frag' | 'blast' | 'shell', zone: Zone, x: number, y: number, z: number) {
+export function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'frag' | 'blast' | 'shell' | 'car', zone: Zone, x: number, y: number, z: number) {
   if (!v.alive || raw <= 0) return;
   if (v.shield > 0) return;
   if (zone === 'head') raw *= HELMET[v.helmet];
@@ -621,7 +649,7 @@ function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'fr
   v.healT = 0;
   v.healKind = null;
   const before = v.hp + v.armor;
-  const res = applyDamage(v.hp, v.armor, raw, w === 'frag' || w === 'blast' || w === 'shell' ? 1 : WEAPONS[w].armorPen);
+  const res = applyDamage(v.hp, v.armor, raw, w === 'frag' || w === 'blast' || w === 'shell' || w === 'car' ? 1 : WEAPONS[w].armorPen);
   const hadArmor = v.armor > 0;
   v.hp = res.hp;
   v.armor = Math.max(0, res.armor);
@@ -642,6 +670,8 @@ function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'fr
 }
 
 function die(m: Match, v: Actor, from: number, w: Cause, head: boolean) {
+  // knocked out in a vehicle: the body (and what it carried) falls beside it
+  if (v.car >= 0) leaveCar(m, v);
   v.alive = false;
   v.hp = 0;
   v.deathT = m.time;
@@ -855,6 +885,7 @@ function startRoyale(m: Match, seed: number) {
   m.loot = spawnLoot(w, seed);
   for (const it of m.loot) if (it.kind === 'gun') it.n = WEAPONS[it.what as WeaponId].mag;
   m.lootVer++;
+  m.cars = spawnCars(w, seed);
   m.plane = planePath(w, m.rng);
   const z0 = ZONES[0];
   const r0 = w.arena * 1.45;
@@ -919,7 +950,7 @@ function dropAll(m: Match, v: Actor) {
 
 /** The item an actor would pick up now: close, the one most in front, and (for bots) one it actually wants. */
 export function lootNear(m: Match, a: Actor, reach = 2.1, wantedOnly = false): Item | null {
-  if (m.mode !== 'royale' || !a.alive || a.drop) return null;
+  if (m.mode !== 'royale' || !a.alive || a.drop || a.car >= 0) return null;
   const b = a.body;
   const f = viewDir(a.yaw, 0);
   let best: Item | null = null;
@@ -945,7 +976,7 @@ export function lootNear(m: Match, a: Actor, reach = 2.1, wantedOnly = false): I
 
 /** What a person walking by picks up on their own: anything that helps without giving something up. */
 function autoLoot(m: Match, a: Actor): Item | null {
-  if (!a.alive || a.drop || a.healT > 0) return null;
+  if (!a.alive || a.drop || a.healT > 0 || a.car >= 0) return null;
   const b = a.body;
   for (const it of m.loot) {
     if (!it.live) continue;
@@ -1872,6 +1903,7 @@ function explode(m: Match, n: Nade) {
     const cover = nadeHit.kind === 'none' ? 1 : 0.2;
     damage(m, a, 125 * Math.pow(1 - d / R, 1.25) * cover, n.owner, 'frag', 'body', a.body.x, cy, a.body.z);
   }
+  if (m.cars.length) blastCars(m, n.x, n.y, n.z, R, 260, n.owner);
 }
 
 /** Does any smoke cloud cut the line between two points? */
@@ -1909,6 +1941,17 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
   if (inp.buy) {
     if (m.authority) buy(m, a, inp.buy);
     else if (canShop(m, a) && !owns(a, inp.buy)) m.net?.buy(inp.buy);
+  }
+  // in a vehicle (F gets out; the driver's keys drive it), or F at a vehicle's door gets in
+  if (m.cars.length) {
+    if (a.car >= 0 && inp.ride) {
+      leaveCar(m, a);
+      inp = { ...inp, use: false, ride: false };
+    } else if (a.car < 0 && inp.ride) {
+      const c = carNear(m, a);
+      if (c && enterCar(m, a, c)) inp = { ...inp, use: false, ride: false };
+    }
+    if (a.car >= 0) inp = rideInput(m, a, inp);
   }
   // picking up and healing
   if (m.mode === 'royale') {
@@ -2014,53 +2057,56 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
   const wantCrouch = inp.crouch && !b.swim;
   a.crouch = clamp(a.crouch + (wantCrouch ? 1 : -1) * dt * 7, 0, 1);
   b.height = lerp(STAND_H, CROUCH_H, a.crouch);
-  // movement
-  a.walking = inp.walk;
-  let mx = inp.mx;
-  let mz = inp.mz;
-  const ml = Math.hypot(mx, mz);
-  if (ml > 1) {
-    mx /= ml;
-    mz /= ml;
-  }
-  let speed = b.swim ? 2.4 : a.crouch > 0.5 ? CROUCH_SPEED : inp.walk || a.healT > 0 ? WALK : RUN;
-  speed *= w.weight * (a.ads > 0.5 ? 0.78 : 1);
-  const sy = Math.sin(a.yaw);
-  const cy = Math.cos(a.yaw);
-  // forward (-sin, -cos), right (cos, -sin)
-  const tx = (cy * mx - sy * mz) * speed;
-  const tz = (-sy * mx - cy * mz) * speed;
-  if (b.onGround) {
-    const k = 1 - Math.exp(-(ml > 0.05 ? 13 : 17) * dt);
-    b.vx += (tx - b.vx) * k;
-    b.vz += (tz - b.vz) * k;
-    if (inp.jump && !b.swim && a.crouch < 0.5) {
-      b.vy = JUMP;
-      b.onGround = false;
-      m.events.push({ t: 'jump', a: a.id });
+  // movement (a rider is carried: the car puts it in its seat)
+  if (a.car >= 0) a.walking = false;
+  else {
+    a.walking = inp.walk;
+    let mx = inp.mx;
+    let mz = inp.mz;
+    const ml = Math.hypot(mx, mz);
+    if (ml > 1) {
+      mx /= ml;
+      mz /= ml;
     }
-  } else {
-    const k = 1 - Math.exp(-2.2 * dt);
-    b.vx += (tx - b.vx) * k;
-    b.vz += (tz - b.vz) * k;
-  }
-  const airborne = !b.onGround;
-  const ox = b.x;
-  const oz = b.z;
-  stepBody(m.world, b, dt);
-  // the buy phase keeps everyone in their spawn
-  if (m.mode === 'breach' && m.phase === 'buy') {
-    const s = spawnOf(m, a.team);
-    const dx = b.x - s.x;
-    const dz = b.z - s.z;
-    const d = Math.hypot(dx, dz);
-    if (d > SPAWN_R) {
-      b.x = s.x + (dx / d) * SPAWN_R;
-      b.z = s.z + (dz / d) * SPAWN_R;
+    let speed = b.swim ? 2.4 : a.crouch > 0.5 ? CROUCH_SPEED : inp.walk || a.healT > 0 ? WALK : RUN;
+    speed *= w.weight * (a.ads > 0.5 ? 0.78 : 1);
+    const sy = Math.sin(a.yaw);
+    const cy = Math.cos(a.yaw);
+    // forward (-sin, -cos), right (cos, -sin)
+    const tx = (cy * mx - sy * mz) * speed;
+    const tz = (-sy * mx - cy * mz) * speed;
+    if (b.onGround) {
+      const k = 1 - Math.exp(-(ml > 0.05 ? 13 : 17) * dt);
+      b.vx += (tx - b.vx) * k;
+      b.vz += (tz - b.vz) * k;
+      if (inp.jump && !b.swim && a.crouch < 0.5) {
+        b.vy = JUMP;
+        b.onGround = false;
+        m.events.push({ t: 'jump', a: a.id });
+      }
+    } else {
+      const k = 1 - Math.exp(-2.2 * dt);
+      b.vx += (tx - b.vx) * k;
+      b.vz += (tz - b.vz) * k;
     }
+    const airborne = !b.onGround;
+    const ox = b.x;
+    const oz = b.z;
+    stepBody(m.world, b, dt);
+    // the buy phase keeps everyone in their spawn
+    if (m.mode === 'breach' && m.phase === 'buy') {
+      const s = spawnOf(m, a.team);
+      const dx = b.x - s.x;
+      const dz = b.z - s.z;
+      const d = Math.hypot(dx, dz);
+      if (d > SPAWN_R) {
+        b.x = s.x + (dx / d) * SPAWN_R;
+        b.z = s.z + (dz / d) * SPAWN_R;
+      }
+    }
+    if (airborne && b.onGround) m.events.push({ t: 'land', a: a.id });
+    footsteps(m, a, ox, oz, inp.walk);
   }
-  if (airborne && b.onGround) m.events.push({ t: 'land', a: a.id });
-  footsteps(m, a, ox, oz, inp.walk);
   // fighting is off until the round goes live
   const armed = m.mode !== 'breach' || m.phase === 'live';
   if (!armed) {
@@ -2191,6 +2237,7 @@ export function step(m: Match, dt: number, you: Input) {
     else if (a.remote) remoteStep(m, a, dt);
     else act(m, a, a.bot ? botInput(m, a, dt) : idleInput(a.yaw, a.pitch), dt);
   }
+  if (m.cars.length) stepCars(m, dt);
   stepBullets(m, dt);
   stepNades(m, dt);
   m.sounds = m.sounds.filter((s) => m.time - s.t < 1.5);

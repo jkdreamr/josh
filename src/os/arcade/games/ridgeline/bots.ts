@@ -2,7 +2,8 @@
 // with its credits, plays its side in a breach (the attack pushes a site together, plants and guards the charge; the
 // defense holds both sites, rotates on a call and retakes to defuse), and aims like a person: a reaction delay, an error that settles, a
 // limited turn speed that has to fight the recoil, and (on harder levels) stopping before it shoots. In a royale they
-// pick a landing spot, jump when the transport passes it, loot what they need, heal up, and keep ahead of the zone;
+// pick a landing spot, jump when the transport passes it, loot what they need, heal up, and keep ahead of the zone
+// (when it is far, in a vehicle if one is parked near: they drive it toward the circle and get out to fight);
 // the bolder ones go for a supply drop that comes down near them, and everyone gets out from under a bombardment.
 import {
   DEFUSE_TIME,
@@ -34,6 +35,7 @@ import {
   type Match,
   type ShopItem,
 } from './match.ts';
+import { CARS, carNear, type Car } from './cars.ts';
 import { clamp, mulberry32, type Rng } from './noise.ts';
 import { canWalk, fieldDist, fieldStep, fieldTo, findPath } from './nav.ts';
 import { blockedAt, clearLine } from './physics.ts';
@@ -137,6 +139,17 @@ export type Brain = {
   /** Royale: the supply crate it is going for (-1 none), and a bit per crate it has already made up its mind on. */
   supply: number;
   supplySeen: number;
+  /** Royale: the vehicle it is walking to or driving (-1 none), since when, and not another before `carCd` (match
+   * time). Driving: the heading it steers for, backing up for `revT` more seconds (and how many times so far), time
+   * spent barely moving, and slowing down to get out. */
+  car: number;
+  carT: number;
+  carCd: number;
+  driveYaw: number;
+  revT: number;
+  revs: number;
+  carStuck: number;
+  leaving: number;
 };
 
 const LEVELS: Record<BotLevel, { skill: number; react: number; turn: number }> = {
@@ -226,6 +239,14 @@ export function newBrain(level: BotLevel, seed: number): Brain {
     healNow: false,
     supply: -1,
     supplySeen: 0,
+    car: -1,
+    carT: 0,
+    carCd: 0,
+    driveYaw: 0,
+    revT: 0,
+    revs: 0,
+    carStuck: 0,
+    leaving: -1,
   };
 }
 
@@ -1051,6 +1072,8 @@ function planRoyale(m: Match, a: Actor, br: Brain) {
   const dn = Math.hypot(b.x - z.nx, b.z - z.nz);
   const late = z.shrinking || z.t < 22;
   br.healNow = a.hp < 72 && !!healPick(a) && dz < z.r - 4;
+  // a long way from where the zone is going: a vehicle parked near gets there sooner
+  if (seekCar(m, a, br)) return;
   // out of the zone (or soon to be): head in
   if (dz > z.r - 6 || (late && dn > z.nr - 8 && z.nr > 0)) {
     const tx = z.nr > 0 ? z.nx : z.x;
@@ -1130,6 +1153,157 @@ function planRoyale(m: Match, a: Actor, br: Brain) {
     const step = Math.min(l, 50 + r() * 30);
     setGoal(m, br, b.x + ((gx - b.x) / l) * step, b.z + ((gz - b.z) / l) * step);
   }
+}
+
+/** Royale: whether to walk to a vehicle (and on the way to one, keeps the goal on it). */
+function seekCar(m: Match, a: Actor, br: Brain) {
+  if (!m.cars.length || a.car >= 0) return false;
+  const b = a.body;
+  if (br.car >= 0) {
+    const c = m.cars[br.car];
+    // gone, taken, or too long getting to it: forget it for a while
+    if (!c.alive || c.seats[0] >= 0 || claimedBy(m, c, a) || m.time - br.carT > 20) {
+      if (c.claim === a.id) c.claim = -1;
+      br.car = -1;
+      br.carCd = m.time + 25;
+      return false;
+    }
+    setGoal(m, br, c.x, c.z);
+    return true;
+  }
+  if (br.carCd > m.time || br.healNow || !currentGun(a)) return false;
+  const z = m.zone!;
+  const tx = z.nr > 0 ? z.nx : z.x;
+  const tz = z.nr > 0 ? z.nz : z.z;
+  const R = z.nr > 0 ? z.nr : z.r;
+  if (Math.hypot(b.x - tx, b.z - tz) - R * 0.5 < 120) return false;
+  let best: Car | null = null;
+  let bestD = 50;
+  for (const c of m.cars) {
+    if (!c.alive || c.seats[0] >= 0 || c.flooded || c.hp < CARS[c.kind].hp * 0.4 || claimedBy(m, c, a)) continue;
+    const d = Math.hypot(c.x - b.x, c.z - b.z);
+    if (d < bestD) {
+      bestD = d;
+      best = c;
+    }
+  }
+  if (!best) {
+    br.carCd = m.time + 6;
+    return false;
+  }
+  best.claim = a.id;
+  br.car = best.id;
+  br.carT = m.time;
+  setGoal(m, br, best.x, best.z);
+  return true;
+}
+
+/** Is a car spoken for by another bot still on its way to it? */
+function claimedBy(m: Match, c: Car, a: Actor) {
+  if (c.claim < 0 || c.claim === a.id) return false;
+  const o = m.actors[c.claim];
+  return !!o && o.alive && o.car < 0 && o.brain?.car === c.id;
+}
+
+/** Could a car drive this way for `dist` meters: nothing in the way, no cliff, no deep water? */
+function roadClear(m: Match, c: Car, yaw: number, dist: number) {
+  const w = m.world;
+  const t = w.terrain;
+  const S = CARS[c.kind];
+  const fx = -Math.sin(yaw);
+  const fz = -Math.cos(yaw);
+  let y = c.y;
+  for (let d = S.hl + 1.5; d <= dist; d += 2.5) {
+    const x = c.x + fx * d;
+    const z = c.z + fz * d;
+    if (Math.abs(x) > w.arena - 4 || Math.abs(z) > w.arena - 4) return false;
+    const g = floorAt(t, x, z);
+    if (Math.abs(g - y) > 1.6) return false;
+    if (t.hasWater && !t.ice && heightAt(t, x, z) < t.water - S.wade * 0.6) return false;
+    if (blockedAt(w, x, z, g, S.hw + 0.25)) return false;
+    for (const o of m.cars) if (o !== c && Math.abs(o.x - x) < 3.5 && Math.abs(o.z - z) < 3.5) return false;
+    y = g;
+  }
+  return true;
+}
+
+/** Royale, at the wheel: drive toward the circle, round what is in the way, back up when stuck, and get out once
+ * there, when someone is near enough to fight, when the car is nearly done for, or after a while regardless. */
+function driveInput(m: Match, a: Actor, br: Brain, inp: Input, dt: number) {
+  const c = m.cars[a.car];
+  const leave = () => {
+    inp.ride = true;
+    br.car = -1;
+    br.carCd = m.time + 30;
+    br.leaving = -1;
+    br.revs = 0;
+    br.path = null;
+    br.repath = true;
+    br.posX = br.longX = a.body.x;
+    br.posZ = br.longZ = a.body.z;
+    br.stuckT = br.longT = 0;
+    return inp;
+  };
+  // (a passenger seat is no place for a bot)
+  if (a.carSeat !== 0 || !c) return leave();
+  const S = CARS[c.kind];
+  const b = a.body;
+  br.think -= dt;
+  br.revT -= dt;
+  if (br.think <= 0) {
+    br.think = 0.25;
+    perceive(m, a, br);
+    const z = m.zone!;
+    const tx = z.nr > 0 ? z.nx : z.x;
+    const tz = z.nr > 0 ? z.nz : z.z;
+    const R = z.nr > 0 ? z.nr : z.r;
+    // where to: the near side of the circle, well inside it
+    const dc = Math.hypot(b.x - tx, b.z - tz) || 1;
+    const gx = tx + ((b.x - tx) / dc) * Math.min(dc, R * 0.45);
+    const gz = tz + ((b.z - tz) / dc) * Math.min(dc, R * 0.45);
+    const d = Math.hypot(gx - b.x, gz - b.z);
+    // barely moving while trying to: back up a little, off to one side
+    if (Math.abs(c.speed) < 1.2 && br.revT <= 0 && br.leaving < 0) br.carStuck += 0.25;
+    else br.carStuck = Math.max(0, br.carStuck - 0.1);
+    if (br.carStuck > 1.25) {
+      br.carStuck = 0;
+      br.revT = 1.2 + br.rng() * 0.6;
+      br.revs++;
+    }
+    const tgt = br.target >= 0 ? m.actors[br.target] : null;
+    const done = d < 22 || dc < R * 0.55 || (!!tgt && Math.hypot(tgt.body.x - b.x, tgt.body.z - b.z) < 75) || c.hp < S.hp * 0.3 || c.flooded || br.revs >= 4 || m.time - br.carT > 60;
+    if (done && br.leaving < 0) br.leaving = m.time;
+    // the heading: straight there unless something is in the way within a few seconds' drive
+    const want = Math.atan2(-(gx - b.x), -(gz - b.z));
+    const look = 9 + Math.abs(c.speed) * 1.1;
+    br.driveYaw = want;
+    for (const off of [0, 0.3, -0.3, 0.6, -0.6, 1, -1, 1.5, -1.5]) {
+      const yaw = want + off * (br.strafe > 0 ? 1 : -1);
+      if (roadClear(m, c, yaw, look)) {
+        br.driveYaw = yaw;
+        break;
+      }
+    }
+  }
+  // getting out: slow down first (but never wait on it long)
+  if (br.leaving >= 0) {
+    if (Math.abs(c.speed) < 5 || m.time - br.leaving > 3) return leave();
+    inp.mz = c.speed > 0 ? -1 : 1;
+    inp.jump = true;
+  } else {
+    const diff = angDiff(c.yaw, br.driveYaw);
+    if (br.revT > 0) {
+      inp.mz = -1;
+      inp.mx = diff > 0 ? 1 : -1;
+    } else {
+      inp.mx = clamp(-diff * 2.2, -1, 1);
+      inp.mz = Math.abs(diff) > 1.2 && c.speed > 7 ? -0.4 : Math.abs(diff) > 0.7 ? 0.45 : 1;
+    }
+  }
+  // looking where it goes
+  inp.yaw = a.yaw + clamp(angDiff(a.yaw, c.yaw), -dt * 4, dt * 4);
+  inp.pitch = a.pitch * (1 - Math.min(1, dt * 3));
+  return inp;
 }
 
 /** Landing spots already picked in a match, counted per grid cell. */
@@ -1271,6 +1445,7 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
   }
   if (m.mode === 'royale' && a.drop) return dropInput(m, a, br, inp, dt);
   if (br.reset) roundReset(m, a, br);
+  if (a.car >= 0) return driveInput(m, a, br, inp, dt);
   const r = br.rng;
   if (m.mode === 'breach' && m.phase === 'buy') {
     if (!br.bought && m.phaseT < 13) shop(m, a, br);
@@ -1367,6 +1542,8 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
           break;
         }
     if (!tgt && br.healNow && a.healT <= 0) inp.heal = true;
+    // at the door of the vehicle it came for: in
+    if (br.car >= 0 && carNear(m, a)?.id === br.car) inp.ride = true;
   }
   // breach: plant once on the spot with nobody in sight (or the clock about to run out); defuse when clear, or
   // regardless once the fuse is too short to wait
