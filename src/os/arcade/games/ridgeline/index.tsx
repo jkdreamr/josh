@@ -7,9 +7,9 @@ import { Score, type Mood } from './score.ts';
 import { useAssets } from './assets.ts';
 import { autoQuality, createView, flyover, type Quality, type View } from './gfx/view.ts';
 import { kitOf, paletteOf } from './gfx/soldiers.ts';
-import { Ammo, BannerView, BreachPrompts, BuyMenu, DeathPanel, Feed, Markers, MedalView, Minimap, Reticle, RoyalePrompts, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type MedalPop, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi } from './hud.tsx';
+import { Ammo, BannerView, HitInfo, BreachPrompts, BuyMenu, DeathPanel, Feed, Markers, MedalView, Minimap, Reticle, RoyalePrompts, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type MedalPop, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi, type HitInfoApi } from './hud.tsx';
 import { MAPS, MAP_IDS, type MapId } from './maps.ts';
-import { DEFUSE_HALF, DEFUSE_TIME, DEG, PLANT_TIME, type Medal, canDefuse, canShop, createMatch, currentGun, eyeY, finalScore, idleInput, lootNear, owns, plantSite, spareOf, spreadOf, standings, step, viewDir, type Actor, type Input, type Match, type ShopItem } from './match.ts';
+import { DEFUSE_HALF, DEFUSE_TIME, DEG, PLANT_TIME, type Medal, canDefuse, canShop, createMatch, currentGun, echoOfMine, eyeY, finalScore, idleInput, lootNear, owns, plantSite, spareOf, spreadOf, standings, step, viewDir, type Actor, type Input, type Match, type ShopItem } from './match.ts';
 import { HEAL, ROYALE_PLAYERS, ZONES, itemName, planeAt } from './royale.ts';
 import { newBrain } from './bots.ts';
 import { Session, type OnlineApi } from './online.ts';
@@ -317,6 +317,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
   const mini = useRef<MinimapApi>(null);
   const big = useRef<MinimapApi>(null);
   const marks = useRef<MarkersApi>(null);
+  const hitInfo = useRef<HitInfoApi>(null);
 
   // input state
   const look = useRef({ dx: 0, dy: 0 });
@@ -691,7 +692,10 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       // feedback from what happened
       for (const e of m.events) {
         if (e.t === 'hit') {
-          if (e.a === m.me && e.v !== m.me) fast.current?.hit(e.kill, e.zone === 'head');
+          if (e.a === m.me && e.v !== m.me && !echoOfMine(m, e)) {
+            fast.current?.hit(e.kill, e.zone === 'head');
+            hitInfo.current?.pop(e.x, e.y, e.z, e.dmg || e.est || 0, e.kill ? 'kill' : e.zone === 'head' ? 'head' : 'hit', e.v);
+          }
           if (e.v === m.me) {
             const att = m.actors[e.a];
             if (att) fast.current?.hurt(wrapAngle(Math.atan2(-(att.body.x - you.body.x), -(att.body.z - you.body.z)) - you.yaw) * -1);
@@ -865,6 +869,12 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         fh.set(spreadPx, a.alive && !scoped && a.ads < 0.6 && !buyRef.current);
         fh.tick(dt);
       }
+      const hi = hitInfo.current;
+      if (hi && host)
+        hi.place(view.project, host.clientWidth, host.clientHeight, dt, (id) => {
+          const o = m.actors[id];
+          return o ? { x: o.body.x, y: o.body.y + o.body.height + 0.32, z: o.body.z, hp: o.hp, alive: o.alive } : null;
+        });
       const mk = marks.current;
       if (mk && host) {
         const list: Parameters<MarkersApi['place']>[0] = [];
@@ -1189,6 +1199,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       {showHud && (
         <div className="g-ridgeline-hud" data-touch={touchUi ? '1' : '0'}>
           <Markers ref={marks} />
+          <HitInfo ref={hitInfo} />
           <TopBar h={hud} />
           {world && <Minimap ref={mini} world={world} />}
           <Feed items={feed} />

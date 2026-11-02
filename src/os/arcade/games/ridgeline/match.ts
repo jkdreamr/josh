@@ -194,7 +194,8 @@ export type Charge = {
 export type Ev =
   | { t: 'shot'; a: number; w: WeaponId; x: number; y: number; z: number; dx: number; dy: number; dz: number; v?: number[] }
   | { t: 'impact'; x: number; y: number; z: number; nx: number; ny: number; nz: number; s: Surface }
-  | { t: 'hit'; a: number; v: number; dmg: number; zone: Zone; armor: boolean; x: number; y: number; z: number; kill: boolean }
+  // (est: an online guest's own hit, shown at once with the damage it should do, before the host's word on it)
+  | { t: 'hit'; a: number; v: number; dmg: number; zone: Zone; armor: boolean; x: number; y: number; z: number; kill: boolean; est?: number }
   | { t: 'kill'; k: Kill }
   | { t: 'boom'; x: number; y: number; z: number }
   | { t: 'smoke'; x: number; y: number; z: number }
@@ -546,7 +547,7 @@ function stepBullets(m: Match, dt: number) {
       else if (b.owner === m.me && m.net) {
         // a guest's own shot: tell the host (who checks it), and show the hit marker now
         m.net.hit({ v: who.a.id, zone: who.zone, w: b.w, ox: b.x - (b.vx / Math.hypot(b.vx, b.vy, b.vz)) * b.dist, oy: b.y - (b.vy / Math.hypot(b.vx, b.vy, b.vz)) * b.dist, oz: b.z - (b.vz / Math.hypot(b.vx, b.vy, b.vz)) * b.dist, x: hx, y: hy, z: hz });
-        m.events.push({ t: 'hit', a: m.me, v: who.a.id, dmg: 0, zone: who.zone, armor: who.a.armor > 0, x: hx, y: hy, z: hz, kill: false });
+        m.events.push({ t: 'hit', a: m.me, v: who.a.id, dmg: 0, zone: who.zone, armor: who.a.armor > 0, x: hx, y: hy, z: hz, kill: false, est: Math.round(def.dmg * mul * rangeMul(def, travelled)) });
       }
       b.x = hx;
       b.y = hy;
@@ -584,10 +585,15 @@ export function throwFor(m: Match, a: Actor, kind: NadeKind) {
   throwNade(m, a, kind);
 }
 
+/** How hard a bot's shots and grenades hit a person, by level (bots hit each other at full strength), so a person
+ * survives long enough to react, turn and fight back. */
+export const BOT_HITS_PEOPLE: Record<Level, number> = { easy: 0.45, normal: 0.6, hard: 0.8 };
+
 function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'frag' | 'blast', zone: Zone, x: number, y: number, z: number) {
   if (!v.alive || raw <= 0) return;
   if (v.shield > 0) return;
   if (zone === 'head') raw *= HELMET[v.helmet];
+  if (!v.bot && w !== 'blast' && m.actors[from]?.bot) raw *= BOT_HITS_PEOPLE[m.level];
   v.healT = 0;
   v.healKind = null;
   const before = v.hp + v.armor;
@@ -1417,6 +1423,14 @@ export function buy(m: Match, a: Actor, item: ShopItem) {
 
 // ---------------------------------------------------------------------------------------------------------------
 // actions
+
+/**
+ * An online guest's own hit as the host tells it back, a moment after the guest already showed it (est): only its
+ * kill is news. Feedback skips these so a hit is never shown or heard twice.
+ */
+export function echoOfMine(m: Match, e: Ev) {
+  return e.t === 'hit' && !m.authority && e.a === m.me && e.est === undefined && !e.kill;
+}
 
 /** Current cone half angle in degrees for an actor's next shot. */
 export function spreadOf(a: Actor) {
