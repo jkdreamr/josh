@@ -5,9 +5,15 @@ import { COMPETITIONS, COMPETITION_IDS, type CompetitionId, type Mode } from './
 import type { CupSummary } from './cup.ts';
 import { validRules } from './rules.ts';
 
-export type MovePacket = { t: 'soccer'; k: 'mv'; r: number; seq: number; seat: number; x: number; z: number; ax: number; az: number; power: number; buttons: number; held: number; e?: number; sx?: number; sz?: number };
+/** w: 1 (newer guests that play on their own screen) says the stick is already turned to the pitch, so the host takes it as it is. */
+export type MovePacket = { t: 'soccer'; k: 'mv'; r: number; seq: number; seat: number; x: number; z: number; ax: number; az: number; power: number; buttons: number; held: number; e?: number; sx?: number; sz?: number; w?: 1 };
 export type PingPacket = { t: 'soccer'; k: 'pg'; id: number; at: number };
-export type SnapshotPacket = { t: 'soccer'; k: 's'; r: number; seq: number; state: World; ack?: number[] };
+export type KickEvent = NonNullable<World['kickEvent']>;
+/**
+ * Newer hosts add at (their match time, seconds, for guests to draw on the host's clock) and kicks (the latest kicks again,
+ * for a fast snapshot that went missing with one). Older guests ignore both.
+ */
+export type SnapshotPacket = { t: 'soccer'; k: 's'; r: number; seq: number; state: World; ack?: number[]; at?: number; kicks?: KickEvent[] };
 export type ConfigPacket = { t: 'soccer'; k: 'cfg'; r: number; seq: number; half: 2 | 3 | 4 | 6; level: 0 | 1 | 2; displayOnly: boolean; mode?: Mode; comp?: CompetitionId; clubs?: [string, string]; offside?: boolean };
 export type LobbyMember = { seat: number; role: 'host' | 'phone' | 'mac'; side: 0 | 1 };
 export type LobbyPacket = { t: 'soccer'; k: 'lobby'; r: number; seq: number; comp: CompetitionId; mode: Mode; clubs: [string, string]; focus: [number, number]; ready: [boolean, boolean]; countdown: number | null; members: LobbyMember[]; cup?: CupSummary; screen?: 'lobby' | 'match' };
@@ -59,6 +65,11 @@ const finite = (v: unknown, abs: number) => typeof v === 'number' && Number.isFi
 const quantized = (v: unknown) => finite(v, 1) && Math.abs((v as number) * 100 - Math.round((v as number) * 100)) < 1e-6;
 const inRange = (v: unknown, min: number, max: number) => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max;
 const validClubId = (value: unknown): value is string => typeof value === 'string' && CLUB_IDS.includes(value);
+const validKick = (kick: unknown): kick is KickEvent => {
+  const k = kick as Partial<KickEvent> | null;
+  return !!k && typeof k === 'object' && Number.isInteger(k.playerId) && k.playerId! >= 0 && k.playerId! < PLAYER_COUNT
+    && typeof k.action === 'string' && k.action.length <= 24 && inRange(k.power, 0, 1) && inRange(k.time, 0, 360);
+};
 const validMode = (competition: unknown, mode: unknown) => mode === 'practice'
   ? competition === undefined || COMPETITION_IDS.includes(competition as CompetitionId)
   : COMPETITIONS.some((definition) =>
@@ -239,8 +250,9 @@ export function parsePacket(value: unknown): SoccerPacket | null {
       || (p.e !== undefined && (!Number.isSafeInteger(p.e) || (p.e as number) < 0))
       || !Number.isInteger(p.buttons) || (p.buttons as number) < 0 || (p.buttons as number) > 65535 || ((p.buttons as number) & ~65535) !== 0
       || ((p.sx !== undefined || p.sz !== undefined) && (!quantized(p.sx) || !quantized(p.sz)))
-      || !Number.isInteger(p.held) || (p.held as number) < 0 || (p.held as number) > 527 || ((p.held as number) & ~527) !== 0) return null;
-    return { t: 'soccer', k: 'mv', r: p.r as number, seq: p.seq as number, seat: p.seat as number, x: p.x as number, z: p.z as number, ax: p.ax as number, az: p.az as number, power: p.power as number, buttons: p.buttons as number, held: p.held as number, ...(p.e === undefined ? {} : { e: p.e as number }), ...(p.sx === undefined ? {} : { sx: p.sx as number, sz: p.sz as number }) };
+      || !Number.isInteger(p.held) || (p.held as number) < 0 || (p.held as number) > 527 || ((p.held as number) & ~527) !== 0
+      || (p.w !== undefined && p.w !== 1)) return null;
+    return { t: 'soccer', k: 'mv', r: p.r as number, seq: p.seq as number, seat: p.seat as number, x: p.x as number, z: p.z as number, ax: p.ax as number, az: p.az as number, power: p.power as number, buttons: p.buttons as number, held: p.held as number, ...(p.e === undefined ? {} : { e: p.e as number }), ...(p.sx === undefined ? {} : { sx: p.sx as number, sz: p.sz as number }), ...(p.w === 1 ? { w: 1 as const } : {}) };
   }
   if (p.k === 'pd') {
     if (!Number.isInteger(p.seat) || (p.seat as number) < 0 || (p.seat as number) > 3 || !shortText(p.pick, 24)) return null;
@@ -254,9 +266,14 @@ export function parsePacket(value: unknown): SoccerPacket | null {
     const ack = Array.isArray(p.ack) && p.ack.length <= 4 && p.ack.every((seq) => Number.isSafeInteger(seq) && (seq as number) >= -1)
       ? p.ack as number[]
       : undefined;
+    // (a bad at or kicks is left out rather than losing the snapshot, as ack is)
+    const at = inRange(p.at, 0, 1e7) ? p.at as number : undefined;
+    const kicks = Array.isArray(p.kicks) && p.kicks.length <= 4 && p.kicks.every(validKick) ? structuredClone(p.kicks) as KickEvent[] : undefined;
     return {
       t: 'soccer', k: 's', r: p.r as number, seq: p.seq as number, state: structuredClone(p.state),
       ...(ack === undefined ? {} : { ack: [...ack] }),
+      ...(at === undefined ? {} : { at }),
+      ...(kicks === undefined ? {} : { kicks }),
     };
   }
   return null;
@@ -361,6 +378,20 @@ export function cloneSnapshot(world: World) {
 
 export const SNAPSHOT_MAX_BYTES = 8 * 1024 - 256;
 const snapshotEncoder = new TextEncoder();
+/** The room's limit on one relayed message (worker/src/room-core.ts), and room for the relay's own wrapper around it. */
+const RELAY_MAX_BYTES = 8 * 1024;
+const RELAY_WRAPPER_BYTES = 64;
+
+/**
+ * A snapshot packet: the trimmed world, the newest move packet the host has taken from each seat (ack), the host's match
+ * time (at), and its latest kicks again (two at most, and only while the whole packet still fits the relay).
+ */
+export function snapshotPacket(round: number, seq: number, state: World, ack: number[], at: number, kicks?: KickEvent[]): SnapshotPacket {
+  const packet: SnapshotPacket = { t: 'soccer', k: 's', r: round, seq, state, ack, at: Math.round(at * 1000) / 1000 };
+  if (!kicks?.length) return packet;
+  const carried = { ...packet, kicks: kicks.slice(-2).map((kick) => ({ ...kick, power: Math.round(kick.power * 1000) / 1000, time: Math.round(kick.time * 1000) / 1000 })) };
+  return snapshotEncoder.encode(JSON.stringify(carried)).byteLength + RELAY_WRAPPER_BYTES <= RELAY_MAX_BYTES ? carried : packet;
+}
 
 export function trimSnapshot(world: World): World {
   const serialize = (decimals: number, dropHostFields = false) => JSON.stringify(world, (key, value) => {

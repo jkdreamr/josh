@@ -226,6 +226,13 @@ export function takeSetPiece(w: World, action: Action = 'lob', power = 0.65) {
   }
   if (w.shootout) w.shootout.flight=0;
 }
+/** A human other than the taker while a set piece is lined up: he moves, kept back from the ball (and out of the box for a penalty). An online guest predicts its own player with it too. */
+export function setPieceStep(w: World, p: Player, c: Command | undefined, t: number) {
+  const s=w.setPiece!, d=teamDir(w.restartTeam,w.endsSwapped);
+  movePlayer(p,c?.move??{x:0,z:0},!!c?.sprint,false,t);
+  if (p.team!==w.restartTeam) exclude(w,p);
+  if (s.kind==='penalty') { p.x=d*Math.min(p.x*d,w.restartAt.x*d-9.16); if(Math.abs(p.z)<20.5) p.z=Math.sign(p.z||1)*20.5; }
+}
 export function stepSetPiece(w: World, commands: Map<number,Command>, t: number) {
   const s=w.setPiece; if (!s) return;
   const taker=w.players[s.takerId]!, cmd=commands.get(taker.id), d=teamDir(w.restartTeam,w.endsSwapped);
@@ -233,9 +240,7 @@ export function stepSetPiece(w: World, commands: Map<number,Command>, t: number)
     if (p.id===taker.id || !p.human) continue;
     const c=commands.get(p.id);
     if (s.kind==='penalty' && p.team!==w.restartTeam && p.slot==='GK') { if (c?.pressed) s.keeperDive=side(c.move.z); else if(s.keeperDive===null && c) s.keeperDive=side(c.move.z); continue; }
-    movePlayer(p,c?.move??{x:0,z:0},!!c?.sprint,false,t);
-    if (p.team!==w.restartTeam) exclude(w,p);
-    if (s.kind==='penalty') { p.x=d*Math.min(p.x*d,w.restartAt.x*d-9.16); if(Math.abs(p.z)<20.5) p.z=Math.sign(p.z||1)*20.5; }
+    setPieceStep(w,p,c,t);
   }
   for(const [id,markId] of Object.entries(s.marks??{})) {
     const marker=w.players[Number(id)]!, mark=w.players[markId]!;

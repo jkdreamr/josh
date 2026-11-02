@@ -4,7 +4,8 @@ import { meta } from './meta.ts';
 import { computeAI, type Level } from './ai.ts';
 import { carryEdge, chargePower, screenToWorld, gamepadInput, keyboardInput, phoneAttacking, phoneControlledPlayer, phoneViewKey, reconcileControllers, syncControllerSeats, type ControlCommand, type GamepadHistory } from './input.ts';
 import { desiredCameraBasis } from './camera.ts';
-import { acceptMovePacket, consumeCommand, InputFreshness, neutralCommand, movePacket, parsePacket, sameStick, stickSendDelay, trimSnapshot, type RemoteSeat, type LobbyMember } from './net.ts';
+import { acceptMovePacket, consumeCommand, InputFreshness, neutralCommand, movePacket, parsePacket, sameStick, snapshotPacket, stickSendDelay, trimSnapshot, type RemoteSeat, type LobbyMember } from './net.ts';
+import { GuestNet, KEYFRAME_EVERY, KickCarry, KickHearing, SNAPSHOT_S } from './netplay.ts';
 import { createWorld, distance, teamOf, findReceiver, isCross, matchClock, nearestCarrier, possessionTeam, setRestart, stepWorld, STEP, type Command, type Point, type Team, type World } from './logic.ts';
 import { kickoffPrompt, phoneStoppagePrompt, setPieceLabels, shootoutScore, shootoutWinner, startShootout } from './setpieces.ts';
 import { appendReplayFrame, createReplayWorld, sampleReplay, type ReplayFrame } from './replay.ts';
@@ -193,38 +194,6 @@ function setupHumans(world: World, mode: Mode, online: ReturnType<typeof useOnli
   return new Map<number, number>(ids.map((id, index) => [index, id]));
 }
 
-function interpolate(a: World, b: World, t: number): World {
-  const world = structuredClone(a);
-  const mix = (from: number, to: number) => from + (to - from) * t;
-  world.players = b.players.map((player, i) => {
-    const previous = a.players[i]!;
-    return { ...player, x: mix(previous.x, player.x), z: mix(previous.z, player.z), vx: mix(previous.vx, player.vx), vz: mix(previous.vz, player.vz), facing: mix(previous.facing, player.facing), stamina: mix(previous.stamina, player.stamina) };
-  });
-  world.ball = { ...b.ball, x: mix(a.ball.x, b.ball.x), y: mix(a.ball.y, b.ball.y), z: mix(a.ball.z, b.ball.z), vx: mix(a.ball.vx, b.ball.vx), vy: mix(a.ball.vy, b.ball.vy), vz: mix(a.ball.vz, b.ball.vz) };
-  world.score = [...b.score];
-  world.clock = b.clock;
-  world.phase = b.phase;
-  world.event = b.event;
-  world.eventTime = b.eventTime;
-  return world;
-}
-
-type NetworkFrame = { time: number; world: World };
-
-function onlineRenderState(frames: NetworkFrame[], now: number, fallback: World) {
-  if (!frames.length) return fallback;
-  const target = now - 0.1;
-  let before = frames[0]!;
-  for (const frame of frames) {
-    if (frame.time <= target) before = frame;
-    else {
-      const span = frame.time - before.time;
-      return span > 0 ? interpolate(before.world, frame.world, clamp((target - before.time) / span, 0, 1)) : frame.world;
-    }
-  }
-  return before.world;
-}
-
 function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const shell = useShell();
   const keys = useKeys();
@@ -335,7 +304,6 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const snapshotTimer = useRef(0);
   const pendingSnapshotKick = useRef<NonNullable<World['kickEvent']> | null>(null);
   const snapshotSequence = useRef(0);
-  const inputSequence = useRef(0);
   const inputTimer = useRef(0);
   const configSequence = useRef(0);
   const remoteCommands = useRef(new Map<number, Command>());
@@ -347,8 +315,11 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const aiCommands = useRef<[Map<number, Command>, Map<number, Command>]>([new Map(), new Map()]);
   const remoteSeats = useRef(new Map<number, RemoteSeat>());
   const inputFreshness = useRef(new InputFreshness());
-  const guestSnapshots = useRef<NetworkFrame[]>([]);
-  const pendingNetworkAction = useRef<Command | null>(null);
+  // (an online guest's end of the match, and a host's latest kicks to repeat for guests that lose a snapshot)
+  const guestNet = useRef<GuestNet | null>(null);
+  if (!guestNet.current) guestNet.current = new GuestNet();
+  const kickCarry = useRef<KickCarry | null>(null);
+  if (!kickCarry.current) kickCarry.current = new KickCarry();
   const charging = useRef(new Map<number, { holding: boolean; action: Command['action']; seconds: number }>());
   const lastScore = useRef<[number, number]>([0, 0]);
   const reported = useRef(false);
@@ -356,7 +327,6 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
   const renderDirty = useRef(true);
   const framePerfStart = useRef<number | null>(null);
   const framePerfEvents = useRef({ kick: false, switch: false });
-  const guestRenderTimer = useRef(0);
   const gamepadPrevious = useRef<Record<number, GamepadHistory>>({});
   const controllerPlayers = useRef(new Map<number, number>());
   const displayOnlyRoom = useRef(getSetting(DISPLAY_ONLY) === 'on');
@@ -804,7 +774,8 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         const previous = remoteCommands.current.get(player.id);
         const carrier = nearestCarrier(current);
         const remoteRole = lobbyState?.members.find((member) => member.seat === from)?.role;
-        const basis = displayOnlyRoom.current && remoteRole !== 'mac'
+        // (a phone's stick is turned to the pitch as this screen shows it; a guest playing on its own screen says it did that already)
+        const basis = displayOnlyRoom.current && remoteRole !== 'mac' && packet.w !== 1
           ? viewRef.current?.viewBasis() ?? desiredCameraBasis(current, player.team, 16 / 9, 'broadcast')
           : null;
         const toWorld = basis ? (point: Point) => screenToWorld(point, basis) : undefined;
@@ -830,10 +801,10 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         return;
       }
       if (!room.isHost && from === 0 && packet.k === 's') {
-        if (packet.seq <= snapshotSequence.current) return;
-        snapshotSequence.current = packet.seq;
-        const previousPhase = worldRef.current?.phase;
         const now = performance.now() / 1000;
+        // (snapshots come on the fast channel: an older one than we have is dropped, and a kick it lost is filled in)
+        if (!guestNet.current!.receive(packet, room.seat, now)) return;
+        const previousPhase = worldRef.current?.phase;
         const snapshotDt = guestSnapshotAt.current === null ? 0 : Math.max(0, now - guestSnapshotAt.current);
         guestSnapshotAt.current = now;
         statsObserver.current.observe(packet.state, snapshotDt);
@@ -845,8 +816,6 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
         if (packet.state.phase === 'full-time' && previousPhase !== 'full-time') showPresentation('full-time');
         appendReplayFrame(replayFrames.current, packet.state, now);
         fxDirectorRef.current?.observe(packet.state, now);
-        guestSnapshots.current.push({ time: now, world: packet.state });
-        guestSnapshots.current = guestSnapshots.current.slice(-12);
         worldRef.current = packet.state;
         matchContext && (matchContext.current = { world: packet.state, stats: statsObserver.current.stats });
         if (audioEnabled) sound.observe(packet.state, now);
@@ -1206,16 +1175,20 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       }
     }
 
-    if (isOnlineGuest && room && frameLocalPlayerIds.length) {
-      const command = commandsForUsers.get(frameLocalPlayerIds[0]!)!;
-      if (command.action && command.pressed || command.switchNearest || command.switchDir || command.callRun) pendingNetworkAction.current = command;
+    // An online guest's stick goes on the fast channel 60 times a second (a newer one replaces a lost one), and a press
+    // rides along in every packet until a snapshot says the host has it. (While a goal is replayed there is no command,
+    // and a still stick goes instead: a host that hears nothing for 1.5 s takes the guest for gone and stops the match.)
+    const guestCommand = isOnlineGuest && frameLocalPlayerIds.length
+      ? commandsForUsers.get(frameLocalPlayerIds[0]!) ?? neutralCommand()
+      : undefined;
+    if (isOnlineGuest && room && guestCommand) {
+      const net = guestNet.current!;
+      if (hasCommandEdge(guestCommand)) net.pressed(commandEdge(guestCommand), now / 1000);
       inputTimer.current += dt;
       if (inputTimer.current >= 1 / 60) {
         inputTimer.current %= 1 / 60;
-        const pending = pendingNetworkAction.current;
-        const moveOnly = { ...command, ...(pending ? { action: pending.action, pressed: pending.pressed, power: pending.power, aim: pending.aim, switchNearest: pending.switchNearest, switchDir: pending.switchDir, callRun: pending.callRun } : {}) };
-        room.send(movePacket(room.round || 1, inputSequence.current++, room.seat, moveOnly));
-        pendingNetworkAction.current = null;
+        const { packet, reliable } = net.outgoing(room.round || 1, room.seat, guestCommand, now / 1000);
+        room.send(packet, reliable ? { fast: true, reliable: true } : { fast: true });
       }
     }
 
@@ -1262,7 +1235,10 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
           if (current.controlled[0] !== controlledBeforeStep[0] || current.controlled[1] !== controlledBeforeStep[1]) framePerfEvents.current.switch = true;
         }
         if (edgeCommands.size) appliedLocalEdges = true;
-        if (current.kickEvent) pendingSnapshotKick.current = { ...current.kickEvent };
+        if (current.kickEvent) {
+          pendingSnapshotKick.current = { ...current.kickEvent };
+          if (room?.isHost) kickCarry.current!.note(current.kickEvent, now / 1000);
+        }
         fxDirector.observe(current, simulationTime.current);
         statsObserver.current.observe(current, STEP);
         matchContext && (matchContext.current = { world: current, stats: statsObserver.current.stats });
@@ -1325,23 +1301,21 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       }
       if (stepped) renderDirty.current = true;
       if (soccerPerfEnabled) recordSoccerPerf('simulationMs', performance.now() - simulationStart);
-    } else if (isOnlineGuest) {
-      guestRenderTimer.current += dt;
-      if (guestRenderTimer.current >= 1 / 30) {
-        guestRenderTimer.current %= 1 / 30;
-        renderDirty.current = true;
-      }
     }
 
     if (room?.isHost) {
+      // Snapshots go on the fast channel (a newer one replaces a lost one, so nothing queues behind a lost one), every
+      // tenth on both, stamped with the match time for guests to draw them on this clock.
       snapshotTimer.current += dt;
-      if (snapshotTimer.current >= 0.05) {
-        snapshotTimer.current %= 0.05;
+      if (snapshotTimer.current >= SNAPSHOT_S) {
+        snapshotTimer.current %= SNAPSHOT_S;
         const state = trimSnapshot(current);
         if (!state.kickEvent && pendingSnapshotKick.current) state.kickEvent = { ...pendingSnapshotKick.current };
         pendingSnapshotKick.current = null;
         const ack = [0, 1, 2, 3].map((seat) => remoteSeats.current.get(seat)?.seq ?? -1);
-        room.send({ t: 'soccer', k: 's', r: room.round || 1, seq: snapshotSequence.current++, state, ack });
+        const seq = snapshotSequence.current++;
+        const packet = snapshotPacket(room.round || 1, seq, state, ack, simulationTime.current, kickCarry.current!.recent(now / 1000));
+        room.send(packet, { fast: true, reliable: seq % KEYFRAME_EVERY === 0 });
       }
       practiceStatusTimer.current += dt;
       const practice = practiceRef.current;
@@ -1382,12 +1356,18 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
     }
 
     let renderWorld: World;
-    if (isOnlineGuest) renderWorld = onlineRenderState(guestSnapshots.current, performance.now() / 1000, current);
-    else if (previousRenderSnapshot.current && interpolatedWorld.current) {
+    if (isOnlineGuest && room) {
+      // The host's world a little behind its clock, with this guest's own player run on by its own sticks.
+      const seats = current.controlledSeats;
+      const ownId = room.watching || room.seat < 0 ? null : seats ? seats[room.seat] ?? null : frameLocalPlayerIds[0] ?? null;
+      renderWorld = guestNet.current!.draw(now / 1000, ownId) ?? current;
+    } else if (previousRenderSnapshot.current && interpolatedWorld.current) {
       const interpolationStart = soccerPerfEnabled ? performance.now() : 0;
       renderWorld = interpolateInto(interpolatedWorld.current, previousRenderSnapshot.current, current, accumulator.current / STEP);
       if (soccerPerfEnabled) recordSoccerPerf('interpolationMs', performance.now() - interpolationStart);
     } else renderWorld = current;
+    // (with ?soccerdebug, what this screen draws, next to __soccerWorld: the host's world, or the newest snapshot of it)
+    if (debugConfig.enabled) (window as Window & { __soccerDrawn?: World }).__soccerDrawn = renderWorld;
     let camera: CameraMode = presentation.current === 'intro' ? 'intro' : cameraRef.current;
     if (renderWorld.phase === 'restart' && renderWorld.setPiece && ['corner', 'free-kick', 'penalty'].includes(renderWorld.setPiece.kind)) camera = 'setpiece';
     const replayClock = isOnlineGuest ? performance.now() / 1000 : simulationTime.current;
@@ -1459,7 +1439,7 @@ function Play({ audioEnabled = true }: { audioEnabled?: boolean }) {
       if (practiceRef.current) setPracticeHud(practiceView(practiceRef.current));
       setTutorialHud(tutorialRef.current);
     }
-    if (!isOnlineGuest) renderDirty.current = true;
+    renderDirty.current = true;
     if (current.phase === 'full-time') finishMatch(current);
   };
 
@@ -1710,6 +1690,8 @@ export function PhoneController() {
   const pingSequence = useRef(0);
   const outstandingPings = useRef(new Set<number>());
   const phoneWorld = useRef<World | null>(null);
+  const phoneSnapshot = useRef({ round: -1, seq: -1 });
+  const phoneKicks = useRef(new KickHearing());
   const shoulder = useRef(false);
   const press = useRef(false);
   const jockey = useRef(false);
@@ -2067,6 +2049,11 @@ export function PhoneController() {
       }
       if (packet?.k === 'lobby') publishLobby(packet);
       if (packet?.k === 's') {
+        // (snapshots come on the fast channel, so one can arrive after a newer one; a new round counts from 0 again)
+        const last = phoneSnapshot.current;
+        if (packet.r === last.round && packet.seq <= last.seq && packet.seq > last.seq - 200) return;
+        phoneSnapshot.current = { round: packet.r, seq: packet.seq };
+        phoneKicks.current.hear(packet.state, packet.kicks);
         telemetryRef.current?.seq(packet.seq);
         const ack = packet.ack?.[online.seat];
         if (ack !== undefined && ack >= 0) telemetryRef.current?.ack(ack);
