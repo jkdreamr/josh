@@ -6,7 +6,7 @@ export const meta: GameMeta = {
   blurb: 'Tactical 5v5 on realistic outdoor maps: attack with the charge and plant it on a site, or hold the sites and defuse it. Buy rounds, one life, sides swap at the half. Also a 100 player Royale and Deathmatch. Real bullet drop, no powers, just aim.',
   category: '3d',
   players: '1-10P',
-  controls: 'Click to capture the mouse. WASD move, Shift walk quietly, Space jump, C crouch, left click fire, right click aim, R reload, hold F (or E) to plant or defuse, B buy, 1 2 long guns and 3 sidearm (or the wheel), 4 or G frag, 5 or Q smoke, 6 or X flash, M map, Tab scores. Royale: walk over loot to take it, F swaps the gun in hand, H heal, 1 2 3 guns, Space jumps out and opens the canopy. On touch, drag the left side to move and the right side to look.',
+  controls: 'Click to capture the mouse. WASD move, Shift walk quietly, Space jump, C crouch, left click fire, right click (or hold Z) aim and scope, R reload, hold F (or E) to plant or defuse, B buy, 1 2 long guns and 3 sidearm (or the wheel), 4 or G frag, 5 or Q smoke, 6 or X flash, M map, Tab scores. Royale: walk over loot to take it, F swaps the gun in hand, H heal, 1 2 3 guns, Space jumps out and opens the canopy. On touch, drag the left side to move and the right side to look.',
   howTo: [
     'Breach: two teams of five. Play with bots, or online with friends (bots fill the empty seats, and take over for anyone who leaves). One life a round, first to 7 rounds wins, and the sides swap after round 6.',
     'Attacking, your team carries the charge. Get it onto site A or B and hold F on the site for 4 seconds to plant it. Once planted it goes off in 40 seconds: guard it. If its carrier falls, any attacker picks it up by walking over it.',

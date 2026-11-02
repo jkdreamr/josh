@@ -648,7 +648,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         inp.jump = k.pressed('Space') || t.jump;
         inp.reload = k.pressed('KeyR') || t.reload;
         inp.fire = (locked && mouse.current.fire) || t.fire !== null;
-        inp.ads = (locked && mouse.current.ads) || t.ads;
+        // aim (or scope in): hold the right mouse button, or Z for a trackpad
+        inp.ads = (locked && mouse.current.ads) || k.down('KeyZ') || t.ads;
         // every mode: 1 and 2 the long guns, 3 the sidearm; the wheel steps through what you carry
         ROYALE_SLOTS.forEach((k2, i) => k.pressed(`Digit${i + 1}`) && you.guns[k2] && (inp.slot = k2));
         if (mouse.current.wheel !== 0 || t.swap) {
@@ -960,7 +961,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       hpMax: a.bot ? 100 : Math.round(100 * PERSON_HEALTH),
       armor: a.armor,
       credits: you.credits,
-      gun: g && w ? { name: w.name, mag: g.mag, reserve: m.mode === 'royale' ? spareOf(m, a, g) : g.reserve, max: w.mag, cls: w.cls } : null,
+      gun: g && w ? { name: w.name, mag: g.mag, reserve: m.mode === 'royale' ? spareOf(m, a, g) : g.reserve, max: w.mag, cls: w.cls, scope: w.scope } : null,
       slot: a.slot,
       guns: [a.guns[0]?.id ?? null, a.guns[1]?.id ?? null, a.guns[2]?.id ?? null],
       frags: a.frags,
@@ -1196,6 +1197,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       {glError && <div className="g-ridgeline-loading">this browser could not start 3D graphics.</div>}
       {showHud && (
         <div className="g-ridgeline-hud" data-touch={touchUi ? '1' : '0'}>
+          {/* (the scope's black mask under everything else, so the scores, health and ammo stay readable) */}
+          <Scope on={hud.scoped} />
           <Markers ref={marks} />
           <HitInfo ref={hitInfo} />
           <TopBar h={hud} />
@@ -1204,7 +1207,6 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           <Vitals h={hud} />
           <Ammo h={hud} />
           <Reticle ref={fast} shotgun={gunCls === 'shotgun'} />
-          <Scope on={hud.scoped} />
           <BannerView b={banner} />
           <MedalView m={medal} />
           <DeathPanel h={hud} touch={touchUi} />

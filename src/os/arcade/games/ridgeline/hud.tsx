@@ -22,7 +22,7 @@ export type Hud = {
   hpMax: number;
   armor: number;
   credits: number;
-  gun: { name: string; mag: number; reserve: number; max: number; cls: string } | null;
+  gun: { name: string; mag: number; reserve: number; max: number; cls: string; scope: boolean } | null;
   slot: number;
   guns: (WeaponId | null)[];
   frags: number;
@@ -267,6 +267,7 @@ export function Ammo({ h }: { h: Hud }) {
             <span>/ {h.mode === 'dm' ? '∞' : g.reserve}</span>
           </div>
           <div className="g-ridgeline-gunName">{g.name}</div>
+          {g.scope && !h.scoped && <div className="g-ridgeline-scopeHint">right click or hold Z to scope</div>}
           {h.reload > 0 && (
             <div className="g-ridgeline-reload">
               <i style={{ width: `${h.reload * 100}%` }} />
@@ -493,9 +494,14 @@ export function Scope({ on }: { on: boolean }) {
   if (!on) return null;
   return (
     <div className="g-ridgeline-scope" aria-hidden="true">
+      <div className="g-ridgeline-scopeMask" />
       <div className="g-ridgeline-scopeLens">
         <i className="is-h" />
         <i className="is-v" />
+        <i className="is-l" />
+        <i className="is-r" />
+        <i className="is-b" />
+        <b />
       </div>
     </div>
   );
