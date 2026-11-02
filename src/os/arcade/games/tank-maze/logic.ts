@@ -198,11 +198,15 @@ export const cellOf = (m: Maze, x: number, y: number) => Math.min(m.rows - 1, Ma
 export type Special = 'laser' | 'triple' | 'mine';
 export type Phase = 'ready' | 'play' | 'settle' | 'done';
 
+/** Where a tank is and which way its barrel points. */
+export type Pose = { x: number; y: number; a: number };
+
 /**
  * `turn`/`move` steer relative to the barrel (bots). `dir` is a screen heading in radians (players):
- * the tank swings to face it and drives that way, so it overrides turn/move when set.
+ * the tank swings to face it and drives that way, so it overrides turn/move when set. `from` fires the shot from
+ * that pose rather than the tank's own (online, the host fires a guest's shot from where the guest's barrel was).
  */
-export type TankInput = { turn: -1 | 0 | 1; move: -1 | 0 | 1; fire: boolean; dir?: number; aim?: number };
+export type TankInput = { turn: -1 | 0 | 1; move: -1 | 0 | 1; fire: boolean; dir?: number; aim?: number; from?: Pose };
 export const noInput: TankInput = { turn: 0, move: 0, fire: false };
 
 export type Tank = {
@@ -240,7 +244,7 @@ export type Beam = { owner: number; pts: number[]; t: number };
 
 export type GameEvent =
   | { k: 'fire'; id: number }
-  | { k: 'bounce'; x: number; y: number }
+  | { k: 'bounce'; x: number; y: number; owner: number }
   | { k: 'kill'; id: number; by: number; x: number; y: number }
   | { k: 'pickup'; id: number; kind: Special }
   | { k: 'laser'; id: number; pts: number[] }
@@ -444,7 +448,7 @@ const rayTank = (x: number, y: number, dx: number, dy: number, t: Tank, max: num
  * Walk a ray through the maze with reflections. Returns the polyline and the first living tank hit,
  * or -1 when it runs out of length or bounces. Segment count = bounces + 1.
  */
-export function traceShot(w: World, x: number, y: number, angle: number, maxBounces: number, maxLen = LASER_LEN, selfId = -1): Trace {
+export function traceShot(w: Pick<World, 'maze' | 'tanks'>, x: number, y: number, angle: number, maxBounces: number, maxLen = LASER_LEN, selfId = -1): Trace {
   const pts = [x, y];
   let dx = Math.cos(angle);
   let dy = Math.sin(angle);
@@ -493,21 +497,32 @@ export function traceShot(w: World, x: number, y: number, angle: number, maxBoun
 // -----------------------------------------------------------------------------------------------------------------
 // Simulation
 
-const fireShell = (w: World, t: Tank) => {
+/** The shells one shot from a barrel at `from` lets go (three in a fan for a triple), and how many of its owner's may be out at once. */
+export function shotShells(m: Maze, from: Pose, fan: boolean): { shells: { x: number; y: number; vx: number; vy: number }[]; cap: number } {
   // Barrel tip: if it sits inside a wall, spawn from the center instead (no shooting through walls).
-  let x = t.x + Math.cos(t.a) * (TANK_R + 0.1);
-  let y = t.y + Math.sin(t.a) * (TANK_R + 0.1);
-  if (!circleFree(w.maze, x, y, SHELL_R)) {
-    x = t.x;
-    y = t.y;
+  let x = from.x + Math.cos(from.a) * (TANK_R + 0.1);
+  let y = from.y + Math.sin(from.a) * (TANK_R + 0.1);
+  if (!circleFree(m, x, y, SHELL_R)) {
+    x = from.x;
+    y = from.y;
   }
-  const spread = t.fans > 0 ? [-0.18, 0, 0.18] : [0];
-  const cap = t.fans > 0 ? 8 : MAX_SHELLS;
-  const volley = spread.length > 1 ? w.nextShell : 0;
-  for (const off of spread) {
-    if (w.shells.filter((s) => s.owner === t.id).length >= cap) break;
-    const a = t.a + off;
-    w.shells.push({ id: w.nextShell++, owner: t.id, x, y, vx: Math.cos(a) * SHELL_SPEED, vy: Math.sin(a) * SHELL_SPEED, age: 0, volley });
+  const spread = fan ? [-0.18, 0, 0.18] : [0];
+  return { shells: spread.map((off) => ({ x, y, vx: Math.cos(from.a + off) * SHELL_SPEED, vy: Math.sin(from.a + off) * SHELL_SPEED })), cap: fan ? 8 : MAX_SHELLS };
+}
+
+/** Where a mine dropped by a tank at `from` lands: just behind it, or under it when that spot is in a wall. */
+export function mineDrop(m: Maze, from: Pose): { x: number; y: number } {
+  const x = from.x - Math.cos(from.a) * (TANK_R + 0.18);
+  const y = from.y - Math.sin(from.a) * (TANK_R + 0.18);
+  return circleFree(m, x, y, 0.08) ? { x, y } : { x: from.x, y: from.y };
+}
+
+const fireShell = (w: World, t: Tank, from: Pose) => {
+  const shot = shotShells(w.maze, from, t.fans > 0);
+  const volley = shot.shells.length > 1 ? w.nextShell : 0;
+  for (const s of shot.shells) {
+    if (w.shells.filter((s) => s.owner === t.id).length >= shot.cap) break;
+    w.shells.push({ id: w.nextShell++, owner: t.id, x: s.x, y: s.y, vx: s.vx, vy: s.vy, age: 0, volley });
   }
   if (t.fans > 0) t.fans--;
   t.cooldown = FIRE_CD;
@@ -521,8 +536,8 @@ const killTank = (w: World, t: Tank, by: number) => {
   w.events.push({ k: 'kill', id: t.id, by, x: t.x, y: t.y });
 };
 
-/** Move a shell with substeps so it never tunnels through thin walls. */
-const moveShell = (w: World, s: Shell, dt: number) => {
+/** Move a shell with substeps so it never tunnels through thin walls. Bounces land in w.events. */
+export const moveShell = (w: { maze: Maze; events: GameEvent[] }, s: Shell, dt: number) => {
   let left = dt;
   while (left > 0) {
     const h = Math.min(left, 0.05 / SHELL_SPEED);
@@ -545,16 +560,14 @@ const moveShell = (w: World, s: Shell, dt: number) => {
         s.vy = -s.vy;
         s.y += s.vy * h * 2;
       }
-      w.events.push({ k: 'bounce', x: s.x, y: s.y });
+      w.events.push({ k: 'bounce', x: s.x, y: s.y, owner: s.owner });
       break;
     }
   }
 };
 
-const applyInput = (w: World, t: Tank, input: TankInput, dt: number) => {
-  if (!t.alive) return;
-  t.cooldown = Math.max(0, t.cooldown - dt);
-  t.recoil = Math.max(0, t.recoil - dt * 6);
+/** Turn and drive one tank for dt by its input, kept out of the walls: a step's movement, without the firing. */
+export function driveTank(m: Maze, t: Tank, input: TankInput, dt: number) {
   const direct = input.dir !== undefined && Number.isFinite(input.dir);
   if (direct) {
     t.a = rotateToward(t.a, input.dir!, DIR_TURN * dt);
@@ -567,13 +580,21 @@ const applyInput = (w: World, t: Tank, input: TankInput, dt: number) => {
     t.x += Math.cos(heading) * sp * sign * dt;
     t.y += Math.sin(heading) * sp * sign * dt;
     t.tread += sp * dt;
-    pushOut(w.maze, t, TANK_R);
-    t.x = Math.max(TANK_R, Math.min(w.maze.cols - TANK_R, t.x));
-    t.y = Math.max(TANK_R, Math.min(w.maze.rows - TANK_R, t.y));
+    pushOut(m, t, TANK_R);
+    t.x = Math.max(TANK_R, Math.min(m.cols - TANK_R, t.x));
+    t.y = Math.max(TANK_R, Math.min(m.rows - TANK_R, t.y));
   }
+}
+
+const applyInput = (w: World, t: Tank, input: TankInput, dt: number) => {
+  if (!t.alive) return;
+  t.cooldown = Math.max(0, t.cooldown - dt);
+  t.recoil = Math.max(0, t.recoil - dt * 6);
+  driveTank(w.maze, t, input, dt);
   if (input.fire && t.cooldown <= 0) {
+    const from = input.from ?? t;
     if (t.special === 'laser') {
-      const tr = traceShot(w, t.x, t.y, t.a, LASER_BOUNCES, LASER_LEN, t.id);
+      const tr = traceShot(w, from.x, from.y, from.a, LASER_BOUNCES, LASER_LEN, t.id);
       t.special = null;
       t.cooldown = FIRE_CD;
       t.recoil = 1;
@@ -587,16 +608,14 @@ const applyInput = (w: World, t: Tank, input: TankInput, dt: number) => {
     } else if (t.special === 'mine') {
       t.special = null;
       t.cooldown = FIRE_CD;
-      const x = t.x - Math.cos(t.a) * (TANK_R + 0.18);
-      const y = t.y - Math.sin(t.a) * (TANK_R + 0.18);
-      w.mines.push({ owner: t.id, x: circleFree(w.maze, x, y, 0.08) ? x : t.x, y: circleFree(w.maze, x, y, 0.08) ? y : t.y, age: 0 });
+      w.mines.push({ owner: t.id, ...mineDrop(w.maze, from), age: 0 });
       w.events.push({ k: 'mine', id: t.id });
     } else {
       if (t.special === 'triple') {
         t.fans = 3;
         t.special = null;
       }
-      fireShell(w, t);
+      fireShell(w, t, from);
     }
   }
 };
