@@ -9,12 +9,21 @@ export type NetOp =
   | { k: 'death'; id: number; killer: number | null; mass: number; x: number; y: number }
   | { k: 'spawn'; id: number; x: number; y: number; angle: number };
 
+/**
+ * Newer guests move their own snake and say where it went: `p` is its head at its last few ticks, oldest first, as
+ * x, y, angle and boost (1 or 0) each, the newest at the guest's tick `n`; `w` is the host's warp of that snake it moved
+ * on from (see netsync.ts), -1 before it has picked one up. Older hosts ignore all three, and newer hosts steer older
+ * guests by `target` as before.
+ */
+export type OwnReport = { n: number; w: number; p: number[] };
+export const REPORT_TICKS = 3;
+
 export type Packet =
   | { t: 'sl'; r: number; k: 'I'; seed: number; radius: number; duration: number; level: 'easy' | 'normal' | 'hard'; seq: number; roster: RosterEntry[] }
-  | { t: 'sl'; r: number; k: 'S'; tick: number; clock: number; snakes: SnakeState[] }
+  | { t: 'sl'; r: number; k: 'S'; tick: number; clock: number; snakes: SnakeState[]; w?: number[] }
   | { t: 'sl'; r: number; k: 'O'; seq: number; ops: NetOp[] }
   | { t: 'sl'; r: number; k: 'Z'; snap: number; part: number; total: number; data: unknown[][] }
-  | { t: 'sl'; r: number; k: 'M'; seq: number; target: number; boost: boolean }
+  | ({ t: 'sl'; r: number; k: 'M'; seq: number; target: number; boost: boolean } & Partial<OwnReport>)
   | { t: 'sl'; r: number; k: 'H' | 'Q' }
   | { t: 'sl'; r: number; k: 'P'; away: boolean }
   | { t: 'sl'; r: number; k: 'E'; winner: number | null; seat: number | null; clock: number; ranking: [number, number, number, number][] };
@@ -58,7 +67,12 @@ export function parsePacket(input: unknown): Packet | null {
       if (!input.snakes.every((s) => Array.isArray(s) && s.length === 11 && integer(s[0], 0, 15) && bounded(s[1], -5000, 5000) && bounded(s[2], -5000, 5000)
         && bounded(s[3], -10, 10) && bounded(s[4], 0, 1_000_000) && typeof s[5] === 'boolean' && integer(s[6], 0, 1_000_000)
         && typeof s[7] === 'boolean' && bounded(s[8], -1000, 1000) && bounded(s[9], -1000, 1000) && bounded(s[10], 0, 1_000_000))) return null;
-      return { t: 'sl', r, k: 'S', tick: input.tick as number, clock: input.clock as number, snakes: input.snakes as SnakeState[] };
+      // (newer hosts: each snake's warp, which a guest checks its own snake against)
+      if (input.w !== undefined && (!Array.isArray(input.w) || input.w.length !== input.snakes.length || !input.w.every((n) => integer(n)))) return null;
+      return {
+        t: 'sl', r, k: 'S', tick: input.tick as number, clock: input.clock as number, snakes: input.snakes as SnakeState[],
+        ...(input.w ? { w: input.w as number[] } : {}),
+      };
     case 'O':
       if (!integer(input.seq) || !Array.isArray(input.ops) || input.ops.length > 500 || !input.ops.every(validOp)) return null;
       return { t: 'sl', r, k: 'O', seq: input.seq as number, ops: input.ops as NetOp[] };
@@ -68,6 +82,11 @@ export function parsePacket(input: unknown): Packet | null {
       return { t: 'sl', r, k: 'Z', snap: input.snap as number, part: input.part as number, total: input.total as number, data: input.data as unknown[][] };
     case 'M':
       if (!integer(input.seq) || !bounded(input.target, -10, 10) || typeof input.boost !== 'boolean') return null;
+      if (input.p !== undefined || input.n !== undefined || input.w !== undefined) {
+        if (!integer(input.n, 0, 1_000_000_000) || !integer(input.w, -1) || !Array.isArray(input.p) || input.p.length > REPORT_TICKS * 4
+          || input.p.length % 4 !== 0 || !input.p.every((v, i) => i % 4 === 3 ? v === 0 || v === 1 : bounded(v, i % 4 === 2 ? -10 : -5000, i % 4 === 2 ? 10 : 5000))) return null;
+        return { t: 'sl', r, k: 'M', seq: input.seq as number, target: input.target, boost: input.boost, n: input.n as number, w: input.w as number, p: input.p as number[] };
+      }
       return { t: 'sl', r, k: 'M', seq: input.seq as number, target: input.target, boost: input.boost };
     case 'H':
     case 'Q':
@@ -88,11 +107,20 @@ export function parsePacket(input: unknown): Packet | null {
 
 export const initPacket = (r: number, seed: number, radius: number, duration: number, level: 'easy' | 'normal' | 'hard', seq: number, roster: RosterEntry[]) =>
   packet(r, 'I', { seed, radius, duration, level, seq, roster }) as Packet;
-export function statePacket(r: number, world: World): Packet {
-  const snakes = world.snakes.map((s) => [s.id, s.x, s.y, wrapAngle(s.angle), s.mass, s.alive, s.kills, s.boosting, s.vx, s.vy, s.peak] as SnakeState);
-  return packet(r, 'S', { tick: world.tick, clock: world.clock, snakes }) as Packet;
+/** Positions to a tenth of a pixel, angles to a ten-thousandth (kept within ±π), so a state for 16 snakes stays near 1 KB. */
+const tenth = (n: number) => Math.round(n * 10) / 10;
+const hundredth = (n: number) => Math.round(n * 100) / 100;
+export const quantAngle = (angle: number) => Math.max(-Math.PI, Math.min(Math.PI, Math.round(wrapAngle(angle) * 10_000) / 10_000));
+
+/** Every snake's head; newer hosts add `warps` (one a snake), so guests can tell when the host moved their own snake. */
+export function statePacket(r: number, world: World, warps?: readonly number[]): Packet {
+  const snakes = world.snakes.map((s) => [
+    s.id, tenth(s.x), tenth(s.y), quantAngle(s.angle), hundredth(s.mass), s.alive, s.kills, s.boosting, Math.round(s.vx), Math.round(s.vy), hundredth(s.peak),
+  ] as SnakeState);
+  return packet(r, 'S', { tick: world.tick, clock: Math.round(world.clock * 1000) / 1000, snakes, ...(warps ? { w: world.snakes.map((s) => warps[s.id] ?? 0) } : {}) }) as Packet;
 }
-export const movePacket = (r: number, seq: number, target: number, boost: boolean): Packet => packet(r, 'M', { seq, target: wrapAngle(target), boost }) as Packet;
+export const movePacket = (r: number, seq: number, target: number, boost: boolean, own?: OwnReport): Packet =>
+  packet(r, 'M', { seq, target: quantAngle(target), boost, ...(own ? { n: own.n, w: own.w, p: own.p } : {}) }) as Packet;
 export const helloPacket = (r: number): Packet => packet(r, 'H') as Packet;
 export const resyncPacket = (r: number): Packet => packet(r, 'Q') as Packet;
 export const pausePacket = (r: number, away: boolean): Packet => packet(r, 'P', { away }) as Packet;
