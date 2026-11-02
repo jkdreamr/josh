@@ -23,8 +23,13 @@ type OnlineValue = {
   transport: RoomTransport;
   /** The connection to the room dropped and this player's seat is being got back (the round carries on meanwhile). */
   reconnecting: boolean;
-  /** Bumps each time the host leaves and hands the room on: a round the old host's game ran is over. */
+  /**
+   * Bumps each time the host leaves and hands the room on: a round the old host's game ran is over, unless the game
+   * takes it over (meta.online.migrate).
+   */
   handoffs: number;
+  /** Each hand-off a round went on past, oldest first: the round, and the seat that took over (seat 0 from then on). */
+  handedOff: readonly HandOff[];
   /** A quick-play room: it started on its own, and the game sets the match up the same way every time. */
   quick: boolean;
   /** The quick-play pool the room gathered for (a game's mode, see GameShell's quickPool), or '' for none. */
@@ -37,6 +42,8 @@ type OnlineValue = {
   /** Who is watching the room, by name. */
   watchers: string[];
 };
+
+export type HandOff = { round: number; from: number };
 
 const OnlineContext = createContext<OnlineValue | null>(null);
 
@@ -52,6 +59,7 @@ export function OnlineProvider({
   transport,
   reconnecting,
   handoffs,
+  handedOff,
   quick,
   pool,
   watching,
@@ -59,8 +67,8 @@ export function OnlineProvider({
   children,
 }: Omit<OnlineValue, 'seat' | 'link' | 'isHost' | 'code' | 'start'> & { link: RoomLink | null; seat: number | null; children: ReactNode }) {
   const value = useMemo(
-    () => link && seat !== null ? { link, code: link.code, start: () => link.start(), router, seat, seats, round, started, players, bots, isHost: seat === 0, transport, reconnecting, handoffs, quick, pool, watching, watchers } : null,
-    [link, router, seat, seats, round, started, players, bots, transport, reconnecting, handoffs, quick, pool, watching, watchers],
+    () => link && seat !== null ? { link, code: link.code, start: () => link.start(), router, seat, seats, round, started, players, bots, isHost: seat === 0, transport, reconnecting, handoffs, handedOff, quick, pool, watching, watchers } : null,
+    [link, router, seat, seats, round, started, players, bots, transport, reconnecting, handoffs, handedOff, quick, pool, watching, watchers],
   );
   return <OnlineContext.Provider value={value}>{children}</OnlineContext.Provider>;
 }
@@ -82,6 +90,7 @@ export function useOnline() {
       transport: room.transport,
       reconnecting: room.reconnecting,
       handoffs: room.handoffs,
+      handedOff: room.handedOff,
       quick: room.quick,
       pool: room.pool,
       watching: room.watching,

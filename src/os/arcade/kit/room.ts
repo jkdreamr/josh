@@ -45,7 +45,8 @@ type RoomEvents = {
    * for a spectator).
    * Any round under way is over, since the host's game was running it.
    */
-  host: { from: number; seat: number; players: RoomPlayer[] };
+  /** started: the round under way goes on past the hand-off (a game that takes rounds over, see OnlineSpec migrate). */
+  host: { from: number; seat: number; players: RoomPlayer[]; started: boolean };
   /** Seats bots would take if the host started now; only rooms for games that allow bots send them. */
   bots: number[];
   /** Whether the room is public (listed in the arcade's Open Rooms); servers from before public rooms never say. */
@@ -445,7 +446,7 @@ export class RoomLink {
         if (this.seat === from) this.seat = 0;
         // Every direct link ran through the old host; the next round connects everyone to the new one.
         this.dropPeers();
-        if (this.seat !== null || this.watching) this.emit('host', { from, seat: this.seat ?? -1, players: this.players });
+        if (this.seat !== null || this.watching) this.emit('host', { from, seat: this.seat ?? -1, players: this.players, started: message.started === true });
       } else this.dropPeers(this.players);
       this.emit('players', this.players);
       if (Array.isArray(message.bots)) {
