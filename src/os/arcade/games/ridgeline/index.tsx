@@ -9,7 +9,8 @@ import { autoQuality, createView, flyover, type Quality, type View } from './gfx
 import { kitOf, paletteOf } from './gfx/soldiers.ts';
 import { Ammo, BannerView, HitInfo, BreachPrompts, BuyMenu, DeathPanel, Feed, Markers, MedalView, Minimap, Reticle, RoyalePrompts, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type MedalPop, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi, type HitInfoApi } from './hud.tsx';
 import { MAPS, MAP_IDS, type MapId } from './maps.ts';
-import { DEFUSE_HALF, DEFUSE_TIME, DEG, PLANT_TIME, type Medal, canDefuse, canShop, createMatch, currentGun, echoOfMine, eyeY, finalScore, idleInput, lootNear, owns, plantSite, spareOf, spreadOf, standings, step, supplyLeft, underRoof, viewDir, type Actor, type Input, type Match, type ShopItem } from './match.ts';
+import { DEFUSE_HALF, DEFUSE_TIME, DEG, PLANT_TIME, type Medal, canDefuse, canShop, createMatch, currentGun, echoOfMine, eyeY, finalScore, idleInput, lootNear, owns, plantSite, spareOf, spreadOf, standings, step, viewDir, type Actor, type Input, type Match, type ShopItem } from './match.ts';
+import { supplyLeft, underRoof } from './match.ts';
 import { HEAL, ROYALE_PLAYERS, ZONES, itemName, planeAt } from './royale.ts';
 import { newBrain } from './bots.ts';
 import { Session, type OnlineApi } from './online.ts';
