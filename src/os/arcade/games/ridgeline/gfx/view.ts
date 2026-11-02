@@ -3,7 +3,7 @@
 // the frame time and trims the render scale before frames drop, then raises it again when there is room.
 import type { Assets } from '../assets.ts';
 import type { Match } from '../match.ts';
-import { me } from '../match.ts';
+import { currentGun, me } from '../match.ts';
 import { clamp } from '../noise.ts';
 import { newHit, rayWorld } from '../physics.ts';
 import { T_HALF, T_RES } from '../terrain.ts';
@@ -239,7 +239,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
 
   const camera = new THREE.PerspectiveCamera(70, 1, 0.1, 2600);
   camera.rotation.order = 'YXZ';
-  const vm = viewModel(THREE, w.sun, def.sun.color, def.sun.intensity * SUN_K);
+  const vm = viewModel(THREE, w.sun, def.sun.color, def.sun.intensity * SUN_K, assets);
   vm.setEnv(env.texture, def.ambient * AMBIENT_K * 1.3);
 
   const gl = renderer.getContext();
@@ -421,7 +421,10 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
       const ao = bakedAt(camera.position.x, camera.position.z, 1);
       let vmPair: { scene: T.Scene; camera: T.Camera } | null = null;
       if (f.vm && f.vm.gun) {
-        vm.update({ ...f.vm, sun: sunVis, ambient: def.ambient * AMBIENT_K * 1.3 * (0.45 + 0.55 * ao) * (occl > 0 ? 1 : 0.7) }, f.dt, camera);
+        // whether the gun in view is empty (an empty reload looks different), from the actor we look out of
+        const held = m && f.hide >= 0 && m.actors[f.hide] ? currentGun(m.actors[f.hide]) : null;
+        const empty = f.vm.empty ?? (!!held && held.id === f.vm.gun && held.mag <= 0);
+        vm.update({ ...f.vm, sun: sunVis, ambient: def.ambient * AMBIENT_K * 1.3 * (0.45 + 0.55 * ao) * (occl > 0 ? 1 : 0.7), empty }, f.dt, camera);
         if (f.fired) vm.fire();
         vmPair = { scene: vm.scene, camera: vm.camera };
       }

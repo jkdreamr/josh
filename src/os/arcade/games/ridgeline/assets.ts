@@ -33,6 +33,9 @@ import shield from './models/shield.glb?url';
 import soldierLod from './models/soldier-lod.glb?url';
 import soldier from './models/soldier.glb?url';
 import ural from './models/ural.glb?url';
+import vmM4 from './models/vm-m4.glb?url';
+import vmMk23 from './models/vm-mk23.glb?url';
+import vmVector from './models/vm-vector.glb?url';
 import wire from './models/wire.glb?url';
 import xdLite from './models/xd-lite.glb?url';
 import xd from './models/xd.glb?url';
@@ -71,10 +74,13 @@ const URLS = {
   shield,
   cup,
   pan,
+  'vm-m4': vmM4,
+  'vm-vector': vmVector,
+  'vm-mk23': vmMk23,
 } as const;
 
 export type AssetKey = keyof typeof URLS;
-/** Each loaded model's scene (a model that failed is missing). */
+/** Each loaded model's scene, its animation clips in `animations` (a model that failed is missing). */
 export type Assets = Partial<Record<AssetKey, T.Object3D>>;
 
 let pending: Promise<Assets> | null = null;
@@ -90,6 +96,8 @@ export function loadAssets(): Promise<Assets> {
       (Object.entries(URLS) as [AssetKey, string][]).map(([key, url]) =>
         loader.loadAsync(url).then(
           (g) => {
+            // the clips ride along on the scene (the animated first person arms play them)
+            g.scene.animations = g.animations;
             out[key] = g.scene;
           },
           () => {
