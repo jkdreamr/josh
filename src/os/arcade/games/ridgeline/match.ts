@@ -399,13 +399,14 @@ export function viewDir(yaw: number, pitch: number) {
 }
 
 /** Hitbox spheres: [height above the feet as a share of body height, radius, zone]. */
+// a touch generous, so a shot that looks like it hit, did
 const HITBOX: [number, number, Zone][] = [
-  [0.72, 0.25, 'body'],
-  [0.54, 0.23, 'body'],
-  [0.34, 0.19, 'leg'],
-  [0.13, 0.17, 'leg'],
+  [0.72, 0.27, 'body'],
+  [0.54, 0.25, 'body'],
+  [0.34, 0.2, 'leg'],
+  [0.13, 0.18, 'leg'],
 ];
-export const HEAD_R = 0.14;
+export const HEAD_R = 0.15;
 
 /** The first hitbox a segment crosses on any live actor other than the shooter's team. */
 function hitActors(m: Match, b: Bullet, dx: number, dy: number, dz: number, len: number): { a: Actor; t: number; zone: Zone } | null {
@@ -1286,7 +1287,8 @@ export function spreadOf(a: Actor) {
   const w = WEAPONS[g.id];
   const sp = Math.hypot(a.body.vx, a.body.vz) / RUN;
   let s = (w.base + a.bloom) * lerp(1, w.ads, a.ads);
-  s += w.move * smoothstep(0.2, 1, sp) * lerp(1, Math.max(w.ads, 0.6), a.ads);
+  // walking (Shift) and crouch walking stay nearly true; running throws shots wide
+  s += w.move * smoothstep(0.45, 1, sp) * lerp(1, Math.max(w.ads, 0.6), a.ads);
   if (!a.body.onGround && !a.body.swim) s += w.air;
   if (a.crouch > 0.5 && a.body.onGround) s *= 0.8;
   return s;
