@@ -19,6 +19,7 @@ import {
   FUSE,
   HALF,
   PLANT_REWARD,
+  PERSON_HEALTH,
   PLANT_TIME,
   buy,
   canDefuse,
@@ -260,6 +261,19 @@ test('a person firing keeps their aim (the view never climbs), a bot still fight
   for (let i = 0; i < 60; i++) step(m, DT, { ...idleInput(yaw, pitch), fire: true });
   assert.ok(you.guns[0]!.mag < 20, 'it fired');
   assert.ok(Math.abs(you.pitch - pitch) < 1e-9 && Math.abs(you.yaw - yaw) < 1e-9, 'aim unchanged');
+});
+
+test('breach: spare ammo comes back after a pause in the firing, and people are tougher than bots', () => {
+  const m = createMatch(worldFor('vale'), 'breach', 'normal', { seed: 5 });
+  while (m.phase === 'buy') step(m, DT, idleInput());
+  const you = m.actors[0];
+  you.guns[0] = { id: 'kestrel', mag: 25, reserve: 0, fresh: false };
+  you.slot = 0;
+  you.switchT = 0;
+  for (let i = 0; i < 60 * 8; i++) step(m, DT, idleInput(you.yaw, you.pitch));
+  assert.ok(you.guns[0]!.reserve >= WEAPONS.kestrel.mag, `ammo came back (${you.guns[0]!.reserve})`);
+  assert.ok(you.guns[0]!.reserve <= WEAPONS.kestrel.reserve);
+  assert.ok(PERSON_HEALTH > 1);
 });
 
 test('breach: the charge plants on a site, pays the attack, and goes off when the fuse runs out', () => {

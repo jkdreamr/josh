@@ -106,6 +106,8 @@ export type Actor = {
   ads: number;
   spray: number;
   lastShot: number;
+  /** Breach: spare ammo coming back, part rounds not yet whole. */
+  ammoBack: number;
   bloom: number;
   /** Recoil kick not yet recovered, degrees. */
   kickP: number;
@@ -325,6 +327,7 @@ function newActor(id: number, name: string, team: number, bot: boolean, level: L
     ads: 0,
     spray: 0,
     lastShot: -9,
+    ammoBack: 0,
     bloom: 0,
     kickP: 0,
     walking: false,
@@ -588,6 +591,9 @@ export function throwFor(m: Match, a: Actor, kind: NadeKind) {
   throwNade(m, a, kind);
 }
 
+/** How much more health a person has than a bot (the health bar is the same, every hit takes less of it). */
+export const PERSON_HEALTH = 1.5;
+
 /** How hard a bot's shots and grenades hit a person, by level (bots hit each other at full strength), so a person
  * survives long enough to react, turn and fight back. */
 export const BOT_HITS_PEOPLE: Record<Level, number> = { easy: 0.45, normal: 0.6, hard: 0.8 };
@@ -597,6 +603,7 @@ function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'fr
   if (v.shield > 0) return;
   if (zone === 'head') raw *= HELMET[v.helmet];
   if (!v.bot && w !== 'blast' && m.actors[from]?.bot) raw *= BOT_HITS_PEOPLE[m.level];
+  if (!v.bot) raw /= PERSON_HEALTH;
   v.healT = 0;
   v.healKind = null;
   const before = v.hp + v.armor;
@@ -1816,6 +1823,20 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
     }
   }
   if (m.time - a.lastShot > interval(w) * 1.2) a.bloom = Math.max(0, a.bloom - dt * (w.bloomMax * 2.5 + 2));
+  // breach: spare ammo comes back by itself a couple of seconds after you stop firing (about a magazine every 6 s,
+  // for the gun in hand first), so a long fight never leaves you dry
+  if (m.mode === 'breach' && m.time - a.lastShot > 2) {
+    const g = a.guns[a.slot] && a.guns[a.slot]!.reserve < WEAPONS[a.guns[a.slot]!.id].reserve ? a.guns[a.slot] : a.guns.find((o) => o && o.reserve < WEAPONS[o.id].reserve);
+    if (g) {
+      const full = WEAPONS[g.id];
+      a.ammoBack += (full.mag / 6) * dt;
+      const n = Math.floor(a.ammoBack);
+      if (n > 0) {
+        a.ammoBack -= n;
+        g.reserve = Math.min(full.reserve, g.reserve + n);
+      }
+    } else a.ammoBack = 0;
+  }
   // recoil comes back down once you stop firing
   if (a.kickP > 0 && m.time - a.lastShot > Math.min(0.2, interval(w) * 1.5)) {
     const back = Math.min(a.kickP, dt * (8 + a.kickP * 6)) * 0.75;

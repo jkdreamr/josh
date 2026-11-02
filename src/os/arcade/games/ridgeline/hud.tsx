@@ -18,6 +18,8 @@ export type Hud = {
   pips: [boolean[], boolean[]];
   breach: BreachHud | null;
   hp: number;
+  /** What a full bar reads: people are tougher than bots (their health counts for more). */
+  hpMax: number;
   armor: number;
   credits: number;
   gun: { name: string; mag: number; reserve: number; max: number; cls: string } | null;
@@ -92,6 +94,7 @@ export const blankHud = (mode: Mode): Hud => ({
   pips: [[], []],
   breach: null,
   hp: 100,
+  hpMax: 150,
   armor: 0,
   credits: 0,
   gun: null,
@@ -222,7 +225,7 @@ export function Vitals({ h }: { h: Hud }) {
   return (
     <div className="g-ridgeline-vitals">
       <div className="g-ridgeline-hp">
-        <b>{Math.ceil(h.hp)}</b>
+        <b>{Math.ceil((h.hp * h.hpMax) / 100)}</b>
         <span className="g-ridgeline-hpBar">
           <i style={{ width: `${h.hp}%` }} className={h.hp < 35 ? 'is-low' : ''} />
         </span>
