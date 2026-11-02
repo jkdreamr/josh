@@ -4,8 +4,9 @@ import type { GameProps } from '../../types';
 import { createAudio } from './audio.ts';
 import { Hud } from './hud.tsx';
 import type { HudModel } from './hud.tsx';
-import { createWorld, movePlayer, previewTarget, STEP, stepWorld, teamSeats, timingLabel, type Command, type Format, type Level, type MatchLength, type MoveInput, type Player, type PointCall, type ShotKind, type Swing, type World } from './logic.ts';
-import { configOf, commandOf, eventOf, moveOf, parsePacket, serveOf, stateOf, swingOf } from './net.ts';
+import { createWorld, previewTarget, stepWorld, teamSeats, timingLabel, type Command, type Format, type Level, type MatchLength, type MoveInput, type Player, type PointCall, type ShotKind, type Swing, type World } from './logic.ts';
+import { configOf, eventOf, parsePacket, stateOf } from './net.ts';
+import { GuestNet, HostNet, type Out } from './netplay.ts';
 import { meta } from './meta.ts';
 import { createScene, type View } from './scene.ts';
 import { appendReplayFrame, REPLAY_DURATION, sampleReplay, selectReplay, type ReplaySelection } from './replay.ts';
@@ -194,8 +195,16 @@ function Play({ mode }: { mode: StageMode }) {
   const skipReplayRef = useRef<() => void>(() => {});
   const localCommands = useRef<Command[]>([]);
   const remoteCommands = useRef<Command[]>([]);
-  const guestSnapshots = useRef<{ at: number; state: World }[]>([]);
-  const guestPrediction = useRef<Player | null>(null);
+  // online: a guest's side (its own player, the ball on the host's clock, its own returns), and the host's
+  const guestNet = useRef<GuestNet | null>(null);
+  if (mode === 'online' && online && !online.isHost) guestNet.current ??= new GuestNet(online.seat, online.round || 1);
+  const hostNet = useRef<HostNet | null>(null);
+  if (mode === 'online' && online?.isHost) hostNet.current ??= new HostNet();
+  const hostFrameAt = useRef(0);
+  /** A guest's own hits, played here before the host's word of them came back (that word then plays nothing). */
+  const ownHits = useRef(new Set<string>());
+  /** The host's ball drawn this far from where it is, fading: a guest's return lands a few metres along. */
+  const ballFix = useRef({ x: 0, y: 0, z: 0 });
   const synced = useRef(mode !== 'online' || !!online?.isHost);
   const reported = useRef(false);
   const lastMoveSent = useRef<MoveInput>({ x: 0, z: 0 });
@@ -311,6 +320,13 @@ function Play({ mode }: { mode: StageMode }) {
           pending: player.pending?.kind ?? null,
         })),
         lastHit: lastHit.current,
+        // (a guest: its own player as it moves here, and the host's clock as it reads it)
+        guest: guestNet.current && {
+          own: guestNet.current.own && { x: guestNet.current.own.x, z: guestNet.current.own.z },
+          hostNow: guestNet.current.hostNow,
+          ballLag: guestNet.current.ballLag,
+          modern: guestNet.current.modern,
+        },
       };
     };
     debugWindow.__tennisPoseDebug = {
@@ -467,20 +483,18 @@ function Play({ mode }: { mode: StageMode }) {
     view.current?.replayCamera(true);
   };
 
+  // (a guest's keys go through its GuestNet instead)
   const sendCommand = (command: Command) => {
     const o = onlineRef.current;
-    const current = world.current;
-    if (!current) return;
-    if (mode !== 'online' || o?.isHost) {
-      localCommands.current.push(command);
-      return;
-    }
-    if (!o || o.seat < 0) return;
-    if (command.move) o.send(moveOf(o.round || 1, command.move));
-    else if (command.toss) o.send(serveOf(o.round || 1, 'toss'));
-    else if (command.serve) o.send(serveOf(o.round || 1, 'serve', command.swing?.aim ?? 0, command.swing?.kind === 'slice' || command.swing?.kind === 'flat' ? command.swing.kind : 'topspin'));
-    else if (command.swing) o.send(swingOf(o.round || 1, current.ball.rallyShot, command.swing));
+    if (mode !== 'online' || o?.isHost) localCommands.current.push(command);
   };
+
+  const sendOut = (out: Out) => {
+    const o = onlineRef.current;
+    if (!o || o.seat < 0) return;
+    o.send(out.d, out.fast ? { fast: true, ...(out.reliable ? { reliable: true } : {}) } : undefined);
+  };
+  const guestOf = () => mode === 'online' && !onlineRef.current?.isHost ? guestNet.current : null;
 
   const sendMovementIfChanged = (player: Player | undefined, input: MoveInput) => {
     const seat = currentSeat();
@@ -504,6 +518,11 @@ function Play({ mode }: { mode: StageMode }) {
   };
 
   const stopMovement = () => {
+    const guest = guestOf();
+    if (guest) {
+      guest.stop(performance.now()).forEach(sendOut);
+      return;
+    }
     const seat = currentSeat();
     const player = world.current?.players.find((entry) => entry.seat === seat);
     if (player?.ai === null) player.input = { x: 0, z: 0 };
@@ -521,6 +540,11 @@ function Play({ mode }: { mode: StageMode }) {
     const player = current.players.find((entry) => entry.seat === seat);
     if (!player || player.ai !== null || !player.connected) return;
     selectedShot.current = kind;
+    const guest = guestOf();
+    if (guest) {
+      guest.press(kind, performance.now()).forEach(sendOut);
+      return;
+    }
     if ((current.phase === 'serve-ready' || current.phase === 'serve-toss') && current.serverSeat === seat) {
       if (current.phase === 'serve-ready') sendCommand({ seat, toss: true });
       else {
@@ -631,76 +655,24 @@ function Play({ mode }: { mode: StageMode }) {
     const previous = lastWorldFrameAt.current;
     lastWorldFrameAt.current = document.hidden ? null : now;
     if (document.hidden) return;
-    const dt = previous === null ? 0 : Math.min(0.1, Math.max(0, (now - previous) / 1000));
-    const current = world.current;
-    if (!current || shellRef.current.status !== 'playing') return;
     const o = onlineRef.current;
-    if (mode === 'online' && o && !o.isHost) {
-      const snapshots = guestSnapshots.current;
-      if (snapshots.length) {
-        const renderAt = performance.now() - 100;
-        let before = snapshots[0]!;
-        let after = snapshots[snapshots.length - 1]!;
-        for (let index = 1; index < snapshots.length; index++) {
-          const candidate = snapshots[index]!;
-          if (candidate.at >= renderAt) {
-            before = snapshots[index - 1]!;
-            after = candidate;
-            break;
-          }
-          before = candidate;
-        }
-        const span = after.at - before.at;
-        const alpha = span > 0 ? Math.max(0, Math.min(1, (renderAt - before.at) / span)) : 1;
-        const older = before.state;
-        const newer = after.state;
-        const latest = snapshots[snapshots.length - 1]!.state;
-        Object.assign(current, latest);
-        current.players = latest.players.map((player, index) => {
-          const a = older.players[index] ?? player;
-          const b = newer.players[index] ?? player;
-          return {
-            ...player,
-            x: a.x + (b.x - a.x) * alpha,
-            z: a.z + (b.z - a.z) * alpha,
-            prevX: a.x + (b.x - a.x) * alpha,
-            prevZ: a.z + (b.z - a.z) * alpha,
-          };
-        });
-        const a = older.ball.p;
-        const b = newer.ball.p;
-        current.ball = {
-          ...latest.ball,
-          p: { x: a.x + (b.x - a.x) * alpha, y: a.y + (b.y - a.y) * alpha, z: a.z + (b.z - a.z) * alpha },
-          prev: { x: a.x + (b.x - a.x) * alpha, y: a.y + (b.y - a.y) * alpha, z: a.z + (b.z - a.z) * alpha },
-        };
-        const local = current.players.find((player) => player.seat === currentSeat());
-        if (local) {
-          let prediction = guestPrediction.current;
-          if (!prediction || prediction.seat !== local.seat) {
-            prediction = { ...local, input: { ...local.input }, pending: local.pending && { ...local.pending } };
-            guestPrediction.current = prediction;
-          }
-          const input = movementInput();
-          prediction.input = input;
-          movePlayer(current, prediction, dt);
-          const error = Math.hypot(local.x - prediction.x, local.z - prediction.z);
-          if (error > 1.5) {
-            prediction.x = local.x;
-            prediction.z = local.z;
-          } else {
-            prediction.x += (local.x - prediction.x) * 0.15;
-            prediction.z += (local.z - prediction.z) * 0.15;
-          }
-          local.x = prediction.x;
-          local.z = prediction.z;
-          sendMovementIfChanged(local, input);
-          local.input = input;
-        }
-        current.acc = STEP;
+    const onlineHost = mode === 'online' && !!o?.isHost;
+    // (an online host runs the match on the wall clock through a slow frame, so everyone's game keeps time with it)
+    const dt = previous === null ? 0 : Math.min(onlineHost ? 0.25 : 0.1, Math.max(0, (now - previous) / 1000));
+    if (!world.current || shellRef.current.status !== 'playing') return;
+    const guest = guestOf();
+    if (guest && o) {
+      const frame = guest.frame(now, o.watching ? { x: 0, z: 0 } : movementInput());
+      frame.out.forEach(sendOut);
+      for (const event of frame.events) {
+        if (event.type === 'hit') ownHits.current.add(`${event.seat}:${event.shot}`);
+        handleEvent(event, true);
       }
-    } else {
-      if (mode === 'online' && o?.isHost) {
+      if (frame.world) world.current = frame.world;
+    } else if (mode !== 'online' || onlineHost) {
+      const current = world.current;
+      const net = hostNet.current;
+      if (o && net && onlineHost) {
         for (const player of current.players) {
           if (player.ai !== null) continue;
           if (!o.players.some((entry) => entry.seat === player.seat)) {
@@ -708,8 +680,10 @@ function Play({ mode }: { mode: StageMode }) {
             player.name = `${player.name} (bot)`;
             player.input = { x: 0, z: 0 };
             player.pending = null;
+            net.forget(player.seat);
           }
         }
+        net.setGrace(current, (seat) => o.players.some((entry) => entry.seat === seat));
       }
       const input = movementInput();
       const seat = currentSeat();
@@ -718,10 +692,18 @@ function Play({ mode }: { mode: StageMode }) {
       const commands = [...localCommands.current, ...remoteCommands.current];
       localCommands.current = [];
       remoteCommands.current = [];
-      const events = stepWorld(current, commands, dt);
+      const events = stepWorld(current, commands, Math.min(0.1, dt));
+      for (let left = dt - 0.1; left > 1e-9; left -= 0.1) events.push(...stepWorld(current, [], Math.min(0.1, left)));
       events.forEach((event) => handleEvent(event));
+      if (o && net && onlineHost) {
+        net.record(current);
+        hostFrameAt.current = now;
+        // (word of a hit goes out at once, so guests see the ball turn around as soon as they can)
+        if (events.some((event) => event.type === 'hit')) o.send(stateOf(o.round || 1, current), { fast: true });
+      }
       if (current.match.winner !== null) finishGame(current.match.winner);
     }
+    const current = world.current;
 
     timingClock.current = Math.max(0, timingClock.current - dt);
     if (timingClock.current <= 0 && timingRef.current) {
@@ -756,7 +738,20 @@ function Play({ mode }: { mode: StageMode }) {
         view.current?.update(sampleReplay(activeReplay.selection, activeReplay.elapsed), dt, localHumanSeats(), side);
       }
     } else {
-      view.current?.update(current, dt, localHumanSeats(), side, aimTarget);
+      const fix = ballFix.current;
+      const keep = Math.exp(-dt / 0.06);
+      ballFix.current = { x: fix.x * keep, y: fix.y * keep, z: fix.z * keep };
+      const drawn = Math.hypot(fix.x, fix.y, fix.z) > 0.005
+        ? {
+          ...current,
+          ball: {
+            ...current.ball,
+            p: { x: current.ball.p.x + fix.x, y: current.ball.p.y + fix.y, z: current.ball.p.z + fix.z },
+            prev: { x: current.ball.prev.x + fix.x, y: current.ball.prev.y + fix.y, z: current.ball.prev.z + fix.z },
+          },
+        }
+        : current;
+      view.current?.update(drawn, dt, localHumanSeats(), side, aimTarget);
       replayFrames.current = appendReplayFrame(replayFrames.current, current);
     }
     hudClock.current += dt;
@@ -780,42 +775,43 @@ function Play({ mode }: { mode: StageMode }) {
       if (!packet || packet.r !== (o.round || 1)) return;
       const current = world.current;
       if (!current) return;
-      if (o.isHost && packet.k === 'mv') {
-        const player = current.players.find((entry) => entry.seat === from);
-        if (!player || player.ai !== null || !player.connected) return;
-        const command = commandOf(packet, from);
-        if (command) remoteCommands.current.push(command);
-        return;
-      }
-      if (o.isHost && (packet.k === 'sw' || packet.k === 'toss' || packet.k === 'serve')) {
-        const player = current.players.find((entry) => entry.seat === from);
-        if (!player || player.ai !== null || !player.connected) return;
-        const command = commandOf(packet, from);
-        if (!command) return;
-        if (packet.k !== 'sw') {
-          if (from !== current.serverSeat) return;
-          remoteCommands.current.push(command);
-          return;
+      const host = hostNet.current;
+      if (o.isHost && host) {
+        // (the host's clock now: its world's, plus the time since its last frame)
+        const hostNow = current.clock + current.acc + Math.min(0.1, Math.max(0, performance.now() - hostFrameAt.current) / 1000);
+        const before = { ...current.ball.p };
+        const heard = host.receive(current, from, packet, hostNow, o.round || 1);
+        if (heard.command) remoteCommands.current.push(heard.command);
+        if (heard.reply) o.send(heard.reply, { to: from, fast: true });
+        if (heard.events?.some((event) => event.type === 'hit')) {
+          // (a guest's return starts a few metres along on this side: drawn from where the ball was, closing in)
+          const fix = ballFix.current;
+          const jump = { x: fix.x + before.x - current.ball.p.x, y: fix.y + before.y - current.ball.p.y, z: fix.z + before.z - current.ball.p.z };
+          ballFix.current = Math.hypot(jump.x, jump.y, jump.z) < 8 ? jump : { x: 0, y: 0, z: 0 };
         }
-        if (packet.shot !== current.ball.rallyShot || (current.phase !== 'rally' && current.phase !== 'serve-flight')
-          || !current.ball.inPlay || current.ball.canHitTeam !== player.team) return;
-        remoteCommands.current.push(command);
+        heard.events?.forEach((event) => handleEvent(event));
+        if (heard.state) o.send(stateOf(o.round || 1, current), { fast: true });
+        if (current.match.winner !== null) finishGame(current.match.winner);
         return;
       }
-      if (!o.isHost && from === 0 && packet.k === 'S') {
+      if (o.isHost || from !== 0) return;
+      if (packet.k === 'S' || packet.k === 'png') {
+        guestNet.current?.receive(packet, performance.now());
+        if (packet.k !== 'S') return;
         const incoming = packet.state;
         if (!synced.current || world.current?.format !== incoming.format || world.current?.players.length !== incoming.players.length) {
           world.current = incoming;
           synced.current = true;
-          guestPrediction.current = null;
-          guestSnapshots.current = [];
         }
-        guestSnapshots.current.push({ at: performance.now(), state: incoming });
-        if (guestSnapshots.current.length > 12) guestSnapshots.current.shift();
         if (incoming.match.winner !== null) finishGame(incoming.match.winner);
         return;
       }
-      if (!o.isHost && from === 0 && packet.k === 'ev') handleEvent(packet.event, true);
+      if (packet.k === 'ev') {
+        const event = packet.event;
+        // (this guest's own hit already played when it hit)
+        if (event.type === 'hit' && ownHits.current.delete(`${event.seat}:${event.shot}`)) return;
+        handleEvent(event, true);
+      }
     });
 
     const timer = window.setInterval(() => {

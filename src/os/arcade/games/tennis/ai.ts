@@ -10,6 +10,9 @@ function predictedIntercept(world: World, player: Player): CourtTarget {
   if (cached?.bucket === bucket) return cached.target;
   const sim = {
     ...world,
+    // (it looks ahead to where the rally would end, never waiting on a guest's return)
+    grace: undefined,
+    held: null,
     players: world.players.map((entry) => ({ ...entry, input: { ...entry.input }, pending: entry.pending && { ...entry.pending } })),
     match: structuredClone(world.match),
     ball: {
@@ -116,7 +119,7 @@ export function chooseShot(world: World, player: Player): Swing {
 
 export function cpuSwing(world: World, player: Player): Command | null {
   const ball = world.ball;
-  if (player.ai === null || !player.connected || player.swing > 0 || (world.phase !== 'rally' && world.phase !== 'serve-flight') || !ball.inPlay || player.team !== ball.canHitTeam) return null;
+  if (player.ai === null || !player.connected || player.swing > 0 || (world.phase !== 'rally' && world.phase !== 'serve-flight') || !ball.inPlay || world.held || player.team !== ball.canHitTeam) return null;
   const reach = STRIKE_RADIUS + (player.ai === 1 ? 0.25 : 0);
   if (Math.hypot(ball.p.x - player.x, ball.p.z - player.z) > reach || ball.p.y < 0.15 || ball.p.y > 2.9) return null;
   return { seat: player.seat, swing: chooseShot(world, player) };

@@ -98,6 +98,18 @@ export type World = {
   seed: number;
   random: () => number;
   acc: number;
+  /**
+   * Bumped each time the players are put back in place for a serve: online, a guest's word on where its own player is
+   * counts only for the warp it was sent in (older hosts leave it out).
+   */
+  warp?: number;
+  /**
+   * Online only: for each receiving team, how long a rally call waits while a guest on that team, whose word takes a
+   * moment to arrive, might still be returning the ball (see endRally and netplay.ts). Left out while nobody is waited on.
+   */
+  grace?: [number, number];
+  /** A rally call waiting out the receiving team's grace: made at `at` + grace, unless a return taken earlier comes in. */
+  held?: { winner: number; call: PointCall; at: number } | null;
 };
 export type Swing = { kind: ShotKind; aim: number; delta: number; depth?: number; swipe?: number };
 export type Command = { seat: number; move?: MoveInput; swing?: Swing; toss?: boolean; serve?: boolean };
@@ -297,6 +309,8 @@ function resetBall(world: World) {
 }
 
 function resetServe(world: World) {
+  world.warp = (world.warp ?? 0) + 1;
+  world.held = null;
   world.phase = 'serve-ready';
   world.serveNumber = 1;
   world.serveClock = 0;
@@ -874,6 +888,19 @@ function ballTeam(z: number) {
   return z >= 0 ? 0 : 1;
 }
 
+/**
+ * A rally call that hangs on the receiving team not getting to the ball (a second bounce, a ball out): made now, or,
+ * online, held for that team's grace while a guest on it might still be returning the ball (word of a return takes a
+ * moment to reach the host, which then plays it from the moment the guest hit it). The ball flies on meanwhile, dead.
+ */
+function endRally(world: World, winner: number, call: PointCall, events: Event[]) {
+  if ((world.grace?.[world.ball.canHitTeam] ?? 0) > 0) {
+    world.held ??= { winner, call, at: world.clock };
+    return;
+  }
+  awardPoint(world, winner, call, events);
+}
+
 export function updateBall(world: World, events: Event[]) {
   if (!world.ball.inPlay) return;
   const ball = world.ball;
@@ -886,11 +913,13 @@ export function updateBall(world: World, events: Event[]) {
     ball.netCord = true;
     events.push({ type: 'net', x: ball.p.x, z: 0 });
     if (world.phase === 'rally') {
-      awardPoint(world, 1 - ball.hitByTeam, 'net', events);
+      if (!world.held) awardPoint(world, 1 - ball.hitByTeam, 'net', events);
       return;
     }
   }
   const impact = bounceAtGround(ball);
+  // (a dead ball waiting on its held call bounces on quietly, as it would have stopped at the call)
+  if (impact && world.held) return;
   if (impact) {
     const side = ballTeam(impact.z);
     const inCourt = isInCourt(impact.x, impact.z, world.format);
@@ -921,11 +950,11 @@ export function updateBall(world: World, events: Event[]) {
       return;
     }
     if (ball.bounces > 0) {
-      awardPoint(world, ball.hitByTeam, 'point', events);
+      endRally(world, ball.hitByTeam, 'point', events);
       return;
     }
     if (!inCourt || side !== ball.targetTeam) {
-      awardPoint(world, 1 - ball.hitByTeam, 'out', events);
+      endRally(world, 1 - ball.hitByTeam, 'out', events);
       return;
     }
     ball.bounces = 1;
@@ -1012,34 +1041,63 @@ function closestApproachAt(world: World, player: Player) {
   return speedSq > 1e-6 ? world.clock - (dx * vx + dz * vz) / speedSq : world.clock;
 }
 
+function reachOf(world: World, player: Player) {
+  return player.ai === null ? strikeRadius(world.level)
+    : player.ai === 1 ? STRIKE_RADIUS + 0.25
+      : STRIKE_RADIUS;
+}
+
+/**
+ * The swing a queued press makes if `player` can hit the ball from where it is now, timed against when it was pressed
+ * (`pending.at`, on the world's clock), or null while it can't. A guest runs it on the ball as it sees it (netplay.ts).
+ */
+export function contactSwing(world: World, player: Player, pending: NonNullable<Player['pending']>): Swing | null {
+  const receiving = !world.held && world.ball.inPlay && world.ball.bounces < 2 && world.ball.canHitTeam === player.team
+    && (world.phase === 'rally' || (world.phase === 'serve-flight' && world.ball.bounces > 0));
+  if (!receiving) return null;
+  const distance = Math.hypot(world.ball.p.x - player.x, world.ball.p.z - player.z);
+  if (distance > reachOf(world, player) || world.ball.p.y < 0.15 || world.ball.p.y > 2.9) return null;
+  return {
+    kind: classifyShot(pending.kind, world.ball.p.y, player.z),
+    aim: clamp(player.input.x, -1, 1),
+    delta: IDEAL_SWING_LEAD - (closestApproachAt(world, player) - pending.at),
+    depth: clamp(player.input.z, -1, 1),
+  };
+}
+
+/** `player` plays `swing` (from contactSwing) at the ball where it is now: true when the ball goes back. */
+export function strikeBall(world: World, player: Player, swing: Swing, events: Event[]) {
+  const dx = world.ball.p.x - player.x;
+  const dz = world.ball.p.z - player.z;
+  const distance = Math.hypot(dx, dz);
+  const reach = reachOf(world, player);
+  player.swingLunge = clamp((distance - 1.1) / Math.max(0.1, reach - 1.1), 0, 1);
+  player.lungeX = distance > 0 ? dx / distance : 0;
+  player.lungeZ = distance > 0 ? dz / distance : 0;
+  player.pending = null;
+  const hit = applyShot(world, player, swing, false, events);
+  if (hit) world.serveNumber = 1;
+  return hit;
+}
+
+/** The server's swing at its toss, `delta` seconds off the ideal moment: true when the serve is in play, else a fault is called. */
+export function serveSwing(world: World, seat: number, delta: number, aim: number, kind: ShotKind, events: Event[]) {
+  if (!hitServe(world, seat, delta, aim, kind)) {
+    callFault(world, events);
+    return false;
+  }
+  events.push({ type: 'hit', seat, serve: true, speed: world.serveSpeed, kind: world.ball.shotKind, shot: world.rallyShot });
+  return true;
+}
+
 function resolvePending(world: World, events: Event[]) {
   for (const player of world.players) {
     const pending = player.pending;
     if (!pending) continue;
-    const receiving = world.ball.inPlay && world.ball.bounces < 2 && world.ball.canHitTeam === player.team
-      && (world.phase === 'rally' || (world.phase === 'serve-flight' && world.ball.bounces > 0));
-    if (receiving) {
-      const dx = world.ball.p.x - player.x;
-      const dz = world.ball.p.z - player.z;
-      const distance = Math.hypot(dx, dz);
-      const reach = player.ai === null ? strikeRadius(world.level)
-        : player.ai === 1 ? STRIKE_RADIUS + 0.25
-          : STRIKE_RADIUS;
-      if (distance <= reach && world.ball.p.y >= 0.15 && world.ball.p.y <= 2.9) {
-        const kind = classifyShot(pending.kind, world.ball.p.y, player.z);
-        const swing: Swing = {
-          kind,
-          aim: clamp(player.input.x, -1, 1),
-          delta: IDEAL_SWING_LEAD - (closestApproachAt(world, player) - pending.at),
-          depth: clamp(player.input.z, -1, 1),
-        };
-        player.swingLunge = clamp((distance - 1.1) / Math.max(0.1, reach - 1.1), 0, 1);
-        player.lungeX = distance > 0 ? dx / distance : 0;
-        player.lungeZ = distance > 0 ? dz / distance : 0;
-        player.pending = null;
-        if (applyShot(world, player, swing, false, events)) world.serveNumber = 1;
-        continue;
-      }
+    const swing = contactSwing(world, player, pending);
+    if (swing) {
+      strikeBall(world, player, swing, events);
+      continue;
     }
     if (world.clock - pending.at + 1e-9 >= SWING_BUFFER) {
       player.pending = null;
@@ -1061,12 +1119,10 @@ function processCommand(world: World, command: Command, events: Event[]) {
     return;
   }
   if (world.phase === 'serve-toss' && command.serve) {
-    const delta = world.serveClock - 0.56;
-    if (!hitServe(world, player.seat, delta, command.swing?.aim ?? 0, command.swing?.kind ?? 'topspin')) callFault(world, events);
-    else events.push({ type: 'hit', seat: player.seat, serve: true, speed: world.serveSpeed, kind: world.ball.shotKind, shot: world.rallyShot });
+    serveSwing(world, player.seat, world.serveClock - 0.56, command.swing?.aim ?? 0, command.swing?.kind ?? 'topspin', events);
     return;
   }
-  if ((world.phase !== 'rally' && world.phase !== 'serve-flight') || !world.ball.inPlay || !command.swing || player.team !== world.ball.canHitTeam) return;
+  if ((world.phase !== 'rally' && world.phase !== 'serve-flight') || !world.ball.inPlay || world.held || !command.swing || player.team !== world.ball.canHitTeam) return;
   if (player.pending) {
     player.pending.kind = command.swing.kind;
     player.pending.aim = command.swing.aim;
@@ -1111,10 +1167,14 @@ function simulateStep(world: World, commands: readonly Command[], events: Event[
     }
     return;
   }
-  if (world.phase === 'serve-toss') world.serveClock += STEP;
-  if (world.phase === 'serve-toss') {
-    world.ball.p.y = Math.max(BALL_RADIUS, TOSS_START + 5.5 * world.serveClock - 0.5 * GRAVITY * world.serveClock ** 2);
+  if (world.held && world.clock - world.held.at + 1e-9 >= (world.grace?.[world.ball.canHitTeam] ?? 0)) {
+    const { winner, call } = world.held;
+    world.held = null;
+    awardPoint(world, winner, call, events);
+    return;
   }
+  if (world.phase === 'serve-toss') world.serveClock += STEP;
+  if (world.phase === 'serve-toss') world.ball.p.y = tossHeight(world.serveClock);
   for (const command of commands) processCommand(world, command, events);
   movePlayers(world);
   if (world.phase === 'serve-ready') {
@@ -1124,23 +1184,37 @@ function simulateStep(world: World, commands: readonly Command[], events: Event[
       world.ball.prev = { ...world.ball.p };
     }
   }
-  if (world.phase === 'serve-flight' || world.phase === 'rally') {
-    updateBall(world, events);
-    if (world.phase === 'serve-flight' && world.ball.p.z * (serverOf(world)?.team === 0 ? -1 : 1) < 0 && world.ball.p.y < BALL_RADIUS + 0.02) {
-      callFault(world, events);
-      return;
-    }
-    if (world.phase === 'rally' && world.ball.bounces === 0
-      && world.ball.p.z * (world.ball.canHitTeam === 0 ? -1 : 1) < -COURT_LENGTH / 2 - 0.5) {
-      awardPoint(world, 1 - world.ball.hitByTeam, 'out', events);
-      return;
-    }
-  }
+  if ((world.phase === 'serve-flight' || world.phase === 'rally') && stepBall(world, events)) return;
   resolvePending(world, events);
   updateAutomatic(world, events);
-  if (world.phase === 'serve-toss' && world.serveClock > 1.25 && serverOf(world)?.ai === null) {
+  // (a guest serving gets its team's grace on top, as word of its swing takes a moment to arrive)
+  if (world.phase === 'serve-toss' && serverOf(world)?.ai === null
+    && world.serveClock > 1.25 + (world.grace?.[serverOf(world)!.team] ?? 0)) {
     callFault(world, events);
   }
+}
+
+/** The tossed ball's height `serveClock` seconds into the toss. */
+export function tossHeight(serveClock: number) {
+  return Math.max(BALL_RADIUS, TOSS_START + 5.5 * serveClock - 0.5 * GRAVITY * serveClock ** 2);
+}
+
+/**
+ * The ball's part of a step in flight: the ball itself (updateBall), then a serve landing on the server's own side and
+ * a rally ball going long before it bounces. True when one of those made a call (the step goes no further).
+ */
+export function stepBall(world: World, events: Event[]) {
+  updateBall(world, events);
+  if (world.phase === 'serve-flight' && world.ball.p.z * (serverOf(world)?.team === 0 ? -1 : 1) < 0 && world.ball.p.y < BALL_RADIUS + 0.02) {
+    callFault(world, events);
+    return true;
+  }
+  if (world.phase === 'rally' && !world.held && world.ball.bounces === 0
+    && world.ball.p.z * (world.ball.canHitTeam === 0 ? -1 : 1) < -COURT_LENGTH / 2 - 0.5) {
+    endRally(world, 1 - world.ball.hitByTeam, 'out', events);
+    return true;
+  }
+  return false;
 }
 
 export function stepWorld(world: World, commands: readonly Command[] = [], dt = STEP) {
