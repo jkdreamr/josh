@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, LEVEL_NAMES, Segmented, defineSetting, formatTally, levelIndex, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
-import { aimAligned, aimAt, canvasToWorld, createWorld, fitBoard, hudRow, keyHeading, mulberry32, noInput, spawnRound, standings, stickInput, step, toCanvas, touchLayout, traceShot, type Special, type Tank, type TankInput, type World } from './logic.ts';
+import { aimAligned, aimAt, canvasToWorld, createWorld, fitBoard, hudRow, keyHeading, mulberry32, noInput, spawnRound, standings, stickInput, step, toCanvas, touchLayout, traceShot, type Tank, type TankInput, type World } from './logic.ts';
 import { makeMemory, think, type BotMemory } from './bots.ts';
 import { endPacket, inputPacket, parsePacket, rosterPacket, roundPacket, seatNames, statePacket, tankHolders, holdersLeft, tankName, type NetEvent, type RosterPacket, type RoundPacket } from './net.ts';
+import { covered, driverInput, hearInput, newDriver, newOwn, ownHear, ownMines, ownReport, ownRound, ownStep, resetDriver, shotFired, sortEvents, Timeline, type Driver, type Own, type OwnStep, type View } from './netsync.ts';
 import { finalLine, freeSpans, layoutChips, rosterLine, type ChipLayout, type Span } from './hud.ts';
 import { meta } from './meta';
 import './tank-maze.css';
@@ -71,8 +72,6 @@ type Scorch = { x: number; y: number; life: number };
 type Mark = { x: number; y: number; a: number; life: number };
 type Stick = { id: number; ox: number; oy: number; x: number; y: number; player: number };
 
-type Snapshot = { at: number; tanks: { x: number; y: number; a: number; alive: boolean; moving: boolean; special: Special | null }[]; shells: { x: number; y: number; owner: number }[] };
-
 type Match = {
   world: World;
   seats: number[];
@@ -95,17 +94,22 @@ type Match = {
   pending: NetEvent[];
   reported: boolean;
   ended: boolean;
-  /** Guest side: interpolation between the last two snapshots. */
-  snaps: Snapshot[];
+  /** Host side: each tank's warp (bumped when the game moves it, see netsync.ts), and the guest shot each shell came from. */
+  warps: number[];
+  tags: Map<number, number>;
+  /** Guest side: the host's states on its clock, what they show right now, and this guest's own tank and shots. */
+  tl: Timeline;
+  view: View | null;
+  own: Own;
   lastStateAt: number;
   guestScores: number[];
   guestPhase: 'ready' | 'play' | 'settle';
   guestPhaseT: number;
   guestSettleWinner: number | undefined;
   guestBeams: { owner: number; pts: number[]; t: number }[];
-  guestMines: { x: number; y: number; armed: boolean }[];
-  guestPickups: { kind: Special; x: number; y: number }[];
-  lastEvSeen: number;
+  /** Guest side: the host's beams already shown (by owner and first segment), and when. */
+  beamsSeen: Map<string, number>;
+  evSeen: Set<number>;
   prevPhase: string;
   settleWinner: number | undefined;
   lastNetAt: number;
@@ -147,9 +151,9 @@ function TankMaze() {
   const aims = useRef(new Map<number, { x: number; y: number }>());
   const fireQueued = useRef<boolean[]>([false, false, false, false]);
   const fireHeld = useRef<boolean[]>([false, false, false, false]);
-  const guestFireCount = useRef(0);
-  const guestLastSent = useRef<{ turn: number; move: number; dir: number | undefined; aim?: number; t: number }>({ turn: 0, move: 0, dir: undefined, t: 0 });
-  const hostIn = useRef(new Map<number, { turn: -1 | 0 | 1; move: -1 | 0 | 1; dir: number | undefined; aim?: number; fc: number; lastFc: number }>());
+  const guestLastSent = useRef<{ turn: number; move: number; dir: number | undefined; aim?: number; fc: number; t: number }>({ turn: 0, move: 0, dir: undefined, fc: 0, t: 0 });
+  /** Host side: each guest's driving, by seat. */
+  const hostIn = useRef(new Map<number, Driver>());
   const bounceTick = useRef(0);
   const sizeRef = useRef(size);
   sizeRef.current = size;
@@ -160,6 +164,8 @@ function TankMaze() {
 
   const isGuest = !!online && !online.isHost;
   const mine = () => (online && m.current ? m.current.seats.indexOf(online.seat) : 0);
+  /** Guest side: this guest drives its own tank here (the host takes its word, and the tank is still its own this match). */
+  const drivesSelf = (match: Match) => !!online && !online.isHost && match.synced && match.own.active && match.holders.has(online.seat) && match.seats.indexOf(online.seat) >= 0;
   const humanIds = (match: Match): number[] => {
     if (online) {
       const i = match.seats.indexOf(online.seat);
@@ -210,12 +216,16 @@ function TankMaze() {
     for (const e of events) {
       if (e.k === 'fire') {
         const t = match.world.tanks[e.a];
-        if (t) muzzle(match, t);
+        if (t) {
+          muzzle(match, t);
+          if (isGuest) t.recoil = 1;
+        }
         sfx.tone({ freq: 240, to: 90, dur: 0.07, type: 'square', vol: 0.25 });
       } else if (e.k === 'bounce') {
         spark(match, e.x, e.y);
-        if (match.world.time - bounceTick.current > 0.06) {
-          bounceTick.current = match.world.time;
+        const now = performance.now() / 1000;
+        if (now - bounceTick.current > 0.06) {
+          bounceTick.current = now;
           sfx.play('tick', 1.6);
         }
       } else if (e.k === 'kill') {
@@ -257,16 +267,19 @@ function TankMaze() {
       pending: [],
       reported: false,
       ended: false,
-      snaps: [],
+      warps: world.tanks.map(() => 0),
+      tags: new Map(),
+      tl: new Timeline(),
+      view: null,
+      own: newOwn(m.current?.own),
       lastStateAt: performance.now(),
       guestScores: new Array(count).fill(0),
       guestPhase: 'ready',
       guestPhaseT: 1.2,
       guestSettleWinner: undefined,
       guestBeams: [],
-      guestMines: [],
-      guestPickups: [],
-      lastEvSeen: 0,
+      beamsSeen: new Map(),
+      evSeen: new Set(),
       prevPhase: 'ready',
       settleWinner: undefined,
       lastNetAt: 0,
@@ -300,6 +313,8 @@ function TankMaze() {
         level: match.level,
         spawns: match.world.tanks.map((t) => ({ x: t.x, y: t.y, a: t.a })),
         names: match.seats.map((_, i) => nameOf(match, i)),
+        warps: match.warps,
+        tick: Math.round(match.world.time * 60),
       }),
     );
   };
@@ -370,7 +385,6 @@ function TankMaze() {
     m.current = match;
     match.world.round = 1;
     hostIn.current.clear();
-    guestFireCount.current = 0;
     startBanner(match);
     shell.setScore(null);
   };
@@ -477,7 +491,8 @@ function TankMaze() {
     const input = keyInput(id);
     const match = m.current;
     const stick = match ? stickFor(id) : null;
-    const tank = isGuest ? match?.snaps.at(-1)?.tanks[id] : match?.world.tanks[id];
+    // (a guest's world holds the tanks as it shows them: its own as it drives it, the others on the host's clock)
+    const tank = match?.world.tanks[id];
     if (!tank?.alive || input.turn !== 0 || input.move !== 0 || input.dir !== undefined || stick) aims.current.delete(id);
     const target = aims.current.get(id);
     if (target && tank?.alive) {
@@ -546,8 +561,9 @@ function TankMaze() {
         const match = m.current;
         if (!match) return;
         if (pkt.k === 'in' && online.seat === 0) {
-          const cur = hostIn.current.get(from) ?? { turn: 0 as const, move: 0 as const, dir: undefined, fc: 0, lastFc: -1 };
-          hostIn.current.set(from, { turn: pkt.turn, move: pkt.move, dir: pkt.dir, aim: pkt.aim, fc: pkt.fireCount, lastFc: cur.lastFc });
+          let d = hostIn.current.get(from);
+          if (!d) hostIn.current.set(from, (d = newDriver(match.world.time)));
+          hearInput(d, pkt, match.world.time);
           return;
         }
         if (online.seat === 0) return;
@@ -561,20 +577,23 @@ function TankMaze() {
         }
         if (pkt.k === 's') {
           match.lastStateAt = performance.now();
-          const snap: Snapshot = {
-            at: match.lastStateAt,
-            tanks: pkt.tanks.map((t) => ({ x: t.x, y: t.y, a: t.a, alive: t.alive, moving: t.moving, special: t.special })),
-            shells: pkt.shells.map((s) => ({ x: s.x, y: s.y, owner: s.owner })),
-          };
-          match.snaps.push(snap);
-          if (match.snaps.length > 3) match.snaps.shift();
+          const now = match.lastStateAt / 1000;
+          const me = mine();
+          const fresh = pkt.events.filter((e) => !match.evSeen.has(e.id));
+          for (const e of fresh) match.evSeen.add(e.id);
+          if (match.evSeen.size > 600) match.evSeen = new Set([...match.evSeen].sort((x, y) => y - x).slice(0, 300));
+          // Events about this guest's own tank happen now (it is shown as it is now); the rest on the host's clock.
+          const ev = sortEvents(fresh, me, drivesSelf(match));
+          applyEvents(match, ev.now);
+          const snap = { t: pkt.tick / 60, tanks: pkt.tanks, shells: pkt.shells, pickups: pkt.pickups, mines: pkt.mines, beams: pkt.beams };
+          if (!match.tl.push(snap, ev.later, now)) {
+            // (overtaken by a newer state on the fast channel: only its events are news)
+            applyEvents(match, ev.later);
+            return;
+          }
+          const own = me >= 0 ? match.world.tanks[me] : undefined;
+          if (own) ownHear(match.own, own, me, pkt, now);
           match.guestScores = pkt.scores;
-          match.guestMines = pkt.mines;
-          match.guestPickups = pkt.pickups;
-          for (const b of pkt.beams) if (!match.guestBeams.some((g) => g.owner === b.owner && g.pts.length === b.pts.length)) match.guestBeams.push({ ...b, t: 0.35 });
-          const fresh = pkt.events.filter((e) => e.id > match.lastEvSeen);
-          for (const e of fresh) match.lastEvSeen = Math.max(match.lastEvSeen, e.id);
-          applyEvents(match, fresh);
           if (pkt.phase !== match.guestPhase) {
             match.guestPhase = pkt.phase;
             if (pkt.phase === 'play') setBanner(null);
@@ -582,8 +601,8 @@ function TankMaze() {
           match.guestPhaseT = pkt.phaseT;
           if (pkt.phase !== 'settle') match.guestSettleWinner = undefined;
           if (pkt.phase === 'settle') {
-            const left = snap.tanks.filter((t) => t.alive).length;
-            const winner = left === 1 ? snap.tanks.findIndex((t) => t.alive) : -1;
+            const left = pkt.tanks.filter((t) => t.alive).length;
+            const winner = left === 1 ? pkt.tanks.findIndex((t) => t.alive) : -1;
             if (left <= 1 && !match.ended && match.guestSettleWinner !== winner) {
               match.guestSettleWinner = winner;
               const names = match.world.tanks.map((_, i) => nameOf(match, i));
@@ -636,13 +655,16 @@ function TankMaze() {
     match.bots = pkt.bots;
     match.names = pkt.names ?? [];
     match.guestScores = pkt.scores.slice();
-    match.snaps = [];
+    // (round 1 is a new match: the host's clock starts over)
+    match.tl.reset(pkt.tick === undefined ? undefined : pkt.tick / 60, pkt.round === 1 || match.onlineRound !== pkt.roomRound);
+    match.view = null;
+    const me = online ? pkt.seats.indexOf(online.seat) : -1;
+    ownRound(match.own, me >= 0 ? pkt.warps?.[me] : undefined);
+    match.acc = 0;
     match.particles = [];
     match.guestPhase = 'ready';
     match.guestPhaseT = 1.2;
     match.guestBeams = [];
-    match.guestMines = [];
-    match.guestPickups = [];
     match.onlineRound = pkt.roomRound;
     match.holders = tankHolders(online?.players.map((p) => p.seat) ?? [], match, match.synced ? match.holders : undefined);
     match.synced = true;
@@ -660,6 +682,10 @@ function TankMaze() {
       world.scores = pkt.scores.slice();
       match.world = world;
       match.guestScores = pkt.scores.slice();
+      match.tl.reset(undefined, match.onlineRound !== pkt.roomRound);
+      match.view = null;
+      // (the tanks' places come from the host's next state: its warps never match this)
+      ownRound(match.own, -1);
       match.particles = [];
       match.level = pkt.level as 0 | 1 | 2;
       match.onlineRound = pkt.roomRound;
@@ -757,7 +783,54 @@ function TankMaze() {
     else sfx.play('lose');
   };
 
-  const update = (dt: number) => {
+  /**
+   * Guest side: everything but its own tank as the host had it a moment ago (on the host's clock), and the host's
+   * events and beams whose time has come.
+   */
+  const syncView = (match: Match, now: number, self: number) => {
+    const at = match.tl.at(now);
+    if (at === null) return;
+    const view = match.tl.sample(at);
+    match.view = view;
+    if (view)
+      for (const t of match.world.tanks) {
+        const v = view.tanks[t.id];
+        if (!v || t.id === self) continue;
+        const moved = Math.hypot(v.x - t.x, v.y - t.y);
+        if (moved < 0.5) t.tread += moved;
+        t.x = v.x;
+        t.y = v.y;
+        t.a = v.a;
+        t.alive = v.alive;
+        t.special = v.special;
+      }
+    const due = match.tl.drain(at);
+    applyEvents(match, due.events);
+    for (const [key, seen] of match.beamsSeen) if (now - seen > 2) match.beamsSeen.delete(key);
+    for (const b of due.beams) {
+      // (a beam this guest fired is already showing, drawn as it fired it)
+      if (b.owner === self && now - match.own.laserAt < 1) continue;
+      const key = `${b.owner}:${b.pts.slice(0, 4).map((v) => v.toFixed(2)).join(',')}`;
+      if (match.beamsSeen.has(key)) continue;
+      match.beamsSeen.set(key, now);
+      match.guestBeams.push({ ...b, t: 0.35 });
+    }
+  };
+
+  /** Guest side: what its own tank did this step, seen and heard at once. */
+  const ownFeedback = (match: Match, me: number, r: OwnStep) => {
+    const t = match.world.tanks[me];
+    if (r.fired === 'shell') {
+      muzzle(match, t);
+      sfx.tone({ freq: 240, to: 90, dur: 0.07, type: 'square', vol: 0.25 });
+    } else if (r.fired === 'laser' && r.beam) {
+      match.guestBeams.push({ owner: me, pts: r.beam, t: 0.35 });
+      sfx.tone({ freq: 880, to: 220, dur: 0.18, type: 'sawtooth', vol: 0.2 });
+    } else if (r.fired === 'mine') sfx.play('tick');
+    applyEvents(match, r.bounces.map((b) => ({ id: 0, k: 'bounce', a: me, b: 0, x: b.x, y: b.y })));
+  };
+
+  const update = (dt: number, nowMs = performance.now()) => {
     const match = m.current;
     if (!match) return;
     // Round 1 built on fallback dims: respawn it as soon as the real size shows up.
@@ -789,21 +862,40 @@ function TankMaze() {
 
     if (isGuest) {
       // Waiting for host indicator
-      const silence = performance.now() - match.lastStateAt;
+      const silence = nowMs - match.lastStateAt;
       const shouldWait = silence > 1500 && shell.status === 'playing' && !match.ended;
       if (shouldWait !== waiting) setWaiting(shouldWait);
-      if (mine() < 0) return;
-      // Send our input at ~30 Hz or on change.
-      const input = mine() >= 0 ? humanInput(mine()) : { turn: 0 as const, move: 0 as const, fire: false };
+      const now = nowMs / 1000;
+      const me = mine();
+      const self = drivesSelf(match);
+      for (const t of match.world.tanks) if (!self || t.id !== me) t.recoil = Math.max(0, t.recoil - dt * 6);
+      syncView(match, now, self ? me : -1);
+      ownMines(match.own, match.view?.mines ?? [], now);
+      if (me < 0 || !online) return;
+      if (match.guestPhase === 'ready') match.guestPhaseT = Math.max(0, match.guestPhaseT - dt);
+      const input = humanInput(me);
+      if (self) {
+        // Our own tank moves (and fires) here and now, on the host's physics; the host takes our word for it.
+        const play = match.guestPhase === 'play' || (match.guestPhase === 'ready' && match.guestPhaseT <= 0);
+        match.acc += dt;
+        let stepped = false;
+        while (match.acc >= STEP) {
+          match.acc -= STEP;
+          ownFeedback(match, me, ownStep(match.own, match.world, me, stepped ? { ...input, fire: false } : input, STEP, play, now));
+          stepped = true;
+        }
+        if (!stepped && input.fire) fireQueued.current[me] = true;
+      } else if (input.fire) match.own.fc++;
+      // Send our input at ~30 Hz or on change. (One fire count either way: each shot fired here, or each frame fire is
+      // down while the host drives our tank, as older hosts expect.)
+      const fc = match.own.fc;
       const last = guestLastSent.current;
-      const now = performance.now();
       const changed =
         input.turn !== last.turn || input.move !== last.move || input.aim !== last.aim || (input.dir === undefined) !== (last.dir === undefined) || (input.dir !== undefined && Math.abs(input.dir - last.dir!) > 0.02);
-      const fireNow = input.fire;
-      if (fireNow) guestFireCount.current++;
-      if (online && (changed || fireNow || now - last.t > 33)) {
-        guestLastSent.current = { turn: input.turn, move: input.move, dir: input.dir, aim: input.aim, t: now };
-        online.send(inputPacket({ k: 'in', roomRound: online.round, turn: input.turn, move: input.move, dir: input.dir, aim: input.aim, fireCount: guestFireCount.current }), { fast: true });
+      if (changed || fc !== last.fc || nowMs - last.t > 33) {
+        guestLastSent.current = { turn: input.turn, move: input.move, dir: input.dir, aim: input.aim, fc, t: nowMs };
+        const base = { k: 'in' as const, roomRound: online.round, turn: input.turn, move: input.move, dir: input.dir, aim: input.aim, fireCount: fc };
+        online.send(inputPacket(self ? { ...base, ...ownReport(match.own, match.world.tanks[me], now) } : base), { fast: true });
       }
       return;
     }
@@ -826,6 +918,7 @@ function TankMaze() {
       match.acc -= STEP;
       const w = match.world;
       const inputs: TankInput[] = w.tanks.map(() => noInput);
+      const shots: { id: number; d: Driver; fc: number }[] = [];
       for (const t of w.tanks) {
         const seat = online ? match.seats[t.id] : t.id;
         const isBot = online ? match.bots.includes(seat) || match.departed.has(seat) : match.minds[t.id] !== null;
@@ -833,18 +926,25 @@ function TankMaze() {
           if (!match.minds[t.id]) match.minds[t.id] = makeMemory();
           inputs[t.id] = think(w, t.id, match.level, match.minds[t.id]!, match.rngs[t.id]);
         } else if (online && seat !== 0) {
-          const g = hostIn.current.get(seat);
-          if (g) {
-            const fire = g.fc > g.lastFc;
-            if (fire) g.lastFc = g.fc;
-            inputs[t.id] = { turn: g.turn, move: g.move, fire, dir: g.dir, aim: g.aim };
+          // A guest's tank: its word on where it is, then its driving and the shot it fired (see netsync.ts).
+          const d = hostIn.current.get(seat);
+          if (d) {
+            const r = driverInput(w, t, d, match.warps[t.id] ?? 0, w.time);
+            match.warps[t.id] = r.warp;
+            inputs[t.id] = r.input;
+            if (r.shot !== null) shots.push({ id: t.id, d, fc: r.shot });
           }
         } else {
           inputs[t.id] = humanInput(t.id);
         }
       }
       const prevTreads = w.tanks.map((t) => t.tread);
+      const firstShell = w.nextShell;
       step(w, inputs, STEP);
+      for (const s of shots) {
+        const tag = shotFired(w, s.id, s.d, s.fc);
+        if (tag !== null) for (const sh of w.shells) if (sh.id >= firstShell && sh.owner === s.id) match.tags.set(sh.id, tag);
+      }
       for (const t of w.tanks) {
         if (t.alive && t.tread !== prevTreads[t.id] && Math.random() < 0.4) match.marks.push({ x: t.x, y: t.y, a: t.a, life: 0 });
       }
@@ -852,7 +952,7 @@ function TankMaze() {
       for (const e of w.events) {
         const ne: NetEvent | null =
           e.k === 'fire' ? { id: match.evId, k: 'fire', a: e.id, b: 0, x: 0, y: 0 } :
-          e.k === 'bounce' ? { id: match.evId, k: 'bounce', a: 0, b: 0, x: e.x, y: e.y } :
+          e.k === 'bounce' ? { id: match.evId, k: 'bounce', a: e.owner, b: 0, x: e.x, y: e.y } :
           e.k === 'kill' ? { id: match.evId, k: 'kill', a: e.id, b: e.by, x: e.x, y: e.y } :
           e.k === 'pickup' ? { id: match.evId, k: 'pickup', a: e.id, b: 0, x: 0, y: 0 } :
           e.k === 'laser' ? { id: match.evId, k: 'laser', a: e.id, b: 0, x: 0, y: 0, pts: e.pts } :
@@ -881,6 +981,10 @@ function TankMaze() {
       if (w.round !== sentRound) {
         aims.current.clear();
         sentRound = w.round;
+        // Every tank was put somewhere new: what guests said about the last round no longer counts.
+        match.warps = match.warps.map((n) => n + 1);
+        for (const d of hostIn.current.values()) resetDriver(d, w.time);
+        match.tags.clear();
         // Local rounds use the maze dims that fit the stage as it is right now.
         if (!online) {
           const { w: sw, h: sh } = sizeRef.current;
@@ -894,11 +998,13 @@ function TankMaze() {
 
     // Host state broadcast ~25 Hz, and the roster every couple of seconds for anyone who just started watching.
     if (online && online.seat === 0) {
-      const now = performance.now();
+      const now = nowMs;
       if (!match.ended && now - match.lastRosterAt > 2000) hostSendRoster(match);
       if (now - (match.lastNetAt ?? 0) > 40 && match.world.phase !== 'ready') {
         match.lastNetAt = now;
         const w = match.world;
+        for (const id of match.tags.keys()) if (!w.shells.some((s) => s.id === id)) match.tags.delete(id);
+        const driver = (t: Tank) => hostIn.current.get(match.seats[t.id]);
         online.send(
           statePacket({
             roomRound: online.round,
@@ -906,12 +1012,15 @@ function TankMaze() {
             phase: w.phase === 'done' ? 'settle' : w.phase,
             phaseT: w.phaseT,
             tanks: w.tanks.map((t) => ({ x: t.x, y: t.y, a: t.a, alive: t.alive, special: t.special, moving: false })),
-            shells: w.shells.map((s) => ({ x: s.x, y: s.y, owner: s.owner })),
+            shells: w.shells.map((s) => ({ x: s.x, y: s.y, owner: s.owner, id: s.id, tag: match.tags.get(s.id) })),
             pickups: w.pickups.map((p) => ({ kind: p.kind, x: p.x, y: p.y })),
             mines: w.mines.map((mn) => ({ x: mn.x, y: mn.y, armed: mn.age >= 1 })),
             beams: w.beams.map((b) => ({ owner: b.owner, pts: b.pts })),
             scores: standings(w),
             events: match.pending,
+            warps: match.warps,
+            acks: w.tanks.map((t) => Math.max(0, driver(t)?.done ?? 0)),
+            seqs: w.tanks.map((t) => Math.max(0, driver(t)?.seq ?? 0)),
           }),
           { fast: true },
         );
@@ -1035,7 +1144,7 @@ function TankMaze() {
     }
 
     // pickups
-    const pickups = isGuest ? match.guestPickups.map((p) => ({ kind: p.kind, x: p.x, y: p.y, born: 0 })) : world.pickups;
+    const pickups = isGuest ? (match.view?.pickups ?? []) : world.pickups;
     const tNow = world.time;
     for (const p of pickups) {
       const bob = Math.sin((tNow + p.x * 3) * 3) * 0.03;
@@ -1080,7 +1189,8 @@ function TankMaze() {
     }
 
     // mines
-    const mines = isGuest ? match.guestMines : world.mines.map((mn) => ({ x: mn.x, y: mn.y, armed: mn.age >= 1 }));
+    // (a guest's own mine shows from the moment it drops it, until the host's turns up)
+    const mines = isGuest ? [...(match.view?.mines ?? []), ...match.own.mines.map((mn) => ({ x: mn.x, y: mn.y, armed: false }))] : world.mines.map((mn) => ({ x: mn.x, y: mn.y, armed: mn.age >= 1 }));
     for (const mn of mines) {
       const px = X(mn.x);
       const py = Y(mn.y);
@@ -1097,31 +1207,14 @@ function TankMaze() {
       c.globalAlpha = 1;
     }
 
-    // tanks (interpolated for guests)
-    const now = performance.now();
-    const snapFor = (): { x: number; y: number; a: number; alive: boolean; moving: boolean; special: Special | null }[] | null => {
-      if (!isGuest) return null;
-      const sn = match.snaps;
-      if (!sn.length) return null;
-      if (sn.length === 1) return sn[0].tanks;
-      const renderAt = now - 90;
-      const a = sn[sn.length - 2];
-      const b = sn[sn.length - 1];
-      const f = Math.max(0, Math.min(1.5, (renderAt - a.at) / Math.max(1, b.at - a.at)));
-      return b.tanks.map((tb, i) => {
-        const ta = a.tanks[i] ?? tb;
-        const da = Math.atan2(Math.sin(tb.a - ta.a), Math.cos(tb.a - ta.a));
-        return { x: ta.x + (tb.x - ta.x) * f, y: ta.y + (tb.y - ta.y) * f, a: ta.a + da * f, alive: tb.alive, moving: tb.moving, special: tb.special };
-      });
-    };
-    const viewTanks = snapFor() ?? world.tanks.map((t) => ({ x: t.x, y: t.y, a: t.a, alive: t.alive, moving: false, special: t.special }));
+    // tanks (a guest's world holds them as it shows them: its own as it drives it, the rest from syncView)
+    const viewTanks = world.tanks;
 
     // aim guide for laser holders
-    for (const t of world.tanks) {
-      const vt = viewTanks[t.id];
-      if (!vt || !vt.alive || vt.special !== 'laser') continue;
+    for (const vt of viewTanks) {
+      if (!vt.alive || vt.special !== 'laser') continue;
       const tr = traceShot(world, vt.x, vt.y, vt.a, 0, 4);
-      c.strokeStyle = COLORS[t.id];
+      c.strokeStyle = COLORS[vt.id];
       c.globalAlpha = 0.3;
       c.lineWidth = Math.max(1, cell * 0.03);
       c.setLineDash([cell * 0.12, cell * 0.1]);
@@ -1133,21 +1226,18 @@ function TankMaze() {
       c.globalAlpha = 1;
     }
 
-    for (let i = 0; i < viewTanks.length; i++) {
-      const vt = viewTanks[i];
-      const t = world.tanks[i];
-      if (!vt || (t && !t.alive && !isGuest)) continue;
-      if (!vt.alive && isGuest) continue;
-      const color = COLORS[i % COLORS.length];
+    for (const vt of viewTanks) {
+      if (!vt.alive) continue;
+      const color = COLORS[vt.id % COLORS.length];
       c.save();
       c.translate(X(vt.x), Y(vt.y));
       c.rotate(vt.a);
-      const rec = (t?.recoil ?? 0) * cell * 0.05;
+      const rec = vt.recoil * cell * 0.05;
       // treads
       c.fillStyle = '#33322f';
       const tw = cell * 0.5;
       const th = cell * 0.1;
-      const treadOff = ((t?.tread ?? 0) * cell) % (cell * 0.1);
+      const treadOff = (vt.tread * cell) % (cell * 0.1);
       for (const ty of [-cell * 0.2, cell * 0.2 - th]) {
         c.beginPath();
         c.roundRect(-tw / 2, ty, tw, th, th / 2);
@@ -1184,19 +1274,12 @@ function TankMaze() {
       c.restore();
     }
 
-    // shells
+    // shells (a guest flies its own here, and shows the host's copies of them only once it no longer does)
     const viewShells = (() => {
       if (!isGuest) return world.shells.map((s) => ({ x: s.x, y: s.y }));
-      const sn = match.snaps;
-      if (!sn.length) return [];
-      if (sn.length === 1) return sn[0].shells;
-      const renderAt = now - 90;
-      const a = sn[sn.length - 2];
-      const b = sn[sn.length - 1];
-      const f = Math.max(0, Math.min(1.5, (renderAt - a.at) / Math.max(1, b.at - a.at)));
-      const n = Math.min(a.shells.length, b.shells.length);
-      const out: { x: number; y: number }[] = [];
-      for (let i = 0; i < n; i++) out.push({ x: a.shells[i].x + (b.shells[i].x - a.shells[i].x) * f, y: a.shells[i].y + (b.shells[i].y - a.shells[i].y) * f });
+      const flying = covered(match.own);
+      const out: { x: number; y: number }[] = (match.view?.shells ?? []).filter((s) => s.id === undefined || !flying.has(s.id));
+      for (const shot of match.own.shots) if (shot.hidden === null) out.push({ x: shot.s.x, y: shot.s.y });
       return out;
     })();
     for (const s of viewShells) {
@@ -1338,7 +1421,8 @@ function TankMaze() {
     }
   };
 
-  useGameLoop(update, render);
+  // Online, every client keeps to the wall clock (a slow frame is caught up, not played in slow motion for everyone).
+  useGameLoop(update, render, { realtime: !!online });
 
   const touchPlayers = touch && m.current ? humanIds(m.current).slice(0, 2) : [];
   const lay = size.w ? layout(size.w, size.h) : null;

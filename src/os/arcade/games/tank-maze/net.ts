@@ -8,7 +8,13 @@
 //   end    host -> all,   reliable   the match is over: winner seat (or null), champ seat (null only on a draw), scores, rounds
 //   in     guest -> host, fast       this guest's input, with a monotonic fireCount so dropped packets
 //                                    don't drop shots (the host fires once per increment)
-import type { Special } from './logic.ts';
+//
+// Newer clients add optional fields an older one ignores (see netsync.ts for what they are for): a guest's input
+// carries a sequence number, where its own tank is (it drives itself) with the warp that pose is for, and the pose it
+// fired its latest shot from; the host's state carries shell ids (and, for a shell a guest fired, that shot's fire
+// count), each tank's warp, the last fire count it dealt with and the last input it heard; the round packet carries the
+// warps and the host's tick.
+import type { Pose, Special } from './logic.ts';
 
 const int = (v: unknown): v is number => Number.isInteger(v);
 const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -17,7 +23,8 @@ const KINDS: readonly Special[] = ['laser', 'triple', 'mine'];
 const kindIx = (k: Special | null) => (k === null ? -1 : KINDS.indexOf(k));
 
 export type NetTank = { x: number; y: number; a: number; alive: boolean; special: Special | null; moving: boolean };
-export type NetShell = { x: number; y: number; owner: number };
+/** `id` is the host's shell id; `tag` the fire count of the guest's shot that made it (newer hosts). */
+export type NetShell = { x: number; y: number; owner: number; id?: number; tag?: number };
 export type NetPickup = { kind: Special; x: number; y: number };
 export type NetMine = { x: number; y: number; armed: boolean };
 export type NetEvent = { id: number; k: 'fire' | 'kill' | 'pickup' | 'laser' | 'mine' | 'boom' | 'bounce'; a: number; b: number; x: number; y: number; pts?: number[] };
@@ -37,6 +44,9 @@ export type RoundPacket = {
   spawns: { x: number; y: number; a: number }[];
   /** The host's label for each tank, so everyone (late watchers too) names the tanks the same way. */
   names?: string[];
+  /** Newer hosts: each tank's warp (see netsync.ts), and the host's tick when the round began. */
+  warps?: number[];
+  tick?: number;
 };
 
 export type StatePacket = {
@@ -52,6 +62,10 @@ export type StatePacket = {
   beams: { owner: number; pts: number[] }[];
   scores: number[];
   events: NetEvent[];
+  /** Newer hosts, by tank: its warp, the last fire count dealt with for its guest, and the last input sequence heard from it. */
+  warps?: number[];
+  acks?: number[];
+  seqs?: number[];
 };
 
 /** The host's whole match roster, by tank slot. A spectator who joined mid-round never saw this round's round packet. */
@@ -73,13 +87,29 @@ export type RosterPacket = {
 
 /** `seats`/`bots` (by tank slot) let a guest that never got a round packet still match names and scores to tanks. */
 export type EndPacket = { k: 'end'; roomRound: number; winner: number | null; champ: number | null; scores: number[]; rounds: number; names?: string[]; seats?: number[]; bots?: number[] };
-/** `dir` is the player's screen heading (see TankInput), sent as milliradians in `d`. */
-export type InputPacket = { k: 'in'; roomRound: number; turn: -1 | 0 | 1; move: -1 | 0 | 1; fireCount: number; dir?: number; aim?: number };
+/**
+ * `dir` is the player's screen heading (see TankInput), sent as milliradians in `d`. Newer guests add `seq`, their own
+ * tank's `pose` with the `warp` it is for, `time` (their clock, ms, when they sent it), and `shot`, the pose they fired
+ * fire count `fireCount` from.
+ */
+export type InputPacket = { k: 'in'; roomRound: number; turn: -1 | 0 | 1; move: -1 | 0 | 1; fireCount: number; dir?: number; aim?: number; seq?: number; pose?: Pose; warp?: number; time?: number; shot?: Pose };
 
 export type Packet = RoundPacket | RosterPacket | StatePacket | EndPacket | InputPacket;
 
 const q = (n: number) => Math.round(n * 100);
 const NAME_MAX = 48;
+const COUNT_MAX = 1e9;
+const wrapA = (a: number) => Math.atan2(Math.sin(a), Math.cos(a));
+const packPose = (p: Pose) => [q(p.x), q(p.y), Math.round(wrapA(p.a) * 1000)];
+/** A pose as it reads after a trip through a packet (centi-cells, milliradians): a guest fires from this, so its shot and the host's match. */
+export const wirePose = (p: Pose): Pose => ({ x: q(p.x) / 100, y: q(p.y) / 100, a: Math.round(wrapA(p.a) * 1000) / 1000 });
+/** An optional pose; anything malformed reads as absent. */
+const poseOf = (v: unknown): Pose | undefined =>
+  Array.isArray(v) && v.length === 3 && v.every(int) && v[0] >= 0 && v[0] <= 2400 && v[1] >= 0 && v[1] <= 2400 && Math.abs(v[2]) <= 3200 ? { x: v[0] / 100, y: v[1] / 100, a: v[2] / 1000 } : undefined;
+/** An optional list of `n` counts; anything else reads as absent. */
+const countList = (v: unknown, n: number): number[] | undefined =>
+  Array.isArray(v) && v.length === n && v.every((c) => int(c) && c >= 0 && c <= COUNT_MAX) ? (v as number[]).slice() : undefined;
+const countOk = (v: unknown): v is number => int(v) && v >= 0 && v <= COUNT_MAX;
 /** An optional list of `n` tank names; anything else reads as absent. */
 const nameList = (v: unknown, n: number): string[] | undefined =>
   Array.isArray(v) && v.length === n && v.every((s) => typeof s === 'string') ? (v as string[]).map((s) => s.slice(0, NAME_MAX)) : undefined;
@@ -102,6 +132,8 @@ export const roundPacket = (p: Omit<RoundPacket, 'k'>) => ({
   level: p.level,
   spawns: p.spawns.map((s) => [q(s.x), q(s.y), Math.round(s.a * 1000)]),
   ...(p.names ? { names: p.names.map((n) => n.slice(0, NAME_MAX)) } : {}),
+  ...(p.warps ? { wp: p.warps } : {}),
+  ...(p.tick !== undefined ? { tk: p.tick } : {}),
 });
 
 export const statePacket = (p: Omit<StatePacket, 'k'>) => ({
@@ -112,12 +144,15 @@ export const statePacket = (p: Omit<StatePacket, 'k'>) => ({
   phase: p.phase,
   pt: Math.max(0, q(p.phaseT)),
   tanks: p.tanks.map((t) => [q(t.x), q(t.y), Math.round(t.a * 1000), t.alive ? 1 : 0, kindIx(t.special), t.moving ? 1 : 0]),
-  shells: p.shells.map((s) => [q(s.x), q(s.y), s.owner]),
+  shells: p.shells.map((s) => (s.id === undefined ? [q(s.x), q(s.y), s.owner] : s.tag === undefined ? [q(s.x), q(s.y), s.owner, s.id] : [q(s.x), q(s.y), s.owner, s.id, s.tag])),
   pickups: p.pickups.map((s) => [kindIx(s.kind), q(s.x), q(s.y)]),
   mines: p.mines.map((m) => [q(m.x), q(m.y), m.armed ? 1 : 0]),
   beams: p.beams.map((b) => [b.owner, b.pts.map(q)]),
   scores: p.scores,
   ev: p.events.map((e) => (e.pts ? [e.id, e.k, e.a, e.b, q(e.x), q(e.y), e.pts.map(q)] : [e.id, e.k, e.a, e.b, q(e.x), q(e.y)])),
+  ...(p.warps ? { wp: p.warps } : {}),
+  ...(p.acks ? { fa: p.acks } : {}),
+  ...(p.seqs ? { ak: p.seqs } : {}),
 });
 
 export const rosterPacket = (p: Omit<RosterPacket, 'k'>) => ({
@@ -158,6 +193,10 @@ export const inputPacket = (p: InputPacket) => ({
   fc: p.fireCount,
   ...(p.dir !== undefined && Number.isFinite(p.dir) ? { d: Math.round(p.dir * 1000) } : {}),
   ...(p.aim !== undefined && Number.isFinite(p.aim) ? { a: Math.round(p.aim * 1000) } : {}),
+  ...(p.seq !== undefined ? { q: p.seq } : {}),
+  ...(p.time !== undefined ? { t: Math.round(p.time) % COUNT_MAX } : {}),
+  ...(p.pose && p.warp !== undefined ? { p: packPose(p.pose), w: p.warp } : {}),
+  ...(p.shot ? { f: packPose(p.shot) } : {}),
 });
 
 // -----------------------------------------------------------------------------------------------------------------
@@ -206,7 +245,9 @@ export function parsePacket(value: unknown): Packet | null {
         spawns.push({ x: (s[0] as number) / 100, y: (s[1] as number) / 100, a: (s[2] as number) / 1000 });
       }
       const names = nameList(p.names, seats.length);
-      return { k: 'round', roomRound, round: p.round as number, seed: p.seed as number, cols, rows, seats, bots, scores, target, level: p.level as number, spawns, ...(names ? { names } : {}) };
+      const warps = countList(p.wp, seats.length);
+      const tick = countOk(p.tk) ? p.tk : undefined;
+      return { k: 'round', roomRound, round: p.round as number, seed: p.seed as number, cols, rows, seats, bots, scores, target, level: p.level as number, spawns, ...(names ? { names } : {}), ...(warps ? { warps } : {}), ...(tick !== undefined ? { tick } : {}) };
     }
     case 'roster': {
       if (!int(p.round) || !int(p.seed) || !int(p.cols) || !int(p.rows) || !int(p.target) || !int(p.level)) return null;
@@ -235,7 +276,12 @@ export function parsePacket(value: unknown): Packet | null {
       const shells: NetShell[] = [];
       for (const a of (p.shells as unknown[]).slice(0, 40)) {
         if (!Array.isArray(a) || !int(a[0]) || !int(a[1]) || !int(a[2])) return null;
-        shells.push({ x: (a[0] as number) / 100, y: (a[1] as number) / 100, owner: a[2] as number });
+        const shell: NetShell = { x: (a[0] as number) / 100, y: (a[1] as number) / 100, owner: a[2] as number };
+        if (countOk(a[3])) {
+          shell.id = a[3];
+          if (countOk(a[4])) shell.tag = a[4];
+        }
+        shells.push(shell);
       }
       const pickups: NetPickup[] = [];
       if (Array.isArray(p.pickups))
@@ -269,7 +315,10 @@ export function parsePacket(value: unknown): Packet | null {
         }
       const scores = Array.isArray(p.scores) && (p.scores as unknown[]).every((s) => int(s) && s >= 0 && s < 100) ? (p.scores as number[]).slice(0, 4) : null;
       if (!scores) return null;
-      return { k: 's', roomRound, tick: p.tick as number, phase, phaseT: (p.pt as number) / 100, tanks, shells, pickups, mines, beams, scores, events };
+      const warps = countList(p.wp, tanks.length);
+      const acks = countList(p.fa, tanks.length);
+      const seqs = countList(p.ak, tanks.length);
+      return { k: 's', roomRound, tick: p.tick as number, phase, phaseT: (p.pt as number) / 100, tanks, shells, pickups, mines, beams, scores, events, ...(warps ? { warps } : {}), ...(acks ? { acks } : {}), ...(seqs ? { seqs } : {}) };
     }
     case 'end': {
       if (!(p.winner === null || seatOk(p.winner)) || !Array.isArray(p.scores) || !int(p.rounds)) return null;
@@ -293,7 +342,24 @@ export function parsePacket(value: unknown): Packet | null {
       const dir = p.d === undefined ? undefined : (p.d as number) / 1000;
       if (p.a !== undefined && (!int(p.a) || Math.abs(p.a as number) > 3200)) return null;
       const aim = p.a === undefined ? undefined : (p.a as number) / 1000;
-      return { k: 'in', roomRound, turn: turn as -1 | 0 | 1, move: move as -1 | 0 | 1, fireCount: fc, ...(dir === undefined ? {} : { dir }), ...(aim === undefined ? {} : { aim }) };
+      const seq = countOk(p.q) ? p.q : undefined;
+      const time = countOk(p.t) ? p.t : undefined;
+      const pose = poseOf(p.p);
+      const warp = pose && countOk(p.w) ? p.w : undefined;
+      const shot = poseOf(p.f);
+      return {
+        k: 'in',
+        roomRound,
+        turn: turn as -1 | 0 | 1,
+        move: move as -1 | 0 | 1,
+        fireCount: fc,
+        ...(dir === undefined ? {} : { dir }),
+        ...(aim === undefined ? {} : { aim }),
+        ...(seq === undefined ? {} : { seq }),
+        ...(time === undefined ? {} : { time }),
+        ...(pose && warp !== undefined ? { pose, warp } : {}),
+        ...(shot ? { shot } : {}),
+      };
     }
   }
   return null;
