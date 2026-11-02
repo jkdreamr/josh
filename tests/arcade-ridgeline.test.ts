@@ -240,6 +240,21 @@ const putOn = (m: Match, a: number, x: number, z: number) => {
   b.onGround = true;
 };
 
+test('a person firing keeps their aim (the view never climbs), a bot still fights its recoil', () => {
+  const m = createMatch(worldFor('vale'), 'breach', 'normal', { seed: 2 });
+  m.phase = 'live';
+  m.phaseT = 999;
+  const you = m.actors[0];
+  you.guns = [{ id: 'kestrel', mag: 25, reserve: 75, fresh: false }, null, null];
+  you.slot = 0;
+  you.switchT = 0;
+  const pitch = 0.05;
+  const yaw = you.yaw;
+  for (let i = 0; i < 60; i++) step(m, DT, { ...idleInput(yaw, pitch), fire: true });
+  assert.ok(you.guns[0]!.mag < 20, 'it fired');
+  assert.ok(Math.abs(you.pitch - pitch) < 1e-9 && Math.abs(you.yaw - yaw) < 1e-9, 'aim unchanged');
+});
+
 test('breach: the charge plants on a site, pays the attack, and goes off when the fuse runs out', () => {
   const m = handMatch('vale', 8);
   const site = m.world.sites[1];

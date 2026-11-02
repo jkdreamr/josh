@@ -1407,9 +1407,11 @@ export function spreadOf(a: Actor) {
   if (!g) return 0;
   const w = WEAPONS[g.id];
   const sp = Math.hypot(a.body.vx, a.body.vz) / RUN;
-  let s = (w.base + a.bloom) * lerp(1, w.ads, a.ads);
+  // (a person's spray and running open up half as much as a bot's: shots go where the crosshair is)
+  const ease = a.bot ? 1 : 0.5;
+  let s = (w.base + a.bloom * ease) * lerp(1, w.ads, a.ads);
   // walking (Shift) and crouch walking stay nearly true; running throws shots wide
-  s += w.move * smoothstep(0.45, 1, sp) * lerp(1, Math.max(w.ads, 0.6), a.ads);
+  s += w.move * ease * smoothstep(0.45, 1, sp) * lerp(1, Math.max(w.ads, 0.6), a.ads);
   if (!a.body.onGround && !a.body.swim) s += w.air;
   if (a.crouch > 0.5 && a.body.onGround) s *= 0.8;
   return s;
@@ -1476,8 +1478,12 @@ function fire(m: Match, a: Actor) {
   if (!m.authority && a.id === m.me) m.net?.fire(g.id, ex, ey, ez, vel);
   const [up, side] = kickOf(w, a.spray);
   const k = (a.crouch > 0.5 ? 0.85 : 1) * (1 - a.ads * 0.15);
-  a.pitch = clamp(a.pitch + up * k * DEG, -1.5, 1.5);
-  a.yaw += side * k * DEG;
+  // the view climbs for bots only (their aim works against it); a person's crosshair stays where they put it, the
+  // kick shows in the gun in hand instead
+  if (a.bot) {
+    a.pitch = clamp(a.pitch + up * k * DEG, -1.5, 1.5);
+    a.yaw += side * k * DEG;
+  }
   a.kickP += up * k;
   a.bloom = Math.min(w.bloomMax, a.bloom + w.bloom);
   a.spray++;
@@ -1739,7 +1745,7 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
   // recoil comes back down once you stop firing
   if (a.kickP > 0 && m.time - a.lastShot > Math.min(0.2, interval(w) * 1.5)) {
     const back = Math.min(a.kickP, dt * (8 + a.kickP * 6)) * 0.75;
-    a.pitch -= back * DEG;
+    if (a.bot) a.pitch -= back * DEG;
     a.kickP = Math.max(0, a.kickP - back / 0.75);
   }
   // aiming
