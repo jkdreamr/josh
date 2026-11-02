@@ -1,16 +1,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as RPointerEvent, type WheelEvent as RWheelEvent } from 'react';
-import { GameShell, Segmented, defineSetting, useGameLoop, useKeys, useSetting, useShell, useThree } from '../../kit';
+import { GameShell, Segmented, defineSetting, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { meta } from './meta';
 import { chargeBeeps, playEvents } from './audio.ts';
+import { Score, type Mood } from './score.ts';
 import { useAssets } from './assets.ts';
 import { autoQuality, createView, flyover, type Quality, type View } from './gfx/view.ts';
 import { kitOf, paletteOf } from './gfx/soldiers.ts';
-import { Ammo, BannerView, BreachPrompts, BuyMenu, DeathPanel, Feed, Markers, Minimap, Reticle, RoyalePrompts, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi } from './hud.tsx';
+import { Ammo, BannerView, BreachPrompts, BuyMenu, DeathPanel, Feed, Markers, MedalView, Minimap, Reticle, RoyalePrompts, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type MedalPop, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi } from './hud.tsx';
 import { MAPS, MAP_IDS, type MapId } from './maps.ts';
-import { DEFUSE_HALF, DEFUSE_TIME, DEG, PLANT_TIME, canDefuse, canShop, createMatch, currentGun, eyeY, finalScore, idleInput, lootNear, owns, plantSite, spareOf, spreadOf, standings, step, viewDir, type Actor, type Input, type Match, type ShopItem } from './match.ts';
+import { DEFUSE_HALF, DEFUSE_TIME, DEG, PLANT_TIME, type Medal, canDefuse, canShop, createMatch, currentGun, eyeY, finalScore, idleInput, lootNear, owns, plantSite, spareOf, spreadOf, standings, step, viewDir, type Actor, type Input, type Match, type ShopItem } from './match.ts';
 import { HEAL, ROYALE_PLAYERS, ZONES, itemName, planeAt } from './royale.ts';
 import { newBrain } from './bots.ts';
+import { Session, type OnlineApi } from './online.ts';
 import { floorAt } from './terrain.ts';
 import { WEAPONS, type WeaponId } from './weapons.ts';
 import { buildWorld, cacheWorld, cachedWorld, type World } from './world.ts';
@@ -63,9 +65,9 @@ const gunOptions = [
   ['longbow', 'Longbow'],
 ] as const;
 
-export default function Game({ compact, onExit }: GameProps) {
+export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
-    <GameShell meta={meta} compact={compact} onExit={onExit} setup={<Setup />} remount={false}>
+    <GameShell meta={meta} compact={compact} onExit={onExit} roomCode={roomCode} setup={<Setup />} hostSetup={<OnlineSetup />} handlesLeavers remount={false}>
       <Stage />
     </GameShell>
   );
@@ -96,7 +98,119 @@ function Setup() {
   );
 }
 
+/** Room settings: online plays the 5v5, the host picks the map and how the bots in the empty seats play. */
+function OnlineSetup() {
+  const shell = useShell();
+  const online = useOnline();
+  const [map, setMap] = useSetting(MAP);
+  const [level, setLevel] = useSetting(LEVEL);
+  const [quality, setQuality] = useSetting(QUALITY);
+  const [sens, setSens] = useSetting(SENS);
+  const mouse = !shell.touch || finePointer();
+  const host = !online || online.isHost;
+  return (
+    <div className="g-ridgeline-setup">
+      <p className="g-ridgeline-note">Breach 5v5 online: people are split between the two sides, bots fill the empty seats, and a leaver's seat goes to a bot.</p>
+      {host ? (
+        <>
+          <Segmented label="Map" value={map} options={mapOptions} onChange={setMap} />
+          <Segmented label="Bots" value={level} options={levelOptions} onChange={setLevel} />
+        </>
+      ) : (
+        <p className="g-ridgeline-note">the host picks the map and the bots.</p>
+      )}
+      <Segmented label="Graphics" value={quality} options={qualityOptions} onChange={setQuality} />
+      {mouse && <Segmented label="Mouse" value={sens} options={sensOptions} onChange={setSens} />}
+    </div>
+  );
+}
+
 function Stage() {
+  const shell = useShell();
+  const online = useOnline();
+  if (online && shell.status !== 'ready') return <OnlineStage key={`online:${online.round}`} />;
+  return <SoloStage />;
+}
+
+/** The room's wrapper for the shell's online api, read fresh each call (seats change when the host leaves). */
+function useOnlineApi() {
+  const online = useOnline();
+  const ref = useRef(online);
+  ref.current = online;
+  return useMemo<OnlineApi>(
+    () => ({
+      get seat() {
+        return ref.current?.seat ?? 0;
+      },
+      get isHost() {
+        return !!ref.current?.isHost;
+      },
+      get round() {
+        return ref.current?.round ?? 0;
+      },
+      get players() {
+        return ref.current?.players ?? [];
+      },
+      send: (d, o) => {
+        try {
+          ref.current?.send(d, o);
+        } catch {
+          /* a full or closed channel: the next packet tries again */
+        }
+      },
+      onMessage: (fn) => ref.current?.onMessage(fn) ?? (() => {}),
+    }),
+    [],
+  );
+}
+
+/** One online match: its session, the map the host picked (a guest waits to hear it), then the game itself. */
+function OnlineStage() {
+  const online = useOnline();
+  const api = useOnlineApi();
+  const [mapSetting] = useSetting(MAP);
+  const [level] = useSetting(LEVEL);
+  const [session, setSession] = useState<Session | null>(null);
+  const [mapId, setMapId] = useState<MapId | null>(null);
+  useEffect(() => {
+    const map: MapId = mapSetting === 'random' ? MAP_IDS[Math.floor(Math.random() * MAP_IDS.length)] : mapSetting;
+    const s = new Session(api, { map, level });
+    if (s.map) setMapId(s.map);
+    s.onMap = (id) => setMapId(id);
+    setSession(s);
+    // until the host's match is in, ask for it again now and then (the first ask can arrive before the host is ready)
+    const ask = window.setInterval(() => s.wait(), 1000);
+    // dev only: lets the online harness look into the session
+    if (import.meta.env.DEV) (window as unknown as { __rlSession?: Session }).__rlSession = s;
+    return () => {
+      if (import.meta.env.DEV) delete (window as unknown as { __rlSession?: Session }).__rlSession;
+      window.clearInterval(ask);
+      s.onMap = null;
+      s.dispose();
+    };
+  }, [api]);
+  // people leaving and joining: a leaver's soldier is a bot from then on, a latecomer takes a bot's place
+  useEffect(() => {
+    if (online) session?.playersChanged(online.players);
+  }, [session, online?.players]);
+  // the host leaving: the room renumbers seats, and the new host's game takes the match over
+  const seen = useRef(0);
+  useEffect(() => {
+    if (!online || !session) return;
+    const ours = online.handedOff.filter((h) => h.round === online.round);
+    for (const h of ours.slice(seen.current)) session.handOff(h.from);
+    seen.current = ours.length;
+  }, [session, online?.handoffs, online?.handedOff]);
+  if (!session || !mapId)
+    return (
+      <div className="g-ridgeline-wait" role="status">
+        waiting for the host's match…
+      </div>
+    );
+  return <Play key={mapId} mapId={mapId} royale={false} session={session} />;
+}
+
+function SoloStage() {
   const shell = useShell();
   const [mapSetting] = useSetting(MAP);
   // Random picks a fresh map for each match; a set map always plays that map
@@ -119,6 +233,35 @@ function myName() {
 }
 
 const TEAM_COLORS = ['#7cc6ff', '#ff7a5c'];
+
+/** A medal's words and how big it shows. */
+function medalText(kind: Medal, n: number): Omit<MedalPop, 'key'> {
+  switch (kind) {
+    case 'first':
+      return { title: 'First blood', sub: '', tier: 1 };
+    case 'head':
+      return { title: 'Headshot', sub: '', tier: 1 };
+    case 'double':
+      return { title: 'Double kill', sub: '', tier: 1 };
+    case 'triple':
+      return { title: 'Triple kill', sub: '', tier: 2 };
+    case 'quad':
+      return { title: 'Quad kill', sub: 'one more for the ace', tier: 2 };
+    case 'ace':
+      return { title: 'Ace', sub: 'the whole team, by yourself', tier: 3 };
+    default:
+      return { title: 'Clutch', sub: `won it 1 v ${n}`, tier: 3 };
+  }
+}
+
+/** What the music should do: strings while buying, the march once live, a driving pulse when it is close. */
+function moodOf(m: Match): Mood {
+  if (m.phase === 'over') return 'off';
+  if (m.mode !== 'breach') return m.phase === 'live' ? 'march' : 'calm';
+  if (m.phase !== 'live') return 'calm';
+  const left = [0, 1].map((t) => m.actors.reduce((n, a) => n + (a.alive && a.team === t ? 1 : 0), 0));
+  return m.charge.state === 'planted' || Math.min(left[0], left[1]) <= 1 ? 'urgent' : 'march';
+}
 const hex = (n: number) => `#${n.toString(16).padStart(6, '0')}`;
 const wrapAngle = (a: number) => {
   let d = a % (Math.PI * 2);
@@ -127,15 +270,20 @@ const wrapAngle = (a: number) => {
   return d;
 };
 
-type Touch = { stick: number | null; sx: number; sy: number; mx: number; mz: number; look: number | null; lx: number; ly: number; fire: number | null; fx: number; fy: number; ads: boolean; crouch: boolean; jump: boolean; reload: boolean; swap: boolean; frag: boolean; smoke: boolean; use: boolean; heal: boolean; hold: boolean };
+type Touch = { stick: number | null; sx: number; sy: number; mx: number; mz: number; look: number | null; lx: number; ly: number; fire: number | null; fx: number; fy: number; ads: boolean; crouch: boolean; jump: boolean; reload: boolean; swap: boolean; frag: boolean; smoke: boolean; flash: boolean; use: boolean; heal: boolean; hold: boolean };
 
 /** Royale weapon keys 1, 2, 3: the two long guns, then the sidearm. */
 const ROYALE_SLOTS = [0, 2, 1] as const;
 
-function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
+function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean; session?: Session | null }) {
   const shell = useShell();
   const shellRef = useRef(shell);
   shellRef.current = shell;
+  const online = useOnline();
+  const onlineRef = useRef(online);
+  onlineRef.current = online;
+  const netRef = useRef(session);
+  netRef.current = session;
   const THREE = useThree();
   const assets = useAssets();
   const [mode] = useSetting(MODE);
@@ -154,6 +302,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
   const matchRef = useRef<{ m: Match; round: number } | null>(null);
   const [hud, setHud] = useState<Hud>(() => blankHud(mode));
   const [banner, setBanner] = useState<Banner | null>(null);
+  const [medal, setMedal] = useState<MedalPop | null>(null);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [buyOpen, setBuyOpen] = useState(false);
   const buyRef = useRef(false);
@@ -172,7 +321,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
   // input state
   const look = useRef({ dx: 0, dy: 0 });
   const mouse = useRef({ fire: false, ads: false, wheel: 0 });
-  const touch = useRef<Touch>({ stick: null, sx: 0, sy: 0, mx: 0, mz: 0, look: null, lx: 0, ly: 0, fire: null, fx: 0, fy: 0, ads: false, crouch: false, jump: false, reload: false, swap: false, frag: false, smoke: false, use: false, heal: false, hold: false });
+  const touch = useRef<Touch>({ stick: null, sx: 0, sy: 0, mx: 0, mz: 0, look: null, lx: 0, ly: 0, fire: null, fx: 0, fy: 0, ads: false, crouch: false, jump: false, reload: false, swap: false, frag: false, smoke: false, flash: false, use: false, heal: false, hold: false });
   const unlockOnPurpose = useRef(false);
 
   // per match view state
@@ -188,7 +337,15 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
   const time = useRef(0);
   const lastLook = useRef({ yaw: 0, pitch: 0 });
   const lastRender = useRef(0);
+  /** When the loop last ran (the online host's hidden tab steps the match from a worker's beat instead). */
+  const lastFrame = useRef(0);
   const firstBuy = useRef(true);
+  const score = useRef(new Score());
+  // the score plays only while a round does (the Music switch and mute are checked as it plays)
+  useEffect(() => {
+    if (shell.status !== 'playing') score.current.stop();
+  }, [shell.status]);
+  useEffect(() => () => score.current.stop(), []);
 
   // the world: from the cache, or built in a worker (main thread if workers fail)
   useEffect(() => {
@@ -253,7 +410,10 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
     if (!matchRef.current || matchRef.current.round !== s.round) {
       const st = settings.current;
       const mode = royale ? 'royale' : st.mode === 'royale' ? 'breach' : st.mode;
-      const m = createMatch(world, mode, st.level, { name: myName(), dmPick: st.dmGun as WeaponId });
+      // online: the session's match (a guest's mirror waits for the host's word)
+      const net = netRef.current;
+      const m = net ? net.attach(world) : createMatch(world, mode, st.level, { name: myName(), dmPick: st.dmGun as WeaponId });
+      if (!m) return null;
       matchRef.current = { m, round: s.round };
       camY.current = null;
       overAt.current = null;
@@ -262,13 +422,14 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
       firstBuy.current = true;
       setFeed([]);
       setBuyOpen(false);
-      setHud(blankHud(st.mode));
+      setHud(blankHud(m.mode));
       s.setScore(null);
       // the first round's buy phase starts with the match, before any frame could report it
       if (m.mode === 'breach') {
-        const atk = m.attack === m.actors[0].team;
-        setBanner({ title: atk ? 'Round 1. You attack' : 'Round 1. You defend', sub: atk ? 'plant the charge on A or B, or knock them all out' : 'stop the plant, or defuse the charge. buy first', tone: 'info', key: Date.now() });
-        if (!touchRef.current) {
+        const atk = m.attack === m.actors[m.me].team;
+        // (online, a guest can arrive any round)
+        setBanner({ title: `Round ${m.round}. You ${atk ? 'attack' : 'defend'}`, sub: atk ? 'plant the charge on A or B, or knock them all out' : 'stop the plant, or defuse the charge. buy first', tone: 'info', key: Date.now() });
+        if (!touchRef.current && canShop(m, m.actors[m.me])) {
           firstBuy.current = false;
           setBuyOpen(true);
         }
@@ -277,6 +438,41 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
     }
     return matchRef.current.m;
   }, [world]);
+
+  // The online host's tab hidden or minimized: no frames, but the room still needs the match to go on. A worker's beat
+  // (page timers slow to a crawl in hidden tabs) runs the rules, the bots and the traffic whenever frames stop.
+  useEffect(() => {
+    if (!session || !world) return;
+    let last = performance.now();
+    const beat = () => {
+      const now = performance.now();
+      const gap = Math.min(0.25, (now - last) / 1000);
+      last = now;
+      const m = matchRef.current?.m;
+      if (!session.isHost || !m || now - lastFrame.current < 250 || shellRef.current.status !== 'playing' || m.phase === 'over') return;
+      // your soldier stands where it is while you are away
+      const you = m.actors[m.me];
+      for (let t = 0; t < gap - 1e-6; t += 1 / 30) {
+        session.before(m);
+        session.using = false;
+        step(m, Math.min(1 / 30, gap - t), idleInput(you.yaw, you.pitch));
+        session.after(m);
+      }
+    };
+    let worker: Worker | null = null;
+    try {
+      worker = new Worker(new URL('./ticker.worker.ts', import.meta.url), { type: 'module' });
+      worker.onmessage = beat;
+      worker.postMessage(50);
+    } catch {
+      worker = null;
+    }
+    const timer = worker ? 0 : window.setInterval(beat, 50);
+    return () => {
+      worker?.terminate();
+      window.clearInterval(timer);
+    };
+  }, [session, world]);
 
   // pointer lock: click to capture the mouse; losing it (Esc) pauses
   useEffect(() => {
@@ -343,7 +539,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
     if (code === 'Tab') e?.preventDefault();
     if (code === 'KeyB') {
       const m = matchRef.current?.m;
-      if (m && canShop(m, m.actors[0])) openBuy(!buyRef.current);
+      if (m && canShop(m, m.actors[m.me])) openBuy(!buyRef.current);
       else if (buyRef.current) openBuy(false);
     }
     if (code === 'Escape' && buyRef.current) openBuy(false);
@@ -365,11 +561,11 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
 
   const pushBanner = (title: string, sub: string, tone: Banner['tone']) => setBanner({ title, sub, tone, key: Date.now() + Math.random() });
 
-  const nameColor = (m: Match, a: Actor) => (m.mode === 'breach' ? TEAM_COLORS[a.team] : hex(paletteOf(m, a).band));
+  const nameColor = (m: Match, a: Actor) => (m.mode === 'breach' ? TEAM_COLORS[a.team === m.actors[m.me].team ? 0 : 1] : hex(paletteOf(m, a).band));
 
   /** The actor the camera looks out of: you, or a teammate you watch while you are out. */
   const watched = (m: Match) => {
-    const you = m.actors[0];
+    const you = m.actors[m.me];
     if (you.alive || m.mode !== 'breach') return you;
     const mates = m.actors.filter((a) => a.alive && a.team === you.team && a !== you);
     if (!mates.length) return you;
@@ -379,7 +575,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
   const finish = (m: Match) => {
     if (finished.current) return;
     finished.current = true;
-    const you = m.actors[0];
+    const you = m.actors[m.me];
     const score = finalScore(m);
     const mapName = MAPS[mapId].name;
     const lvl = settings.current.level;
@@ -391,10 +587,20 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
         board: `royale-${lvl}`,
       });
     } else if (m.mode === 'breach') {
-      const won = m.winner === 0;
+      const won = m.winner === you.team;
+      // online: everyone reports who won (the people on the winning side), so the room agrees
+      const net = netRef.current;
+      if (net && onlineRef.current) {
+        const r = net.result();
+        try {
+          onlineRef.current.reportResult(onlineRef.current.round, r.winner, r.team.length ? r.team : undefined);
+        } catch {
+          /* the room is gone: nothing to tell */
+        }
+      }
       shellRef.current.gameOver(score, {
         title: m.winner < 0 ? 'Draw' : won ? 'Victory' : 'Defeat',
-        detail: `${m.score[0]} to ${m.score[1]} on ${mapName}. you went ${you.kills}/${you.deaths}/${you.assists} with ${Math.round(you.damage)} damage.`,
+        detail: `${m.score[you.team]} to ${m.score[1 - you.team]} on ${mapName}. you went ${you.kills}/${you.deaths}/${you.assists} with ${Math.round(you.damage)} damage.`,
         board: `breach-${m.level}`,
       });
     } else {
@@ -415,7 +621,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
       if (shellRef.current.status !== 'playing') return;
       const m = ensureMatch();
       if (!m) return;
-      const you = m.actors[0];
+      const you = m.actors[m.me];
       const st = settings.current;
       const t = touch.current;
       const k = keys;
@@ -462,25 +668,31 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
           if (mouse.current.wheel !== 0 || t.swap) inp.slot = you.slot === 0 ? 1 : 0;
           if (k.pressed('Digit3', 'KeyG') || t.frag) inp.throw = 'frag';
           if (k.pressed('Digit4', 'KeyQ') || t.smoke) inp.throw = 'smoke';
+          if (k.pressed('Digit5', 'KeyX') || t.flash) inp.throw = 'flash';
           // plant and defuse: held
           inp.use = k.down('KeyF', 'KeyE') || t.hold;
         }
       }
       mouse.current.wheel = 0;
-      t.jump = t.reload = t.swap = t.frag = t.smoke = t.use = t.heal = false;
+      t.jump = t.reload = t.swap = t.frag = t.smoke = t.flash = t.use = t.heal = false;
       const p = pending.current;
       if (p.buy) inp.buy = p.buy;
       p.buy = null;
       setBoard(k.down('Tab'));
       if (!touchRef.current) setBigMap(k.down('KeyM'));
 
+      const net = netRef.current;
+      net?.before(m);
+      lastFrame.current = performance.now();
+      if (net) net.using = inp.use;
       step(m, dt, inp);
+      net?.after(m);
 
       // feedback from what happened
       for (const e of m.events) {
         if (e.t === 'hit') {
-          if (e.a === 0 && e.v !== 0) fast.current?.hit(e.kill, e.zone === 'head');
-          if (e.v === 0) {
+          if (e.a === m.me && e.v !== m.me) fast.current?.hit(e.kill, e.zone === 'head');
+          if (e.v === m.me) {
             const att = m.actors[e.a];
             if (att) fast.current?.hurt(wrapAngle(Math.atan2(-(att.body.x - you.body.x), -(att.body.z - you.body.z)) - you.yaw) * -1);
             damageFx.current = Math.min(1, damageFx.current + e.dmg / 60);
@@ -491,9 +703,9 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
           const ka = m.actors[kk.killer];
           const va = m.actors[kk.victim];
           const blast = kk.w === 'blast';
-          const item: FeedItem = { id: ++feedId.current, killer: blast ? 'The charge' : (ka?.name ?? (kk.w === 'zone' ? 'The zone' : '?')), victim: va.name, kc: ka && !blast ? nameColor(m, ka) : '#e8743a', vc: nameColor(m, va), w: kk.w === 'frag' ? 'Frag' : kk.w === 'zone' ? 'Zone' : kk.w === 'blast' ? 'Blast' : WEAPONS[kk.w].name, head: kk.head, mine: kk.killer === 0 || kk.victim === 0 };
+          const item: FeedItem = { id: ++feedId.current, killer: blast ? 'The charge' : (ka?.name ?? (kk.w === 'zone' ? 'The zone' : '?')), victim: va.name, kc: ka && !blast ? nameColor(m, ka) : '#e8743a', vc: nameColor(m, va), w: kk.w === 'frag' ? 'Frag' : kk.w === 'zone' ? 'Zone' : kk.w === 'blast' ? 'Blast' : WEAPONS[kk.w].name, head: kk.head, mine: kk.killer === m.me || kk.victim === m.me };
           setFeed((f) => [...f.slice(-5), item]);
-          if (kk.victim === 0) {
+          if (kk.victim === m.me) {
             deathLook.current = { yaw: you.yaw, pitch: you.pitch };
             spec.current = 0;
           }
@@ -512,7 +724,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
             if (buyRef.current) openBuy(false);
             if (m.mode === 'breach') {
               const atk = m.attack === you.team;
-              const carry = m.charge.holder === 0;
+              const carry = m.charge.holder === m.me;
               pushBanner(atk ? (carry ? 'You have the charge' : 'Go') : 'Hold the sites', atk ? (carry ? 'plant it on A or B: stand on the site and hold F' : 'push a site with your team and get the charge planted') : 'watch the ways in. if they plant, defuse it: hold F on the charge', 'info');
             }
           }
@@ -524,32 +736,37 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
         if (e.t === 'round') {
           const won = e.winner === you.team;
           const why = e.why === 'blast' ? 'the charge went off' : e.why === 'defuse' ? 'the charge was defused' : e.why === 'elim' ? (won ? 'all knocked out' : 'your team is out') : 'time ran out before a plant';
-          pushBanner(e.winner < 0 ? 'Round drawn' : won ? 'Round won' : 'Round lost', why, e.winner < 0 ? 'info' : won ? 'win' : 'loss');
+          // and how your round went
+          const mine = m.mode === 'breach' ? `. you: ${you.roundKills} ${you.roundKills === 1 ? 'kill' : 'kills'}, ${Math.round(you.roundDmg)} damage` : '';
+          pushBanner(e.winner < 0 ? 'Round drawn' : won ? 'Round won' : 'Round lost', why + mine, e.winner < 0 ? 'info' : won ? 'win' : 'loss');
         }
         if (e.t === 'plant' && e.done) {
           const atk = m.attack === you.team;
           pushBanner(`Charge planted on ${m.world.sites[e.site].name}`, atk ? 'guard it until it goes off' : 'get to it and defuse it: hold F on the charge', atk ? 'win' : 'loss');
         }
-        if (e.t === 'carry' && e.a === 0) pushBanner('You have the charge', 'plant it on A or B: stand on the site and hold F', 'info');
+        if (e.t === 'carry' && e.a === m.me) pushBanner('You have the charge', 'plant it on A or B: stand on the site and hold F', 'info');
         if (e.t === 'dropcharge' && m.attack === you.team && you.alive) pushBanner('The charge is down', 'pick it up: walk over it', 'info');
         if (e.t === 'sides') pushBanner('Switching sides', 'everyone starts over with a pistol', 'info');
+        if (e.t === 'medal' && e.a === m.me) setMedal({ ...medalText(e.kind, e.n), key: Date.now() + Math.random() });
       }
       damageFx.current = Math.max(0, damageFx.current - dt * 1.4);
       flashFx.current = Math.max(0, flashFx.current - dt * 3);
       if (m.phase === 'over') {
         if (overAt.current === null) {
           overAt.current = time.current;
-          const won = m.winner === 0;
+          const won = m.mode === 'breach' ? m.winner === you.team : m.winner === m.me;
           if (m.mode === 'royale') pushBanner(won ? 'Last one standing' : `#${you.place} of ${m.actors.length}`, `${you.kills} ${you.kills === 1 ? 'kill' : 'kills'}`, won ? 'win' : 'loss');
-          else pushBanner(m.mode === 'breach' ? (m.winner < 0 ? 'Draw' : won ? 'Victory' : 'Defeat') : won ? 'You won' : `${m.actors[m.winner]?.name ?? ''} wins`, m.mode === 'breach' ? `${m.score[0]} to ${m.score[1]}` : '', won ? 'win' : 'loss');
+          else pushBanner(m.mode === 'breach' ? (m.winner < 0 ? 'Draw' : won ? 'Victory' : 'Defeat') : won ? 'You won' : `${m.actors[m.winner]?.name ?? ''} wins`, m.mode === 'breach' ? `${m.score[you.team]} to ${m.score[1 - you.team]}` : '', won ? 'win' : 'loss');
         }
         if (time.current - overAt.current > 3.2) finish(m);
       }
 
       // sound from where the camera is
       const eyeA = watched(m);
-      playEvents(m, m.events, eyeA.body.x, eyeA.body.z, 0);
-      chargeBeeps(m, eyeA.body.x, eyeA.body.z);
+      const ear = { x: eyeA.body.x, z: eyeA.body.z, yaw: eyeA.yaw };
+      playEvents(m, m.events, ear, m.me);
+      chargeBeeps(m, ear);
+      score.current.tick(moodOf(m));
 
       // the HUD, ten or so times a second
       hudClock.current -= dt;
@@ -573,7 +790,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
         view.render({ m: null, dt, time: time.current, eye: f, fov: baseV, hide: -1, vm: null, fired: false, damage: 0, low: 0, flash: 0 });
         return;
       }
-      const you = m.actors[0];
+      const you = m.actors[m.me];
       const a = watched(m);
       let eye = { x: a.body.x, y: eyeY(a), z: a.body.z, yaw: a.yaw, pitch: a.pitch };
       // smooth steps up (stairs, crates) without lagging falls
@@ -638,7 +855,9 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
               kit: kitOf(m, a),
             }
           : null;
-      view.render({ m, dt, time: time.current, eye, fov, hide, vm: vmState, fired, damage: damageFx.current, low: a.alive ? Math.max(0, (35 - a.hp) / 35) : 0, flash: flashFx.current });
+      // a flashbang: white while it lasts, fading out over its last second or so
+      const blind = a.alive && a.blindT > 0 ? Math.min(1, a.blindT / Math.min(1.2, a.blind0)) : 0;
+      view.render({ m, dt, time: time.current, eye, fov, hide, vm: vmState, fired, damage: damageFx.current, low: a.alive ? Math.max(0, (35 - a.hp) / 35) : 0, flash: Math.max(flashFx.current, blind) });
       // fast HUD bits: crosshair spread in pixels, markers, minimap
       const fh = fast.current;
       if (fh) {
@@ -712,7 +931,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
 
   // the HUD snapshot
   const snapshot = (m: Match): Hud => {
-    const you = m.actors[0];
+    const you = m.actors[m.me];
     const a = watched(m);
     const g = currentGun(a);
     const w = g ? WEAPONS[g.id] : null;
@@ -720,14 +939,15 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
     const top = st[0];
     const killer = m.actors[you.killer];
     const owned: Hud['owned'] = {};
-    for (const i of ['wren', 'bulwark', 'hornet', 'mauler', 'kestrel', 'lancer', 'longbow', 'light', 'heavy', 'frag', 'smoke'] as ShopItem[]) owned[i] = owns(you, i);
+    for (const i of ['wren', 'bulwark', 'hornet', 'mauler', 'kestrel', 'lancer', 'longbow', 'light', 'heavy', 'frag', 'smoke', 'flash'] as ShopItem[]) owned[i] = owns(you, i);
     return {
       mode: m.mode,
       phase: m.phase,
       timer: m.phaseT,
       round: m.round,
-      score: [m.score[0], m.score[1]],
-      pips: [m.actors.filter((o) => o.team === 0).map((o) => o.alive), m.actors.filter((o) => o.team === 1).map((o) => o.alive)],
+      // yours first, whichever side you are
+      score: [m.score[you.team] ?? 0, m.score[1 - you.team] ?? 0],
+      pips: [m.actors.filter((o) => o.team === you.team).map((o) => o.alive), m.actors.filter((o) => o.team !== you.team).map((o) => o.alive)],
       breach: m.mode === 'breach' ? breachHud(m, you) : null,
       hp: a.hp,
       armor: a.armor,
@@ -737,6 +957,8 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
       guns: [a.guns[0]?.id ?? null, a.guns[1]?.id ?? null, a.guns[2]?.id ?? null],
       frags: a.frags,
       smokes: a.smokes,
+      flashes: a.flashes,
+      blind: a.alive && a.blindT > 0 ? Math.min(1, a.blindT / Math.min(1.2, a.blind0)) : 0,
       canBuy: canShop(m, you),
       alive: you.alive,
       dead: !you.alive ? { by: you.killedWith === 'zone' ? 'the zone' : you.killedWith === 'blast' ? 'the charge' : killer && killer !== you ? killer.name : 'yourself', w: you.killedWith === 'frag' ? 'Frag' : you.killedWith === 'zone' ? 'out in the open too long' : you.killedWith === 'blast' ? 'caught in the blast' : you.killedWith ? WEAPONS[you.killedWith].name : '', head: you.killedHead, respawn: you.respawnT } : null,
@@ -745,7 +967,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
       dm: m.mode === 'dm' ? { kills: you.kills, top: top === you ? (st[1]?.kills ?? 0) : top.kills, topName: top === you ? (st[1]?.name ?? '') : top.name, place: st.indexOf(you) + 1, total: m.actors.length } : null,
       scoped: !!w?.scope && a.alive && a.ads > 0.85,
       reload: a.reloadT > 0 && w ? 1 - a.reloadT / w.reload : 0,
-      rows: (m.mode === 'breach' ? [...m.actors].sort((x, y) => x.team - y.team || y.cs - x.cs) : m.mode === 'royale' ? royaleRows(m) : st).map((o) => ({ name: o.name, team: m.mode === 'breach' ? o.team : -1, k: o.kills, d: o.deaths, a: o.assists, cs: Math.round(o.cs), credits: m.mode === 'breach' && o.team === you.team ? o.credits : null, alive: o.alive, you: o === you })),
+      rows: (m.mode === 'breach' ? [...m.actors].sort((x, y) => (x.team === you.team ? 0 : 1) - (y.team === you.team ? 0 : 1) || y.cs - x.cs) : m.mode === 'royale' ? royaleRows(m) : st).map((o) => ({ name: o.name, team: m.mode === 'breach' ? (o.team === you.team ? 0 : 1) : -1, k: o.kills, d: o.deaths, a: o.assists, cs: Math.round(o.cs), credits: m.mode === 'breach' && o.team === you.team ? o.credits : null, alive: o.alive, you: o === you })),
       owned,
       royale: m.mode === 'royale' && m.zone ? royaleHud(m, you) : null,
     };
@@ -754,12 +976,12 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
   /** The breach part of the HUD. */
   const breachHud = (m: Match, you: Actor): NonNullable<Hud['breach']> => {
     const c = m.charge;
-    const mine = c.plantBy === 0 ? 'plant' : c.defuseBy === 0 ? 'defuse' : null;
-    const mate = c.plantBy > 0 && m.actors[c.plantBy].team === you.team ? `${m.actors[c.plantBy].name} is planting` : c.defuseBy > 0 && m.actors[c.defuseBy].team === you.team ? `${m.actors[c.defuseBy].name} is defusing` : null;
+    const mine = c.plantBy === m.me ? 'plant' : c.defuseBy === m.me ? 'defuse' : null;
+    const mate = c.plantBy >= 0 && c.plantBy !== m.me && m.actors[c.plantBy].team === you.team ? `${m.actors[c.plantBy].name} is planting` : c.defuseBy >= 0 && c.defuseBy !== m.me && m.actors[c.defuseBy].team === you.team ? `${m.actors[c.defuseBy].name} is defusing` : null;
     return {
       side: m.attack === you.team ? 'attack' : 'defend',
       charge: c.state,
-      carrying: c.state === 'carried' && c.holder === 0,
+      carrying: c.state === 'carried' && c.holder === m.me,
       site: c.site >= 0 ? m.world.sites[c.site].name : null,
       fuse: c.fuse,
       work: mine,
@@ -799,7 +1021,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
   const royaleRows = (m: Match) => {
     const all = [...m.actors].sort((x, y) => y.kills - x.kills || Number(y.alive) - Number(x.alive) || y.damage - x.damage);
     const top = all.slice(0, 15);
-    if (!top.includes(m.actors[0])) top.push(m.actors[0]);
+    if (!top.includes(m.actors[m.me])) top.push(m.actors[m.me]);
     return top;
   };
 
@@ -823,13 +1045,13 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
         t.ly = e.clientY;
         // tapping while out switches who you watch
         const m = matchRef.current?.m;
-        if (m && !m.actors[0].alive) spec.current++;
+        if (m && !m.actors[m.me].alive) spec.current++;
       }
       return;
     }
     if (touchUi) setTouchUi(false);
     const m = matchRef.current?.m;
-    if (m && !m.actors[0].alive && locked) spec.current++;
+    if (m && !m.actors[m.me].alive && locked) spec.current++;
     if (document.pointerLockElement !== hostRef.current) {
       lock();
       return;
@@ -925,19 +1147,19 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
       autopilot(level: 'easy' | 'normal' | 'hard' = 'hard') {
         const m = matchRef.current?.m;
         if (!m) return;
-        m.actors[0].bot = true;
-        m.actors[0].brain = newBrain(level, 0);
+        m.actors[m.me].bot = true;
+        m.actors[m.me].brain = newBrain(level, 0);
       },
       skip(sec: number) {
         const m = matchRef.current?.m;
         if (!m) return;
-        for (let t = 0; t < sec && m.phase !== 'over'; t += 1 / 30) step(m, 1 / 30, idleInput(m.actors[0].yaw, m.actors[0].pitch));
+        for (let t = 0; t < sec && m.phase !== 'over'; t += 1 / 30) step(m, 1 / 30, idleInput(m.actors[m.me].yaw, m.actors[m.me].pitch));
       },
       aim(yaw: number, pitch: number) {
         const m = matchRef.current?.m;
         if (m) {
-          m.actors[0].yaw = yaw;
-          m.actors[0].pitch = pitch;
+          m.actors[m.me].yaw = yaw;
+          m.actors[m.me].pitch = pitch;
         }
       },
     };
@@ -974,6 +1196,7 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
           <Reticle ref={fast} shotgun={gunCls === 'shotgun'} />
           <Scope on={hud.scoped} />
           <BannerView b={banner} />
+          <MedalView m={medal} />
           <DeathPanel h={hud} touch={touchUi} />
           <RoyalePrompts h={hud} touch={touchUi} />
           <BreachPrompts h={hud} touch={touchUi} />
@@ -1014,6 +1237,11 @@ function Play({ mapId, royale }: { mapId: MapId; royale: boolean }) {
               <button type="button" className="g-ridgeline-btn is-smoke" onPointerDown={tap((t) => (t.smoke = true))}>
                 Smoke
               </button>
+              {hud.breach && (
+                <button type="button" className="g-ridgeline-btn is-flash" onPointerDown={tap((t) => (t.flash = true))}>
+                  Flash
+                </button>
+              )}
               {hud.royale && (
                 <>
                   <button type="button" className="g-ridgeline-btn is-use" data-on={hud.royale.pickup ? '1' : '0'} onPointerDown={tap((t) => (t.use = true))}>

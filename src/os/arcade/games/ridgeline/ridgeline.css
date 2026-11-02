@@ -607,6 +607,64 @@
 .g-ridgeline .g-ridgeline-banner.is-loss b {
   color: var(--g-ridgeline-them);
 }
+/* medals: your highlights, under the crosshair */
+.g-ridgeline .g-ridgeline-medal {
+  position: absolute;
+  top: calc(50% + 60px);
+  left: 50%;
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  white-space: nowrap;
+  animation: g-ridgeline-medal 1.9s ease forwards;
+}
+.g-ridgeline .g-ridgeline-medal b {
+  font-family: var(--g-ridgeline-display);
+  font-size: 26px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  line-height: 1;
+  color: #f2efe6;
+  text-shadow: 0 2px 8px rgba(0, 0, 0, 0.7);
+}
+.g-ridgeline .g-ridgeline-medal small {
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.85;
+  text-shadow: 0 1px 4px rgba(0, 0, 0, 0.8);
+}
+.g-ridgeline .g-ridgeline-medal[data-tier='2'] b {
+  font-size: 32px;
+  color: var(--g-ridgeline-gold);
+}
+.g-ridgeline .g-ridgeline-medal[data-tier='3'] b {
+  font-size: 40px;
+  color: var(--g-ridgeline-gold);
+}
+.g-ridgeline .g-ridgeline-hud[data-touch='1'] .g-ridgeline-medal {
+  top: calc(50% - 150px);
+}
+@keyframes g-ridgeline-medal {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(1.35);
+  }
+  10% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+  75% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-10px);
+  }
+}
 @keyframes g-ridgeline-banner {
   0% {
     opacity: 0;
@@ -929,6 +987,10 @@
   right: 66px;
   bottom: 140px;
 }
+.g-ridgeline .g-ridgeline-btn.is-flash {
+  right: 132px;
+  bottom: 196px;
+}
 .g-ridgeline .g-ridgeline-btn.is-buy {
   right: 170px;
   bottom: 140px;
@@ -1143,4 +1205,23 @@
   .g-ridgeline .g-ridgeline-loading i {
     animation: none;
   }
+}
+
+.g-ridgeline .g-ridgeline-wait {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: #0d1114;
+  color: #c9d3da;
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+
+/* The room's Direct/Relayed pill: under the sound buttons, clear of the round timer and the scores. */
+.g-ridgeline .arcade-online-status {
+  top: 52px;
+  left: auto;
+  right: 12px;
+  transform: none;
 }

@@ -3,11 +3,14 @@
 Every model here was downloaded from Sketchfab and then reduced for the game: stray parts removed, re-oriented and
 scaled to meters, simplified, textures resized and re-encoded as WebP, and the files meshopt compressed. The soldier
 was also skinned to the game's skeleton. The `-lite` files are low detail copies with the textures baked into vertex
-colors, for guns held by other soldiers.
+colors, for guns held by other soldiers. The `vm-` files are animated first person arms with a gun: kept with their
+skins and animations (each clip moved to start at zero and resampled), cameras dropped, materials converted to
+metal/rough.
 
 All are licensed under Creative Commons Attribution 4.0 (CC BY 4.0, <http://creativecommons.org/licenses/by/4.0/>),
 except the AWP, which is Creative Commons Attribution-NonCommercial 4.0 (CC BY-NC 4.0,
-<http://creativecommons.org/licenses/by-nc/4.0/>) and may only be used non-commercially.
+<http://creativecommons.org/licenses/by-nc/4.0/>) and may only be used non-commercially, and the Mark 23 arms
+(`vm-mk23.glb`), which are under the Sketchfab Standard license (<https://sketchfab.com/licenses>).
 
 | File | Model | Author | License | Source |
 | --- | --- | --- | --- | --- |
@@ -35,3 +38,6 @@ except the AWP, which is Creative Commons Attribution-NonCommercial 4.0 (CC BY-N
 | `shield.glb` | ballistic shield | sanyaork | CC BY 4.0 | <https://sketchfab.com/3d-models/ballistic-shield-142c4ec45e3b403d8d0104e3150efb14> |
 | `cup.glb` | WW2 Soviet Old Metall Cup FREE | Kozlov Maksim | CC BY 4.0 | <https://sketchfab.com/3d-models/ww2-soviet-old-metall-cup-free-cac613a4f08142f3a541ec6f21946c11> |
 | `pan.glb` | Old Frying Pan | GameDev Nick | CC BY 4.0 | <https://sketchfab.com/3d-models/old-frying-pan-dbac7c1a1a5f4b79a1cb8bdacdd42aff> |
+| `vm-m4.glb` | M4 - FPS Weapon Animations Pack v.1 | BarcodeGames | CC BY 4.0 | <https://sketchfab.com/3d-models/m4-fps-weapon-animations-pack-v1-662fc74dda2646cfb48fc610705768ef> |
+| `vm-vector.glb` | Kriss Vector Animated (FREE) | BarcodeGame | CC BY 4.0 | <https://sketchfab.com/3d-models/kriss-vector-animated-free-54530c888cfd4ae7aab3c3852b229c7e> |
+| `vm-mk23.glb` | Mark 23 Animated (FREE) | BarcodeGames | Sketchfab Standard | <https://sketchfab.com/3d-models/mark-23-animated-free-7abebe340aca4f46b36368417b3ca920> |

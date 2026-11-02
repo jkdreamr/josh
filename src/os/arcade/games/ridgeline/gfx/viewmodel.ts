@@ -1,10 +1,13 @@
 // The first person view: the gun models from guns.ts held in gloved hands (palm, fingers wrapped round the grip,
 // the index finger along the trigger guard, armored knuckles, a cuff) in camouflage sleeves, with sway, walk bob,
 // recoil, aiming down sights, reloads and swaps. It renders in its own pass after the world so it never clips into
-// walls, lit by the same sky and darkened when you stand in shade.
+// walls, lit by the same sky and darkened when you stand in shade. Guns with an animated arms model (fparms.ts) show
+// that instead, its clips following the draw, the shots and the reloads.
+import type { Assets } from '../assets.ts';
 import type { WeaponId } from '../weapons.ts';
 import { WEAPONS } from '../weapons.ts';
 import { ADDITIVE, DOUBLE, canvas, lin, roundBox, type T, type Three } from './common.ts';
+import { animatedArms, type ArmsState } from './fparms.ts';
 import { OUTFITS, gunMaterials, outfitMaterials } from './gear.ts';
 import { gunMesh, gunModel, type GunModel } from './guns.ts';
 
@@ -25,6 +28,8 @@ export type ViewState = {
   ambient: number;
   /** The kit you wear (sleeves and gloves). */
   kit: string;
+  /** The magazine is empty (picks the empty reload where a gun has one). */
+  empty?: boolean;
 };
 
 export type ViewModel = {
@@ -107,7 +112,7 @@ function sleeveGeometry(THREE: Three) {
   return g;
 }
 
-export function viewModel(THREE: Three, sunDir: [number, number, number], sunColor: number, sunIntensity: number): ViewModel {
+export function viewModel(THREE: Three, sunDir: [number, number, number], sunColor: number, sunIntensity: number, assets?: Assets | null): ViewModel {
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 20);
   scene.add(camera);
@@ -185,6 +190,17 @@ export function viewModel(THREE: Three, sunDir: [number, number, number], sunCol
   flash.visible = false;
   rig.add(flash);
 
+  // animated arms for the guns that have them, each in camera space with its own flash at the muzzle
+  const anims = animatedArms(THREE, assets);
+  for (const a of anims.values()) {
+    a.holder.visible = false;
+    camera.add(a.holder);
+  }
+  const animFlash = new THREE.Mesh(flash.geometry, flashMat);
+  animFlash.visible = false;
+  camera.add(animFlash);
+  const armsSt: ArmsState = { switching: 0, reload: 0, empty: false, ads: 0 };
+
   let cur: WeaponId | null = null;
   /** Every gun is showing from a prewarm: hide them on the next update. */
   let warmed = false;
@@ -216,14 +232,19 @@ export function viewModel(THREE: Three, sunDir: [number, number, number], sunCol
       if (st.kit !== armsKit) buildArms(st.kit);
       if (st.gun !== cur || warmed) {
         for (const g of guns.values()) g.group.visible = false;
+        for (const a of anims.values()) a.holder.visible = false;
         warmed = false;
         cur = st.gun;
         if (cur) gunFor(cur).group.visible = true;
+        if (cur) anims.get(cur)?.reset();
       }
       const entry = cur ? gunFor(cur) : null;
+      const am = cur ? anims.get(cur) : undefined;
       const visible = !!entry && !st.scoped;
-      rig.visible = visible;
-      if (arms) for (const a of arms.meshes) a.sleeve.visible = visible;
+      rig.visible = visible && !am;
+      if (arms) for (const a of arms.meshes) a.sleeve.visible = visible && !am;
+      if (am) am.holder.visible = visible;
+      animFlash.visible = false;
       if (!entry || !cur) return;
       const spec = entry.model;
       const pistol = WEAPONS[cur].cls === 'pistol';
@@ -247,16 +268,42 @@ export function viewModel(THREE: Three, sunDir: [number, number, number], sunCol
       const bobY = -Math.abs(Math.cos(st.phase * 2.2)) * 0.012 * st.speed * still + Math.sin(bobT * 0.9) * 0.002 * still;
       const drop = Math.sin(Math.min(1, st.reload) * Math.PI);
       const sw = st.switching;
+      const recoilK = pistol ? 1.6 : WEAPONS[cur].cls === 'sniper' ? 2.2 : WEAPONS[cur].cls === 'shotgun' ? 2 : 1;
+      flashT -= dt;
+      if (am) {
+        // the clips do the draw, reload and the shot itself: here only where it is held, the aim, bob, sway and a
+        // lighter recoil spring on top (pivoting on the rear sight)
+        if (!visible) return;
+        const h = am.hip;
+        am.holder.position.set(
+          h[0] * (1 - ads) + bobX + swayX * 0.05 * still,
+          h[1] * (1 - ads) + bobY + swayY * 0.05 * still - (st.air ? 0.012 : 0) - st.crouch * 0.01 * still,
+          h[2] + (-am.relief - h[2]) * ads + kick * 0.36,
+        );
+        am.holder.rotation.set(-kick * 0.5 * recoilK + swayY * 0.4 * still, swayX * 0.5 * still + am.yaw * (1 - ads), bobX * 2 + am.roll * (1 - ads));
+        armsSt.switching = sw;
+        armsSt.reload = st.reload;
+        armsSt.empty = !!st.empty;
+        armsSt.ads = ads;
+        am.pose(armsSt, dt);
+        am.holder.updateMatrixWorld(true);
+        animFlash.visible = flashT > 0;
+        if (animFlash.visible) {
+          camera.worldToLocal(am.muzzle(animFlash.position));
+          animFlash.position.z -= 0.03;
+          animFlash.rotation.set(0, 0, Math.random() * Math.PI);
+          animFlash.scale.setScalar(0.6 + Math.random() * 0.5);
+        }
+        return;
+      }
       rig.position.set(
         hip[0] + (aim[0] - hip[0]) * ads + bobX + swayX * 0.05 * still,
         hip[1] + (aim[1] - hip[1]) * ads + bobY + swayY * 0.05 * still - drop * 0.07 - sw * 0.32 - (st.air ? 0.012 : 0) - st.crouch * 0.01 * still,
         hip[2] + (aim[2] - hip[2]) * ads + kick * 0.6,
       );
-      const recoilK = pistol ? 1.6 : WEAPONS[cur].cls === 'sniper' ? 2.2 : WEAPONS[cur].cls === 'shotgun' ? 2 : 1;
       rig.rotation.set(-kick * 1.4 * recoilK * 0.6 + drop * 0.55 + swayY * 0.4 * still + sw * 0.5, swayX * 0.5 * still + (pistol ? 0.06 : 0.11) * (1 - ads), drop * 0.75 + bobX * 2 + (1 - ads) * 0.05);
       rig.updateMatrix();
       rig.updateMatrixWorld(true);
-      flashT -= dt;
       flash.visible = flashT > 0;
       if (flash.visible) {
         flash.position.set(spec.muzzle[0], spec.muzzle[1], spec.muzzle[2] - 0.05);
@@ -290,18 +337,27 @@ export function viewModel(THREE: Three, sunDir: [number, number, number], sunCol
       warmed = true;
       if (kit !== armsKit) buildArms(kit);
       for (const id of Object.keys(WEAPONS) as WeaponId[]) gunFor(id).group.visible = true;
+      for (const a of anims.values()) {
+        a.holder.visible = true;
+        a.holder.position.set(0.05, -0.08, -0.2);
+        a.reset();
+      }
+      animFlash.visible = true;
       rig.visible = true;
       rig.position.set(0.15, -0.2, -0.4);
       rig.updateMatrixWorld(true);
       cur = null;
     },
     fire() {
+      if (cur) anims.get(cur)?.shoot();
       kick = Math.min(0.06, kick + 0.018);
       kickV += 0.6;
       flashT = 0.045;
     },
     muzzle(out) {
       if (!cur) return out.set(0, 0, 0);
+      const am = anims.get(cur);
+      if (am) return am.muzzle(out);
       const m = gunFor(cur).model.muzzle;
       out.set(m[0], m[1], m[2]);
       rig.localToWorld(out);
@@ -319,6 +375,11 @@ export function viewModel(THREE: Three, sunDir: [number, number, number], sunCol
         arms.camo.dispose();
         for (const g of arms.gloves) g.dispose();
       }
+      for (const a of anims.values()) {
+        camera.remove(a.holder);
+        a.dispose();
+      }
+      camera.remove(animFlash);
       flashTex.dispose();
       flash.geometry.dispose();
       flashMat.dispose();

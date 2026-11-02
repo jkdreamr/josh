@@ -9,14 +9,15 @@ import { fieldTo, navOf } from './nav.ts';
 import { clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
 import { CROUCH_H, GRAVITY, STAND_H, groundAt, newHit, raySphere, rayWorld, stepBody, type Body } from './physics.ts';
 import { AMMO_KINDS, AMMO_MAX, AMMO_OF, CHUTE_GLIDE, CHUTE_OPEN, CHUTE_VY, FALL_FAST, FALL_SLOW, FALL_VY, HEAL, HELMET, NADE_MAX, ROYALE_PLAYERS, VEST, ZONES, nextCircle, planeAt, planePath, spawnLoot, type AmmoKind, type HealKind, type Item, type Plane, type Zone as Circle } from './royale.ts';
-import { floorAt } from './terrain.ts';
+import { floorAt, heightAt } from './terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, LOSS_STREAK_BONUS, MAX_CREDITS, NADES, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, interval, kickOf, rangeMul, type WeaponId } from './weapons.ts';
 import { ARENA, SITE_R, SPAWN_R, yawTo, type Surface, type World } from './world.ts';
 
 export type Mode = 'breach' | 'royale' | 'dm';
 export type Level = BotLevel;
 export type Zone = 'head' | 'body' | 'leg';
-export type ShopItem = WeaponId | 'light' | 'heavy' | 'frag' | 'smoke';
+export type NadeKind = 'frag' | 'smoke' | 'flash';
+export type ShopItem = WeaponId | 'light' | 'heavy' | NadeKind;
 
 export const DEG = Math.PI / 180;
 export const RUN = 5.8;
@@ -27,7 +28,7 @@ export const BULLET_G = 9.81;
 export const ROUNDS_TO_WIN = 7;
 /** Rounds in a half: the teams swap sides after this many. */
 export const HALF = 6;
-export const BUY_TIME = 15;
+export const BUY_TIME = 12;
 export const ROUND_TIME = 100;
 export const END_TIME = 5;
 /** Breach: seconds to plant, to defuse (half of it is kept once reached), the fuse once planted, the blast radius and
@@ -59,7 +60,7 @@ export type Input = {
   reload: boolean;
   /** Switch to the primary (0), the sidearm (1) or the second primary (2), or -1. */
   slot: number;
-  throw: 'frag' | 'smoke' | null;
+  throw: NadeKind | null;
   buy: ShopItem | null;
   /** Held: plant or defuse (breach). Pressed: pick up what's at your feet (royale). */
   use: boolean;
@@ -90,6 +91,13 @@ export type Actor = {
   slot: 0 | 1 | 2;
   frags: number;
   smokes: number;
+  /** Breach: flashbangs carried; how long it stays blinded, and how long that started at (for the fade). */
+  flashes: number;
+  blindT: number;
+  blind0: number;
+  /** Breach, this round: knockouts and damage dealt. */
+  roundKills: number;
+  roundDmg: number;
   fireCd: number;
   fireHeld: boolean;
   reloadT: number;
@@ -136,17 +144,30 @@ export type Actor = {
   /** Seconds in the air while dropping; once down, when it landed. */
   dropT: number;
   zoneT: number;
+  /** Online: the room seat of the person playing it (-1 a bot), whether that person plays on another machine, and a
+   * count of the times it was put somewhere new (a round start), so that machine knows to jump there. */
+  seat: number;
+  remote: boolean;
+  epoch: number;
+  net: RemoteIn | null;
+  /** Where a body moved by the network last was (for its strides). */
+  lastX: number;
+  lastZ: number;
   /** Finishing place (royale), 0 while still in. */
   place: number;
 };
 
-export type Bullet = { x: number; y: number; z: number; px: number; py: number; pz: number; vx: number; vy: number; vz: number; owner: number; w: WeaponId; life: number; dist: number; live: boolean };
-export type Nade = { kind: 'frag' | 'smoke'; x: number; y: number; z: number; vx: number; vy: number; vz: number; fuse: number; owner: number; rest: boolean; spin: number };
+/** `vis`: only seen, never hurts anyone (a shot this machine is shown but does not judge, online). */
+export type Bullet = { x: number; y: number; z: number; px: number; py: number; pz: number; vx: number; vy: number; vz: number; owner: number; w: WeaponId; life: number; dist: number; live: boolean; vis?: boolean };
+export type Nade = { kind: NadeKind; x: number; y: number; z: number; vx: number; vy: number; vz: number; fuse: number; owner: number; rest: boolean; spin: number };
 export type Smoke = { x: number; y: number; z: number; age: number; life: number; r: number };
 export type Sound = { x: number; z: number; t: number; team: number; range: number; who: number };
 export type Cause = WeaponId | 'frag' | 'zone' | 'blast';
 export type Kill = { t: number; killer: number; victim: number; w: Cause; head: boolean };
 export type Why = 'elim' | 'time' | 'blast' | 'defuse';
+/** Breach highlights: first blood, a headshot kill, two to five kills in a round (five is the whole team, an ace), and a
+ * round won as the last one standing against two or more. */
+export type Medal = 'first' | 'head' | 'double' | 'triple' | 'quad' | 'ace' | 'clutch';
 
 /** Breach: where the charge is and what is being done to it. */
 export type Charge = {
@@ -171,13 +192,16 @@ export type Charge = {
 };
 
 export type Ev =
-  | { t: 'shot'; a: number; w: WeaponId; x: number; y: number; z: number; dx: number; dy: number; dz: number }
+  | { t: 'shot'; a: number; w: WeaponId; x: number; y: number; z: number; dx: number; dy: number; dz: number; v?: number[] }
   | { t: 'impact'; x: number; y: number; z: number; nx: number; ny: number; nz: number; s: Surface }
   | { t: 'hit'; a: number; v: number; dmg: number; zone: Zone; armor: boolean; x: number; y: number; z: number; kill: boolean }
   | { t: 'kill'; k: Kill }
   | { t: 'boom'; x: number; y: number; z: number }
   | { t: 'smoke'; x: number; y: number; z: number }
-  | { t: 'throw'; a: number; kind: 'frag' | 'smoke' }
+  | { t: 'throw'; a: number; kind: NadeKind; n?: Nade }
+  | { t: 'flash'; x: number; y: number; z: number }
+  | { t: 'blind'; a: number; secs: number }
+  | { t: 'medal'; a: number; kind: Medal; n: number }
   | { t: 'bounce'; x: number; y: number; z: number }
   | { t: 'reload'; a: number; w: WeaponId }
   | { t: 'empty'; a: number }
@@ -202,6 +226,18 @@ export type Ev =
   | { t: 'zone'; i: number; shrinking: boolean };
 
 export type Phase = 'buy' | 'live' | 'end' | 'over';
+
+/** A hit an online guest says its own bullet made (the host checks it before anything happens). */
+export type Claim = { v: number; zone: Zone; w: WeaponId; ox: number; oy: number; oz: number; x: number; y: number; z: number };
+/** Online, on a guest: what its own player does that the host decides on. */
+export type NetHooks = {
+  fire(w: WeaponId, x: number, y: number, z: number, vel: number[]): void;
+  hit(c: Claim): void;
+  buy(item: ShopItem): void;
+  throwNade(kind: NadeKind, yaw: number, pitch: number): void;
+};
+/** Online, on the host: the latest of what a remote player's own machine says it is doing. */
+export type RemoteIn = { use: boolean; ads: number; walking: boolean; crouch: number; reloading: boolean };
 
 export type Match = {
   mode: Mode;
@@ -241,6 +277,14 @@ export type Match = {
   zone: Circle | null;
   plane: Plane | null;
   alive: number;
+  /** Which actor is played on this machine, whether this machine runs the rules (solo and the online host) or only
+   * mirrors them (an online guest), and a guest's line to the host. */
+  me: number;
+  authority: boolean;
+  net: NetHooks | null;
+  /** Breach, this round: whether first blood was drawn, and per team its last one standing and how many they faced. */
+  firstBlood: boolean;
+  clutch: [{ a: number; vs: number } | null, { a: number; vs: number } | null];
 };
 
 const BOT_NAMES = ['Vega', 'Rook', 'Sable', 'Juno', 'Kite', 'Onyx', 'Mako', 'Pike', 'Wren', 'Ash', 'Bishop', 'Cobalt', 'Drift', 'Ember', 'Flint', 'Haze', 'Ivy', 'Jett', 'Lark', 'Moss', 'Nova', 'Quill', 'Reed', 'Slate'];
@@ -266,6 +310,11 @@ function newActor(id: number, name: string, team: number, bot: boolean, level: L
     slot: 1,
     frags: 0,
     smokes: 0,
+    flashes: 0,
+    blindT: 0,
+    blind0: 0,
+    roundKills: 0,
+    roundDmg: 0,
     fireCd: 0,
     fireHeld: false,
     reloadT: 0,
@@ -306,6 +355,12 @@ function newActor(id: number, name: string, team: number, bot: boolean, level: L
     dropT: 0,
     zoneT: 0,
     place: 0,
+    seat: bot ? -1 : 0,
+    remote: false,
+    epoch: 0,
+    net: null,
+    lastX: 0,
+    lastZ: 0,
   };
 }
 
@@ -316,15 +371,27 @@ const newCharge = (): Charge => ({ state: 'carried', holder: -1, x: 0, y: 0, z: 
 export const sideOf = (m: Match, team: number) => (team === m.attack ? 0 : 1);
 export const spawnOf = (m: Match, team: number) => m.world.spawns[sideOf(m, team)];
 
-export function createMatch(world: World, mode: Mode, level: Level, opts: { name?: string; seed?: number; dmPick?: WeaponId } = {}): Match {
+/** Online breach: who plays each of the ten places (actors 0 to 4 are one team, 5 to 9 the other). */
+export type RosterEntry = { name: string; seat: number; bot: boolean };
+
+export function createMatch(world: World, mode: Mode, level: Level, opts: { name?: string; seed?: number; dmPick?: WeaponId; roster?: RosterEntry[]; mySeat?: number } = {}): Match {
   const rng = mulberry32(opts.seed ?? Math.floor(Math.random() * 2 ** 31));
   const names = [...BOT_NAMES, ...(mode === 'royale' ? MORE_NAMES : [])].sort(() => rng() - 0.5);
   const count = mode === 'royale' ? ROYALE_PLAYERS : mode === 'breach' ? 10 : 8;
   const actors: Actor[] = [];
+  const roster = mode === 'breach' ? opts.roster : undefined;
+  let me = 0;
   for (let i = 0; i < count; i++) {
     const team = mode === 'breach' ? (i < 5 ? 0 : 1) : i;
-    const a = newActor(i, i === 0 ? (opts.name ?? 'You') : names[i % names.length], team, i > 0, level, Math.floor(rng() * 1e6));
+    const r = roster?.[i];
+    const human = r ? !r.bot : i === 0;
+    const a = newActor(i, r ? r.name : i === 0 ? (opts.name ?? 'You') : names[i % names.length], team, !human, level, Math.floor(rng() * 1e6));
     a.dmgFrom = new Array(count).fill(0);
+    if (r) {
+      a.seat = r.bot ? -1 : r.seat;
+      a.remote = human && r.seat !== opts.mySeat;
+      if (human && r.seat === opts.mySeat) me = i;
+    }
     actors.push(a);
   }
   if (opts.dmPick) actors[0].dmPick = opts.dmPick;
@@ -368,6 +435,11 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
     zone: null,
     plane: null,
     alive: count,
+    me,
+    authority: true,
+    net: null,
+    firstBlood: false,
+    clutch: [null, null],
   };
   if (mode === 'royale') startRoyale(m, opts.seed ?? Math.floor(rng() * 1e9));
   else if (mode === 'breach') {
@@ -391,7 +463,7 @@ export const currentGun = (a: Actor) => a.guns[a.slot] ?? a.guns[1] ?? a.guns[0]
 /** Rounds left to reload a gun from: endless in deathmatch, the carried ammo in a royale, else the gun's own. */
 export const spareOf = (m: Match, a: Actor, g: Gun) => (m.mode === 'dm' ? Infinity : m.mode === 'royale' ? a.ammo[AMMO_OF[g.id]] : g.reserve);
 export const isEnemy = (a: Actor, b: Actor) => a.team !== b.team;
-export const me = (m: Match) => m.actors[0];
+export const me = (m: Match) => m.actors[m.me];
 
 export function viewDir(yaw: number, pitch: number) {
   const cp = Math.cos(pitch);
@@ -399,13 +471,14 @@ export function viewDir(yaw: number, pitch: number) {
 }
 
 /** Hitbox spheres: [height above the feet as a share of body height, radius, zone]. */
+// a touch generous, so a shot that looks like it hit, did
 const HITBOX: [number, number, Zone][] = [
-  [0.72, 0.25, 'body'],
-  [0.54, 0.23, 'body'],
-  [0.34, 0.19, 'leg'],
-  [0.13, 0.17, 'leg'],
+  [0.72, 0.27, 'body'],
+  [0.54, 0.25, 'body'],
+  [0.34, 0.2, 'leg'],
+  [0.13, 0.18, 'leg'],
 ];
-export const HEAD_R = 0.14;
+export const HEAD_R = 0.15;
 
 /** The first hitbox a segment crosses on any live actor other than the shooter's team. */
 function hitActors(m: Match, b: Bullet, dx: number, dy: number, dz: number, len: number): { a: Actor; t: number; zone: Zone } | null {
@@ -467,7 +540,14 @@ function stepBullets(m: Match, dt: number) {
       const hx = b.x + dx * who.t;
       const hy = b.y + dy * who.t;
       const hz = b.z + dz * who.t;
-      damage(m, who.a, def.dmg * mul * rangeMul(def, travelled), b.owner, b.w, who.zone, hx, hy, hz);
+      if (b.vis) {
+        // only a picture of someone else's shot: it stops where it seems to hit, and the host says what it did
+      } else if (m.authority) damage(m, who.a, def.dmg * mul * rangeMul(def, travelled), b.owner, b.w, who.zone, hx, hy, hz);
+      else if (b.owner === m.me && m.net) {
+        // a guest's own shot: tell the host (who checks it), and show the hit marker now
+        m.net.hit({ v: who.a.id, zone: who.zone, w: b.w, ox: b.x - (b.vx / Math.hypot(b.vx, b.vy, b.vz)) * b.dist, oy: b.y - (b.vy / Math.hypot(b.vx, b.vy, b.vz)) * b.dist, oz: b.z - (b.vz / Math.hypot(b.vx, b.vy, b.vz)) * b.dist, x: hx, y: hy, z: hz });
+        m.events.push({ t: 'hit', a: m.me, v: who.a.id, dmg: 0, zone: who.zone, armor: who.a.armor > 0, x: hx, y: hy, z: hz, kill: false });
+      }
       b.x = hx;
       b.y = hy;
       b.z = hz;
@@ -492,6 +572,18 @@ function stepBullets(m: Match, dt: number) {
   if (m.bullets.length > 64) m.bullets = m.bullets.filter((b) => b.live);
 }
 
+/** Online, on the host: a guest's hit, once checked (see online.ts), hurts like any other. */
+export function applyHit(m: Match, from: number, v: Actor, w: WeaponId, zone: Zone, dist: number, x: number, y: number, z: number) {
+  const def = WEAPONS[w];
+  const mul = zone === 'head' ? def.head : zone === 'leg' ? def.leg : 1;
+  damage(m, v, def.dmg * mul * rangeMul(def, dist), from, w, zone, x, y, z);
+}
+
+/** Online, on the host: a guest's grenade, thrown here from where its player is. */
+export function throwFor(m: Match, a: Actor, kind: NadeKind) {
+  throwNade(m, a, kind);
+}
+
 function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'frag' | 'blast', zone: Zone, x: number, y: number, z: number) {
   if (!v.alive || raw <= 0) return;
   if (v.shield > 0) return;
@@ -507,6 +599,7 @@ function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'fr
   const dealt = Math.min(before, raw);
   const att = m.actors[from];
   if (att && att !== v) {
+    if (isEnemy(att, v)) att.roundDmg += dealt;
     att.damage += dealt;
     att.cs += Math.round(dealt);
     v.dmgFrom[from] = (v.dmgFrom[from] ?? 0) + dealt;
@@ -532,7 +625,17 @@ function die(m: Match, v: Actor, from: number, w: Cause, head: boolean) {
   if (att && att !== v && isEnemy(att, v)) {
     att.kills++;
     att.cs += 150 + (head ? 30 : 0);
-    if (m.mode === 'breach') att.credits = Math.min(MAX_CREDITS, att.credits + KILL_REWARD);
+    if (m.mode === 'breach') {
+      att.credits = Math.min(MAX_CREDITS, att.credits + KILL_REWARD);
+      // the highlights: first blood, then a multi kill (or a headshot, the smaller one)
+      att.roundKills++;
+      const n = att.roundKills;
+      const multi = n >= 5 ? 'ace' : n === 4 ? 'quad' : n === 3 ? 'triple' : n === 2 ? 'double' : null;
+      if (multi) m.events.push({ t: 'medal', a: att.id, kind: multi, n });
+      else if (!m.firstBlood) m.events.push({ t: 'medal', a: att.id, kind: 'first', n: 1 });
+      else if (head) m.events.push({ t: 'medal', a: att.id, kind: 'head', n: 1 });
+      m.firstBlood = true;
+    }
   }
   for (const o of m.actors)
     if (o !== att && o !== v && isEnemy(o, v) && (v.dmgFrom[o.id] ?? 0) >= 40) {
@@ -547,10 +650,17 @@ function die(m: Match, v: Actor, from: number, w: Cause, head: boolean) {
   if (m.mode === 'breach') {
     // a teammate down near a site tells the rest where the fight is
     callout(m, v.team, v.body.x, v.body.z);
+    // down to one: a clutch if that one wins it against two or more
+    if (m.phase === 'live' && !m.clutch[v.team]) {
+      const mates = m.actors.filter((o) => o.alive && o.team === v.team);
+      const foes = m.actors.filter((o) => o.alive && o.team !== v.team).length;
+      if (mates.length === 1 && foes >= 2) m.clutch[v.team] = { a: mates[0].id, vs: foes };
+    }
     v.guns[0] = null;
     v.armor = 0;
     v.frags = 0;
     v.smokes = 0;
+    v.flashes = 0;
     const c = m.charge;
     if (c.plantBy === v.id) {
       c.plantBy = -1;
@@ -581,6 +691,7 @@ function die(m: Match, v: Actor, from: number, w: Cause, head: boolean) {
 // rounds
 
 function place(m: Match, a: Actor, x: number, z: number, yaw: number) {
+  a.epoch++;
   const y = floorAt(m.world.terrain, x, z) + 0.05;
   a.body.x = x;
   a.body.z = z;
@@ -602,6 +713,8 @@ function resetCombat(a: Actor) {
   a.bloom = 0;
   a.kickP = 0;
   a.fireHeld = false;
+  a.blindT = 0;
+  a.blind0 = 0;
 }
 
 export function startRound(m: Match) {
@@ -617,6 +730,7 @@ export function startRound(m: Match) {
       a.armor = 0;
       a.frags = 0;
       a.smokes = 0;
+      a.flashes = 0;
     }
     m.events.push({ t: 'sides' });
   }
@@ -633,6 +747,8 @@ export function startRound(m: Match) {
   m.smokes = [];
   m.sounds = [];
   m.last = null;
+  m.firstBlood = false;
+  m.clutch = [null, null];
   const seen = [0, 0];
   for (const a of m.actors) {
     const s = spawnOf(m, a.team);
@@ -651,6 +767,8 @@ export function startRound(m: Match) {
     a.hp = 100;
     a.slot = a.guns[0] ? 0 : 1;
     a.dmgFrom.fill(0);
+    a.roundKills = 0;
+    a.roundDmg = 0;
     resetCombat(a);
     place(m, a, slot.x, slot.z, slot.yaw);
     if (a.brain) a.brain.reset = true;
@@ -680,6 +798,8 @@ function endRound(m: Match, winner: number, why: Why) {
     if (won) a.cs += 60;
   }
   m.events.push({ t: 'round', winner, why });
+  const cl = winner >= 0 ? m.clutch[winner] : null;
+  if (cl && m.actors[cl.a].alive) m.events.push({ t: 'medal', a: cl.a, kind: 'clutch', n: cl.vs });
 }
 
 function respawn(m: Match, a: Actor) {
@@ -1230,7 +1350,7 @@ export function canShop(m: Match, a: Actor) {
 
 export function priceOf(item: ShopItem) {
   if (item === 'light' || item === 'heavy') return ARMOR[item].price;
-  if (item === 'frag' || item === 'smoke') return NADES[item].price;
+  if (item === 'frag' || item === 'smoke' || item === 'flash') return NADES[item].price;
   return WEAPONS[item].price;
 }
 
@@ -1240,6 +1360,7 @@ export function owns(a: Actor, item: ShopItem) {
   if (item === 'heavy') return a.armor >= ARMOR.heavy.amount;
   if (item === 'frag') return a.frags >= NADES.frag.max;
   if (item === 'smoke') return a.smokes >= NADES.smoke.max;
+  if (item === 'flash') return a.flashes >= NADES.flash.max;
   return a.guns[0]?.id === item || a.guns[1]?.id === item;
 }
 
@@ -1254,11 +1375,12 @@ export function buy(m: Match, a: Actor, item: ShopItem) {
     a.credits -= cost;
     a.armor = ARMOR[item].amount;
     a.boughtArmor = ARMOR[item].price;
-  } else if (item === 'frag' || item === 'smoke') {
+  } else if (item === 'frag' || item === 'smoke' || item === 'flash') {
     if (a.credits < NADES[item].price) return false;
     a.credits -= NADES[item].price;
     if (item === 'frag') a.frags++;
-    else a.smokes++;
+    else if (item === 'smoke') a.smokes++;
+    else a.flashes++;
   } else {
     const def = WEAPONS[item];
     const k = def.slot === 'primary' ? 0 : 1;
@@ -1286,7 +1408,8 @@ export function spreadOf(a: Actor) {
   const w = WEAPONS[g.id];
   const sp = Math.hypot(a.body.vx, a.body.vz) / RUN;
   let s = (w.base + a.bloom) * lerp(1, w.ads, a.ads);
-  s += w.move * smoothstep(0.2, 1, sp) * lerp(1, Math.max(w.ads, 0.6), a.ads);
+  // walking (Shift) and crouch walking stay nearly true; running throws shots wide
+  s += w.move * smoothstep(0.45, 1, sp) * lerp(1, Math.max(w.ads, 0.6), a.ads);
   if (!a.body.onGround && !a.body.swim) s += w.air;
   if (a.crouch > 0.5 && a.body.onGround) s *= 0.8;
   return s;
@@ -1341,11 +1464,16 @@ function fire(m: Match, a: Actor) {
   const ez = a.body.z;
   const zero = w.cls === 'pistol' || w.cls === 'smg' || w.cls === 'shotgun' ? 40 : 100;
   const lift = (BULLET_G * (zero / w.speed)) / 2;
+  const vel: number[] = [];
   for (let p = 0; p < w.pellets; p++) {
     let dir = inCone(m.rng, d.x, d.y, d.z, spread);
     if (w.pellets > 1) dir = inCone(m.rng, dir.x, dir.y, dir.z, w.pelletSpread);
-    m.bullets.push({ x: ex, y: ey, z: ez, px: ex, py: ey, pz: ez, vx: dir.x * w.speed, vy: dir.y * w.speed + lift, vz: dir.z * w.speed, owner: a.id, w: g.id, life: 1.6, dist: 0, live: true });
+    const b: Bullet = { x: ex, y: ey, z: ez, px: ex, py: ey, pz: ez, vx: dir.x * w.speed, vy: dir.y * w.speed + lift, vz: dir.z * w.speed, owner: a.id, w: g.id, life: 1.6, dist: 0, live: true };
+    m.bullets.push(b);
+    vel.push(b.vx, b.vy, b.vz);
   }
+  // online: the others are shown this shot (the host from a guest, everyone from the host)
+  if (!m.authority && a.id === m.me) m.net?.fire(g.id, ex, ey, ez, vel);
   const [up, side] = kickOf(w, a.spray);
   const k = (a.crouch > 0.5 ? 0.85 : 1) * (1 - a.ads * 0.15);
   a.pitch = clamp(a.pitch + up * k * DEG, -1.5, 1.5);
@@ -1354,7 +1482,7 @@ function fire(m: Match, a: Actor) {
   a.bloom = Math.min(w.bloomMax, a.bloom + w.bloom);
   a.spray++;
   a.lastShot = m.time;
-  m.events.push({ t: 'shot', a: a.id, w: g.id, x: ex, y: ey, z: ez, dx: d.x, dy: d.y, dz: d.z });
+  m.events.push({ t: 'shot', a: a.id, w: g.id, x: ex, y: ey, z: ez, dx: d.x, dy: d.y, dz: d.z, v: vel });
   m.sounds.push({ x: ex, z: ez, t: m.time, team: a.team, range: w.cls === 'sniper' ? 160 : 90, who: a.id });
 }
 
@@ -1369,18 +1497,22 @@ function startReload(m: Match, a: Actor) {
   m.events.push({ t: 'reload', a: a.id, w: g.id });
 }
 
-function throwNade(m: Match, a: Actor, kind: 'frag' | 'smoke') {
-  if (kind === 'frag' ? a.frags <= 0 : a.smokes <= 0) return;
+function throwNade(m: Match, a: Actor, kind: NadeKind) {
+  if ((kind === 'frag' ? a.frags : kind === 'smoke' ? a.smokes : a.flashes) <= 0) return;
   if (a.switchT > 0.2) return;
   if (kind === 'frag') a.frags--;
-  else a.smokes--;
+  else if (kind === 'smoke') a.smokes--;
+  else a.flashes--;
   const d = viewDir(a.yaw, a.pitch + 0.12);
   const sp = 17;
-  m.nades.push({ kind, x: a.body.x + d.x * 0.5, y: eyeY(a) - 0.1, z: a.body.z + d.z * 0.5, vx: d.x * sp + a.body.vx * 0.5, vy: d.y * sp + 1.5, vz: d.z * sp + a.body.vz * 0.5, fuse: kind === 'frag' ? 2.3 : 1.5, owner: a.id, rest: false, spin: 0 });
+  const n: Nade = { kind, x: a.body.x + d.x * 0.5, y: eyeY(a) - 0.1, z: a.body.z + d.z * 0.5, vx: d.x * sp + a.body.vx * 0.5, vy: d.y * sp + 1.5, vz: d.z * sp + a.body.vz * 0.5, fuse: kind === 'frag' ? 2.3 : kind === 'flash' ? 1.2 : 1.5, owner: a.id, rest: false, spin: 0 };
+  m.nades.push(n);
   a.switchT = Math.max(a.switchT, 0.4);
   a.reloadT = 0;
   a.ads = 0;
-  m.events.push({ t: 'throw', a: a.id, kind });
+  // online: a guest throws its own at once and the host throws the real one; everyone else is sent how it flies
+  if (!m.authority && a.id === m.me) m.net?.throwNade(kind, a.yaw, a.pitch);
+  m.events.push({ t: 'throw', a: a.id, kind, n: { ...n } });
 }
 
 const nadeHit = newHit();
@@ -1426,6 +1558,7 @@ function stepNades(m: Match, dt: number) {
     }
     if (n.fuse <= 0) {
       if (n.kind === 'frag') explode(m, n);
+      else if (n.kind === 'flash') flashbang(m, n);
       else {
         m.smokes.push({ x: n.x, y: n.y, z: n.z, age: 0, life: 15, r: 0 });
         m.events.push({ t: 'smoke', x: n.x, y: n.y, z: n.z });
@@ -1440,9 +1573,43 @@ function stepNades(m: Match, dt: number) {
   m.smokes = m.smokes.filter((s) => s.age < s.life);
 }
 
+/** A flashbang goes off: everyone with a clear line to it is blinded, for longer the nearer they are and the more
+ * they were looking at it (looking away saves most of it, so throw it and turn). */
+const FLASH_R = 34;
+function flashbang(m: Match, n: Nade) {
+  m.events.push({ t: 'flash', x: n.x, y: n.y, z: n.z });
+  m.sounds.push({ x: n.x, z: n.z, t: m.time, team: m.actors[n.owner]?.team ?? -1, range: 90, who: n.owner });
+  for (const a of m.actors) {
+    if (!a.alive || a.drop) continue;
+    // (an online guest judges only its own eyes; the host does everyone's)
+    if (!m.authority && a.id !== m.me) continue;
+    const ey = eyeY(a);
+    const dx = n.x - a.body.x;
+    const dy = n.y + 0.1 - ey;
+    const dz = n.z - a.body.z;
+    const d = Math.hypot(dx, dy, dz);
+    if (d > FLASH_R) continue;
+    if (d > 0.5) {
+      rayWorld(m.world, a.body.x, ey, a.body.z, dx / d, dy / d, dz / d, d - 0.2, nadeHit);
+      if (nadeHit.kind !== 'none') continue;
+      if (smokeBlocks(m, a.body.x, ey, a.body.z, n.x, n.y + 0.1, n.z)) continue;
+    }
+    const v = viewDir(a.yaw, a.pitch);
+    const facing = d > 0.5 ? (v.x * dx + v.y * dy + v.z * dz) / d : 1;
+    const look = clamp((facing + 0.35) / 0.85, 0.1, 1);
+    const secs = (0.3 + 3.6 * Math.pow(1 - d / FLASH_R, 0.7)) * look;
+    if (secs < 0.5 || secs <= a.blindT) continue;
+    a.blindT = secs;
+    a.blind0 = secs;
+    m.events.push({ t: 'blind', a: a.id, secs });
+  }
+}
+
 function explode(m: Match, n: Nade) {
   m.events.push({ t: 'boom', x: n.x, y: n.y, z: n.z });
   m.sounds.push({ x: n.x, z: n.z, t: m.time, team: m.actors[n.owner]?.team ?? -1, range: 120, who: n.owner });
+  // (an online guest's grenades are pictures of the host's: the host does the damage)
+  if (!m.authority) return;
   const R = 7.5;
   for (const a of m.actors) {
     if (!a.alive) continue;
@@ -1492,8 +1659,11 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
     stepDrop(m, a, inp, dt);
     return;
   }
-  // buying
-  if (inp.buy) buy(m, a, inp.buy);
+  // buying (an online guest asks the host, who keeps the credits)
+  if (inp.buy) {
+    if (m.authority) buy(m, a, inp.buy);
+    else if (canShop(m, a) && !owns(a, inp.buy)) m.net?.buy(inp.buy);
+  }
   // picking up and healing
   if (m.mode === 'royale') {
     if (inp.use) {
@@ -1529,7 +1699,8 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
     }
   }
   // planting or defusing: stand still with the gun down until done or let go
-  if (m.mode === 'breach' && m.phase === 'live' && stepCharge(m, a, inp, dt)) {
+  // (a guest only holds still where it could; the host does the planting and defusing and says how far along it is)
+  if (m.mode === 'breach' && m.phase === 'live' && (m.authority ? stepCharge(m, a, inp, dt) : inp.use && (plantSite(m, a) >= 0 || canDefuse(m, a)))) {
     inp = { ...inp, mx: 0, mz: 0, jump: false, fire: false, ads: false, reload: false, slot: -1, throw: null, walk: true };
     a.reloadT = 0;
   }
@@ -1548,6 +1719,7 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
   // timers
   a.fireCd = Math.max(-dt, a.fireCd - dt);
   a.shield = Math.max(0, a.shield - dt);
+  a.blindT = Math.max(0, a.blindT - dt);
   if (a.switchT > 0) a.switchT = Math.max(0, a.switchT - dt);
   if (a.reloadT > 0) {
     a.reloadT -= dt;
@@ -1624,18 +1796,7 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
     }
   }
   if (airborne && b.onGround) m.events.push({ t: 'land', a: a.id });
-  // footsteps: running is loud, walking and crouching are silent
-  const moved = Math.hypot(b.x - ox, b.z - oz);
-  a.phase += moved * 1.15;
-  if (b.onGround) {
-    a.stepDist += moved;
-    if (a.stepDist > 2.1) {
-      a.stepDist = 0;
-      const loud = !inp.walk && a.crouch < 0.5 && Math.hypot(b.vx, b.vz) > WALK + 0.4;
-      m.events.push({ t: 'step', a: a.id, loud, s: b.swim ? 'water' : 'dirt' });
-      if (loud) m.sounds.push({ x: b.x, z: b.z, t: m.time, team: a.team, range: 24, who: a.id });
-    }
-  }
+  footsteps(m, a, ox, oz, inp.walk);
   // fighting is off until the round goes live
   const armed = m.mode !== 'breach' || m.phase === 'live';
   if (!armed) {
@@ -1654,11 +1815,84 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
   a.fireHeld = inp.fire;
 }
 
+/** The walk cycle and footsteps for a stretch walked: running is loud (heard by bots too), walking and crouching quiet. */
+function footsteps(m: Match, a: Actor, ox: number, oz: number, walk: boolean) {
+  const b = a.body;
+  const moved = Math.hypot(b.x - ox, b.z - oz);
+  // (a jump to a new place, a round start, is no stride)
+  if (moved > 3) return;
+  a.phase += moved * 1.15;
+  if (!b.onGround) return;
+  a.stepDist += moved;
+  if (a.stepDist <= 2.1) return;
+  a.stepDist = 0;
+  const loud = !walk && a.crouch < 0.5 && Math.hypot(b.vx, b.vz) > WALK + 0.4;
+  m.events.push({ t: 'step', a: a.id, loud, s: surfaceUnder(m, a) });
+  if (loud) m.sounds.push({ x: b.x, z: b.z, t: m.time, team: a.team, range: 24, who: a.id });
+}
+
+/** Online, on the host: a player on another machine. Their body was put where their machine says (see online.ts);
+ * here only the rules: footsteps for the bots to hear, timers, the buy phase fence, planting and defusing. */
+const useIn = idleInput();
+function remoteStep(m: Match, a: Actor, dt: number) {
+  const b = a.body;
+  const n = a.net;
+  a.shield = Math.max(0, a.shield - dt);
+  a.blindT = Math.max(0, a.blindT - dt);
+  if (!a.alive || !n) return;
+  a.walking = n.walking;
+  a.crouch = n.crouch;
+  a.ads = n.ads;
+  a.reloadT = n.reloading ? Math.max(a.reloadT, 0.1) : 0;
+  b.height = lerp(STAND_H, CROUCH_H, a.crouch);
+  footsteps(m, a, a.lastX, a.lastZ, n.walking);
+  a.lastX = b.x;
+  a.lastZ = b.z;
+  if (m.mode === 'breach' && m.phase === 'buy') {
+    const s = spawnOf(m, a.team);
+    const dx = b.x - s.x;
+    const dz = b.z - s.z;
+    const d = Math.hypot(dx, dz);
+    if (d > SPAWN_R + 1) {
+      b.x = s.x + (dx / d) * SPAWN_R;
+      b.z = s.z + (dz / d) * SPAWN_R;
+    }
+  }
+  if (m.mode === 'breach' && m.phase === 'live') {
+    useIn.use = n.use;
+    stepCharge(m, a, useIn, dt);
+  }
+}
+
+/** Online, on a guest: someone this machine only shows (moved by the host's stream): the walk cycle and footsteps. */
+function puppet(m: Match, a: Actor, dt: number) {
+  a.blindT = Math.max(0, a.blindT - dt);
+  if (a.reloadT > 0) a.reloadT = Math.max(0.05, a.reloadT - dt);
+  if (!a.alive) return;
+  footsteps(m, a, a.lastX, a.lastZ, a.walking);
+  a.lastX = a.body.x;
+  a.lastZ = a.body.z;
+}
+
+/** What a body stands on, for its footsteps: a floor or a crate's top, water, or the map's own ground. */
+function surfaceUnder(m: Match, a: Actor): Surface {
+  const b = a.body;
+  if (b.swim) return 'water';
+  const t = m.world.terrain;
+  const g = floorAt(t, b.x, b.z);
+  if (b.y > g + 0.08)
+    for (const q of m.world.boxes) if (b.x > q.x0 && b.x < q.x1 && b.z > q.z0 && b.z < q.z1 && Math.abs(b.y - q.y1) < 0.3) return q.s;
+  if (t.ice && heightAt(t, b.x, b.z) < t.water) return 'stone';
+  const id = m.world.id;
+  return id === 'frost' ? 'snow' : id === 'mesa' ? 'sand' : id === 'isles' && g < t.water + 2.5 ? 'sand' : 'leaf';
+}
+
 function spot(m: Match) {
   for (const e of m.actors) {
-    if (!e.alive || e.team === 0) continue;
+    const mine = m.actors[m.me].team;
+    if (!e.alive || e.team === mine) continue;
     for (const f of m.actors) {
-      if (!f.alive || f.team !== 0) continue;
+      if (!f.alive || f.team !== mine) continue;
       const dx = e.body.x - f.body.x;
       const dz = e.body.z - f.body.z;
       const d = Math.hypot(dx, dz);
@@ -1672,7 +1906,7 @@ function spot(m: Match) {
       rayWorld(m.world, f.body.x, ey, f.body.z, dx / l, (ty - ey) / l, dz / l, l, hit);
       if (hit.kind === 'none') {
         m.spotted[e.id] = m.time;
-        callout(m, 0, e.body.x, e.body.z);
+        callout(m, mine, e.body.x, e.body.z);
         break;
       }
     }
@@ -1685,8 +1919,13 @@ export function step(m: Match, dt: number, you: Input) {
   if (m.phase === 'over') return;
   m.time += dt;
   for (const a of m.actors) {
-    const inp = a.bot ? botInput(m, a, dt) : a.id === 0 ? you : idleInput(a.yaw, a.pitch);
-    act(m, a, inp, dt);
+    // (your seat handed to a bot, as the dev autopilot does, plays as one)
+    if (a.id === m.me) act(m, a, a.bot && a.brain && m.authority ? botInput(m, a, dt) : you, dt);
+    // an online guest mirrors everyone else: they are where the host's stream puts them
+    else if (!m.authority) puppet(m, a, dt);
+    // the host: a remote player is where their own machine says, and the rules here judge what they do
+    else if (a.remote) remoteStep(m, a, dt);
+    else act(m, a, a.bot ? botInput(m, a, dt) : idleInput(a.yaw, a.pitch), dt);
   }
   stepBullets(m, dt);
   stepNades(m, dt);
@@ -1696,7 +1935,12 @@ export function step(m: Match, dt: number, you: Input) {
     m.spotT = 0.25;
     spot(m);
   }
-  stepRules(m, dt);
+  if (m.authority) stepRules(m, dt);
+  else {
+    // a guest's clocks run on between the host's updates (which set them right)
+    m.phaseT = Math.max(0, m.phaseT - dt);
+    if (m.charge.state === 'planted') m.charge.fuse = Math.max(0, m.charge.fuse - dt);
+  }
 }
 
 /** The final score for the local player: combat score, with the match bonus already in. */

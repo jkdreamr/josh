@@ -115,7 +115,7 @@ for (const folder of folders) {
   test(`game ${folder} has a How to Play and valid music`, async () => {
     const dir = join(root, folder);
     const { meta } = await import(pathToFileURL(join(dir, 'meta.ts')).href);
-    if (meta.music !== undefined) assert.ok(MUSIC_STYLES.includes(meta.music), `unknown music style ${meta.music}`);
+    if (meta.music !== undefined && meta.music !== 'own') assert.ok(MUSIC_STYLES.includes(meta.music), `unknown music style ${meta.music}`);
     if (meta.howTo !== undefined) {
       assert.ok(Array.isArray(meta.howTo) && meta.howTo.length >= 2, 'howTo needs a few steps');
       for (const step of meta.howTo) assert.ok(typeof step === 'string' && step.trim() && !/[–—]/.test(step), `bad howTo step: ${step}`);

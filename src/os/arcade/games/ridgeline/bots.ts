@@ -8,6 +8,7 @@ import {
   DEG,
   HALF,
   PLANT_TIME,
+  ROUND_TIME,
   buy,
   canDefuse,
   canShop,
@@ -36,7 +37,7 @@ import { blockedAt, clearLine } from './physics.ts';
 import { floorAt, heightAt } from './terrain.ts';
 import { planeAt } from './royale.ts';
 import { WEAPONS, type WeaponId } from './weapons.ts';
-import { SITE_R } from './world.ts';
+import { SITE_R, type World } from './world.ts';
 
 export type BotLevel = 'easy' | 'normal' | 'hard';
 type Role = 'entry' | 'support' | 'flank';
@@ -111,6 +112,13 @@ export type Brain = {
   faceZ: number;
   /** Push to the goal even while fighting (a defuse to stop or to make before the charge blows). */
   rush: boolean;
+  /** Breach: keep to the goal in a fight instead of closing in (a spot to hold), and how far from the plan's spot it
+   * goes after what it saw or heard. */
+  hold: boolean;
+  leash: number;
+  /** Just threw a flashbang: looks away from it (that way) until it has gone off. */
+  flashAway: number;
+  awayYaw: number;
   /** How close counts as there: close for the charge (to pick it up or work on it), looser for a spot to hold. */
   arrive: number;
   /** Heading toward the last thing it heard, how long to keep facing it, and when it last stopped to listen. */
@@ -196,6 +204,10 @@ export function newBrain(level: BotLevel, seed: number): Brain {
     faceX: 0,
     faceZ: 0,
     rush: false,
+    hold: false,
+    leash: 45,
+    flashAway: 0,
+    awayYaw: 0,
     arrive: 2.2,
     listenA: 0,
     waitT: 0,
@@ -231,7 +243,7 @@ function shop(m: Match, a: Actor, br: Brain) {
   const want: ShopItem[] = [];
   if (m.round === 1 || m.round === HALF + 1) {
     if (r() < 0.45) want.push('bulwark');
-    else want.push('light', r() < 0.5 ? 'frag' : 'smoke');
+    else want.push('light', r() < 0.4 ? 'frag' : r() < 0.5 ? 'smoke' : 'flash');
   } else if (!a.guns[0]) {
     const eco = avg < 2500 && a.credits < 3900;
     if (eco) {
@@ -244,9 +256,9 @@ function shop(m: Match, a: Actor, br: Brain) {
       else if (a.credits >= 3900) gun = roll < 0.72 ? 'kestrel' : 'lancer';
       else if (a.credits >= 2400) gun = roll < 0.4 ? 'lancer' : roll < 0.75 ? 'hornet' : 'mauler';
       else gun = roll < 0.6 ? 'hornet' : 'mauler';
-      want.push(gun, 'heavy', 'light', 'frag', 'smoke');
+      want.push(gun, 'heavy', 'light', 'flash', 'frag', 'smoke');
     }
-  } else want.push('heavy', 'light', 'frag', 'smoke');
+  } else want.push('heavy', 'light', 'flash', 'frag', 'smoke');
   for (const item of want) {
     if (owns(a, item)) continue;
     if (item === 'light' && owns(a, 'heavy')) continue;
@@ -391,6 +403,14 @@ function perceive(m: Match, a: Actor, br: Brain) {
   const fw = viewDir(a.yaw, 0);
   let best = -1;
   let bestScore = Infinity;
+  // flashed: sees nothing until it clears (it still remembers where they were)
+  if (a.blindT > 0.35) {
+    if (br.target >= 0) {
+      br.lostAt = m.time;
+      br.target = -1;
+    }
+    return;
+  }
   // breach: enemy footsteps or shots heard near a site tell the team where the push is
   if (m.mode === 'breach')
     for (const s of m.sounds)
@@ -402,7 +422,7 @@ function perceive(m: Match, a: Actor, br: Brain) {
   const geared = m.mode !== 'royale' || ((!!a.guns[0] || !!a.guns[2]) && (a.vest > 0 || a.helmet > 0));
   // breach: a stranger further off than this is a few pixels across a field; nobody picks that out (a scope helps)
   const scoped = !!currentGun(a) && WEAPONS[currentGun(a)!.id].scope;
-  const range = m.mode === 'breach' ? (scoped ? 140 : 85) : m.mode !== 'royale' ? 230 : geared ? 130 : a.guns[0] || a.guns[2] ? 45 : 28;
+  const range = m.mode === 'breach' ? (scoped ? 95 : 55) : m.mode !== 'royale' ? 230 : geared ? 130 : a.guns[0] || a.guns[2] ? 45 : 28;
   for (const o of m.actors) {
     if (!o.alive || !isEnemy(a, o) || o.drop === 1) continue;
     const dx = o.body.x - ex;
@@ -418,7 +438,9 @@ function perceive(m: Match, a: Actor, br: Brain) {
     // second to pick out someone running 100 m off, longer if they hold still)
     if (!known && d > 10) {
       const still = Math.hypot(o.body.vx, o.body.vz) < 1;
-      const rate = 7 * (40 / Math.max(d, 14)) ** 2 * (still ? 0.5 : 1) * (o.crouch > 0.5 ? 0.7 : 1) * (0.6 + br.skill * 0.6) * (m.mode === 'royale' ? 0.55 : 1);
+      // (in a breach, past 30 m it falls off faster still: the fights are meant to be won on angles, not by spotting)
+      const far = m.mode === 'breach' && d > 30 ? (30 / d) ** 2 : 1;
+      const rate = 7 * (40 / Math.max(d, 14)) ** 2 * far * (still ? 0.5 : 1) * (o.crouch > 0.5 ? 0.7 : 1) * (0.6 + br.skill * 0.6) * (m.mode === 'royale' ? 0.55 : 1);
       if (br.rng() > 1 - Math.exp(-rate * Math.max(0.1, br.think))) continue;
     } else if (!known && m.mode === 'royale' && d > 6 && br.rng() > 0.3 + br.skill * 0.3) continue; // busy looting: takes a moment to notice
     const chest = o.body.y + o.body.height * 0.68;
@@ -459,9 +481,20 @@ function perceive(m: Match, a: Actor, br: Brain) {
     br.lastY = o.body.y;
     br.lastZ = o.body.z;
     br.hasLast = true;
-    // tell the team where the push is
-    if (m.mode === 'breach') callout(m, a.team, o.body.x, o.body.z);
+    // tell the team where the push is, and who was seen where
+    if (m.mode === 'breach') {
+      callout(m, a.team, o.body.x, o.body.z);
+      sightings(m, a.team).set(o.id, { x: o.body.x, z: o.body.z, t: m.time });
+    }
   }
+}
+
+/** Breach: where each enemy was last seen by anyone on a team this round. */
+const seenBy = new WeakMap<Match, { round: number; teams: Map<number, { x: number; z: number; t: number }>[] }>();
+function sightings(m: Match, team: number) {
+  let e = seenBy.get(m);
+  if (!e || e.round !== m.round) seenBy.set(m, (e = { round: m.round, teams: [new Map(), new Map()] }));
+  return e.teams[team];
 }
 
 /** Breach: an enemy seen (or a teammate lost) near a site marks it for the team, which the defense rotates on. */
@@ -481,7 +514,7 @@ function siteFor(m: Match, a: Actor, br: Brain) {
     // a carrier the bots can't steer (you): go where it goes, once it heads for a site
     const h = c.state === 'carried' ? m.actors[c.holder] : null;
     if (h && !h.bot && h.alive) {
-      let near = m.aim;
+      let near = stageOf(m).site;
       let nd = Infinity;
       for (const s of m.world.sites) {
         const d = Math.hypot(s.x - h.body.x, s.z - h.body.z);
@@ -492,11 +525,14 @@ function siteFor(m: Match, a: Actor, br: Brain) {
       }
       if (nd < 55) return near;
     }
-    return m.aim;
+    return stageOf(m).site;
   }
   const call = m.call[a.team];
   if (call.site >= 0 && m.time - call.t < 9 && !br.anchor) return call.site;
-  return br.post >= 0 ? br.post : m.aim;
+  if (br.post >= 0) return br.post;
+  // the middle: whichever site is nearer
+  const [A, B] = m.world.sites;
+  return Math.hypot(A.x - a.body.x, A.z - a.body.z) <= Math.hypot(B.x - a.body.x, B.z - a.body.z) ? 0 : 1;
 }
 
 /** Breach: where the attack's way in reaches each site (the first point of its route within 24 m), worked out once a
@@ -524,14 +560,14 @@ function entryOf(m: Match, k: number) {
   return e.pts[k];
 }
 
-/** Breach: the middle, between the sites and a little toward the attack. */
-function midPoint(m: Match) {
+/** Breach: the middle, between the sites and `toward` meters toward the attack. */
+function midPoint(m: Match, toward = 12) {
   const [A, B] = m.world.sites;
   const sp = spawnOf(m, m.attack);
   const x = (A.x + B.x) / 2;
   const z = (A.z + B.z) / 2;
   const d = Math.hypot(sp.x - x, sp.z - z) || 1;
-  return { x: x + ((sp.x - x) / d) * 12, z: z + ((sp.z - z) / d) * 12 };
+  return { x: x + ((sp.x - x) / d) * toward, z: z + ((sp.z - z) / d) * toward };
 }
 
 /** Where to stand on a site: off to one side of the center toward `from`, `out` meters out. */
@@ -544,6 +580,10 @@ function siteSpot(m: Match, k: number, fromX: number, fromZ: number, spread: num
 /** Where the bot wants to go when nobody is in sight. */
 function plan(m: Match, a: Actor, br: Brain) {
   const r = br.rng;
+  if (m.mode === 'breach') {
+    planBreach(m, a, br);
+    return;
+  }
   // chase what we lost, for a while
   if (br.hasLast && m.time - br.lostAt < 5 && Math.hypot(br.lastX - a.body.x, br.lastZ - a.body.z) < 45) {
     setGoal(m, br, br.lastX, br.lastZ);
@@ -558,9 +598,7 @@ function plan(m: Match, a: Actor, br: Brain) {
       if (d < s.range && d > 4 && r() < (m.mode === 'royale' ? (a.vest > 0 && (a.guns[0] || a.guns[2]) ? 0.3 : 0) : 0.5)) {
         br.heardT = m.time;
         br.listenA = Math.atan2(s.x - a.body.x, s.z - a.body.z);
-        // in a breach the charge comes first: its carrier, and everyone once it is down, only turn to look
-        const busy = m.mode === 'breach' && (m.charge.holder === a.id || m.charge.state === 'planted');
-        if (m.mode === 'dm' || (!busy && d < (m.mode === 'royale' ? 55 : 22))) {
+        if (m.mode === 'dm' || d < 55) {
           setGoal(m, br, s.x, s.z);
           br.waitT = 0.5;
           return;
@@ -583,9 +621,146 @@ function plan(m: Match, a: Actor, br: Brain) {
     }
     return;
   }
+}
+
+/** Breach, nobody in sight: the side's plan first, then a look after what was lost or heard, but only as far from the
+ * plan's spot as its leash lets it go (a defender doesn't leave the site to run after a shadow). */
+function planBreach(m: Match, a: Actor, br: Brain) {
   if (m.phase !== 'live') return;
+  br.hold = false;
+  br.leash = 45;
   if (a.team === m.attack) planAttack(m, a, br);
   else planDefense(m, a, br);
+  if (br.rush) return;
+  const hx = br.goalX;
+  const hz = br.goalZ;
+  const near = (x: number, z: number) => Math.hypot(x - hx, z - hz) < br.leash;
+  if (br.hasLast && m.time - br.lostAt < 5 && Math.hypot(br.lastX - a.body.x, br.lastZ - a.body.z) < 45) {
+    if (near(br.lastX, br.lastZ)) {
+      setGoal(m, br, br.lastX, br.lastZ);
+      return;
+    }
+    // too far to go after: keep the angle on where it went
+    br.faceX = br.lastX;
+    br.faceZ = br.lastZ;
+  }
+  if (m.time - br.heardT > 3)
+    for (const s of m.sounds) {
+      if (s.team === a.team || s.who === a.id) continue;
+      const d = Math.hypot(s.x - a.body.x, s.z - a.body.z);
+      if (d < s.range && d > 4 && br.rng() < 0.5) {
+        br.heardT = m.time;
+        br.listenA = Math.atan2(s.x - a.body.x, s.z - a.body.z);
+        // the charge comes first: its carrier, and everyone once it is down, only turn to look
+        const busy = m.charge.holder === a.id || m.charge.state === 'planted';
+        if (!busy && d < 22 && near(s.x, s.z)) {
+          setGoal(m, br, s.x, s.z);
+          br.waitT = 0.5;
+          return;
+        }
+        br.waitT = 0.35;
+        break;
+      }
+    }
+}
+
+/** Breach: the attack's ways in from one spawn: where it gathers before going onto each site (a spot on its way in,
+ * short of the site and out of sight of both sites if the way allows), and whether that way leads close past the
+ * other site. Worked out once per map and spawn. */
+type Ways = { pts: { x: number; z: number }[]; past: boolean[] };
+const ways = new WeakMap<World, Map<number, Ways>>();
+function waysIn(m: Match): Ways {
+  const w = m.world;
+  let byTeam = ways.get(w);
+  if (!byTeam) ways.set(w, (byTeam = new Map()));
+  const known = byTeam.get(m.attack);
+  if (known) return known;
+  const sp = spawnOf(m, m.attack);
+  const past: boolean[] = [];
+  const pts = w.sites.map((s) => {
+    const o = w.sites[1 - s.id] ?? s;
+    const f = fieldTo(w, `site${s.id}`, s.x, s.z);
+    let x = sp.x;
+    let z = sp.z;
+    let hid: { x: number; z: number } | null = null;
+    let fall: { x: number; z: number } | null = null;
+    let close = Infinity;
+    for (let i = 0; i < 120; i++) {
+      const d = fieldDist(w, f, x, z);
+      if (d < STAGE_NEAR) break;
+      const od = Math.hypot(x - o.x, z - o.z);
+      close = Math.min(close, od);
+      if (d < STAGE_FAR) {
+        if (!fall && d < 50) fall = { x, z };
+        // out of sight of the site's middle and of where its holders stand toward here, and the same for the other
+        // site when it is near
+        const eye = floorAt(w.terrain, x, z) + 1.5;
+        let seen = od < 30;
+        for (const q of od < 70 && o !== s ? [s, o] : [s]) {
+          const ang = Math.atan2(x - q.x, z - q.z);
+          for (const [off, r] of [[0, 0], [0, 8], [0.7, 8], [-0.7, 8], [1.4, 9], [-1.4, 9]])
+            if (!seen && clearLine(w, q.x + Math.sin(ang + off) * r, q.y + 1.5, q.z + Math.cos(ang + off) * r, x, eye, z)) seen = true;
+        }
+        if (!seen) hid = { x, z };
+      }
+      const n = fieldStep(w, f, x, z, 3);
+      if (!n) break;
+      x = n[0];
+      z = n[1];
+    }
+    past.push(close < 30);
+    return hid ?? fall ?? { x, z };
+  });
+  const out = { pts, past };
+  byTeam.set(m.attack, out);
+  return out;
+}
+
+/** Breach: the attack's call this round: the site it goes for (the one the round drew, but a way in that leads past
+ * the other site's guns gets traded for the other most of the time), and whether it has gone in yet. */
+const stages = new WeakMap<Match, { round: number; attack: number; pts: { x: number; z: number }[]; site: number; go: boolean; smokes: number; wait: number }>();
+function stageOf(m: Match) {
+  let e = stages.get(m);
+  if (!e || e.round !== m.round || e.attack !== m.attack) {
+    const wy = waysIn(m);
+    let site = m.aim;
+    const other = 1 - site;
+    const roll = mulberry32(m.round * 7919 + m.attack * 31 + Math.floor(m.time * 7));
+    if (wy.past[site] && other < wy.pts.length && !wy.past[other] && roll() < 0.75) site = other;
+    e = { round: m.round, attack: m.attack, pts: wy.pts, site, go: false, smokes: 0, wait: GO_AFTER + roll() * GO_SPREAD };
+    stages.set(m, e);
+  }
+  return e;
+}
+/** The soonest the attack goes in, in seconds into the round, and how much later it may be. */
+const GO_AFTER = 16;
+const GO_SPREAD = 14;
+/** How far short of a site (walking) the attack gathers, at the nearest and the farthest. */
+const STAGE_NEAR = 24;
+const STAGE_FAR = 64;
+
+/** Breach: is the attack going in? Once all but one are gathered (or the clock says so, or you have already gone on
+ * ahead), and from then on for the round. */
+function attackGo(m: Match, team: number, k: number, st: { pts: { x: number; z: number }[]; go: boolean; wait: number }) {
+  if (st.go) return true;
+  const p = st.pts[k];
+  const s = m.world.sites[k];
+  const ps = Math.hypot(p.x - s.x, p.z - s.z);
+  let alive = 0;
+  let there = 0;
+  for (const o of m.actors) {
+    if (!o.alive || o.team !== team) continue;
+    alive++;
+    const ds = Math.hypot(o.body.x - s.x, o.body.z - s.z);
+    if (Math.hypot(o.body.x - p.x, o.body.z - p.z) < 10 || ds < ps - 4) there++;
+    // you, gone in on your own: the team follows
+    if (!o.bot && ds < 30) st.go = true;
+  }
+  // (never before the round's own moment to go, a while in: the defense has to be set before a push means anything,
+  // and it shouldn't be able to set its watch by it)
+  const t = ROUND_TIME - m.phaseT;
+  if ((there >= Math.max(1, alive - 1) && t > st.wait) || t > 45) st.go = true;
+  return st.go;
 }
 
 /** Breach attack, nobody in sight. */
@@ -610,6 +785,8 @@ function planAttack(m: Match, a: Actor, br: Brain) {
     br.faceX = c.x;
     br.faceZ = c.z;
     br.via = false;
+    br.hold = true;
+    br.leash = 10;
     return;
   }
   // the charge on the ground: the nearest attacker bot goes to get it
@@ -635,6 +812,22 @@ function planAttack(m: Match, a: Actor, br: Brain) {
   const s = m.world.sites[k];
   const def = spawnOf(m, 1 - a.team);
   const own = spawnOf(m, a.team);
+  // late in the round: everyone in
+  const late = m.phaseT < 35;
+  br.leash = 20;
+  // first the team gathers short of the site, then goes in together, trading as a group instead of one at a time
+  const st = stageOf(m);
+  const go = late || attackGo(m, a.team, k, st);
+  if (!go && !(br.role === 'flank' && br.via)) {
+    const p = st.pts[k];
+    const ang = br.holdA * Math.PI * 2;
+    setGoal(m, br, p.x + Math.sin(ang) * 2.5, p.z + Math.cos(ang) * 2.5, `site${k}`);
+    br.faceX = s.x;
+    br.faceZ = s.z;
+    br.hold = Math.hypot(p.x - a.body.x, p.z - a.body.z) < 8;
+    br.leash = 10;
+    return;
+  }
   // the carrier: to the plant spot, just on the attack's side of the mast (cover from the defense)
   if (c.state === 'carried' && c.holder === a.id) {
     const d = Math.hypot(own.x - s.x, own.z - s.z) || 1;
@@ -646,14 +839,15 @@ function planAttack(m: Match, a: Actor, br: Brain) {
   }
   br.faceX = def.x;
   br.faceZ = def.z;
-  // late in the round, or the plan already on site: everyone in
-  const late = m.phaseT < 35;
   if (br.role === 'flank' && br.via && !late) {
-    if (Math.hypot(br.viaX - a.body.x, br.viaZ - a.body.z) < 6) br.via = false;
+    // the lurk: out to the middle, and wait there until the rest go in, then hit the site from the side
+    if (go) br.via = false;
     else {
       setGoal(m, br, br.viaX, br.viaZ);
-      br.faceX = br.viaX * 2 - a.body.x;
-      br.faceZ = br.viaZ * 2 - a.body.z;
+      br.faceX = s.x;
+      br.faceZ = s.z;
+      br.hold = Math.hypot(br.viaX - a.body.x, br.viaZ - a.body.z) < 8;
+      br.leash = 10;
       return;
     }
   }
@@ -673,6 +867,36 @@ function planAttack(m: Match, a: Actor, br: Brain) {
   setGoal(m, br, spot.x, spot.z, `site${k}`);
 }
 
+/** Breach defense: a spot `r` meters from (x, z) toward the defense's spawn, spread to either side by the bot. (Walked
+ * to by search, not by the site's field: that field pulls toward the site and the search back out to here, and the
+ * bot would pace between the two.) */
+function behind(m: Match, a: Actor, br: Brain, x: number, z: number, r: number) {
+  const own = spawnOf(m, a.team);
+  const ang = Math.atan2(own.x - x, own.z - z) + (br.holdA - 0.5) * 1.4;
+  return { x: x + Math.sin(ang) * r, z: z + Math.cos(ang) * r };
+}
+/** How far from the charge the defense gathers for a retake. */
+const RETAKE_R = 22;
+
+/** Breach: is the defense's retake on? Once every defender left is gathered near the charge, or the fuse says go now,
+ * and from then on for the round. */
+const retakes = new WeakMap<Match, { round: number; go: boolean }>();
+function retakeGo(m: Match, team: number) {
+  let e = retakes.get(m);
+  if (!e || e.round !== m.round) retakes.set(m, (e = { round: m.round, go: false }));
+  if (e.go) return true;
+  const c = m.charge;
+  let alive = 0;
+  let there = 0;
+  for (const o of m.actors)
+    if (o.alive && o.team === team) {
+      alive++;
+      if (Math.hypot(o.body.x - c.x, o.body.z - c.z) < RETAKE_R + 7) there++;
+    }
+  if (there >= alive || c.fuse < DEFUSE_TIME + 15) e.go = true;
+  return e.go;
+}
+
 /** Breach defense, nobody in sight. */
 function planDefense(m: Match, a: Actor, br: Brain) {
   const c = m.charge;
@@ -681,28 +905,70 @@ function planDefense(m: Match, a: Actor, br: Brain) {
   br.via = false;
   br.arrive = 2.2;
   if (c.state === 'planted') {
-    // the retake: gather a way off on the defense's side first, then go in together once the time says so (or
-    // straight away if someone is already on the charge); whoever gets there first defuses, the rest cover
-    const own = spawnOf(m, a.team);
-    const go = c.fuse < DEFUSE_TIME + 19 || c.defuseBy >= 0 || Math.hypot(c.x - a.body.x, c.z - a.body.z) < 9;
+    // the retake: gather a way off on the defense's side first, then go in together once everyone who is coming is
+    // there or the time says so (or straight away if someone is already on the charge); whoever gets there first
+    // defuses, the rest cover
+    const go = retakeGo(m, a.team) || c.defuseBy >= 0 || Math.hypot(c.x - a.body.x, c.z - a.body.z) < 9;
     br.faceX = c.x;
     br.faceZ = c.z;
     if (!go) {
-      const side = (br.holdA - 0.5) * 1.4;
-      const ang = Math.atan2(own.x - c.x, own.z - c.z) + side;
-      setGoal(m, br, c.x + Math.sin(ang) * 22, c.z + Math.cos(ang) * 22, `site${c.site}`);
+      const p = behind(m, a, br, c.x, c.z, RETAKE_R);
+      setGoal(m, br, p.x, p.z);
+      br.hold = true;
+      br.leash = 10;
       return;
     }
     br.rush = c.fuse < DEFUSE_TIME - c.defuseKept + 6;
-    br.arrive = 0.7;
-    setGoal(m, br, c.x, c.z, `site${c.site}`);
+    // the nearest goes for the charge; the rest clear round it first, toward where the attack was last seen, to
+    // cover whoever is on it
+    let near: Actor | null = null;
+    let nd = Infinity;
+    for (const o of m.actors)
+      if (o.alive && o.team === a.team) {
+        const d = c.defuseBy === o.id ? -1 : Math.hypot(o.body.x - c.x, o.body.z - c.z);
+        if (d < nd) {
+          nd = d;
+          near = o;
+        }
+      }
+    if (near === a || br.rush || !near?.bot) {
+      br.arrive = 0.7;
+      setGoal(m, br, c.x, c.z, `site${c.site}`);
+      return;
+    }
+    let tx = 0;
+    let tz = 0;
+    let n = 0;
+    for (const [id, p] of sightings(m, a.team))
+      if (m.actors[id].alive && m.time - p.t < 12 && Math.hypot(p.x - c.x, p.z - c.z) < 30) {
+        tx += p.x;
+        tz += p.z;
+        n++;
+      }
+    const ang = (n ? Math.atan2(tx / n - c.x, tz / n - c.z) : Math.atan2(atk.x - c.x, atk.z - c.z)) + (br.holdA - 0.5) * 1.6;
+    setGoal(m, br, c.x + Math.sin(ang) * 7, c.z + Math.cos(ang) * 7, `site${c.site}`);
+    br.faceX = c.x + Math.sin(ang) * 20;
+    br.faceZ = c.z + Math.cos(ang) * 20;
+    br.leash = 14;
+    return;
+  }
+  // the charge going down (you hear it): everyone near goes for the one planting, now, before it is too late
+  const planter = c.plantBy >= 0 ? m.actors[c.plantBy] : null;
+  if (planter && Math.hypot(planter.body.x - a.body.x, planter.body.z - a.body.z) < 32) {
+    setGoal(m, br, planter.body.x, planter.body.z);
+    br.faceX = planter.body.x;
+    br.faceZ = planter.body.z;
+    br.rush = true;
     return;
   }
   const call = m.call[a.team];
   const fresh = call.site >= 0 && m.time - call.t < 9;
+  // a spot to hold: it keeps to it in a fight, and goes after what it saw or heard only a few steps
+  br.hold = true;
+  br.leash = 10;
   if (br.post < 0 && !fresh) {
-    // the middle, watching the lanes between the sites
-    const p = midPoint(m);
+    // the middle, watching the lanes between the sites from a little back on the defense's side
+    const p = midPoint(m, -6);
     setGoal(m, br, p.x + (br.holdA - 0.5) * 8, p.z + (br.holdA - 0.5) * 8);
   } else {
     // hold a site (its own, or the one called) from off to one side of where the attack comes in, crossing it
@@ -885,19 +1151,23 @@ function roundReset(m: Match, a: Actor, br: Brain) {
   br.role = k % 5 === 1 || k % 5 === 2 ? 'entry' : k % 5 === 3 ? 'flank' : 'support';
   br.rush = false;
   br.arrive = 2.2;
+  br.flashAway = 0;
   if (m.mode === 'breach') {
     if (a.team === m.attack) {
       // one flanks through the middle, unless that is a long way round
-      const s = m.world.sites[m.aim];
+      const aim = stageOf(m).site;
+      const s = m.world.sites[aim];
       const sp = spawnOf(m, a.team);
       const mid = midPoint(m);
       br.viaX = mid.x;
       br.viaZ = mid.z;
-      const field = fieldTo(m.world, `site${m.aim}`, s.x, s.z);
+      const field = fieldTo(m.world, `site${aim}`, s.x, s.z);
       const direct = fieldDist(m.world, field, sp.x, sp.z);
       const around = Math.hypot(br.viaX - sp.x, br.viaZ - sp.z) + fieldDist(m.world, field, br.viaX, br.viaZ);
-      br.via = br.role === 'flank' && Number.isFinite(around) && around < direct * 1.45;
-      setGoal(m, br, s.x, s.z, `site${m.aim}`);
+      // (and not where the middle lies under either site's guns: the sites close together, it would only feed them)
+      const covered = m.world.sites.some((q) => Math.hypot(q.x - mid.x, q.z - mid.z) < 33);
+      br.via = br.role === 'flank' && m.charge.holder !== a.id && !covered && Number.isFinite(around) && around < direct * 1.45;
+      setGoal(m, br, s.x, s.z, `site${aim}`);
     } else {
       // two on each site and one in the middle, or (some rounds) three stacked on one site; the first on each site
       // anchors it and stays when the other is hit
@@ -1089,6 +1359,14 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     else if (d > pref + 12) moveAng = toward + (d > reach ? 0.15 : 0.5) * br.strafe;
     else if (d < pref * 0.5) moveAng = toward + Math.PI - 0.6 * br.strafe;
     if (!free(m, a, moveAng, 1.6)) moveAng = toward - (Math.PI / 2) * br.strafe;
+    // breach, a spot to hold: no closing in, only a step to either side, and back onto it if off it
+    if (m.mode === 'breach' && br.hold && g) {
+      if (Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z) > 3.5) moveAng = br.detourT > 0 ? br.detourA : br.heading;
+      else if (d > pref * 0.5) moveAng = toward + (Math.PI / 2) * (free(m, a, toward + (Math.PI / 2) * br.strafe, 1.6) ? br.strafe : -br.strafe);
+    } else if (m.mode === 'breach' && g && d > pref + 12 && Math.abs(angDiff(toward, br.heading)) > 0.8 && Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z) > 4) {
+      // breach, on the way somewhere: a far one off to the side is no reason to leave the way
+      moveAng = br.detourT > 0 ? br.detourA : br.heading;
+    }
     // a charge to reach in time: keep heading for it while shooting
     if (br.rush && Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z) > 1.2) moveAng = br.detourT > 0 ? br.detourA : br.heading;
     // ready to shoot?
@@ -1167,12 +1445,62 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
           inp.crouch = br.holdA > 0.45;
         }
       }
-      // a smoke ahead on the way into the site
-      if (m.mode === 'breach' && a.team === m.attack && a.smokes > 0 && br.role === 'entry' && gd < 42 && gd > 22 && br.nadeT <= 0 && r() < 0.05) {
-        inp.throw = 'smoke';
-        wantPitch = 0.35;
-        br.nadeT = 6;
+      // going in: a smoke as a wall between the gathering spot and the site, then one onto the far side of the site,
+      // which blinds whoever holds it from the back
+      if (m.mode === 'breach' && a.team === m.attack && a.smokes > 0 && br.nadeT <= 0 && m.charge.state !== 'planted') {
+        const st = stageOf(m);
+        const k = siteFor(m, a, br);
+        const s = m.world.sites[k];
+        const own = spawnOf(m, 1 - a.team);
+        const p = st.pts[k];
+        const sd = Math.hypot(own.x - s.x, own.z - s.z) || 1;
+        const tx = st.smokes === 0 ? p.x + (s.x - p.x) * 0.45 : s.x + ((own.x - s.x) / sd) * 7;
+        const tz = st.smokes === 0 ? p.z + (s.z - p.z) * 0.45 : s.z + ((own.z - s.z) / sd) * 7;
+        const d = Math.hypot(tx - a.body.x, tz - a.body.z);
+        if (st.go && st.smokes < 2 && d > 9 && d < 27) {
+          const yaw = Math.atan2(-(tx - a.body.x), -(tz - a.body.z));
+          wantYaw = yaw;
+          // (it pops a second and a half after leaving the hand, wherever it has got to)
+          wantPitch = Math.acos(clamp(d / 25, 0.3, 1)) - 0.1;
+          moveAng = NaN;
+          if (Math.abs(angDiff(a.yaw, yaw)) < 0.15 && Math.abs(a.pitch - wantPitch) < 0.08) {
+            inp.throw = 'smoke';
+            st.smokes++;
+            br.nadeT = 5;
+          }
+        }
       }
+      // a flashbang over the site before going in (the attack), or onto the charge before a retake (the defense)
+      if (m.mode === 'breach' && m.phase === 'live' && a.flashes > 0 && br.nadeT <= 0 && br.skill > 0.25) {
+        const c = m.charge;
+        // (the defense also flashes the way in on a site being hit, as the push comes)
+        const call = m.call[a.team];
+        const pushed = a.team !== m.attack && c.state !== 'planted' && br.hold && call.site >= 0 && call.site === siteFor(m, a, br) && m.time - call.t < 3;
+        const at = a.team === m.attack ? (c.state === 'planted' || !stageOf(m).go ? null : m.world.sites[siteFor(m, a, br)]) : c.state === 'planted' ? { x: c.x, z: c.z } : pushed ? entryOf(m, call.site) : null;
+        if (at) {
+          const d = Math.hypot(at.x - a.body.x, at.z - a.body.z);
+          if (d > 14 && d < 34 && (a.team === m.attack ? br.role !== 'flank' : pushed || br.rush || c.fuse < 25 || retakeGo(m, a.team))) {
+            const yaw = Math.atan2(-(at.x - a.body.x), -(at.z - a.body.z));
+            wantYaw = yaw;
+            wantPitch = 0.22 + d * 0.004;
+            // throw once facing it, then turn away until it has gone off
+            if (Math.abs(angDiff(a.yaw, yaw)) < 0.25 && r() < 0.5) {
+              inp.throw = 'flash';
+              br.nadeT = 7 + r() * 4;
+              br.flashAway = 1.5;
+              br.awayYaw = yaw + Math.PI;
+            }
+          }
+        }
+      }
+    }
+  }
+  // a flashbang of its own in the air: look the other way
+  if (br.flashAway > 0) {
+    br.flashAway -= dt;
+    if (!tgt) {
+      wantYaw = br.awayYaw;
+      wantPitch = -0.6;
     }
   }
   // turn toward the wanted view at a limited speed

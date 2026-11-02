@@ -198,11 +198,13 @@ test('bullets fly, drop over distance and hit what they aim at', () => {
   assert.equal(m.bullets.length, before + 1);
   const b = m.bullets[m.bullets.length - 1];
   assert.ok(Math.hypot(b.vx, b.vy, b.vz) > 900);
-  // a bullet fired flat drops under gravity: after 0.3 s it has lost about g t^2 / 2 against its start line
-  const vy0 = b.vy;
   for (let i = 0; i < 40 && b.live; i++) step(m, DT, { ...shot, fire: false });
   assert.ok(!foe.alive || foe.hp < 100, 'the target was hit');
-  assert.ok(vy0 - b.vy > BULLET_G * 0.01, 'gravity pulled the bullet down');
+  // a bullet with nothing in its way drops under gravity
+  const free = { ...b, x: you.body.x, y: eye + 50, z: you.body.z, px: you.body.x, py: eye + 50, pz: you.body.z, vx: 0, vy: 0, vz: 900, owner: 0, life: 1, dist: 0, live: true };
+  m.bullets.push(free);
+  for (let i = 0; i < 6; i++) step(m, DT, { ...shot, fire: false });
+  assert.ok(free.vy < -BULLET_G * 0.09, `gravity pulled the bullet down (${free.vy.toFixed(2)})`);
 });
 
 /** A breach match gone live with nobody acting (all steered by hand), you on the attack. */

@@ -217,7 +217,8 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
 
   useEffect(() => setTouch(!!os?.mobile || isTouchDevice()), [os?.mobile]);
   useEffect(() => sfx.retain(), []);
-  useBackgroundMusic(meta.id, compact ? undefined : meta.music, round, status === 'playing');
+  // ('own': the game plays its own score through sfx.graph().music; the shell still gives it the Music switch)
+  useBackgroundMusic(meta.id, compact || meta.music === 'own' ? undefined : meta.music, round, status === 'playing');
   useEffect(() => {
     if (status !== 'ready' && status !== 'paused') setHowOpen(false);
   }, [status]);

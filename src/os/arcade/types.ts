@@ -62,7 +62,7 @@ export type GameMeta = {
    * Background music while a round plays, in one of the kit's styles (the tune itself is written from the id). Leave
    * it out for games that are better quiet (board, card and word games, games played out loud) or play their own.
    */
-  music?: MusicStyle;
+  music?: MusicStyle | 'own';
   /** The rules, a step per line, for the How to Play card the Start and Pause cards open. Leave out if the game has its own. */
   howTo?: readonly string[];
 };

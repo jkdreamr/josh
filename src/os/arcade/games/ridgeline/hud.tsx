@@ -25,6 +25,9 @@ export type Hud = {
   guns: (WeaponId | null)[];
   frags: number;
   smokes: number;
+  flashes: number;
+  /** How white your screen is from a flashbang, 0 to 1. */
+  blind: number;
   canBuy: boolean;
   alive: boolean;
   dead: { by: string; w: string; head: boolean; respawn: number } | null;
@@ -96,6 +99,8 @@ export const blankHud = (mode: Mode): Hud => ({
   guns: [null, null, null],
   frags: 0,
   smokes: 0,
+  flashes: 0,
+  blind: 0,
   canBuy: false,
   alive: true,
   dead: null,
@@ -282,6 +287,11 @@ export function Ammo({ h }: { h: Hud }) {
         <span data-empty={h.smokes ? '0' : '1'}>
           <kbd>{h.mode === 'royale' ? 5 : 4}</kbd>smoke {h.smokes}
         </span>
+        {h.mode === 'breach' && (
+          <span data-empty={h.flashes ? '0' : '1'}>
+            <kbd>5</kbd>flash {h.flashes}
+          </span>
+        )}
       </div>
     </div>
   );
@@ -305,6 +315,18 @@ export function Feed({ items }: { items: FeedItem[] }) {
 }
 
 export type Banner = { title: string; sub: string; tone: 'win' | 'loss' | 'info'; key: number };
+
+/** A highlight of yours (first blood, a multi kill, a clutch): big, brief, under the crosshair. */
+export type MedalPop = { title: string; sub: string; tier: number; key: number };
+export function MedalView({ m }: { m: MedalPop | null }) {
+  if (!m) return null;
+  return (
+    <div key={m.key} className="g-ridgeline-medal" data-tier={m.tier}>
+      <b>{m.title}</b>
+      {m.sub && <small>{m.sub}</small>}
+    </div>
+  );
+}
 export function BannerView({ b }: { b: Banner | null }) {
   if (!b) return null;
   return (
@@ -321,17 +343,18 @@ const SHOP: { group: string; items: ShopItem[] }[] = [
   { group: 'Rifles', items: ['kestrel', 'lancer'] },
   { group: 'Sniper', items: ['longbow'] },
   { group: 'Armor', items: ['light', 'heavy'] },
-  { group: 'Grenades', items: ['frag', 'smoke'] },
+  { group: 'Grenades', items: ['frag', 'smoke', 'flash'] },
 ];
 export const SHOP_ORDER = SHOP.flatMap((g) => g.items);
 
-const itemName = (i: ShopItem) => (i === 'light' ? 'Light Armor' : i === 'heavy' ? 'Heavy Armor' : i === 'frag' ? 'Frag' : i === 'smoke' ? 'Smoke' : WEAPONS[i].name);
-const itemPrice = (i: ShopItem) => (i === 'light' || i === 'heavy' ? ARMOR[i].price : i === 'frag' || i === 'smoke' ? NADES[i].price : WEAPONS[i].price);
+const itemName = (i: ShopItem) => (i === 'light' ? 'Light Armor' : i === 'heavy' ? 'Heavy Armor' : i === 'frag' ? 'Frag' : i === 'smoke' ? 'Smoke' : i === 'flash' ? 'Flashbang' : WEAPONS[i].name);
+const itemPrice = (i: ShopItem) => (i === 'light' || i === 'heavy' ? ARMOR[i].price : i === 'frag' || i === 'smoke' || i === 'flash' ? NADES[i].price : WEAPONS[i].price);
 const itemLine = (i: ShopItem) => {
   if (i === 'light') return 'soaks 25';
   if (i === 'heavy') return 'soaks 50';
   if (i === 'frag') return 'big blast, 2 s fuse';
   if (i === 'smoke') return 'blocks sight 15 s';
+  if (i === 'flash') return 'blinds whoever looks at it';
   const w = WEAPONS[i];
   const dmg = w.pellets > 1 ? `${w.pellets}x${w.dmg}` : `${w.dmg}`;
   return `${dmg} dmg, ${w.rpm} rpm, ${w.mag} rounds${w.scope ? ', scoped' : ''}`;
