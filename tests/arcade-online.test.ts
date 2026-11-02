@@ -3,7 +3,7 @@ import { mock, test } from 'node:test';
 import { roomApp } from '../src/os/arcade/apps.ts';
 import { advanceOnlineRound, botPlayers, canStartNext, channelUsable, FAST_BUFFER_LIMIT, fastSendBlocked, handOffScores, handOffSeat, MAX_SEATS, nextOnlineRound, relayPlan, roundLeftVerdict, RoundRouter, sendLabels, tagRound, openRoomAction, openRoomDetail, openRoomLine, OPEN_ROOMS_MAX, parseOpenRooms, handOffSettled, parseRacePacket, raceSeats, raceStandings, raceVerdict, type OpenRoom, type RaceScores, type SettledRace } from '../src/os/arcade/kit/online-core.ts';
 import { createRoom, listRooms, quickRoom, RoomLink, ROOM_CODE_ALPHABET, makeRoomCode } from '../src/os/arcade/kit/room.ts';
-import { agreedWinner, agreedWinners, isPool, isRelayMessage, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, canWatchRoom, endRound, GATHER_FULL_MS, GATHER_MS, gatherFull, gathering, joinable, LISTING_REFRESH_MS, lowestFreeSeat, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, pickQuick, QUICK_LATE_MS, QUICK_PENDING_MS, roomListing, roundPlayable, roundSeats, seatsFor, sortListings, WATCHERS_MAX, type LobbyRow, type RoomState } from '../worker/src/room-core.ts';
+import { agreedWinner, agreedWinners, isPool, isRelayMessage, beginRound, benchSeat, botSeats, canJoinRoom, canStartRoom, canWatchRoom, endRound, GATHER_FULL_MS, GATHER_MS, gatherFull, gathering, handOffRound, joinable, LISTING_REFRESH_MS, lowestFreeSeat, markRoundRecorded, nextAlarm, nextHost, parseRoomMessage, pickQuick, QUICK_LATE_MS, QUICK_PENDING_MS, roomListing, roundPlayable, roundSeats, seatsFor, sortListings, WATCHERS_MAX, type LobbyRow, type RoomState, type RoundReports } from '../worker/src/room-core.ts';
 import { ONLINE_SPECS } from '../worker/src/specs.gen.ts';
 
 /** A stand-in for the browser's WebSocket: records what RoomLink sends and lets a test play the server's side. */
@@ -240,6 +240,26 @@ test('a round goes on while there is someone to play against, and the lowest sea
   assert.equal(roundPlayable(duel, 2), true);
   assert.deepEqual(nextHost([{ seat: 3, name: 'C' }, { seat: 1, name: 'A' }, { seat: 2, name: 'B' }]), { seat: 1, name: 'A' });
   assert.equal(nextHost([]), null);
+});
+
+test('a round the game takes over goes to someone playing it, and its lineup and results follow the new seats', () => {
+  // seat 1 joined after the round began and sits it out: seat 2, who is playing, takes over
+  const people = [{ seat: 1, name: 'Late' }, { seat: 2, name: 'Bo' }, { seat: 4, name: 'Cy' }];
+  assert.deepEqual(nextHost(people, [0, 2, 4]), { seat: 2, name: 'Bo' });
+  assert.deepEqual(nextHost(people, [0]), { seat: 1, name: 'Late' }, 'nobody left from the round: the lowest seat');
+  assert.deepEqual(nextHost(people), { seat: 1, name: 'Late' });
+  const room: RoomState = { game: 'scramble', seats: 20, started: false, lateJoin: true, migrate: true };
+  const round = beginRound(room, [0, 2, 4, 5], 3);
+  const reports: RoundReports = { [round]: { 0: 4, 2: [2, 4], 4: 0, 5: null }, [round - 1]: { 0: 0 } };
+  handOffRound(room, reports, 2);
+  assert.deepEqual(room.roster, [0, 4, 5], 'the new host is seat 0, and the old one gone');
+  assert.deepEqual(reports[round], { 0: [0, 4], 4: null, 5: null }, "the old host's word is gone, and so is any naming it");
+  assert.deepEqual(reports[round - 1], { 0: 0 }, 'an earlier round is as it was');
+  // and the results agree once everyone left reports in the new seats
+  reports[round][4] = [0, 4];
+  reports[round][5] = [0, 4];
+  assert.deepEqual(agreedWinners(reports, roundSeats(room, [0, 4, 5, 7], round), round), [0, 4]);
+  assert.equal(roundPlayable(room, 3), true);
 });
 
 test('players who join mid-round sit out that round\'s result', () => {
@@ -480,7 +500,7 @@ test('RoomLink follows a host hand-off, round ends and the round a latecomer wal
     const socket = FakeWebSocket.last;
     const seen: unknown[] = [];
     link.on('welcome', (welcome) => seen.push(['welcome', welcome.round, welcome.started]));
-    link.on('host', (host) => seen.push(['host', host.from, host.seat]));
+    link.on('host', (host) => seen.push(['host', host.from, host.seat, host.started]));
     link.on('started', (started) => seen.push(['started', started]));
     link.on('players', (players) => seen.push(['players', players.map((p) => p.seat)]));
     socket.open();
@@ -491,13 +511,16 @@ test('RoomLink follows a host hand-off, round ends and the round a latecomer wal
     assert.equal(link.seat, 2);
     // Then Cy leaves too: Bea takes over.
     socket.receive({ t: 'host', from: 2, players: [{ seat: 0, name: 'Bea' }], started: false });
+    // (in a game that takes rounds over, the room says when the round goes on past one)
+    socket.receive({ t: 'host', from: 2, players: [{ seat: 0, name: 'Bea' }], started: true });
     await new Promise<void>((resolve) => setImmediate(resolve));
     assert.equal(link.seat, 0);
     assert.deepEqual(seen, [
       ['welcome', 3, true], ['players', [0, 1, 2]],
       ['players', [0, 1, 2]], ['started', false],
-      ['host', 1, 2], ['players', [0, 2]], ['started', false],
-      ['host', 2, 0], ['players', [0]], ['started', false],
+      ['host', 1, 2, false], ['players', [0, 2]], ['started', false],
+      ['host', 2, 0, false], ['players', [0]], ['started', false],
+      ['host', 2, 0, true], ['players', [0]], ['started', true],
     ]);
     link.endRound(4);
     assert.deepEqual(JSON.parse(socket.sent.at(-1)!), { t: 'over', round: 4 });
@@ -889,7 +912,7 @@ test('quick play sends people to the fullest quick room still gathering, never o
   assert.deepEqual(listed.map((r) => r.quick), [true, undefined]);
   assert.equal(openRoomLine(listed[0]), 'Quick Play · 2/20 · 18 Bots');
   assert.equal(openRoomDetail(listed[0]), 'Quick Play · 2/20 · 18 Bots · Starting soon');
-  assert.deepEqual(ONLINE_SPECS.scramble, { seats: 20, lateJoin: true, bots: true, quick: true });
+  assert.deepEqual(ONLINE_SPECS.scramble, { seats: 20, lateJoin: true, bots: true, quick: true, migrate: true });
   for (const [game, spec] of Object.entries(ONLINE_SPECS)) if (spec.quick) assert.ok(spec.bots, `${game}: quick play fills seats with bots`);
 });
 

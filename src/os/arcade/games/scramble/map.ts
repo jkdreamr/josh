@@ -242,8 +242,14 @@ export type Solid =
  * wall does while it's shut (see logic.ts), and nothing once it's open.
  */
 export const low = (s: Solid) => s.what === 'fence' || s.what === 'table' || s.what === 'fire' || s.what === 'log' || s.what === 'seat' || s.what === 'bars';
-/** A parked car or truck: solid cover that stops bullets. Axis aligned, nose along x when `alongX`. */
-export type Car = { x: number; z: number; hw: number; hd: number; look: number; truck: boolean; alongX: boolean };
+/**
+ * A parked car or truck: cover that stops bullets. Axis aligned, its length along x when `alongX` (else along z).
+ * Trucks and most cars (`ride`) can be driven off (see logic.ts), so the island's solids leave them out; the rest stay
+ * put, and so does one parked with no room to drive off.
+ */
+export type Car = { x: number; z: number; hw: number; hd: number; look: number; truck: boolean; alongX: boolean; ride: boolean };
+/** Which of the island's cars can be driven: every truck, and cars of the first four looks (the last two are old wrecks). */
+export const drivable = (truck: boolean, look: number) => truck || look < 4;
 /** A farm's fenced yard, with a gate in the middle of each side (gates are doors: the way out is `ox`, `oz`). */
 export type Yard = { x: number; z: number; hw: number; hd: number; fences: Box[]; gates: Door[] };
 /** A dirt road between two places. */
@@ -1854,7 +1860,8 @@ export function generateMap(seed: number): GameMap {
     const r = Math.max(hw, hd);
     if (!onLand(x, z, 3) || !clear(x, z, hw, hd, 1.3) || !free(x, z, r + 1.2) || !offDoors(x, z, r + 1.4) || nearRoad(x, z, r)) return false;
     taken.push({ x, z, r: r + 0.8 });
-    map.cars.push({ x: r1(x), z: r1(z), hw, hd, look: Math.floor(rng() * 6), truck, alongX });
+    const look = Math.floor(rng() * 6);
+    map.cars.push({ x: r1(x), z: r1(z), hw, hd, look, truck, alongX, ride: drivable(truck, look) });
     return true;
   };
   const sidesFrom = (first: number) => [0, 1, 2, 3].map((k) => (first + k) % 4);
@@ -2386,7 +2393,10 @@ export function generateMap(seed: number): GameMap {
   map.yards.forEach((y, i) => {
     for (const f of y.fences) map.solids.push({ shape: 'box', ...f, what: 'fence', ref: i });
   });
-  map.cars.forEach((c, i) => map.solids.push({ shape: 'box', x: c.x, z: c.z, hw: c.hw, hd: c.hd, what: 'car', ref: i }));
+  // (a car that can be driven off stops things where it is, see logic.ts)
+  map.cars.forEach((c, i) => {
+    if (!c.ride) map.solids.push({ shape: 'box', x: c.x, z: c.z, hw: c.hw, hd: c.hd, what: 'car', ref: i });
+  });
   // a bridge's rails, down both sides of the deck
   map.bridges.forEach((b, i) => {
     for (const s of [-1, 1]) {
@@ -2413,7 +2423,46 @@ export function generateMap(seed: number): GameMap {
     map.solids.push({ shape: 'box', x: c.x, z: c.z, hw: SUPPLY_HALF, hd: SUPPLY_HALF, what: 'chest', ref: c.id });
   }
   reindex(map);
+  // a car that can be driven off has room to, ahead of it or behind; one boxed in stays where it is, as cover
+  let boxed = false;
+  map.cars.forEach((c, i) => {
+    if (!c.ride || roomToDrive(map, c, 1) || roomToDrive(map, c, -1)) return;
+    c.ride = false;
+    map.solids.push({ shape: 'box', x: c.x, z: c.z, hw: c.hw, hd: c.hd, what: 'car', ref: i });
+    boxed = true;
+  });
+  if (boxed) reindex(map);
   return map;
+}
+
+/** How far clear a car must be, along its length one way or the other, to be driven off. */
+const DRIVE_OFF = 7;
+
+/**
+ * Whether the strip DRIVE_OFF meters long off one end of a parked car (`s` 1 its +x or +z end, -1 the other), a little
+ * wider than the car, is clear: on the island, off every building and stairway, and clear of everything solid.
+ */
+function roomToDrive(map: GameMap, c: Car, s: number) {
+  const mid = (c.alongX ? c.hw : c.hd) + DRIVE_OFF / 2;
+  const x = c.alongX ? c.x + s * mid : c.x;
+  const z = c.alongX ? c.z : c.z + s * mid;
+  const hw = c.alongX ? DRIVE_OFF / 2 : c.hw + 0.3;
+  const hd = c.alongX ? c.hd + 0.3 : DRIVE_OFF / 2;
+  if (Math.abs(x) + hw > EDGE || Math.abs(z) + hd > EDGE) return false;
+  if (map.buildings.some((b) => Math.abs(b.x - x) < b.w / 2 + WALL_T + hw && Math.abs(b.z - z) < b.d / 2 + WALL_T + hd)) return false;
+  if (map.stairs.some((t) => Math.abs(t.x - x) < t.hw + hw && Math.abs(t.z - z) < t.hd + hd)) return false;
+  let clear = true;
+  solidsNear(map, x, z, Math.max(hw, hd), (_i, o) => {
+    if (!clear) return;
+    if (o.shape === 'box') {
+      if (Math.abs(o.x - x) < o.hw + hw && Math.abs(o.z - z) < o.hd + hd) clear = false;
+      return;
+    }
+    const qx = Math.max(x - hw, Math.min(x + hw, o.x)) - o.x;
+    const qz = Math.max(z - hd, Math.min(z + hd, o.z)) - o.z;
+    if (qx * qx + qz * qz < o.r * o.r) clear = false;
+  });
+  return clear;
 }
 
 /** Sends a called supply drop to land at (x, z) at match time `at`: its box, its loot and its place in the grid. */
