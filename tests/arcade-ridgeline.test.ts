@@ -9,15 +9,24 @@ import { ARMOR, KILL_REWARD, LOSS_REWARD, START_CREDITS, WEAPONS, WIN_REWARD, ap
 import { ARENA, ROYALE_ARENA, SITE_R, worldFor } from '../src/os/arcade/games/ridgeline/world.ts';
 import { AMMO_MAX, AMMO_PACK, ROYALE_PLAYERS, VEST, ZONES } from '../src/os/arcade/games/ridgeline/royale.ts';
 import {
+  BLAST_R,
   BULLET_G,
   BUY_TIME,
-  CAPTURE,
+  DEFUSE_HALF,
+  DEFUSE_TIME,
   DM_KILLS,
+  FUSE,
+  HALF,
+  PLANT_REWARD,
+  PLANT_TIME,
   buy,
+  canDefuse,
   canShop,
   createMatch,
   idleInput,
   lootNear,
+  plantSite,
+  spawnOf,
   startRound,
   step,
   type Input,
@@ -46,9 +55,9 @@ test('terrain is the same every time and the height query matches the grid', () 
 });
 
 for (const id of MAP_IDS) {
-  test(`${id}: spawns and uplinks are inside the arena, reachable and clear`, () => {
+  test(`${id}: spawns and sites are inside the arena, reachable and clear, and the defense is nearer the sites`, () => {
     const w = worldFor(id);
-    assert.equal(w.sites.length, 3);
+    assert.equal(w.sites.length, 2);
     assert.equal(w.spawns.length, 2);
     assert.ok(w.dmSpawns.length >= DM_HUBS + 8, 'enough deathmatch spawns');
     assert.ok(w.interiors.length >= 12, 'towns have buildings to walk into');
@@ -57,8 +66,28 @@ for (const id of MAP_IDS) {
     for (const s of w.spawns) for (const slot of s.slots) assert.ok(!blockedAt(w, slot.x, slot.z, heightAt(w.terrain, slot.x, slot.z)), 'spawn slots are free');
     w.sites.forEach((site, k) => {
       const f = fieldTo(w, `site${k}`, site.x, site.z);
-      for (const s of w.spawns) assert.ok(Number.isFinite(fieldDist(w, f, s.x, s.z)), `spawn reaches uplink ${site.name}`);
+      for (const s of w.spawns) assert.ok(Number.isFinite(fieldDist(w, f, s.x, s.z)), `spawn reaches site ${site.name}`);
+      // walking lengths: the attack about 20 s of running from either site, the defense well nearer
+      const walk = (a: { x: number; z: number }) => {
+        const p = findPath(w, a.x, a.z, site.x, site.z, 200000)!;
+        let x = a.x;
+        let z = a.z;
+        let len = 0;
+        for (let i = 0; i < p.length; i += 2) {
+          len += Math.hypot(p[i] - x, p[i + 1] - z);
+          x = p[i];
+          z = p[i + 1];
+        }
+        return len;
+      };
+      const atk = walk(w.spawns[0]);
+      const def = walk(w.spawns[1]);
+      assert.ok(atk > 70 && atk < 150, `attack walks ${atk.toFixed(0)} m to ${site.name}`);
+      assert.ok(def < atk * 0.8, `defense walks ${def.toFixed(0)} m to ${site.name}, the attack ${atk.toFixed(0)}`);
     });
+    // the spawns are walled yards: nobody sees from one into the other
+    const [a, b] = w.spawns;
+    for (const p of a.slots) for (const q of b.slots) assert.ok(!clearLine(w, p.x, a.y + 1.66, p.z, q.x, b.y + 1.66, q.z), 'no line of sight from spawn to spawn');
     for (const p of w.dmSpawns) assert.ok(findPath(w, p.x, p.z, w.sites[1].x, w.sites[1].z), 'deathmatch spawns are on the main ground');
   });
 }
@@ -108,7 +137,7 @@ function aim(m: Match, from: number, x: number, y: number, z: number): Input {
 }
 
 test('the buy phase: credits, shop rules, refunds and the spawn barrier', () => {
-  const m = createMatch(worldFor('mesa'), 'uplink', 'normal', { seed: 3 });
+  const m = createMatch(worldFor('mesa'), 'breach', 'normal', { seed: 3 });
   const you = m.actors[0];
   assert.equal(m.phase, 'buy');
   assert.equal(you.credits, START_CREDITS);
@@ -123,7 +152,7 @@ test('the buy phase: credits, shop rules, refunds and the spawn barrier', () => 
   assert.equal(you.credits, 5000 - WEAPONS.kestrel.price);
   assert.equal(you.guns[0]?.id, 'kestrel');
   // nobody leaves spawn before the round goes live
-  const s = m.world.spawns[0];
+  const s = spawnOf(m, you.team);
   for (let i = 0; i < 240; i++) step(m, DT, { ...idleInput(you.yaw, 0), mz: 1 });
   assert.ok(Math.hypot(you.body.x - s.x, you.body.z - s.z) < 16);
   while (m.phase === 'buy') step(m, DT, idleInput(you.yaw, 0));
@@ -132,7 +161,7 @@ test('the buy phase: credits, shop rules, refunds and the spawn barrier', () => 
 });
 
 test('bullets fly, drop over distance and hit what they aim at', () => {
-  const m = createMatch(worldFor('vale'), 'uplink', 'normal', { seed: 4 });
+  const m = createMatch(worldFor('vale'), 'breach', 'normal', { seed: 4 });
   while (m.phase === 'buy') step(m, DT, idleInput());
   // freeze everyone but you and one enemy, standing in the open
   for (const a of m.actors) a.alive = a.id === 0 || a.id === 5;
@@ -176,37 +205,137 @@ test('bullets fly, drop over distance and hit what they aim at', () => {
   assert.ok(vy0 - b.vy > BULLET_G * 0.01, 'gravity pulled the bullet down');
 });
 
-test('holding the uplink alone wins the round, and rewards follow', () => {
-  const m = createMatch(worldFor('frost'), 'uplink', 'normal', { seed: 8 });
+/** A breach match gone live with nobody acting (all steered by hand), you on the attack. */
+function handMatch(id: 'vale' | 'mesa' | 'frost' | 'isles', seed: number) {
+  const m = createMatch(worldFor(id), 'breach', 'normal', { seed });
+  while (m.attack !== 0) startRound(m);
+  m.round = 1;
   m.phase = 'live';
   m.phaseT = 100;
-  const site = m.world.sites[m.site];
-  const credits = m.actors.map((a) => a.credits);
-  // park everyone: team 0 on the uplink, team 1 far away and unable to act
   for (const a of m.actors) {
     a.bot = false;
     a.brain = null;
-    if (a.team === 0) {
-      a.body.x = site.x + (a.id - 2) * 0.8;
-      a.body.z = site.z;
-      a.body.y = site.y + 0.1;
+  }
+  return m;
+}
+const hold = (m: Match, a: number, secs: number, use = true) => {
+  for (let t = 0; t < secs && m.phase === 'live'; t += DT) {
+    const inputs = idleInput(m.actors[a].yaw, 0);
+    inputs.use = use;
+    if (a === 0) step(m, DT, inputs);
+    else {
+      // only actor 0 takes input: hand the work to it by swapping in its id
+      step(m, DT, idleInput());
     }
   }
+};
+const putOn = (m: Match, a: number, x: number, z: number) => {
+  const b = m.actors[a].body;
+  b.x = x;
+  b.z = z;
+  b.y = heightAt(m.world.terrain, x, z) + 0.05;
+  b.vx = b.vy = b.vz = 0;
+  b.onGround = true;
+};
+
+test('breach: the charge plants on a site, pays the attack, and goes off when the fuse runs out', () => {
+  const m = handMatch('vale', 8);
+  const site = m.world.sites[1];
+  m.charge.holder = 0;
+  const credits = m.actors.map((a) => a.credits);
+  // off the site: no plant
+  putOn(m, 0, site.x + SITE_R + 6, site.z);
+  step(m, DT, idleInput());
+  assert.equal(plantSite(m, m.actors[0]), -1);
+  putOn(m, 0, site.x + 2, site.z + 1);
+  step(m, DT, idleInput());
+  assert.equal(plantSite(m, m.actors[0]), site.id);
+  // let go half way: it starts over
+  hold(m, 0, PLANT_TIME / 2);
+  assert.equal(m.charge.state, 'carried');
+  hold(m, 0, 0.1, false);
+  assert.equal(m.charge.plantBy, -1);
+  hold(m, 0, PLANT_TIME + 0.1);
+  assert.equal(m.charge.state, 'planted');
+  assert.equal(m.charge.site, site.id);
+  for (const a of m.actors) assert.equal(a.credits - credits[a.id], a.team === 0 ? PLANT_REWARD : 0);
+  // a defender standing close, another far off; the fuse runs out
+  putOn(m, 5, m.charge.x + 3, m.charge.z);
+  putOn(m, 6, m.charge.x + BLAST_R + 30, m.charge.z);
+  putOn(m, 0, m.charge.x + BLAST_R + 30, m.charge.z + 4);
   let t = 0;
-  while (m.phase === 'live' && t < CAPTURE + 2) {
+  while (m.phase === 'live' && t < FUSE + 1) {
     step(m, DT, idleInput());
     t += DT;
   }
-  assert.equal(m.phase, 'end');
-  assert.deepEqual(m.last, { winner: 0, why: 'cap' });
-  assert.deepEqual(m.score, [1, 0]);
-  for (const a of m.actors) assert.equal(a.credits - credits[a.id], a.team === 0 ? WIN_REWARD : LOSS_REWARD);
-  assert.ok(Math.abs(t - CAPTURE) < 0.1, 'capture takes the set time');
-  assert.ok(m.onSite[0] > 0 && Math.hypot(m.actors[0].body.x - site.x, m.actors[0].body.z - site.z) < SITE_R);
+  assert.ok(Math.abs(t - FUSE) < 0.2, `the fuse ran ${t.toFixed(2)} s`);
+  assert.deepEqual(m.last, { winner: 0, why: 'blast' });
+  assert.equal(m.charge.state, 'blown');
+  assert.ok(!m.actors[5].alive, 'caught in the blast');
+  assert.ok(m.actors[6].alive && m.actors[0].alive, 'far enough away');
+});
+
+test('breach: a defender defuses (keeping half the work after letting go), and a dropped charge is picked up', () => {
+  const m = handMatch('frost', 9);
+  const site = m.world.sites[0];
+  // the carrier falls: the charge drops where it fell, and the next attacker to walk over it has it
+  m.charge.holder = 3;
+  putOn(m, 3, site.x, site.z);
+  m.actors[3].hp = 1;
+  m.actors[0].hp = 100;
+  putOn(m, 0, site.x + 20, site.z);
+  const shooter = m.actors[6];
+  shooter.guns[0] = { id: 'kestrel', mag: 25, reserve: 75, fresh: false };
+  m.actors[3].alive = false;
+  m.charge.state = 'dropped';
+  m.charge.holder = -1;
+  m.charge.x = site.x;
+  m.charge.z = site.z;
+  m.charge.y = m.actors[3].body.y;
+  putOn(m, 0, site.x + 0.5, site.z);
+  step(m, DT, idleInput());
+  assert.equal(m.charge.state, 'carried');
+  assert.equal(m.charge.holder, 0);
+  hold(m, 0, PLANT_TIME + 0.1);
+  assert.equal(m.charge.state, 'planted');
+  // now you defend: hand actor 0 to the other team for the test, standing on the charge
+  m.actors[0].team = 1;
+  for (const a of m.actors) if (a.team === 0) a.alive = false;
+  m.actors[1].alive = true;
+  putOn(m, 1, m.charge.x + 40, m.charge.z);
+  putOn(m, 0, m.charge.x + 0.6, m.charge.z);
+  step(m, DT, idleInput());
+  assert.ok(canDefuse(m, m.actors[0]));
+  hold(m, 0, DEFUSE_HALF + 0.2);
+  hold(m, 0, 0.1, false);
+  assert.equal(m.charge.defuseKept, DEFUSE_HALF, 'half kept');
+  hold(m, 0, DEFUSE_TIME - DEFUSE_HALF + 0.1);
+  assert.deepEqual(m.last, { winner: 1, why: 'defuse' });
+  assert.equal(m.charge.state, 'defused');
+});
+
+test('breach: the defense wins when time runs out with no plant, and the sides swap at the half', () => {
+  const m = handMatch('isles', 10);
+  m.phaseT = 0.5;
+  for (let i = 0; i < 60 && m.phase === 'live'; i++) step(m, DT, idleInput());
+  assert.deepEqual(m.last, { winner: 1, why: 'time' });
+  // play out to the half
+  m.round = HALF;
+  m.actors[0].credits = 9000;
+  m.phaseT = 0;
+  step(m, DT, idleInput());
+  assert.equal(m.round, HALF + 1);
+  assert.equal(m.attack, 1, 'sides swapped');
+  assert.equal(m.actors[0].credits, START_CREDITS, 'everyone starts over');
+  assert.ok(m.actors.every((a) => !a.guns[0] && a.guns[1]?.id === 'wren'));
+  // the attack starts at the attack's spawn
+  const sp = spawnOf(m, 1);
+  assert.ok(Math.hypot(m.actors[5].body.x - sp.x, m.actors[5].body.z - sp.z) < 16);
+  assert.equal(m.actors[m.charge.holder].team, 1, 'the charge is with the new attack');
 });
 
 test('a knockout pays the killer, and the dead lose their primary', () => {
-  const m = createMatch(worldFor('isles'), 'uplink', 'normal', { seed: 2 });
+  const m = createMatch(worldFor('isles'), 'breach', 'normal', { seed: 2 });
   while (m.phase === 'buy') step(m, DT, idleInput());
   for (const a of m.actors) {
     a.bot = false;
@@ -233,7 +362,7 @@ test('a knockout pays the killer, and the dead lose their primary', () => {
 
 for (const id of MAP_IDS) {
   test(`${id}: a match of bots plays out to a winner`, () => {
-    const m = createMatch(worldFor(id), 'uplink', 'normal', { seed: 21 });
+    const m = createMatch(worldFor(id), 'breach', 'normal', { seed: 21 });
     m.actors[0].bot = true;
     m.actors[0].brain = newBrain('normal', 0);
     let kills = 0;
@@ -276,7 +405,7 @@ test('a royale world covers the whole land, with loot on building floors and doo
   const cz = (q.z0 + q.z1) / 2;
   const path = findPath(w, cx + 14, cz + 14, cx, cz, 20000);
   assert.ok(path, 'a way into the building');
-  // the uplink world is still the small arena
+  // the breach world is still the small arena
   assert.equal(worldFor('vale').arena, ARENA);
 });
 

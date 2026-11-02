@@ -1,17 +1,19 @@
-// The rules. Royale: a hundred players drop from a transport, loot the land, and fight inside a shrinking zone until one
-// is left. Uplink: two teams of five, one life a round, a buy phase, credits, and an uplink to hold. Deathmatch:
+// The rules. Breach: two teams of five, one life a round, a buy phase and credits. The attack carries a charge to
+// one of two sites and plants it; the defense stops the plant or defuses it before it blows. Sides swap at the half,
+// first to 7 rounds wins. Royale: a hundred players drop from a transport, loot the land, and fight inside a shrinking
+// zone until one is left. Deathmatch:
 // everyone for themselves with quick respawns. Players and bots both act through the same Input, so the rules treat
 // them alike. Pure TS: the renderer, the sound and the HUD read the state and the events after each step.
-import { DM_HUBS, botInput, newBrain, type Brain, type BotLevel } from './bots.ts';
+import { DM_HUBS, botInput, callout, newBrain, type Brain, type BotLevel } from './bots.ts';
 import { fieldTo, navOf } from './nav.ts';
 import { clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
-import { CROUCH_H, GRAVITY, STAND_H, newHit, raySphere, rayWorld, stepBody, type Body } from './physics.ts';
+import { CROUCH_H, GRAVITY, STAND_H, groundAt, newHit, raySphere, rayWorld, stepBody, type Body } from './physics.ts';
 import { AMMO_KINDS, AMMO_MAX, AMMO_OF, CHUTE_GLIDE, CHUTE_OPEN, CHUTE_VY, FALL_FAST, FALL_SLOW, FALL_VY, HEAL, HELMET, NADE_MAX, ROYALE_PLAYERS, VEST, ZONES, nextCircle, planeAt, planePath, spawnLoot, type AmmoKind, type HealKind, type Item, type Plane, type Zone as Circle } from './royale.ts';
 import { floorAt } from './terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, LOSS_STREAK_BONUS, MAX_CREDITS, NADES, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, interval, kickOf, rangeMul, type WeaponId } from './weapons.ts';
 import { ARENA, SITE_R, SPAWN_R, yawTo, type Surface, type World } from './world.ts';
 
-export type Mode = 'royale' | 'uplink' | 'dm';
+export type Mode = 'breach' | 'royale' | 'dm';
 export type Level = BotLevel;
 export type Zone = 'head' | 'body' | 'leg';
 export type ShopItem = WeaponId | 'light' | 'heavy' | 'frag' | 'smoke';
@@ -23,10 +25,21 @@ export const CROUCH_SPEED = 2.1;
 export const JUMP = 6.2;
 export const BULLET_G = 9.81;
 export const ROUNDS_TO_WIN = 7;
+/** Rounds in a half: the teams swap sides after this many. */
+export const HALF = 6;
 export const BUY_TIME = 15;
 export const ROUND_TIME = 100;
-export const END_TIME = 4.5;
-export const CAPTURE = 10;
+export const END_TIME = 5;
+/** Breach: seconds to plant, to defuse (half of it is kept once reached), the fuse once planted, the blast radius and
+ * what the attack earns for a plant. */
+export const PLANT_TIME = 4;
+export const DEFUSE_TIME = 7;
+export const DEFUSE_HALF = 3.5;
+export const FUSE = 40;
+export const BLAST_R = 18;
+export const PLANT_REWARD = 300;
+/** How close a defender must be to the charge to work on it. */
+export const DEFUSE_REACH = 1.8;
 export const DM_KILLS = 25;
 export const DM_TIME = 300;
 export const RESPAWN = 3;
@@ -48,7 +61,7 @@ export type Input = {
   slot: number;
   throw: 'frag' | 'smoke' | null;
   buy: ShopItem | null;
-  /** Pick up what's at your feet (royale). */
+  /** Held: plant or defuse (breach). Pressed: pick up what's at your feet (royale). */
   use: boolean;
   /** Patch yourself up (royale). */
   heal: boolean;
@@ -102,7 +115,7 @@ export type Actor = {
   hurtFrom: number;
   deathT: number;
   killer: number;
-  killedWith: WeaponId | 'frag' | 'zone' | null;
+  killedWith: Cause | null;
   killedHead: boolean;
   respawnT: number;
   shield: number;
@@ -131,7 +144,31 @@ export type Bullet = { x: number; y: number; z: number; px: number; py: number; 
 export type Nade = { kind: 'frag' | 'smoke'; x: number; y: number; z: number; vx: number; vy: number; vz: number; fuse: number; owner: number; rest: boolean; spin: number };
 export type Smoke = { x: number; y: number; z: number; age: number; life: number; r: number };
 export type Sound = { x: number; z: number; t: number; team: number; range: number; who: number };
-export type Kill = { t: number; killer: number; victim: number; w: WeaponId | 'frag' | 'zone'; head: boolean };
+export type Cause = WeaponId | 'frag' | 'zone' | 'blast';
+export type Kill = { t: number; killer: number; victim: number; w: Cause; head: boolean };
+export type Why = 'elim' | 'time' | 'blast' | 'defuse';
+
+/** Breach: where the charge is and what is being done to it. */
+export type Charge = {
+  state: 'carried' | 'dropped' | 'planted' | 'defused' | 'blown';
+  /** Who carries it (carried), or -1. */
+  holder: number;
+  /** Where it lies (dropped or planted). */
+  x: number;
+  y: number;
+  z: number;
+  /** The site it is planted on, or -1. */
+  site: number;
+  /** Seconds left before it blows, once planted. */
+  fuse: number;
+  /** Who is planting it and how far along, or -1. */
+  plantBy: number;
+  plantT: number;
+  /** Who is defusing it and how far along, and the progress kept from an earlier try (the half way mark). */
+  defuseBy: number;
+  defuseT: number;
+  defuseKept: number;
+};
 
 export type Ev =
   | { t: 'shot'; a: number; w: WeaponId; x: number; y: number; z: number; dx: number; dy: number; dz: number }
@@ -150,8 +187,13 @@ export type Ev =
   | { t: 'swap'; a: number }
   | { t: 'buy'; a: number; item: ShopItem }
   | { t: 'phase'; phase: Phase }
-  | { t: 'round'; winner: number; why: 'elim' | 'cap' | 'time' }
-  | { t: 'capture'; team: number }
+  | { t: 'round'; winner: number; why: Why }
+  | { t: 'plant'; a: number; done: boolean; site: number }
+  | { t: 'defuse'; a: number; done: boolean }
+  | { t: 'carry'; a: number }
+  | { t: 'dropcharge'; x: number; y: number; z: number }
+  | { t: 'blast'; x: number; y: number; z: number }
+  | { t: 'sides' }
   | { t: 'spawn'; a: number }
   | { t: 'pickup'; a: number; item: Item }
   | { t: 'heal'; a: number; done: boolean }
@@ -172,12 +214,15 @@ export type Match = {
   phaseT: number;
   round: number;
   score: [number, number];
-  site: number;
-  cap: [number, number];
-  /** Who stands on the uplink right now, per team. */
-  onSite: [number, number];
+  /** Breach: the team attacking this round, the charge, and per team the site its players last saw enemies push
+   * (and when), which the bots use to rotate. */
+  attack: number;
+  charge: Charge;
+  call: [{ site: number; t: number }, { site: number; t: number }];
+  /** Breach: the site this round's attack goes for (the bots' plan). */
+  aim: number;
   lossStreak: [number, number];
-  last: { winner: number; why: 'elim' | 'cap' | 'time' } | null;
+  last: { winner: number; why: Why } | null;
   bullets: Bullet[];
   nades: Nade[];
   smokes: Smoke[];
@@ -265,14 +310,19 @@ function newActor(id: number, name: string, team: number, bot: boolean, level: L
 }
 
 export const gun = (id: WeaponId): Gun => ({ id, mag: WEAPONS[id].mag, reserve: WEAPONS[id].reserve, fresh: false });
+const newCharge = (): Charge => ({ state: 'carried', holder: -1, x: 0, y: 0, z: 0, site: -1, fuse: 0, plantBy: -1, plantT: 0, defuseBy: -1, defuseT: 0, defuseKept: 0 });
+
+/** Breach: which spawn a team starts from this round (0 the attackers', 1 the defenders'). */
+export const sideOf = (m: Match, team: number) => (team === m.attack ? 0 : 1);
+export const spawnOf = (m: Match, team: number) => m.world.spawns[sideOf(m, team)];
 
 export function createMatch(world: World, mode: Mode, level: Level, opts: { name?: string; seed?: number; dmPick?: WeaponId } = {}): Match {
   const rng = mulberry32(opts.seed ?? Math.floor(Math.random() * 2 ** 31));
   const names = [...BOT_NAMES, ...(mode === 'royale' ? MORE_NAMES : [])].sort(() => rng() - 0.5);
-  const count = mode === 'royale' ? ROYALE_PLAYERS : mode === 'uplink' ? 10 : 8;
+  const count = mode === 'royale' ? ROYALE_PLAYERS : mode === 'breach' ? 10 : 8;
   const actors: Actor[] = [];
   for (let i = 0; i < count; i++) {
-    const team = mode === 'uplink' ? (i < 5 ? 0 : 1) : i;
+    const team = mode === 'breach' ? (i < 5 ? 0 : 1) : i;
     const a = newActor(i, i === 0 ? (opts.name ?? 'You') : names[i % names.length], team, i > 0, level, Math.floor(rng() * 1e6));
     a.dmgFrom = new Array(count).fill(0);
     actors.push(a);
@@ -280,7 +330,8 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
   if (opts.dmPick) actors[0].dmPick = opts.dmPick;
   // the bots' map knowledge, built now so no frame pays for it mid round
   navOf(world);
-  if (mode === 'uplink') world.sites.forEach((s, k) => fieldTo(world, `site${k}`, s.x, s.z));
+  if (mode === 'breach') world.sites.forEach((s, k) => fieldTo(world, `site${k}`, s.x, s.z));
+  // (a breach world has two sites; an older royale world's three never meet this mode)
   else if (mode === 'dm') world.dmSpawns.slice(0, DM_HUBS).forEach((p, k) => fieldTo(world, `dm${k}`, p.x, p.z));
   const m: Match = {
     mode,
@@ -293,9 +344,13 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
     phaseT: BUY_TIME,
     round: 0,
     score: [0, 0],
-    site: 0,
-    cap: [0, 0],
-    onSite: [0, 0],
+    attack: 0,
+    charge: newCharge(),
+    call: [
+      { site: -1, t: -99 },
+      { site: -1, t: -99 },
+    ],
+    aim: 0,
     lossStreak: [0, 0],
     last: null,
     bullets: [],
@@ -315,7 +370,11 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
     alive: count,
   };
   if (mode === 'royale') startRoyale(m, opts.seed ?? Math.floor(rng() * 1e9));
-  else if (mode === 'uplink') startRound(m);
+  else if (mode === 'breach') {
+    // which side you start on is a coin toss
+    m.attack = rng() < 0.5 ? 0 : 1;
+    startRound(m);
+  }
   else {
     m.phase = 'live';
     m.phaseT = DM_TIME;
@@ -433,14 +492,14 @@ function stepBullets(m: Match, dt: number) {
   if (m.bullets.length > 64) m.bullets = m.bullets.filter((b) => b.live);
 }
 
-function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'frag', zone: Zone, x: number, y: number, z: number) {
+function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'frag' | 'blast', zone: Zone, x: number, y: number, z: number) {
   if (!v.alive || raw <= 0) return;
   if (v.shield > 0) return;
   if (zone === 'head') raw *= HELMET[v.helmet];
   v.healT = 0;
   v.healKind = null;
   const before = v.hp + v.armor;
-  const res = applyDamage(v.hp, v.armor, raw, w === 'frag' ? 1 : WEAPONS[w].armorPen);
+  const res = applyDamage(v.hp, v.armor, raw, w === 'frag' || w === 'blast' ? 1 : WEAPONS[w].armorPen);
   const hadArmor = v.armor > 0;
   v.hp = res.hp;
   v.armor = Math.max(0, res.armor);
@@ -459,7 +518,7 @@ function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'fr
   if (kill) die(m, v, from, w, zone === 'head');
 }
 
-function die(m: Match, v: Actor, from: number, w: WeaponId | 'frag' | 'zone', head: boolean) {
+function die(m: Match, v: Actor, from: number, w: Cause, head: boolean) {
   v.alive = false;
   v.hp = 0;
   v.deathT = m.time;
@@ -473,7 +532,7 @@ function die(m: Match, v: Actor, from: number, w: WeaponId | 'frag' | 'zone', he
   if (att && att !== v && isEnemy(att, v)) {
     att.kills++;
     att.cs += 150 + (head ? 30 : 0);
-    if (m.mode === 'uplink') att.credits = Math.min(MAX_CREDITS, att.credits + KILL_REWARD);
+    if (m.mode === 'breach') att.credits = Math.min(MAX_CREDITS, att.credits + KILL_REWARD);
   }
   for (const o of m.actors)
     if (o !== att && o !== v && isEnemy(o, v) && (v.dmgFrom[o.id] ?? 0) >= 40) {
@@ -485,11 +544,31 @@ function die(m: Match, v: Actor, from: number, w: WeaponId | 'frag' | 'zone', he
   m.feed.push(k);
   if (m.feed.length > 8) m.feed.shift();
   m.events.push({ t: 'kill', k });
-  if (m.mode === 'uplink') {
+  if (m.mode === 'breach') {
+    // a teammate down near a site tells the rest where the fight is
+    callout(m, v.team, v.body.x, v.body.z);
     v.guns[0] = null;
     v.armor = 0;
     v.frags = 0;
     v.smokes = 0;
+    const c = m.charge;
+    if (c.plantBy === v.id) {
+      c.plantBy = -1;
+      c.plantT = 0;
+    }
+    if (c.defuseBy === v.id) {
+      c.defuseBy = -1;
+      c.defuseT = 0;
+    }
+    // the charge falls where its carrier fell
+    if (c.state === 'carried' && c.holder === v.id) {
+      c.state = 'dropped';
+      c.holder = -1;
+      c.x = v.body.x;
+      c.z = v.body.z;
+      c.y = groundAt(m.world, v.body.x, v.body.z, v.body.y + 0.5);
+      m.events.push({ t: 'dropcharge', x: c.x, y: c.y, z: c.z });
+    }
   } else if (m.mode === 'dm') v.respawnT = RESPAWN;
   else {
     v.place = m.alive;
@@ -527,20 +606,36 @@ function resetCombat(a: Actor) {
 
 export function startRound(m: Match) {
   m.round++;
+  // the half: the sides swap, and both teams start over with pistols and the starting credits
+  const swap = m.round === HALF + 1;
+  if (swap) {
+    m.attack = 1 - m.attack;
+    m.lossStreak = [0, 0];
+    for (const a of m.actors) {
+      a.credits = START_CREDITS;
+      a.guns = [null, gun('wren'), null];
+      a.armor = 0;
+      a.frags = 0;
+      a.smokes = 0;
+    }
+    m.events.push({ t: 'sides' });
+  }
+  const pistol = m.round === 1 || swap;
   m.phase = 'buy';
-  m.phaseT = BUY_TIME + (m.round === 1 ? 5 : 0);
-  m.cap = [0, 0];
-  m.onSite = [0, 0];
-  m.site = Math.floor(m.rng() * 3);
+  m.phaseT = BUY_TIME + (pistol ? 5 : 0);
+  m.aim = Math.floor(m.rng() * m.world.sites.length);
+  m.call = [
+    { site: -1, t: -99 },
+    { site: -1, t: -99 },
+  ];
   m.bullets = [];
   m.nades = [];
   m.smokes = [];
   m.sounds = [];
   m.last = null;
-  const w = m.world;
   const seen = [0, 0];
   for (const a of m.actors) {
-    const s = w.spawns[a.team];
+    const s = spawnOf(m, a.team);
     const slot = s.slots[seen[a.team]++ % s.slots.length];
     if (!a.alive) {
       a.guns = [null, gun('wren'), null];
@@ -560,13 +655,19 @@ export function startRound(m: Match) {
     place(m, a, slot.x, slot.z, slot.yaw);
     if (a.brain) a.brain.reset = true;
   }
+  // the charge starts with one of the attackers
+  const attackers = m.actors.filter((a) => a.team === m.attack);
+  m.charge = newCharge();
+  m.charge.holder = attackers[Math.floor(m.rng() * attackers.length)].id;
   m.events.push({ t: 'phase', phase: 'buy' });
 }
 
-function endRound(m: Match, winner: number, why: 'elim' | 'cap' | 'time') {
+function endRound(m: Match, winner: number, why: Why) {
   m.phase = 'end';
   m.phaseT = END_TIME;
   m.last = { winner, why };
+  m.charge.plantBy = -1;
+  m.charge.defuseBy = -1;
   if (winner >= 0) {
     m.score[winner]++;
     m.lossStreak[winner] = 0;
@@ -579,8 +680,6 @@ function endRound(m: Match, winner: number, why: 'elim' | 'cap' | 'time') {
     if (won) a.cs += 60;
   }
   m.events.push({ t: 'round', winner, why });
-  if (winner === 0 && why === 'cap') m.events.push({ t: 'capture', team: 0 });
-  if (winner === 1 && why === 'cap') m.events.push({ t: 'capture', team: 1 });
 }
 
 function respawn(m: Match, a: Actor) {
@@ -640,7 +739,7 @@ function startRoyale(m: Match, seed: number) {
     a.body.onGround = false;
     a.yaw = yaw;
     a.pitch = -0.4;
-    // a hundred bots at uplink sharpness would end it in a minute: slower to react, a little less sure of aim
+    // a hundred bots at breach sharpness would end it in a minute: slower to react, a little less sure of aim
     if (a.brain) {
       a.brain.react *= 1.45;
       a.brain.skill *= 0.88;
@@ -976,8 +1075,14 @@ function stepRules(m: Match, dt: number) {
     return;
   }
   if (m.phase === 'end') {
+    // a planted charge still goes off after the round is decided, for the show (it hurts nobody by then)
+    const c = m.charge;
+    if (c.state === 'planted') {
+      c.fuse -= dt;
+      if (c.fuse <= 0) blow(m, false);
+    }
     if (m.phaseT <= 0) {
-      if (m.score[0] >= ROUNDS_TO_WIN || m.score[1] >= ROUNDS_TO_WIN || m.round >= 24) {
+      if (m.score[0] >= ROUNDS_TO_WIN || m.score[1] >= ROUNDS_TO_WIN || m.round >= HALF * 2 + 1) {
         m.phase = 'over';
         m.winner = m.score[0] > m.score[1] ? 0 : m.score[1] > m.score[0] ? 1 : -1;
         if (m.winner >= 0) for (const a of m.actors) if (a.team === m.winner) a.cs += 400;
@@ -987,23 +1092,130 @@ function stepRules(m: Match, dt: number) {
     return;
   }
   if (m.phase !== 'live') return;
-  const s = m.world.sites[m.site];
-  m.onSite = [0, 0];
-  for (const a of m.actors)
-    if (a.alive && Math.hypot(a.body.x - s.x, a.body.z - s.z) < SITE_R && Math.abs(a.body.y - s.y) < 4) m.onSite[a.team]++;
-  if (m.onSite[0] > 0 && m.onSite[1] === 0) m.cap[0] += dt;
-  if (m.onSite[1] > 0 && m.onSite[0] === 0) m.cap[1] += dt;
-  const a0 = teamAlive(m, 0);
-  const a1 = teamAlive(m, 1);
-  if (a0 === 0 && a1 === 0) endRound(m, -1, 'elim');
-  else if (a1 === 0) endRound(m, 0, 'elim');
-  else if (a0 === 0) endRound(m, 1, 'elim');
-  else if (m.cap[0] >= CAPTURE) endRound(m, 0, 'cap');
-  else if (m.cap[1] >= CAPTURE) endRound(m, 1, 'cap');
-  else if (m.phaseT <= 0) {
-    const w = m.cap[0] > m.cap[1] + 0.05 ? 0 : m.cap[1] > m.cap[0] + 0.05 ? 1 : a0 > a1 ? 0 : a1 > a0 ? 1 : -1;
-    endRound(m, w, 'time');
+  const c = m.charge;
+  const atk = m.attack;
+  const def = 1 - atk;
+  // a dropped charge goes to the first attacker to walk over it
+  if (c.state === 'dropped')
+    for (const a of m.actors)
+      if (a.alive && a.team === atk && Math.hypot(a.body.x - c.x, a.body.z - c.z) < 1.4 && Math.abs(a.body.y - c.y) < 1.6) {
+        c.state = 'carried';
+        c.holder = a.id;
+        m.events.push({ t: 'carry', a: a.id });
+        break;
+      }
+  const aAtk = teamAlive(m, atk);
+  const aDef = teamAlive(m, def);
+  if (c.state === 'planted') {
+    // the round clock is done with: the fuse decides, unless the defense defuses or nobody is left to defend
+    c.fuse -= dt;
+    m.phaseT = Math.max(0, c.fuse);
+    if (aDef === 0) endRound(m, atk, 'elim');
+    else if (c.fuse <= 0) {
+      blow(m, true);
+      endRound(m, atk, 'blast');
+    }
+    return;
   }
+  if (aAtk === 0) endRound(m, def, 'elim');
+  else if (aDef === 0) endRound(m, atk, 'elim');
+  else if (m.phaseT <= 0) endRound(m, def, 'time');
+}
+
+/** The charge goes off: everyone near enough is hurt or killed (only while the round is live). */
+function blow(m: Match, live: boolean) {
+  const c = m.charge;
+  c.state = 'blown';
+  c.fuse = 0;
+  c.defuseBy = -1;
+  m.events.push({ t: 'blast', x: c.x, y: c.y + 0.4, z: c.z });
+  m.events.push({ t: 'boom', x: c.x, y: c.y + 0.4, z: c.z });
+  if (!live) return;
+  for (const a of m.actors) {
+    if (!a.alive) continue;
+    const d = Math.hypot(a.body.x - c.x, a.body.y + 1 - c.y, a.body.z - c.z);
+    if (d > BLAST_R) continue;
+    // deadly well inside the radius, fading out to its edge, through anything
+    const dmg = d < BLAST_R * 0.55 ? 999 : 160 * (1 - (d - BLAST_R * 0.55) / (BLAST_R * 0.45));
+    if (dmg <= 0) continue;
+    a.shield = 0;
+    damage(m, a, dmg, a.id, 'blast', 'body', a.body.x, a.body.y + 1, a.body.z);
+  }
+}
+
+/** Is an actor where it can plant (carrying the charge, on a site, standing on something)? Returns the site or -1. */
+export function plantSite(m: Match, a: Actor) {
+  if (m.mode !== 'breach' || m.phase !== 'live' || !a.alive || m.charge.state !== 'carried' || m.charge.holder !== a.id || !a.body.onGround || a.body.swim) return -1;
+  for (const s of m.world.sites) if (Math.hypot(a.body.x - s.x, a.body.z - s.z) < SITE_R && Math.abs(a.body.y - s.y) < 4) return s.id;
+  return -1;
+}
+
+/** Can an actor work on the planted charge from where it stands? */
+export function canDefuse(m: Match, a: Actor) {
+  const c = m.charge;
+  if (m.mode !== 'breach' || m.phase !== 'live' || !a.alive || a.team === m.attack || c.state !== 'planted' || !a.body.onGround) return false;
+  if (c.defuseBy >= 0 && c.defuseBy !== a.id) return false;
+  return Math.hypot(a.body.x - c.x, a.body.z - c.z) < DEFUSE_REACH && Math.abs(a.body.y - c.y) < 1.6;
+}
+
+/** Breach, each frame for each actor: holding use plants or defuses. True while it is busy doing so (it stands still,
+ * gun down). */
+function stepCharge(m: Match, a: Actor, inp: Input, dt: number) {
+  const c = m.charge;
+  if (c.plantBy === a.id && (!inp.use || plantSite(m, a) < 0)) {
+    c.plantBy = -1;
+    c.plantT = 0;
+  }
+  if (c.defuseBy === a.id && (!inp.use || !canDefuse(m, a))) {
+    c.defuseBy = -1;
+    c.defuseT = 0;
+  }
+  if (!inp.use) return false;
+  const site = plantSite(m, a);
+  if (site >= 0) {
+    if (c.plantBy !== a.id) {
+      c.plantBy = a.id;
+      c.plantT = 0;
+      m.events.push({ t: 'plant', a: a.id, done: false, site });
+    }
+    c.plantT += dt;
+    if (c.plantT >= PLANT_TIME) {
+      c.state = 'planted';
+      c.holder = -1;
+      c.plantBy = -1;
+      c.plantT = 0;
+      c.site = site;
+      c.x = a.body.x;
+      c.y = a.body.y;
+      c.z = a.body.z;
+      c.fuse = FUSE;
+      m.phaseT = FUSE;
+      a.cs += 50;
+      for (const o of m.actors) if (o.team === a.team) o.credits = Math.min(MAX_CREDITS, o.credits + PLANT_REWARD);
+      m.events.push({ t: 'plant', a: a.id, done: true, site });
+      return false;
+    }
+    return true;
+  }
+  if (canDefuse(m, a)) {
+    if (c.defuseBy !== a.id) {
+      c.defuseBy = a.id;
+      c.defuseT = c.defuseKept;
+      m.events.push({ t: 'defuse', a: a.id, done: false });
+    }
+    c.defuseT += dt;
+    if (c.defuseT >= DEFUSE_HALF) c.defuseKept = DEFUSE_HALF;
+    if (c.defuseT >= DEFUSE_TIME) {
+      c.state = 'defused';
+      c.defuseBy = -1;
+      a.cs += 100;
+      m.events.push({ t: 'defuse', a: a.id, done: true });
+      endRound(m, a.team, 'defuse');
+      return false;
+    }
+    return true;
+  }
+  return false;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1011,8 +1223,8 @@ function stepRules(m: Match, dt: number) {
 
 /** Whether an actor can buy right now (buy phase, inside its spawn). */
 export function canShop(m: Match, a: Actor) {
-  if (m.mode !== 'uplink' || m.phase !== 'buy' || !a.alive) return false;
-  const s = m.world.spawns[a.team];
+  if (m.mode !== 'breach' || m.phase !== 'buy' || !a.alive) return false;
+  const s = spawnOf(m, a.team);
   return Math.hypot(a.body.x - s.x, a.body.z - s.z) < SPAWN_R + 2;
 }
 
@@ -1265,7 +1477,8 @@ export function smokeBlocks(m: Match, ax: number, ay: number, az: number, bx: nu
 }
 
 /** Applies one actor's input for a frame. */
-function act(m: Match, a: Actor, inp: Input, dt: number) {
+function act(m: Match, a: Actor, input: Input, dt: number) {
+  let inp = input;
   const b = a.body;
   a.yaw = inp.yaw;
   a.pitch = clamp(inp.pitch, -1.45, 1.45);
@@ -1314,6 +1527,11 @@ function act(m: Match, a: Actor, inp: Input, dt: number) {
         }
       }
     }
+  }
+  // planting or defusing: stand still with the gun down until done or let go
+  if (m.mode === 'breach' && m.phase === 'live' && stepCharge(m, a, inp, dt)) {
+    inp = { ...inp, mx: 0, mz: 0, jump: false, fire: false, ads: false, reload: false, slot: -1, throw: null, walk: true };
+    a.reloadT = 0;
   }
   // weapon switch
   if ((inp.slot === 0 || inp.slot === 1 || inp.slot === 2) && inp.slot !== a.slot && a.guns[inp.slot]) {
@@ -1395,8 +1613,8 @@ function act(m: Match, a: Actor, inp: Input, dt: number) {
   const oz = b.z;
   stepBody(m.world, b, dt);
   // the buy phase keeps everyone in their spawn
-  if (m.mode === 'uplink' && m.phase === 'buy') {
-    const s = m.world.spawns[a.team];
+  if (m.mode === 'breach' && m.phase === 'buy') {
+    const s = spawnOf(m, a.team);
     const dx = b.x - s.x;
     const dz = b.z - s.z;
     const d = Math.hypot(dx, dz);
@@ -1419,7 +1637,7 @@ function act(m: Match, a: Actor, inp: Input, dt: number) {
     }
   }
   // fighting is off until the round goes live
-  const armed = m.mode !== 'uplink' || m.phase === 'live';
+  const armed = m.mode !== 'breach' || m.phase === 'live';
   if (!armed) {
     a.fireHeld = inp.fire;
     return;
@@ -1454,6 +1672,7 @@ function spot(m: Match) {
       rayWorld(m.world, f.body.x, ey, f.body.z, dx / l, (ty - ey) / l, dz / l, l, hit);
       if (hit.kind === 'none') {
         m.spotted[e.id] = m.time;
+        callout(m, 0, e.body.x, e.body.z);
         break;
       }
     }
@@ -1473,7 +1692,7 @@ export function step(m: Match, dt: number, you: Input) {
   stepNades(m, dt);
   m.sounds = m.sounds.filter((s) => m.time - s.t < 1.5);
   m.spotT -= dt;
-  if (m.spotT <= 0 && m.mode === 'uplink') {
+  if (m.spotT <= 0 && m.mode === 'breach') {
     m.spotT = 0.25;
     spot(m);
   }

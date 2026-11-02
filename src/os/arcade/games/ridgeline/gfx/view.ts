@@ -395,9 +395,19 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
         troops.update(m, f.hide, m.time, camera);
         royale.update(m, camera, f.time);
         const you = me(m);
-        mark.update({ site: m.site, live: m.mode === 'uplink' && (m.phase === 'live' || m.phase === 'buy'), barrier: m.mode === 'uplink' && m.phase === 'buy', fill: m.cap, team: you.team, time: f.time });
+        const c = m.charge;
+        const down = m.mode === 'breach' && (c.state === 'dropped' || c.state === 'planted' || c.state === 'defused');
+        mark.update({
+          sites: m.mode === 'breach' && (m.phase === 'live' || m.phase === 'buy') && c.state !== 'planted',
+          charge: down ? { x: c.x, y: c.y, z: c.z, planted: c.state === 'planted', fuse: c.fuse, site: c.site } : null,
+          barrier: m.mode === 'breach' && m.phase === 'buy',
+          mine: you.team === m.attack ? 0 : 1,
+          time: f.time,
+          eyeX: f.eye.x,
+          eyeZ: f.eye.z,
+        });
         fx.update(m, f.dt, camera, muzzleOf, f.hide);
-      } else mark.update({ site: 0, live: false, barrier: false, fill: [0, 0], team: 0, time: f.time });
+      } else mark.update({ sites: false, charge: null, barrier: false, mine: 0, time: f.time, eyeX: f.eye.x, eyeZ: f.eye.z });
       // the gun's light: in the open sun or under cover, how much sky it sees
       occlT -= f.dt;
       if (occlT <= 0) {

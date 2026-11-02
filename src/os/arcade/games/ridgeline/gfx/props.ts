@@ -1,4 +1,4 @@
-// Buildings, cover and the uplink and spawn markers. Every box of every building is merged into one mesh per material
+// Buildings, cover, and the site, charge and spawn markers. Every box of every building is merged into one mesh per material
 // (about eight draw calls for a whole town), textured with surfaces painted at load (plaster, planks, roof tiles,
 // corrugated metal, concrete, sandbags) plus matching normal maps. Insides are darkened so rooms read as rooms.
 import { mulberry32 } from '../noise.ts';
@@ -407,7 +407,7 @@ export function buildings(THREE: Three, w: World, shared: Shared, shadows: boole
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// uplink beams and rings, spawn barriers
+// site rings, the charge, spawn barriers
 
 const BEAM_VERT = /* glsl */ `
 varying vec2 vUv;
@@ -450,7 +450,20 @@ void main() {
 }
 `;
 
-export type Markers = { group: T.Group; update(state: { site: number; live: boolean; barrier: boolean; fill: [number, number]; team: number; time: number }): void };
+export type MarkerState = {
+  /** Show the site rings (a breach round in its buy phase or live, before the plant). */
+  sites: boolean;
+  /** The charge on the ground (dropped or planted), or null; planted ones blink faster as the fuse runs down. */
+  charge: { x: number; y: number; z: number; planted: boolean; fuse: number; site: number } | null;
+  /** The buy phase barriers, and which spawn is yours (0 the attack's, 1 the defense's). */
+  barrier: boolean;
+  mine: number;
+  time: number;
+  /** Where the camera is (the beam over the charge is for finding it from afar, and only clutters the view up close). */
+  eyeX: number;
+  eyeZ: number;
+};
+export type Markers = { group: T.Group; update(state: MarkerState): void };
 
 export function markers(THREE: Three, w: World): Markers {
   const group = new THREE.Group();
@@ -464,17 +477,14 @@ export function markers(THREE: Three, w: World): Markers {
       blending: ADDITIVE,
       side: DOUBLE,
     });
-  const beams = w.sites.map((s) => {
-    const m = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 70, 16, 1, true), make(0, 0xffe2a0));
-    m.position.set(s.x, s.y + 35, s.z);
-    m.frustumCulled = false;
-    group.add(m);
-    return m;
-  });
+  // a beam over a planted charge, red
+  const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 60, 12, 1, true), make(0, 0xff5a3c));
+  beam.frustumCulled = false;
+  beam.visible = false;
+  group.add(beam);
   const rings = w.sites.map((s) => {
     const g = new THREE.RingGeometry(8.6, 9, 96, 1);
     g.rotateX(-Math.PI / 2);
-    // u runs around the ring, for the progress arc
     const uv = g.attributes.uv as T.BufferAttribute;
     const p = g.attributes.position as T.BufferAttribute;
     for (let i = 0; i < uv.count; i++) uv.setX(i, (Math.atan2(p.getZ(i), p.getX(i)) / (Math.PI * 2) + 1) % 1);
@@ -484,38 +494,65 @@ export function markers(THREE: Three, w: World): Markers {
     group.add(m);
     return m;
   });
-  const barriers = w.spawns.map((s, k) => {
-    const m = new THREE.Mesh(new THREE.CylinderGeometry(15, 15, 5, 96, 1, true), make(1, k === 0 ? 0x4fb4ff : 0xff6a4f));
+  const barriers = w.spawns.map((s) => {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(15, 15, 5, 96, 1, true), make(1, 0x4fb4ff));
     m.position.set(s.x, s.y + 2, s.z);
     m.frustumCulled = false;
     group.add(m);
     return m;
   });
-  const blue = new THREE.Color(...lin(0x4fb4ff, 2.2));
-  const red = new THREE.Color(...lin(0xff6a4f, 2.2));
-  const gold = new THREE.Color(...lin(0xffe2a0, 2.2));
+  // the charge: a squat steel case with a strap of tape, a small screen and a red lamp that blinks
+  const charge = new THREE.Group();
+  const caseMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(...lin(0x3b4046)), roughness: 0.55, metalness: 0.6 });
+  const tapeMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(...lin(0x8a7a52)), roughness: 0.9, metalness: 0 });
+  const screenMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(...lin(0x6cff9a, 1.6)) });
+  const lampMat = new THREE.MeshBasicMaterial({ color: new THREE.Color(...lin(0xff3a2a, 3)) });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.2, 0.32), caseMat);
+  body.position.y = 0.1;
+  const tape = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.205, 0.325), tapeMat);
+  tape.position.set(-0.12, 0.1, 0);
+  const screen = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.012, 0.1), screenMat);
+  screen.position.set(0.08, 0.205, 0.02);
+  const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.035, 10, 8), lampMat);
+  lamp.position.set(0.08, 0.22, -0.1);
+  charge.add(body, tape, screen, lamp);
+  for (const o of [body, tape]) {
+    o.castShadow = true;
+    o.receiveShadow = true;
+  }
+  charge.visible = false;
+  group.add(charge);
+  const blue = new THREE.Color(...lin(0x4fb4ff, 1.4));
+  const red = new THREE.Color(...lin(0xff6a4f, 1.4));
   return {
     group,
     update(st) {
-      beams.forEach((b, k) => {
-        const on = st.live && k === st.site;
-        b.visible = on;
-        rings[k].visible = on;
-        if (!on) return;
-        const u = (b.material as T.ShaderMaterial).uniforms;
-        const ru = (rings[k].material as T.ShaderMaterial).uniforms;
-        const lead = st.fill[0] > st.fill[1] ? 0 : st.fill[1] > st.fill[0] ? 1 : -1;
-        const c = lead < 0 ? gold : lead === st.team ? blue : red;
-        (u.uColor.value as T.Color).copy(c);
-        (ru.uColor.value as T.Color).copy(c);
+      rings.forEach((r) => {
+        r.visible = st.sites;
+        const u = (r.material as T.ShaderMaterial).uniforms;
         u.uTime.value = st.time;
-        ru.uTime.value = st.time;
-        ru.uFill.value = Math.max(st.fill[0], st.fill[1]);
+        u.uFill.value = 1;
       });
-      barriers.forEach((b) => {
+      barriers.forEach((b, k) => {
         b.visible = st.barrier;
-        (b.material as T.ShaderMaterial).uniforms.uTime.value = st.time;
+        const u = (b.material as T.ShaderMaterial).uniforms;
+        u.uTime.value = st.time;
+        (u.uColor.value as T.Color).copy(k === st.mine ? blue : red);
       });
+      const c = st.charge;
+      charge.visible = !!c;
+      beam.visible = !!c && c.planted && Math.hypot(c.x - st.eyeX, c.z - st.eyeZ) > 12;
+      if (!c) return;
+      charge.position.set(c.x, c.y, c.z);
+      charge.rotation.y = c.site * 1.3 + 0.4;
+      // blinks once a second, then faster as the fuse runs down, steady at the end
+      const rate = !c.planted ? 0 : c.fuse > 20 ? 1 : c.fuse > 10 ? 2 : c.fuse > 5 ? 4 : 8;
+      const on = rate === 0 ? false : (st.time * rate) % 1 < 0.3;
+      lamp.visible = on || (c.planted && c.fuse < 1.5);
+      if (c.planted) {
+        beam.position.set(c.x, c.y + 30, c.z);
+        (beam.material as T.ShaderMaterial).uniforms.uTime.value = st.time;
+      }
     },
   };
 }

@@ -1,10 +1,15 @@
 // Computer players. Each one sees (field of view, line of sight, smoke), hears (shots and running footsteps), buys
-// with its credits, plays a role on the uplink, and aims like a person: a reaction delay, an error that settles, a
+// with its credits, plays its side in a breach (the attack pushes a site together, plants and guards the charge; the
+// defense holds both sites, rotates on a call and retakes to defuse), and aims like a person: a reaction delay, an error that settles, a
 // limited turn speed that has to fight the recoil, and (on harder levels) stopping before it shoots. In a royale they
 // pick a landing spot, jump when the transport passes it, loot what they need, heal up, and keep ahead of the zone.
 import {
+  DEFUSE_TIME,
   DEG,
+  HALF,
+  PLANT_TIME,
   buy,
+  canDefuse,
   canShop,
   currentGun,
   eyeY,
@@ -12,9 +17,11 @@ import {
   idleInput,
   isEnemy,
   owns,
+  plantSite,
   priceOf,
   smokeBlocks,
   spareOf,
+  spawnOf,
   spreadOf,
   viewDir,
   wants,
@@ -24,7 +31,7 @@ import {
   type ShopItem,
 } from './match.ts';
 import { clamp, mulberry32, type Rng } from './noise.ts';
-import { fieldDist, fieldStep, fieldTo, findPath } from './nav.ts';
+import { canWalk, fieldDist, fieldStep, fieldTo, findPath } from './nav.ts';
 import { blockedAt, clearLine } from './physics.ts';
 import { floorAt, heightAt } from './terrain.ts';
 import { planeAt } from './royale.ts';
@@ -81,17 +88,35 @@ export type Brain = {
   posX: number;
   posZ: number;
   stuckT: number;
+  /** The same over a longer stretch, which also catches pacing back and forth in one spot. */
+  longX: number;
+  longZ: number;
+  longT: number;
+  /** How long the waypoint has not been a straight walk away, and a spell of searching instead of following fields. */
+  blockT: number;
+  noFieldT: number;
   detourT: number;
   detourA: number;
   jump: boolean;
   nadeT: number;
   bought: boolean;
   wander: number;
-  /** A random 0 to 1 per round: where on the uplink this bot likes to stand. */
+  /** A random 0 to 1 per round: where on a site this bot likes to stand. */
   holdA: number;
-  /** Heading toward the last thing it heard, and how long to keep facing it. */
+  /** Breach defense: the site this bot holds (-1 the middle), and whether it stays put when the other site is hit. */
+  post: number;
+  anchor: boolean;
+  /** Where to look once at the goal with nobody in sight. */
+  faceX: number;
+  faceZ: number;
+  /** Push to the goal even while fighting (a defuse to stop or to make before the charge blows). */
+  rush: boolean;
+  /** How close counts as there: close for the charge (to pick it up or work on it), looser for a spot to hold. */
+  arrive: number;
+  /** Heading toward the last thing it heard, how long to keep facing it, and when it last stopped to listen. */
   listenA: number;
   waitT: number;
+  heardT: number;
   /** Royale: where it means to land, the loot it is going for, when to look for more, and a wish to heal. */
   dropX: number;
   dropZ: number;
@@ -154,6 +179,11 @@ export function newBrain(level: BotLevel, seed: number): Brain {
     posX: 0,
     posZ: 0,
     stuckT: 0,
+    longX: 0,
+    longZ: 0,
+    longT: 0,
+    blockT: 0,
+    noFieldT: 0,
     detourT: 0,
     detourA: 0,
     jump: false,
@@ -161,8 +191,15 @@ export function newBrain(level: BotLevel, seed: number): Brain {
     bought: false,
     wander: 0,
     holdA: 0,
+    post: 0,
+    anchor: false,
+    faceX: 0,
+    faceZ: 0,
+    rush: false,
+    arrive: 2.2,
     listenA: 0,
     waitT: 0,
+    heardT: -9,
     dropX: 0,
     dropZ: 0,
     loot: -1,
@@ -192,7 +229,7 @@ function shop(m: Match, a: Actor, br: Brain) {
   const team = m.actors.filter((o) => o.team === a.team);
   const avg = team.reduce((s, o) => s + o.credits, 0) / team.length;
   const want: ShopItem[] = [];
-  if (m.round === 1) {
+  if (m.round === 1 || m.round === HALF + 1) {
     if (r() < 0.45) want.push('bulwark');
     else want.push('light', r() < 0.5 ? 'frag' : 'smoke');
   } else if (!a.guns[0]) {
@@ -245,18 +282,18 @@ let searches = 0;
 /** Keeps a route to the goal and points the next waypoint. */
 function route(m: Match, a: Actor, br: Brain) {
   br.pathAge += br.think;
-  // far from a goal with a precomputed distance field (an uplink, a roaming hub): walk down it instead of searching
-  if (br.fieldKey && Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z) > 14) {
-    const p = fieldPoint(m, br.fieldKey);
-    if (p) {
-      const next = fieldStep(m.world, fieldTo(m.world, br.fieldKey, p.x, p.z), a.body.x, a.body.z);
-      if (next) {
-        br.wpX = next[0];
-        br.wpZ = next[1];
-        br.path = null;
-        br.repath = true;
-        return;
-      }
+  // far from a goal near a point with a precomputed distance field (a site, a roaming hub): walk down the field
+  // instead of searching, but only while still well further from that point than the goal is (else the field pulls
+  // toward the point and the search back toward the goal, and the bot paces between the two)
+  const fp = br.fieldKey && br.noFieldT <= 0 ? fieldPoint(m, br.fieldKey) : null;
+  if (fp && Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z) > 14 && Math.hypot(fp.x - a.body.x, fp.z - a.body.z) > Math.hypot(fp.x - br.goalX, fp.z - br.goalZ) + 16) {
+    const next = fieldStep(m.world, fieldTo(m.world, br.fieldKey, fp.x, fp.z), a.body.x, a.body.z);
+    if (next) {
+      br.wpX = next[0];
+      br.wpZ = next[1];
+      br.path = null;
+      br.repath = true;
+      return;
     }
   }
   const moved = Math.hypot(br.goalX - br.pathGX, br.goalZ - br.pathGZ) > 4;
@@ -285,20 +322,28 @@ function route(m: Match, a: Actor, br: Brain) {
   }
   const p = br.path;
   if (!p) {
-    // no way there: drop a flank or a chase that leads nowhere, and head for the uplink instead
+    // no way there: drop a flank or a chase that leads nowhere, and head for the objective instead
     br.via = false;
     br.hasLast = false;
     br.waitT = 0;
-    if (m.mode === 'uplink') {
-      const s = m.world.sites[m.site];
-      setGoal(m, br, s.x, s.z, `site${m.site}`);
+    if (m.mode === 'breach') {
+      const k = siteFor(m, a, br);
+      const s = m.world.sites[k];
+      setGoal(m, br, s.x, s.z, `site${k}`);
     } else br.wander = 0;
     br.repath = true;
     br.wpX = br.goalX;
     br.wpZ = br.goalZ;
     return;
   }
-  while (br.pathI < p.length - 2 && Math.hypot(p[br.pathI] - a.body.x, p[br.pathI + 1] - a.body.z) < 2.4) br.pathI += 2;
+  // on to the next leg once near this corner, and only if that next point is a straight walk from here (cutting
+  // the corner short round the end of a wall walks into it)
+  for (;;) {
+    if (br.pathI >= p.length - 2) break;
+    const d = Math.hypot(p[br.pathI] - a.body.x, p[br.pathI + 1] - a.body.z);
+    if (d < 0.8 || (d < 2.4 && canWalk(m.world, a.body.x, a.body.z, p[br.pathI + 2], p[br.pathI + 3]))) br.pathI += 2;
+    else break;
+  }
   br.wpX = p[br.pathI];
   br.wpZ = p[br.pathI + 1];
   if (Math.hypot(br.wpX - a.body.x, br.wpZ - a.body.z) > 36) br.repath = true;
@@ -346,9 +391,18 @@ function perceive(m: Match, a: Actor, br: Brain) {
   const fw = viewDir(a.yaw, 0);
   let best = -1;
   let bestScore = Infinity;
+  // breach: enemy footsteps or shots heard near a site tell the team where the push is
+  if (m.mode === 'breach')
+    for (const s of m.sounds)
+      if (s.team !== a.team && Math.hypot(s.x - ex, s.z - ez) < s.range) {
+        callout(m, a.team, s.x, s.z);
+        break;
+      }
   // a royale bot still gearing up picks its fights: only close ones, or whoever shoots it
   const geared = m.mode !== 'royale' || ((!!a.guns[0] || !!a.guns[2]) && (a.vest > 0 || a.helmet > 0));
-  const range = m.mode !== 'royale' ? 230 : geared ? 130 : a.guns[0] || a.guns[2] ? 45 : 28;
+  // breach: a stranger further off than this is a few pixels across a field; nobody picks that out (a scope helps)
+  const scoped = !!currentGun(a) && WEAPONS[currentGun(a)!.id].scope;
+  const range = m.mode === 'breach' ? (scoped ? 140 : 85) : m.mode !== 'royale' ? 230 : geared ? 130 : a.guns[0] || a.guns[2] ? 45 : 28;
   for (const o of m.actors) {
     if (!o.alive || !isEnemy(a, o) || o.drop === 1) continue;
     const dx = o.body.x - ex;
@@ -360,11 +414,12 @@ function perceive(m: Match, a: Actor, br: Brain) {
     if (!known && m.mode === 'royale' && m.time - a.dropT < 22 && d > 7) continue;
     const facing = (dx * fw.x + dz * fw.z) / (d || 1);
     if (!known && facing < 0.34 && d > 5) continue;
-    // far, crouched or still targets take longer to notice
-    if (!known && d > 40) {
+    // far, crouched or still targets take longer to notice: a chance per look that falls off with distance (about a
+    // second to pick out someone running 100 m off, longer if they hold still)
+    if (!known && d > 10) {
       const still = Math.hypot(o.body.vx, o.body.vz) < 1;
-      const p = (1.6 - d / 200) * (still ? 0.55 : 1) * (o.crouch > 0.5 ? 0.7 : 1) * (0.6 + br.skill * 0.6) * (m.mode === 'royale' ? 0.55 : 1);
-      if (br.rng() > p) continue;
+      const rate = 7 * (40 / Math.max(d, 14)) ** 2 * (still ? 0.5 : 1) * (o.crouch > 0.5 ? 0.7 : 1) * (0.6 + br.skill * 0.6) * (m.mode === 'royale' ? 0.55 : 1);
+      if (br.rng() > 1 - Math.exp(-rate * Math.max(0.1, br.think))) continue;
     } else if (!known && m.mode === 'royale' && d > 6 && br.rng() > 0.3 + br.skill * 0.3) continue; // busy looting: takes a moment to notice
     const chest = o.body.y + o.body.height * 0.68;
     const head = o.body.y + o.body.height - 0.13;
@@ -383,10 +438,13 @@ function perceive(m: Match, a: Actor, br: Brain) {
       // a new target: the aim starts off by an error that shrinks as the bot settles
       const o = m.actors[best];
       const d = Math.hypot(o.body.x - ex, o.body.z - ez);
-      const e = ((1 - br.skill) * 0.09 + 0.012 + d * 0.0002) * (m.mode === 'royale' ? 1.5 : 1);
+      // holding an angle (standing still, already looking where they appear) gives a quicker, truer first shot
+      const off = Math.abs(angDiff(a.yaw, Math.atan2(-(o.body.x - ex), -(o.body.z - ez))));
+      const holding = Math.hypot(a.body.vx, a.body.vz) < 0.8 && off < 0.35;
+      const e = ((1 - br.skill) * 0.09 + 0.012 + d * 0.0002) * (m.mode === 'royale' ? 1.5 : 1) * (holding ? 0.5 : 1);
       br.errY = (br.rng() - 0.5) * 2 * e;
       br.errP = (br.rng() - 0.5) * e;
-      br.seenFor = br.target >= 0 && m.time - br.lostAt < 0.8 ? br.react : 0;
+      br.seenFor = br.target >= 0 && m.time - br.lostAt < 0.8 ? br.react : holding ? br.react * 0.45 : 0;
       br.head = br.rng() < br.skill * 0.6;
     }
     if (br.target >= 0 && best < 0) {
@@ -401,7 +459,86 @@ function perceive(m: Match, a: Actor, br: Brain) {
     br.lastY = o.body.y;
     br.lastZ = o.body.z;
     br.hasLast = true;
+    // tell the team where the push is
+    if (m.mode === 'breach') callout(m, a.team, o.body.x, o.body.z);
   }
+}
+
+/** Breach: an enemy seen (or a teammate lost) near a site marks it for the team, which the defense rotates on. */
+export function callout(m: Match, team: number, x: number, z: number) {
+  for (const s of m.world.sites)
+    if (Math.hypot(s.x - x, s.z - z) < 42) {
+      m.call[team] = { site: s.id, t: m.time };
+      return;
+    }
+}
+
+/** Breach: the site this bot works toward right now. */
+function siteFor(m: Match, a: Actor, br: Brain) {
+  const c = m.charge;
+  if (c.state === 'planted') return c.site;
+  if (a.team === m.attack) {
+    // a carrier the bots can't steer (you): go where it goes, once it heads for a site
+    const h = c.state === 'carried' ? m.actors[c.holder] : null;
+    if (h && !h.bot && h.alive) {
+      let near = m.aim;
+      let nd = Infinity;
+      for (const s of m.world.sites) {
+        const d = Math.hypot(s.x - h.body.x, s.z - h.body.z);
+        if (d < nd) {
+          nd = d;
+          near = s.id;
+        }
+      }
+      if (nd < 55) return near;
+    }
+    return m.aim;
+  }
+  const call = m.call[a.team];
+  if (call.site >= 0 && m.time - call.t < 9 && !br.anchor) return call.site;
+  return br.post >= 0 ? br.post : m.aim;
+}
+
+/** Breach: where the attack's way in reaches each site (the first point of its route within 24 m), worked out once a
+ * round. The defense watches these. */
+const entries = new WeakMap<Match, { round: number; attack: number; pts: { x: number; z: number }[] }>();
+function entryOf(m: Match, k: number) {
+  let e = entries.get(m);
+  if (!e || e.round !== m.round || e.attack !== m.attack) {
+    const sp = spawnOf(m, m.attack);
+    const pts = m.world.sites.map((s) => {
+      const f = fieldTo(m.world, `site${s.id}`, s.x, s.z);
+      let x = sp.x;
+      let z = sp.z;
+      for (let i = 0; i < 80 && Math.hypot(x - s.x, z - s.z) > 24; i++) {
+        const n = fieldStep(m.world, f, x, z);
+        if (!n) break;
+        x = n[0];
+        z = n[1];
+      }
+      return { x, z };
+    });
+    e = { round: m.round, attack: m.attack, pts };
+    entries.set(m, e);
+  }
+  return e.pts[k];
+}
+
+/** Breach: the middle, between the sites and a little toward the attack. */
+function midPoint(m: Match) {
+  const [A, B] = m.world.sites;
+  const sp = spawnOf(m, m.attack);
+  const x = (A.x + B.x) / 2;
+  const z = (A.z + B.z) / 2;
+  const d = Math.hypot(sp.x - x, sp.z - z) || 1;
+  return { x: x + ((sp.x - x) / d) * 12, z: z + ((sp.z - z) / d) * 12 };
+}
+
+/** Where to stand on a site: off to one side of the center toward `from`, `out` meters out. */
+function siteSpot(m: Match, k: number, fromX: number, fromZ: number, spread: number, out: number) {
+  const s = m.world.sites[k];
+  const ang = Math.atan2(fromX - s.x, fromZ - s.z) + spread;
+  return { x: s.x + Math.sin(ang) * out, z: s.z + Math.cos(ang) * out };
 }
 
 /** Where the bot wants to go when nobody is in sight. */
@@ -412,17 +549,26 @@ function plan(m: Match, a: Actor, br: Brain) {
     setGoal(m, br, br.lastX, br.lastZ);
     return;
   }
-  // a loud sound from an enemy
-  for (const s of m.sounds) {
-    if (s.team === a.team || s.who === a.id) continue;
-    const d = Math.hypot(s.x - a.body.x, s.z - a.body.z);
-    if (d < s.range && d > 4 && r() < (m.mode === 'royale' ? (a.vest > 0 && (a.guns[0] || a.guns[2]) ? 0.3 : 0) : 0.5)) {
-      br.listenA = Math.atan2(s.x - a.body.x, s.z - a.body.z);
-      if (m.mode === 'dm' || d < (m.mode === 'royale' ? 55 : 30)) setGoal(m, br, s.x, s.z);
-      br.waitT = 0.6;
-      return;
+  // a loud sound from an enemy: close, go and see; far, a quick look that way and on with the plan (and not again
+  // for a few seconds, or a fight going on somewhere would keep it standing there listening)
+  if (m.time - br.heardT > 3)
+    for (const s of m.sounds) {
+      if (s.team === a.team || s.who === a.id) continue;
+      const d = Math.hypot(s.x - a.body.x, s.z - a.body.z);
+      if (d < s.range && d > 4 && r() < (m.mode === 'royale' ? (a.vest > 0 && (a.guns[0] || a.guns[2]) ? 0.3 : 0) : 0.5)) {
+        br.heardT = m.time;
+        br.listenA = Math.atan2(s.x - a.body.x, s.z - a.body.z);
+        // in a breach the charge comes first: its carrier, and everyone once it is down, only turn to look
+        const busy = m.mode === 'breach' && (m.charge.holder === a.id || m.charge.state === 'planted');
+        if (m.mode === 'dm' || (!busy && d < (m.mode === 'royale' ? 55 : 22))) {
+          setGoal(m, br, s.x, s.z);
+          br.waitT = 0.5;
+          return;
+        }
+        br.waitT = 0.35;
+        break;
+      }
     }
-  }
   if (m.mode === 'royale') {
     planRoyale(m, a, br);
     return;
@@ -438,43 +584,139 @@ function plan(m: Match, a: Actor, br: Brain) {
     return;
   }
   if (m.phase !== 'live') return;
-  const s = m.world.sites[m.site];
-  const enemy = 1 - a.team;
-  const theyCap = m.onSite[enemy] > 0;
-  const weHold = m.onSite[a.team] > 0;
-  const dSite = Math.hypot(s.x - a.body.x, s.z - a.body.z);
-  if (theyCap || br.role === 'entry' || dSite < SITE_R * 2.2) {
-    if (weHold && !theyCap && br.role !== 'entry') {
-      // guard the uplink from its edge, facing out toward the other spawn
-      const sp = m.world.spawns[enemy];
-      const out = Math.atan2(sp.x - s.x, sp.z - s.z) + (br.holdA - 0.5) * 1.6;
-      setGoal(m, br, s.x + Math.sin(out) * SITE_R * 0.75, s.z + Math.cos(out) * SITE_R * 0.75, `site${m.site}`);
-    } else setGoal(m, br, s.x + (br.holdA - 0.5) * SITE_R, s.z + (r() - 0.5) * SITE_R * 0.6, `site${m.site}`);
+  if (a.team === m.attack) planAttack(m, a, br);
+  else planDefense(m, a, br);
+}
+
+/** Breach attack, nobody in sight. */
+function planAttack(m: Match, a: Actor, br: Brain) {
+  const c = m.charge;
+  br.rush = false;
+  br.arrive = 2.2;
+  if (c.state === 'planted') {
+    // someone is on the charge: stop it now
+    if (c.defuseBy >= 0) {
+      br.rush = true;
+      br.via = false;
+      setGoal(m, br, c.x, c.z, `site${c.site}`);
+      br.faceX = c.x;
+      br.faceZ = c.z;
+      return;
+    }
+    // after the plant: hold an angle on the charge from a little way off
+    const ang = br.holdA * Math.PI * 2;
+    const out = 7 + br.holdA * 7;
+    setGoal(m, br, c.x + Math.sin(ang) * out, c.z + Math.cos(ang) * out, `site${c.site}`);
+    br.faceX = c.x;
+    br.faceZ = c.z;
     br.via = false;
     return;
   }
-  if (br.role === 'flank' && br.via) {
+  // the charge on the ground: the nearest attacker bot goes to get it
+  if (c.state === 'dropped') {
+    let near: Actor | null = null;
+    let nd = Infinity;
+    for (const o of m.actors)
+      if (o.alive && o.bot && o.team === a.team) {
+        const d = Math.hypot(o.body.x - c.x, o.body.z - c.z);
+        if (d < nd) {
+          nd = d;
+          near = o;
+        }
+      }
+    if (near === a) {
+      setGoal(m, br, c.x, c.z);
+      br.arrive = 0.5;
+      br.via = false;
+      return;
+    }
+  }
+  const k = siteFor(m, a, br);
+  const s = m.world.sites[k];
+  const def = spawnOf(m, 1 - a.team);
+  const own = spawnOf(m, a.team);
+  // the carrier: to the plant spot, just on the attack's side of the mast (cover from the defense)
+  if (c.state === 'carried' && c.holder === a.id) {
+    const d = Math.hypot(own.x - s.x, own.z - s.z) || 1;
+    setGoal(m, br, s.x + ((own.x - s.x) / d) * 2.2, s.z + ((own.z - s.z) / d) * 2.2, `site${k}`);
+    br.faceX = def.x;
+    br.faceZ = def.z;
+    br.via = false;
+    return;
+  }
+  br.faceX = def.x;
+  br.faceZ = def.z;
+  // late in the round, or the plan already on site: everyone in
+  const late = m.phaseT < 35;
+  if (br.role === 'flank' && br.via && !late) {
     if (Math.hypot(br.viaX - a.body.x, br.viaZ - a.body.z) < 6) br.via = false;
     else {
       setGoal(m, br, br.viaX, br.viaZ);
+      br.faceX = br.viaX * 2 - a.body.x;
+      br.faceZ = br.viaZ * 2 - a.body.z;
       return;
     }
   }
-  if (br.role === 'support') {
-    // trail the entry players until they reach the uplink, or the clock runs down
+  const dSite = Math.hypot(s.x - a.body.x, s.z - a.body.z);
+  if (br.role === 'support' && !late) {
+    // trail the entry players in, a few meters back
     const lead = m.actors.filter((o) => o.alive && o.team === a.team && o.brain?.role === 'entry');
-    const ahead = lead.some((o) => Math.hypot(s.x - o.body.x, s.z - o.body.z) < dSite - 12);
-    if (!ahead && m.phaseT < 75) {
-      setGoal(m, br, s.x, s.z, `site${m.site}`);
-      return;
-    }
-    if (lead.length && ahead) {
-      const o = lead[0];
-      setGoal(m, br, o.body.x - (s.x - o.body.x) * 0.2, o.body.z - (s.z - o.body.z) * 0.2);
+    const o = lead.find((e) => Math.hypot(s.x - e.body.x, s.z - e.body.z) < dSite - 6);
+    if (o) {
+      const d = Math.hypot(s.x - o.body.x, s.z - o.body.z) || 1;
+      setGoal(m, br, o.body.x - ((s.x - o.body.x) / d) * 6, o.body.z - ((s.z - o.body.z) / d) * 6);
       return;
     }
   }
-  setGoal(m, br, s.x, s.z, `site${m.site}`);
+  // clear the site: spread over its far half, toward the defense
+  const spot = siteSpot(m, k, def.x, def.z, (br.holdA - 0.5) * 2.2, 3 + br.holdA * 5);
+  setGoal(m, br, spot.x, spot.z, `site${k}`);
+}
+
+/** Breach defense, nobody in sight. */
+function planDefense(m: Match, a: Actor, br: Brain) {
+  const c = m.charge;
+  const atk = spawnOf(m, m.attack);
+  br.rush = false;
+  br.via = false;
+  br.arrive = 2.2;
+  if (c.state === 'planted') {
+    // the retake: gather a way off on the defense's side first, then go in together once the time says so (or
+    // straight away if someone is already on the charge); whoever gets there first defuses, the rest cover
+    const own = spawnOf(m, a.team);
+    const go = c.fuse < DEFUSE_TIME + 19 || c.defuseBy >= 0 || Math.hypot(c.x - a.body.x, c.z - a.body.z) < 9;
+    br.faceX = c.x;
+    br.faceZ = c.z;
+    if (!go) {
+      const side = (br.holdA - 0.5) * 1.4;
+      const ang = Math.atan2(own.x - c.x, own.z - c.z) + side;
+      setGoal(m, br, c.x + Math.sin(ang) * 22, c.z + Math.cos(ang) * 22, `site${c.site}`);
+      return;
+    }
+    br.rush = c.fuse < DEFUSE_TIME - c.defuseKept + 6;
+    br.arrive = 0.7;
+    setGoal(m, br, c.x, c.z, `site${c.site}`);
+    return;
+  }
+  const call = m.call[a.team];
+  const fresh = call.site >= 0 && m.time - call.t < 9;
+  if (br.post < 0 && !fresh) {
+    // the middle, watching the lanes between the sites
+    const p = midPoint(m);
+    setGoal(m, br, p.x + (br.holdA - 0.5) * 8, p.z + (br.holdA - 0.5) * 8);
+  } else {
+    // hold a site (its own, or the one called) from off to one side of where the attack comes in, crossing it
+    const k = siteFor(m, a, br);
+    const e = entryOf(m, k);
+    const side = (br.holdA < 0.5 ? -1 : 1) * (0.55 + Math.abs(br.holdA - 0.5) * 1.6);
+    const spot = siteSpot(m, k, e.x, e.z, side, 4 + br.holdA * 6);
+    setGoal(m, br, spot.x, spot.z, `site${k}`);
+    br.faceX = e.x;
+    br.faceZ = e.z;
+    return;
+  }
+  br.faceX = atk.x;
+  br.faceZ = atk.z;
 }
 
 /** Royale, nobody in sight: stay ahead of the zone, heal when hurt, gear up, else drift toward the middle of the zone. */
@@ -631,6 +873,9 @@ function roundReset(m: Match, a: Actor, br: Brain) {
   br.stuckT = 0;
   br.posX = a.body.x;
   br.posZ = a.body.z;
+  br.longT = 0;
+  br.longX = a.body.x;
+  br.longZ = a.body.z;
   br.path = null;
   br.repath = true;
   br.nadeT = 4 + br.rng() * 6;
@@ -638,22 +883,33 @@ function roundReset(m: Match, a: Actor, br: Brain) {
   const mates = m.actors.filter((o) => o.team === a.team);
   const k = mates.indexOf(a);
   br.role = k % 5 === 1 || k % 5 === 2 ? 'entry' : k % 5 === 3 ? 'flank' : 'support';
-  if (m.mode === 'uplink') {
-    const s = m.world.sites[m.site];
-    const sp = m.world.spawns[a.team];
-    const mx = (s.x + sp.x) / 2;
-    const mz = (s.z + sp.z) / 2;
-    const l = Math.hypot(s.x - sp.x, s.z - sp.z) || 1;
-    const side = br.rng() < 0.5 ? 1 : -1;
-    const A = m.world.arena;
-    br.viaX = clamp(mx + (-(s.z - sp.z) / l) * 42 * side, -A + 8, A - 8);
-    br.viaZ = clamp(mz + ((s.x - sp.x) / l) * 42 * side, -A + 8, A - 8);
-    // a flank point is only worth it when it is reachable and not much of a detour
-    const field = fieldTo(m.world, `site${m.site}`, s.x, s.z);
-    const direct = fieldDist(m.world, field, sp.x, sp.z);
-    const around = Math.hypot(br.viaX - sp.x, br.viaZ - sp.z) + fieldDist(m.world, field, br.viaX, br.viaZ);
-    br.via = br.role === 'flank' && Number.isFinite(around) && around < direct * 1.5;
-    setGoal(m, br, s.x, s.z, `site${m.site}`);
+  br.rush = false;
+  br.arrive = 2.2;
+  if (m.mode === 'breach') {
+    if (a.team === m.attack) {
+      // one flanks through the middle, unless that is a long way round
+      const s = m.world.sites[m.aim];
+      const sp = spawnOf(m, a.team);
+      const mid = midPoint(m);
+      br.viaX = mid.x;
+      br.viaZ = mid.z;
+      const field = fieldTo(m.world, `site${m.aim}`, s.x, s.z);
+      const direct = fieldDist(m.world, field, sp.x, sp.z);
+      const around = Math.hypot(br.viaX - sp.x, br.viaZ - sp.z) + fieldDist(m.world, field, br.viaX, br.viaZ);
+      br.via = br.role === 'flank' && Number.isFinite(around) && around < direct * 1.45;
+      setGoal(m, br, s.x, s.z, `site${m.aim}`);
+    } else {
+      // two on each site and one in the middle, or (some rounds) three stacked on one site; the first on each site
+      // anchors it and stays when the other is hit
+      const defs = m.actors.filter((o) => o.team === a.team);
+      const i = defs.indexOf(a);
+      const stack = m.round % 3 === 0 ? (m.round % 2) : -1;
+      const posts = stack < 0 ? [0, 1, 0, 1, -1] : [stack, 1 - stack, stack, 1 - stack, stack];
+      br.post = posts[i % 5];
+      br.anchor = i < 2;
+      const s = m.world.sites[Math.max(0, br.post)];
+      setGoal(m, br, s.x, s.z, br.post >= 0 ? `site${br.post}` : '');
+    }
   } else setGoal(m, br, a.body.x, a.body.z);
 }
 
@@ -668,17 +924,17 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
   if (m.mode === 'royale' && a.drop) return dropInput(m, a, br, inp, dt);
   if (br.reset) roundReset(m, a, br);
   const r = br.rng;
-  if (m.mode === 'uplink' && m.phase === 'buy') {
+  if (m.mode === 'breach' && m.phase === 'buy') {
     if (!br.bought && m.phaseT < 13) shop(m, a, br);
-    // mill about and face the field
-    const s = m.world.sites[m.site];
+    // face out toward where this bot is headed
+    const s = m.world.sites[siteFor(m, a, br)];
     const ang = Math.atan2(s.x - a.body.x, s.z - a.body.z);
     inp.yaw = a.yaw + angDiff(a.yaw, yawOf(ang)) * Math.min(1, dt * 3);
     inp.pitch = a.pitch * (1 - Math.min(1, dt * 3));
     if (a.guns[0] && a.slot !== 0) inp.slot = 0;
     return inp;
   }
-  if (m.mode === 'uplink' && m.phase !== 'live') {
+  if (m.mode === 'breach' && m.phase !== 'live') {
     inp.yaw = a.yaw;
     return inp;
   }
@@ -711,6 +967,36 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
       br.posX = a.body.x;
       br.posZ = a.body.z;
     }
+    // a waypoint that is not a straight walk from here for over a second: plan afresh, by search
+    br.noFieldT -= br.think;
+    if (br.moving && br.detourT <= 0 && !canWalk(m.world, a.body.x, a.body.z, br.wpX, br.wpZ)) br.blockT += br.think;
+    else br.blockT = 0;
+    if (br.blockT > 1) {
+      br.blockT = 0;
+      br.path = null;
+      br.repath = true;
+      br.failT = 0;
+      br.noFieldT = 4;
+    }
+    // over four seconds of trying to go somewhere with nobody in sight, hardly any closer: the route is wrong (a
+    // corner it keeps walking into, a waypoint across a wall). Plan again from scratch, and step off to one side
+    br.longT += br.think;
+    if (br.longT > 4) {
+      const gd = Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z);
+      const moved = Math.hypot(a.body.x - br.longX, a.body.z - br.longZ);
+      if (br.target < 0 && br.waitT <= 0 && gd > Math.max(3, br.arrive + 1) && moved < 2.5) {
+        br.path = null;
+        br.repath = true;
+        br.failT = 0;
+        br.noFieldT = 6;
+        br.detourT = 1 + r() * 0.8;
+        br.detourA = Math.atan2(br.goalX - a.body.x, br.goalZ - a.body.z) + (r() < 0.5 ? 1 : -1) * (1.2 + r() * 0.9);
+        br.jump = true;
+      }
+      br.longT = 0;
+      br.longX = a.body.x;
+      br.longZ = a.body.z;
+    }
   }
   // a long gun with rounds beats the sidearm; a gun with nothing left gets swapped for one that has some
   const loaded = (k: number) => !!a.guns[k] && (a.guns[k]!.mag > 0 || spareOf(m, a, a.guns[k]!) > 0);
@@ -733,6 +1019,26 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
           break;
         }
     if (!tgt && br.healNow && a.healT <= 0) inp.heal = true;
+  }
+  // breach: plant once on the spot with nobody in sight (or the clock about to run out); defuse when clear, or
+  // regardless once the fuse is too short to wait
+  let busy = false;
+  if (m.mode === 'breach' && m.phase === 'live') {
+    const c = m.charge;
+    const gd = Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z);
+    if (plantSite(m, a) >= 0 && (c.plantBy === a.id || ((!tgt || m.phaseT < PLANT_TIME + 2) && (gd < 2.6 || m.phaseT < PLANT_TIME + 6)))) busy = true;
+    else if (canDefuse(m, a) && (c.defuseBy === a.id || !tgt || c.fuse < DEFUSE_TIME - c.defuseKept + 2)) busy = true;
+    if (busy) {
+      inp.use = true;
+      br.moving = false;
+      // keep looking about while the hands are busy
+      if (tgt) {
+        const dx = tgt.body.x - a.body.x;
+        const dz = tgt.body.z - a.body.z;
+        inp.yaw = a.yaw + clamp(angDiff(a.yaw, Math.atan2(-dx, -dz)), -br.turn * dt, br.turn * dt);
+      }
+      return inp;
+    }
   }
   let wantYaw = a.yaw;
   let wantPitch = 0;
@@ -783,6 +1089,8 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     else if (d > pref + 12) moveAng = toward + (d > reach ? 0.15 : 0.5) * br.strafe;
     else if (d < pref * 0.5) moveAng = toward + Math.PI - 0.6 * br.strafe;
     if (!free(m, a, moveAng, 1.6)) moveAng = toward - (Math.PI / 2) * br.strafe;
+    // a charge to reach in time: keep heading for it while shooting
+    if (br.rush && Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z) > 1.2) moveAng = br.detourT > 0 ? br.detourA : br.heading;
     // ready to shoot?
     const ready = br.seenFor >= br.react;
     const errNow = Math.hypot(angDiff(a.yaw, wantYaw - br.errY), (a.pitch - (wantPitch - br.errP)) * 1.2);
@@ -847,18 +1155,20 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
       wantYaw = yawOf(br.listenA);
       moveAng = NaN;
     } else {
-      // look where we go, and walk the last stretch into the uplink quietly
+      // look where we go; once there, out at what this spot watches
       wantYaw = yawOf(moveAng);
       wantPitch = -0.04;
       const gd = Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z);
-      if (gd < (m.mode === 'royale' ? 0.9 : 2.2)) {
+      if (gd < (m.mode === 'royale' ? 0.9 : br.arrive)) {
         moveAng = NaN;
-        const sp = m.mode === 'uplink' ? m.world.spawns[1 - a.team] : null;
-        if (sp) wantYaw = Math.atan2(-(sp.x - a.body.x), -(sp.z - a.body.z)) + (br.holdA - 0.5) * 1.4;
+        if (m.mode === 'breach') {
+          wantYaw = Math.atan2(-(br.faceX - a.body.x), -(br.faceZ - a.body.z)) + (br.holdA - 0.5) * 0.35;
+          // some hold crouched, a smaller and quieter shape
+          inp.crouch = br.holdA > 0.45;
+        }
       }
-      if (m.mode === 'uplink' && gd < 30 && br.skill > 0.5 && m.onSite[1 - a.team] === 0) walk = true;
-      // a smoke on the way in
-      if (m.mode === 'uplink' && a.smokes > 0 && br.role === 'entry' && gd < 45 && gd > 25 && br.nadeT <= 0 && r() < 0.05) {
+      // a smoke ahead on the way into the site
+      if (m.mode === 'breach' && a.team === m.attack && a.smokes > 0 && br.role === 'entry' && gd < 42 && gd > 22 && br.nadeT <= 0 && r() < 0.05) {
         inp.throw = 'smoke';
         wantPitch = 0.35;
         br.nadeT = 6;
@@ -877,7 +1187,7 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     br.moving = false;
   } else {
     const gd = Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z);
-    if (!tgt && gd < (m.mode === 'royale' ? 0.9 : 1.6) && br.detourT <= 0) br.moving = false;
+    if (!tgt && gd < (m.mode === 'royale' ? 0.9 : Math.min(1.6, br.arrive)) && br.detourT <= 0) br.moving = false;
     else {
       const wx = Math.sin(moveAng);
       const wz = Math.cos(moveAng);

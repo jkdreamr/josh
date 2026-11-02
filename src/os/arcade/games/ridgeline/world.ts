@@ -1,16 +1,17 @@
-// Everything on a map besides the ground: the two spawns, the three uplinks, towns of walk-in buildings, cover,
+// Everything on a map besides the ground: the attacker and defender spawns, the two sites (three spread far apart in a
+// royale world, where they only seed towns), towns of walk-in buildings, cover,
 // trees, rocks and dirt roads. Also bakes the light the renderer reads (terrain shadows, ambient occlusion and the
 // shadows of far trees and buildings) and paints the minimap. Pure data, so it runs in a worker and under node.
 import { MAPS, type MapDef, type MapId, type Style, type TreeKind } from './maps.ts';
 import { Noise2, clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
-import { CELL, T_HALF, T_RES, T_SIZE, flattenRect, generateTerrain, heightAt, meanHeight, normalAt, type Terrain } from './terrain.ts';
+import { CELL, T_HALF, T_RES, T_SIZE, flattenRect, floorAt, generateTerrain, heightAt, meanHeight, normalAt, type Terrain } from './terrain.ts';
 
-/** Half the side of the square everyone plays in (uplink and deathmatch). */
-export const ARENA = 160;
+/** Half the side of the square everyone plays in (breach and deathmatch): tight, so a 5v5 meets within seconds. */
+export const ARENA = 100;
 const ARENA_CLASSIC = ARENA;
 /** The same for a royale: nearly all of the shaped land. */
 export const ROYALE_ARENA = 330;
-/** Uplink capture radius. */
+/** Breach: how far from a site's center the charge can be planted. */
 export const SITE_R = 9;
 /** Where a team waits out the buy phase. */
 export const SPAWN_R = 15;
@@ -34,6 +35,7 @@ export type Vehicle = { x: number; y: number; z: number; rot: number; kind: numb
 /** A placed model; cover also carries its box (across, up, along) for a plain stand-in if the model is missing. */
 export type Placed = { key: ModelKey; x: number; y: number; z: number; yaw: number; size?: [number, number, number] };
 export type ModelKey = 'barricade' | 'pile' | 'wire' | 'dumpsters' | 'fence-base' | 'fence-half' | 'fence-wood' | 'fence-wheel' | 'jerry' | 'gas' | 'propane' | 'helmet' | 'shield' | 'cup' | 'pan';
+/** A team's start: spawns[0] is where the attackers start, spawns[1] the defenders. */
 export type Spawn = { x: number; y: number; z: number; yaw: number; slots: Slot[] };
 export type Town = { name: string; x: number; z: number; site: number };
 /** Uniform grid over the terrain: start[c]..start[c+1] index items, which encode kind * KIND + index. */
@@ -137,6 +139,14 @@ const pick = <T>(r: Rng, a: readonly T[]) => a[Math.floor(r() * a.length) % a.le
 
 function overlaps(c: Ctx, x0: number, z0: number, x1: number, z1: number) {
   for (const r of c.taken) if (x0 < r.x1 && x1 > r.x0 && z0 < r.z1 && z1 > r.z0) return true;
+  return false;
+}
+
+/** Anything solid standing within `d` of (x, z)? */
+function solidNear(c: Ctx, x: number, z: number, d: number) {
+  const near = (b: { x0: number; z0: number; x1: number; z1: number }) => Math.hypot(Math.max(b.x0 - x, 0, x - b.x1), Math.max(b.z0 - z, 0, z - b.z1)) < d;
+  for (const p of c.pieces) if (p.solid && p.y1 - p.y0 > 0.8 && near(p)) return true;
+  for (const b of c.colliders) if (near(b)) return true;
   return false;
 }
 
@@ -468,20 +478,25 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number) {
   if (roadDist(c, x, z) < 2.5 + Math.max(hx, hz)) return false;
   let lo = Infinity;
   let hi = -Infinity;
+  // (on ice the frozen surface is the ground: cover may stand out on a frozen lake, but not in open water)
+  let iced = false;
   for (const [a, b] of [
     [-1, -1],
     [1, -1],
     [-1, 1],
     [1, 1],
   ]) {
-    const h = heightAt(c.t, x + a * hx, z + b * hz);
+    const h = floorAt(c.t, x + a * hx, z + b * hz);
+    if (c.t.ice && heightAt(c.t, x + a * hx, z + b * hz) < c.t.water) iced = true;
     lo = Math.min(lo, h);
     hi = Math.max(hi, h);
   }
-  if (hi - lo > (kind === 'container' ? 2.2 : kind === 'truck' ? 1.4 : MODEL_COVER[kind] ? 0.7 : 1.2) || lo < c.t.water + 0.3) return false;
+  if (hi - lo > (kind === 'container' ? 2.2 : kind === 'truck' ? 1.4 : MODEL_COVER[kind] ? 0.7 : 1.2) || (!c.t.ice && lo < c.t.water + 0.3)) return false;
+  if (iced && (kind === 'truck' || hi - lo > 0.3)) return false;
   const f = new Frame(c, x, z, rot);
   let y = lo - 0.15;
-  if (kind === 'container') {
+  if (kind === 'container' && iced) y = lo;
+  else if (kind === 'container') {
     y = meanHeight(c.t, x, z, hx, hz);
     flattenRect(c.t, x, z, hx + 0.4, hz + 0.4, y, 3);
     c.pads.push({ x, z, hx: hx + 0.4, hz: hz + 0.4, y });
@@ -540,7 +555,7 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number) {
 
 /**
  * The walkable ground inside the arena that hangs together: 1 on vertices of the biggest region you can walk across
- * without climbing a cliff or swimming deep water, 0 elsewhere. Spawns, uplinks and respawns only go on it.
+ * without climbing a cliff or swimming deep water, 0 elsewhere. Spawns, sites and respawns only go on it.
  */
 export function walkRegion(t: Terrain, arena = ARENA): Uint8Array {
   const lab = new Int32Array(T_RES * T_RES).fill(-1);
@@ -586,10 +601,282 @@ export function walkRegion(t: Terrain, arena = ARENA): Uint8Array {
   return out;
 }
 
+/** Walking distances over the bare land (2 m steps, no climbing more than 1.5 m a step), from one point to the rest. */
+function landDist(t: Terrain, arena: number, from: { x: number; z: number }, to: { x: number; z: number }[]) {
+  const lo = Math.ceil((T_HALF - arena + 6) / CELL);
+  const hi = Math.floor((T_HALF + arena - 6) / CELL);
+  const n = hi - lo + 1;
+  const dist = new Float32Array(n * n).fill(Infinity);
+  const done = new Uint8Array(n * n);
+  const idx = (x: number, z: number) => {
+    const i = clamp(Math.round((x + T_HALF) / CELL) - lo, 0, n - 1);
+    const j = clamp(Math.round((z + T_HALF) / CELL) - lo, 0, n - 1);
+    return j * n + i;
+  };
+  const hAt = (c: number) => t.h[(lo + Math.floor(c / n)) * T_RES + lo + (c % n)];
+  const wet = (c: number) => t.hasWater && !t.ice && hAt(c) < t.water - 1.1;
+  // a plain bucket queue: costs are small whole numbers of half steps
+  const buckets: number[][] = [];
+  const start = idx(from.x, from.z);
+  dist[start] = 0;
+  buckets[0] = [start];
+  for (let b = 0; b < buckets.length; b++) {
+    const list = buckets[b];
+    if (!list) continue;
+    for (const c of list) {
+      if (done[c]) continue;
+      done[c] = 1;
+      const ci = c % n;
+      const cj = (c - ci) / n;
+      for (let dj = -1; dj <= 1; dj++)
+        for (let di = -1; di <= 1; di++) {
+          if (!di && !dj) continue;
+          const ni = ci + di;
+          const nj = cj + dj;
+          if (ni < 0 || nj < 0 || ni >= n || nj >= n) continue;
+          const nc = nj * n + ni;
+          if (done[nc] || wet(nc) || Math.abs(hAt(nc) - hAt(c)) > 1.4) continue;
+          const nb = b + (di && dj ? 3 : 2);
+          if (nb * CELL * 0.5 < dist[nc]) {
+            dist[nc] = nb * CELL * 0.5;
+            (buckets[nb] ??= []).push(nc);
+          }
+        }
+    }
+  }
+  return to.map((p) => dist[idx(p.x, p.z)]);
+}
+
+/** How much ground stands above a straight grade from a to b: the depth a lane between them would have to cut. */
+function cutDepth(t: Terrain, ax: number, az: number, bx: number, bz: number) {
+  const ha = heightAt(t, ax, az);
+  const hb = heightAt(t, bx, bz);
+  const n = Math.ceil(Math.hypot(bx - ax, bz - az) / CELL);
+  let most = 0;
+  for (let i = 1; i < n; i++) {
+    const k = i / n;
+    most = Math.max(most, heightAt(t, lerp(ax, bx, k), lerp(az, bz, k)) - lerp(ha, hb, k));
+  }
+  return most;
+}
+
+/** Grades a road (a flat x, z polyline) so it can be walked end to end: wherever the land climbs or falls more than
+ * `rise` meters per meter, the road cuts into the slope or runs on a bank instead, with steep sides. Across a pad (a
+ * spawn or a site) it stays at the pad's height, so the pad and the road meet level. */
+function gradeRoad(t: Terrain, pts: number[], pads: Ctx['pads'], graded: Uint8Array, rise = 0.4, half = 5, side = 7) {
+  const xs: number[] = [];
+  const zs: number[] = [];
+  for (let i = 0; i + 3 < pts.length; i += 2) {
+    const n = Math.max(1, Math.ceil(Math.hypot(pts[i + 2] - pts[i], pts[i + 3] - pts[i + 1])));
+    for (let k = 0; k < n; k++) {
+      xs.push(lerp(pts[i], pts[i + 2], k / n));
+      zs.push(lerp(pts[i + 1], pts[i + 3], k / n));
+    }
+  }
+  xs.push(pts[pts.length - 2]);
+  zs.push(pts[pts.length - 1]);
+  const N = xs.length;
+  const h = xs.map((x, k) => heightAt(t, x, zs[k]));
+  const at = [0];
+  for (let k = 1; k < N; k++) at.push(at[k - 1] + Math.hypot(xs[k] - xs[k - 1], zs[k] - zs[k - 1]));
+  // fixed heights: the two ends, and every mark on a pad (at the pad's height)
+  const fixed: number[] = [];
+  const fixedY: number[] = [];
+  for (let k = 0; k < N; k++) {
+    const pad = pads.find((p) => Math.abs(xs[k] - p.x) <= p.hx + 0.5 && Math.abs(zs[k] - p.z) <= p.hz + 0.5);
+    if (pad || k === 0 || k === N - 1) {
+      fixed.push(k);
+      fixedY.push(pad ? pad.y : h[k]);
+    }
+  }
+  // between fixed marks: the profile nearest the land that never climbs faster than `rise` and meets both ends (a
+  // straight grade when even that is too steep)
+  const prof = h.slice();
+  for (let f = 0; f < fixed.length; f++) prof[fixed[f]] = fixedY[f];
+  for (let f = 0; f + 1 < fixed.length; f++) {
+    const k0 = fixed[f];
+    const k1 = fixed[f + 1];
+    if (k1 - k0 < 2) continue;
+    const y0 = fixedY[f];
+    const y1 = fixedY[f + 1];
+    const L = at[k1] - at[k0];
+    if (Math.abs(y1 - y0) > rise * L) {
+      for (let k = k0 + 1; k < k1; k++) prof[k] = lerp(y0, y1, (at[k] - at[k0]) / L);
+      continue;
+    }
+    for (let k = k0 + 1; k < k1; k++) {
+      const s0 = at[k] - at[k0];
+      const s1 = at[k1] - at[k];
+      const step = at[k] - at[k - 1];
+      const lo = Math.max(y0 - rise * s0, y1 - rise * s1, prof[k - 1] - rise * step);
+      const hi = Math.min(y0 + rise * s0, y1 + rise * s1, prof[k - 1] + rise * step);
+      prof[k] = clamp(h[k], lo, Math.max(lo, hi));
+    }
+  }
+  let x0 = Infinity;
+  let x1 = -Infinity;
+  let z0 = Infinity;
+  let z1 = -Infinity;
+  for (let k = 0; k < N; k++)
+    if (Math.abs(prof[k] - h[k]) > 0.05) {
+      x0 = Math.min(x0, xs[k]);
+      x1 = Math.max(x1, xs[k]);
+      z0 = Math.min(z0, zs[k]);
+      z1 = Math.max(z1, zs[k]);
+    }
+  if (x0 > x1) return;
+  const pad = half + side;
+  const i0 = Math.max(0, Math.floor((x0 - pad + T_HALF) / CELL));
+  const i1 = Math.min(T_RES - 1, Math.ceil((x1 + pad + T_HALF) / CELL));
+  const j0 = Math.max(0, Math.floor((z0 - pad + T_HALF) / CELL));
+  const j1 = Math.min(T_RES - 1, Math.ceil((z1 + pad + T_HALF) / CELL));
+  for (let j = j0; j <= j1; j++)
+    for (let i = i0; i <= i1; i++) {
+      const px = -T_HALF + i * CELL;
+      const pz = -T_HALF + j * CELL;
+      // the nearest meter mark on the road (fine enough at 1 m apart)
+      let best = 0;
+      let bd = Infinity;
+      for (let k = 0; k < N; k++) {
+        const d = (xs[k] - px) * (xs[k] - px) + (zs[k] - pz) * (zs[k] - pz);
+        if (d < bd) {
+          bd = d;
+          best = k;
+        }
+      }
+      const w = 1 - smoothstep(half, pad, Math.sqrt(bd));
+      if (w <= 0 || Math.abs(prof[best] - h[best]) < 0.05) continue;
+      const k = j * T_RES + i;
+      t.h[k] = lerp(t.h[k], prof[best], w);
+      graded[k] = 1;
+    }
+}
+
+/** Two cuts close together can leave a knife edge of rock standing between them: round such slivers off (any point
+ * near a cut standing well above the points around it), so no thin spike sticks up between two lanes. */
+function roundRidges(t: Terrain, graded: Uint8Array) {
+  const near = new Uint8Array(T_RES * T_RES);
+  for (let j = 3; j < T_RES - 3; j++)
+    for (let i = 3; i < T_RES - 3; i++) {
+      if (!graded[j * T_RES + i]) continue;
+      for (let b = -3; b <= 3; b++) for (let a = -3; a <= 3; a++) near[(j + b) * T_RES + i + a] = 1;
+    }
+  for (let pass = 0; pass < 6; pass++)
+    for (let j = 1; j < T_RES - 1; j++)
+      for (let i = 1; i < T_RES - 1; i++) {
+        const k = j * T_RES + i;
+        if (!near[k]) continue;
+        const h = t.h;
+        // standing above both sides along either axis (a ridge), or above all four (a spike)
+        const ex = Math.min(h[k] - h[k - 1], h[k] - h[k + 1]);
+        const ez = Math.min(h[k] - h[k - T_RES], h[k] - h[k + T_RES]);
+        if (Math.max(ex, ez) > 1.6) h[k] = Math.max(h[k] - Math.max(ex, ez) * 0.6, (h[k - 1] + h[k + 1] + h[k - T_RES] + h[k + T_RES]) / 4);
+      }
+}
+
+/** A square of concrete walls, 3 m tall, round a spawn, open where its roads leave; each opening has a screen wall a
+ * few meters out, so you step out round a corner and nobody looks straight in (or out across the map). */
+function spawnYard(c: Ctx, x: number, z: number, half = 17, seg = 2) {
+  const t = c.t;
+  const wall = (x0: number, z0: number, x1: number, z1: number) => {
+    const lo = Math.min(heightAt(t, x0, z0), heightAt(t, x1, z1), heightAt(t, (x0 + x1) / 2, (z0 + z1) / 2));
+    const hi = Math.max(heightAt(t, x0, z0), heightAt(t, x1, z1), heightAt(t, (x0 + x1) / 2, (z0 + z1) / 2));
+    if (hi < t.water + 0.2 && !t.ice) return;
+    const y0 = Math.max(lo, t.ice ? t.water : -Infinity) - 0.8;
+    const y1 = Math.max(hi, t.ice ? t.water : -Infinity) + 3;
+    c.pieces.push({ x0, y0, z0, x1, y1, z1, part: 'concrete', color: 0x9a978f, solid: true });
+    c.blocks.push({ x0, y0, z0, x1, y1, z1 });
+    c.taken.push({ x0: x0 - 1, z0: z0 - 1, x1: x1 + 1, z1: z1 + 1 });
+  };
+  for (let side = 0; side < 4; side++) {
+    // along x (sides 0, 1) or along z (sides 2, 3), at -half or +half
+    const alongX = side < 2;
+    const off = side % 2 === 0 ? -half : half;
+    let gap0 = Infinity;
+    const close = (u: number) => {
+      // an opening from gap0 to u: a screen wall 4.5 m out, 2 m wider than it on each end
+      if (gap0 === Infinity) return;
+      const a = gap0 - 2;
+      const b = u + 2;
+      const o = off + Math.sign(off) * 4.5;
+      if (alongX) wall(x + a, z + o - 0.35, x + b, z + o + 0.35);
+      else wall(x + o - 0.35, z + a, x + o + 0.35, z + b);
+      gap0 = Infinity;
+    };
+    for (let u = -half; u < half; u += seg) {
+      const ax = alongX ? x + u : x + off;
+      const az = alongX ? z + off : z + u;
+      const bx = alongX ? ax + seg : ax;
+      const bz = alongX ? az : az + seg;
+      if (roadDist(c, (ax + bx) / 2, (az + bz) / 2) < 3.6) {
+        if (gap0 === Infinity) gap0 = u;
+        continue;
+      }
+      close(u);
+      if (alongX) wall(ax, az - 0.35, bx, az + 0.35);
+      else wall(ax - 0.35, az, ax + 0.35, bz);
+    }
+    close(half);
+  }
+}
+
+type Spot = { x: number; z: number; score: number };
+
+/**
+ * How far a breach layout is from the plan: the attack about 110 m of walking from either site, the defense about 55,
+ * both sites about as far, and the sites a short rotation apart. A pair the land doesn't join sensibly (no way at all,
+ * or a long detour) counts as joined by its road, graded through, which costs by how deep it must cut.
+ */
+function layoutCost(t: Terrain, arena: number, spawnAt: Spot[], siteAt: Spot[]) {
+  const [atk, def] = spawnAt;
+  const [A, B] = siteAt;
+  const fromAtk = landDist(t, arena, atk, [A, B]);
+  const fromA = landDist(t, arena, A, [def, B]);
+  const fromB = landDist(t, arena, B, [def]);
+  let carve = 0;
+  const way = (p: Spot, q: Spot, d: number) => {
+    const straight = Math.hypot(q.x - p.x, q.z - p.z);
+    if (Number.isFinite(d) && d < straight * 1.6) return d;
+    // the road there will be graded through, if the climb between the pads is gentle enough to walk (the less it
+    // has to cut the better); if not, the long way round it is, or no way at all
+    const climb = Math.abs(heightAt(t, p.x, p.z) - heightAt(t, q.x, q.z)) / Math.max(1, straight - 24);
+    if (climb < 0.55) {
+      carve += 0.5 + cutDepth(t, p.x, p.z, q.x, q.z) / 8;
+      return straight * 1.1;
+    }
+    return Number.isFinite(d) ? d : 1e4;
+  };
+  const atkA = way(atk, A, fromAtk[0]);
+  const atkB = way(atk, B, fromAtk[1]);
+  const defA = way(A, def, fromA[0]);
+  const ab = way(A, B, fromA[1]);
+  const defB = way(B, def, fromB[0]);
+  const off = (d: number, want: number) => Math.abs(d - want) / want;
+  let cost = off(atkA, 110) + off(atkB, 110) + off(defA, 55) + off(defB, 55) + off(ab, 90) * 0.5 + carve;
+  cost += (Math.abs(atkA - atkB) / 110) * 2 + (Math.abs(defA - defB) / 55) * 2;
+  // the defense must get there well first
+  cost += Math.max(0, Math.max(defA, defB) - Math.min(atkA, atkB) * 0.65) / 20;
+  for (const p of [...spawnAt, ...siteAt]) cost += p.score * 0.02;
+  // open water or ice has no cover at all: keep the spawns, the sites and the lanes between them off it
+  const wet = (x: number, z: number) => t.hasWater && heightAt(t, x, z) < t.water + 0.8;
+  for (const p of [...spawnAt, ...siteAt]) for (const [ox, oz] of [[0, 0], [14, 0], [-14, 0], [0, 14], [0, -14]]) if (wet(p.x + ox, p.z + oz)) cost += 2;
+  for (const [p, q] of [
+    [atk, A],
+    [atk, B],
+    [def, A],
+    [def, B],
+  ]) {
+    let n = 0;
+    for (let k = 1; k < 20; k++) if (wet(lerp(p.x, q.x, k / 20), lerp(p.z, q.z, k / 20))) n++;
+    cost += (n / 19) * 6;
+  }
+  return cost;
+}
+
 const onRegion = (region: Uint8Array, x: number, z: number) => region[Math.round((z + T_HALF) / CELL) * T_RES + Math.round((x + T_HALF) / CELL)] === 1;
 
 /** Best spot near (x, z) for a pad: dry, flat, reachable and inside the arena. `along` limits the search to one axis. */
-function findSpot(t: Terrain, region: Uint8Array, x: number, z: number, radius: number, along?: [number, number], arena = ARENA) {
+function findSpot(t: Terrain, region: Uint8Array, x: number, z: number, radius: number, along?: [number, number], arena = ARENA, strict = true) {
   let best = { x, z, score: Infinity };
   for (let a = -radius; a <= radius; a += 4)
     for (let b = -radius; b <= radius; b += 4) {
@@ -597,7 +884,9 @@ function findSpot(t: Terrain, region: Uint8Array, x: number, z: number, radius: 
       const px = x + a;
       const pz = z + b;
       if (Math.abs(px) > arena - 20 || Math.abs(pz) > arena - 20) continue;
-      if (!onRegion(region, px, pz)) continue;
+      // off the main walkable land: out, unless a lane will be cut to it (then only a little worse)
+      const off = !onRegion(region, px, pz);
+      if (off && strict) continue;
       let lo = Infinity;
       let hi = -Infinity;
       for (let u = -10; u <= 10; u += 5)
@@ -607,7 +896,7 @@ function findSpot(t: Terrain, region: Uint8Array, x: number, z: number, radius: 
           hi = Math.max(hi, h);
         }
       const wet = Math.max(0, t.water + 1.2 - lo) * 8;
-      const score = hi - lo + wet + Math.hypot(a, b) * 0.04;
+      const score = hi - lo + wet + Math.hypot(a, b) * 0.04 + (off ? 6 : 0);
       if (score < best.score) best = { x: px, z: pz, score };
     }
   return best;
@@ -694,7 +983,7 @@ function clearSpots(spots: number[], boxes: Box[], trunks: Trunk[]) {
   return out;
 }
 
-/** Builds a map: the uplink arena, or with `royale` the whole land, with many more towns, cover and loot. */
+/** Builds a map: the breach arena, or with `royale` the whole land, with many more towns, cover and loot. */
 export function buildWorld(id: MapId, royale = false): World {
   const def = MAPS[id];
   const t = generateTerrain(def);
@@ -703,14 +992,37 @@ export function buildWorld(id: MapId, royale = false): World {
   const r = c.rng;
 
   // the axis between the spawns
-  const th = r() * Math.PI * 2;
-  const ux = Math.cos(th);
-  const uz = Math.sin(th);
-  const vx = -uz;
-  const vz = ux;
-  const region = walkRegion(t, ARENA);
-  const spawnAt = [-1, 1].map((sgn) => findSpot(t, region, sgn * 120 * ux, sgn * 120 * uz, 24));
-  const siteAt = [-1, 0, 1].map((k) => findSpot(t, region, k * 82 * vx, k * 82 * vz, 24, [ux, uz]));
+  let region = walkRegion(t, ARENA);
+  const th0 = r() * Math.PI * 2;
+  // breach: the attackers start far back, the defenders close behind the two sites, so the defense sets up first and
+  // the attack has a run of about twenty seconds to either site. The land decides which way round fits best (a cliff
+  // or a lake between a spawn and a site would make a lopsided map). A royale world keeps its old spread of three.
+  const layout = (th: number) => {
+    const ux = Math.cos(th);
+    const uz = Math.sin(th);
+    const vx = -uz;
+    const vz = ux;
+    const spawnAt = royale
+      ? [-1, 1].map((sgn) => findSpot(t, region, sgn * 120 * ux, sgn * 120 * uz, 24))
+      : [findSpot(t, region, -68 * ux, -68 * uz, 16, undefined, ARENA, false), findSpot(t, region, 58 * ux, 58 * uz, 16, undefined, ARENA, false)];
+    const siteAt = royale
+      ? [-1, 0, 1].map((k) => findSpot(t, region, k * 82 * vx, k * 82 * vz, 24, [ux, uz]))
+      : [-1, 1].map((k) => findSpot(t, region, 24 * ux + k * 40 * vx, 24 * uz + k * 40 * vz, 14, [ux, uz], ARENA, false));
+    return { ux, uz, vx, vz, spawnAt, siteAt };
+  };
+  let best = layout(th0);
+  if (!royale) {
+    let bestScore = Infinity;
+    for (let k = 0; k < 16; k++) {
+      const L = k === 0 ? best : layout(th0 + (k * Math.PI) / 8);
+      const cost = layoutCost(t, ARENA, L.spawnAt, L.siteAt);
+      if (cost < bestScore) {
+        bestScore = cost;
+        best = L;
+      }
+    }
+  }
+  const { ux, uz, vx, vz, spawnAt, siteAt } = best;
 
   const spawns = spawnAt.map((p, team) => {
     const y = meanHeight(t, p.x, p.z, 12, 12);
@@ -731,13 +1043,31 @@ export function buildWorld(id: MapId, royale = false): World {
     c.taken.push({ x0: p.x - 13, z0: p.z - 13, x1: p.x + 13, z1: p.z + 13 });
     return { id: k, name: 'ABC'[k], town: def.pois[k], x: p.x, y, z: p.z };
   });
+  // breach: a middle between the sites, its own little town, where the lanes cross
+  const mid = royale ? null : findSpot(t, region, -6 * ux, -6 * uz, 14);
 
-  // roads: each spawn to each uplink, and the uplinks to each other
+  // roads: each spawn to each site, and the sites to each other (through the middle in breach)
   for (const s of spawns) for (const site of sites) roadLine(c, s.x, s.z, site.x, site.z);
-  roadLine(c, sites[0].x, sites[0].z, sites[1].x, sites[1].z);
-  roadLine(c, sites[1].x, sites[1].z, sites[2].x, sites[2].z);
+  if (mid) {
+    for (const site of sites) roadLine(c, mid.x, mid.z, site.x, site.z);
+    roadLine(c, spawns[0].x, spawns[0].z, mid.x, mid.z);
+  } else {
+    roadLine(c, sites[0].x, sites[0].z, sites[1].x, sites[1].z);
+    roadLine(c, sites[1].x, sites[1].z, sites[2].x, sites[2].z);
+  }
+  // breach: every lane is walkable end to end. Where a road meets a slope too steep to climb (a mesa's cliff, a
+  // ridge), a ramp is cut into it; buildings, cover and trees all keep off roads, so the lanes stay open.
+  if (!royale) {
+    const graded = new Uint8Array(T_RES * T_RES);
+    for (const pts of c.roads) gradeRoad(t, pts, c.pads, graded);
+    roundRidges(t, graded);
+    region = walkRegion(t, ARENA);
+    // and each spawn is a walled yard you leave by its roads, so nobody sees across from spawn to spawn or into a
+    // site the moment a round starts
+    for (const sp of spawns) spawnYard(c, sp.x, sp.z);
+  }
 
-  // the uplink masts: a waist high concrete block to hide behind and an antenna
+  // the site masts: a waist high concrete block to hide behind and an antenna
   for (const s of sites) {
     const f = new Frame(c, s.x, s.z, 0);
     f.box(-0.9, s.y - 0.3, -0.9, 0.9, s.y + 1.15, 0.9, 'concrete', 0x8f8d88);
@@ -746,12 +1076,14 @@ export function buildWorld(id: MapId, royale = false): World {
     f.box(-0.06, s.y + 4.4, -0.6, 0.06, s.y + 4.52, 0.6, 'metal', 0x6a6e72, false);
   }
 
-  // towns: one around each uplink, two more out on the flanks, and a few beyond the arena for the view
+  // towns: one around each site, the middle (breach) or two out on the flanks (royale), and a few beyond for the view
   const towns: Town[] = sites.map((s) => ({ name: s.town, x: s.x, z: s.z, site: s.id }));
-  for (const sgn of [-1, 1]) {
-    const p = findSpot(t, region, sgn * 135 * vx, sgn * 135 * vz, 18, [ux, uz]);
-    towns.push({ name: def.pois[sgn < 0 ? 3 : 4], x: p.x, z: p.z, site: -1 });
-  }
+  if (mid) towns.push({ name: def.pois[2], x: mid.x, z: mid.z, site: -1 });
+  else
+    for (const sgn of [-1, 1]) {
+      const p = findSpot(t, region, sgn * 135 * vx, sgn * 135 * vz, 18, [ux, uz]);
+      towns.push({ name: def.pois[sgn < 0 ? 3 : 4], x: p.x, z: p.z, site: -1 });
+    }
   if (royale) {
     // a royale spreads towns over the whole land, each joined by a road to the nearest one already there
     const names = ['Brook', 'Mill', 'Quarry', 'Pines', 'Harbor', 'Crossing', 'Depot', 'Farm', 'Outlook', 'Station'];
@@ -792,12 +1124,12 @@ export function buildWorld(id: MapId, royale = false): World {
     }
   }
   // lone buildings out in the open
-  for (let k = 0, placed = 0; k < (royale ? 400 : 80) && placed < (royale ? 30 : 7); k++)
+  for (let k = 0, placed = 0; k < (royale ? 400 : 120) && placed < (royale ? 30 : 11); k++)
     if (tryBuilding(c, r() < 0.5 ? 'ruin' : 'shed', (r() * 2 - 1) * (ARENA - 15), (r() * 2 - 1) * (ARENA - 15), ARENA - 4)) placed++;
 
-  // cover: around the uplinks, at the spawns and across the lanes
+  // cover: around the sites, at the spawns and across the lanes
   const propKinds: PropKind[] = ['container', 'crates', 'sandbags', 'hesco', 'barrier', 'pile', 'hesco', 'wire', 'dumpsters', 'fence', 'barrier', 'pile'];
-  // an armored truck by each spawn and one at the middle uplink, then HESCO walls round every uplink
+  // an armored truck by each spawn and one in the middle, then HESCO walls round every site
   for (const s of spawns)
     for (let k = 0, placed = 0; k < 60 && placed < 1; k++) {
       const a = r() * Math.PI * 2;
@@ -805,7 +1137,8 @@ export function buildWorld(id: MapId, royale = false): World {
     }
   for (let k = 0, placed = 0; k < 60 && placed < 1; k++) {
     const a = r() * Math.PI * 2;
-    if (tryProp(c, 'truck', sites[1].x + Math.cos(a) * 16, sites[1].z + Math.sin(a) * 16, ARENA - 4)) placed++;
+    const at = mid ?? sites[1];
+    if (tryProp(c, 'truck', at.x + Math.cos(a) * (mid ? 9 : 16), at.z + Math.sin(a) * (mid ? 9 : 16), ARENA - 4)) placed++;
   }
   for (const s of sites)
     for (let k = 0, placed = 0; k < 40 && placed < 2; k++) {
@@ -829,8 +1162,20 @@ export function buildWorld(id: MapId, royale = false): World {
       const d = 60 + r() * 250;
       if (tryProp(c, 'truck', Math.cos(a) * d, Math.sin(a) * d, ARENA - 4)) placed++;
     }
-  for (let k = 0, placed = 0; k < (royale ? 1600 : 400) && placed < (royale ? 120 : 34); k++)
+  for (let k = 0, placed = 0; k < (royale ? 1600 : 700) && placed < (royale ? 120 : 62); k++)
     if (tryProp(c, propKinds[Math.floor(r() * propKinds.length)], (r() * 2 - 1) * (ARENA - 8), (r() * 2 - 1) * (ARENA - 8), ARENA - 3)) placed++;
+  // breach: wherever the ground still lies open (nothing standing within 9 m), a piece of cover, so a fight turns on
+  // angles and not on who spots whom first across an empty field
+  if (!royale) {
+    const fill: PropKind[] = ['container', 'crates', 'sandbags', 'hesco', 'hesco', 'barrier', 'sandbags', 'container', 'pile'];
+    for (let gx = -ARENA + 10; gx <= ARENA - 10; gx += 13)
+      for (let gz = -ARENA + 10; gz <= ARENA - 10; gz += 13) {
+        const x = gx + (r() - 0.5) * 7;
+        const z = gz + (r() - 0.5) * 7;
+        if (solidNear(c, x, z, 9)) continue;
+        for (let k = 0; k < 5; k++) if (tryProp(c, fill[Math.floor(r() * fill.length)], x + (r() - 0.5) * 5, z + (r() - 0.5) * 5, ARENA - 3)) break;
+      }
+  }
 
   // later pads blend into earlier ones at their edges: put every pad back exactly
   for (const p of c.pads) flattenRect(t, p.x, p.z, p.hx, p.hz, p.y, 0.01);

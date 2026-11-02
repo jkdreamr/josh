@@ -1,6 +1,7 @@
 // Everything drawn over the 3D view: the round bar (or a royale's players left and zone clock), health, armor and ammo,
-// the kill feed, the minimap with the zone, markers for the uplink and your team, the buy menu, the scoreboard,
-// banners, pick up and heal prompts, the crosshair, hit markers and the scope.
+// the kill feed, the minimap with the sites, the charge and the zone, markers for the sites, the charge and your team,
+// the buy menu, the scoreboard, banners, plant, defuse, pick up and heal prompts, the crosshair, hit markers and the
+// scope.
 import { forwardRef, useEffect, useImperativeHandle, useRef, type ReactNode } from 'react';
 import type { Mode, Phase, ShopItem } from './match.ts';
 import { ARMOR, NADES, WEAPONS, type WeaponId } from './weapons.ts';
@@ -15,9 +16,7 @@ export type Hud = {
   round: number;
   score: [number, number];
   pips: [boolean[], boolean[]];
-  site: string | null;
-  cap: [number, number];
-  onSite: [number, number];
+  breach: BreachHud | null;
   hp: number;
   armor: number;
   credits: number;
@@ -37,6 +36,26 @@ export type Hud = {
   rows: Row[];
   owned: Partial<Record<ShopItem, boolean>>;
   royale: RoyaleHud | null;
+};
+
+export type BreachHud = {
+  /** Your side this round. */
+  side: 'attack' | 'defend';
+  charge: 'carried' | 'dropped' | 'planted' | 'defused' | 'blown';
+  /** You carry the charge. */
+  carrying: boolean;
+  /** The site it is planted on. */
+  site: string | null;
+  /** Seconds left on the fuse once planted. */
+  fuse: number;
+  /** Your plant or defuse under way, 0 to 1, and its half way mark kept (defuse). */
+  work: 'plant' | 'defuse' | null;
+  progress: number;
+  kept: number;
+  /** What holding the use key would do where you stand. */
+  prompt: 'plant' | 'defuse' | null;
+  /** A teammate is on the charge (planting or defusing). */
+  mateWorking: string | null;
 };
 
 export type RoyaleHud = {
@@ -68,9 +87,7 @@ export const blankHud = (mode: Mode): Hud => ({
   round: 1,
   score: [0, 0],
   pips: [[], []],
-  site: null,
-  cap: [0, 0],
-  onSite: [0, 0],
+  breach: null,
   hp: 100,
   armor: 0,
   credits: 0,
@@ -135,23 +152,29 @@ export function TopBar({ h }: { h: Hud }) {
       </div>
     );
   }
-  const total = h.cap[0] + h.cap[1];
+  const br = h.breach;
+  const planted = br?.charge === 'planted' && h.phase === 'live';
+  const sub =
+    h.phase === 'buy'
+      ? `buy phase. ${br?.side === 'attack' ? 'you attack' : 'you defend'}`
+      : h.phase === 'end'
+        ? 'round over'
+        : planted
+          ? `charge planted on ${br?.site}`
+          : `round ${h.round}. ${br?.side === 'attack' ? 'attacking' : 'defending'}`;
   return (
     <div className="g-ridgeline-top">
       <div className="g-ridgeline-score is-you">
         <b>{h.score[0]}</b>
         <span className="g-ridgeline-pips">{h.pips[0].map((a, i) => <i key={i} className={a ? 'is-on' : ''} />)}</span>
       </div>
-      <div className="g-ridgeline-clock">
-        <b>{clock(h.timer)}</b>
-        <small>{h.phase === 'buy' ? 'buy phase' : h.phase === 'end' ? 'round over' : `round ${h.round}`}</small>
-        {h.site && h.phase !== 'buy' && (
-          <div className="g-ridgeline-cap" data-contest={h.onSite[0] > 0 && h.onSite[1] > 0 ? '1' : '0'}>
-            <span className="g-ridgeline-capLetter">{h.site}</span>
-            <span className="g-ridgeline-capBar is-you" style={{ width: `${(h.cap[0] / 10) * 100}%` }} />
-            <span className="g-ridgeline-capBar is-them" style={{ width: `${(h.cap[1] / 10) * 100}%` }} />
-            {total === 0 && <em>uplink {h.site} is live</em>}
-          </div>
+      <div className="g-ridgeline-clock" data-planted={planted ? '1' : '0'}>
+        <b>{planted ? clock(br?.fuse ?? 0) : clock(h.timer)}</b>
+        <small>{sub}</small>
+        {br && (
+          <span className="g-ridgeline-side" data-side={br.side}>
+            {br.side === 'attack' ? 'ATK' : 'DEF'}
+          </span>
         )}
       </div>
       <div className="g-ridgeline-score is-them">
@@ -159,6 +182,34 @@ export function TopBar({ h }: { h: Hud }) {
         <span className="g-ridgeline-pips">{h.pips[1].map((a, i) => <i key={i} className={a ? 'is-on' : ''} />)}</span>
       </div>
     </div>
+  );
+}
+
+/** Breach: what holding the use key does here (plant, defuse), the progress while you do it, and what the charge is up
+ * to. */
+export function BreachPrompts({ h, touch }: { h: Hud; touch: boolean }) {
+  const br = h.breach;
+  if (!br || !h.alive || h.phase !== 'live') return null;
+  const key = touch ? (br.prompt === 'defuse' ? 'Defuse' : 'Plant') : 'F';
+  return (
+    <>
+      {br.work ? (
+        <div className="g-ridgeline-healing g-ridgeline-work" data-work={br.work}>
+          <span>{br.work === 'plant' ? 'planting the charge' : 'defusing'}</span>
+          <i style={{ width: `${Math.min(1, br.progress) * 100}%` }} />
+          {br.work === 'defuse' && br.kept > 0 && <em style={{ left: `${br.kept * 100}%` }} />}
+        </div>
+      ) : br.prompt ? (
+        <div className="g-ridgeline-prompt is-charge">
+          hold <kbd>{key}</kbd>
+          {br.prompt === 'plant' ? 'to plant the charge' : 'to defuse the charge'}
+        </div>
+      ) : br.carrying ? (
+        <div className="g-ridgeline-hint">you carry the charge. plant it on A or B</div>
+      ) : br.mateWorking ? (
+        <div className="g-ridgeline-hint">{br.mateWorking}</div>
+      ) : null}
+    </>
   );
 }
 
@@ -187,7 +238,7 @@ export function Vitals({ h }: { h: Hud }) {
           <span data-on={h.royale.kits ? '1' : '0'}>kit {h.royale.kits}</span>
         </div>
       )}
-      {h.mode === 'uplink' && (
+      {h.mode === 'breach' && (
         <div className="g-ridgeline-credits">
           <span>¤</span>
           {h.credits}
@@ -362,7 +413,7 @@ export function RoyalePrompts({ h, touch }: { h: Hud; touch: boolean }) {
 }
 
 export function Scoreboard({ rows, mode }: { rows: Row[]; mode: Mode }) {
-  const teams = mode === 'uplink' ? [0, 1] : [-1];
+  const teams = mode === 'breach' ? [0, 1] : [-1];
   return (
     <div className="g-ridgeline-board">
       {teams.map((t) => (
@@ -497,14 +548,17 @@ export const Reticle = forwardRef<FastHud, { shotgun: boolean }>(function Reticl
   );
 });
 
-/** The minimap: the baked map picture, uplinks, your team, enemies your team can see, and you. Drawn on demand. */
+/** The minimap: the baked map picture, the sites and the charge, your team, enemies your team can see, and you. Drawn
+ * on demand. */
 export type MinimapApi = { draw(s: MapState): void };
 export type MapState = {
   x: number;
   z: number;
   yaw: number;
-  site: number;
-  live: boolean;
+  /** Breach: the sites are marked, the one the charge is on picked out, and the charge where your side knows it. */
+  sites: boolean;
+  plantedOn: number;
+  charge: { x: number; z: number; planted: boolean } | null;
   mates: { x: number; z: number }[];
   foes: { x: number; z: number }[];
   /** Royale: the zone now and next, and the transport's line with where it is. */
@@ -574,8 +628,8 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
         g.fillStyle = '#ffd56a';
         g.fill();
       }
-      if (s.zone === undefined) world.sites.forEach((site, i) => {
-        const on = s.live && i === s.site;
+      if (s.sites) world.sites.forEach((site, i) => {
+        const on = i === s.plantedOn;
         g.fillStyle = on ? '#ffd56a' : 'rgba(255,255,255,0.75)';
         g.strokeStyle = 'rgba(0,0,0,0.6)';
         g.lineWidth = 3;
@@ -607,6 +661,23 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
       };
       for (const p of s.mates) dot(p.x, p.z, '#4fb4ff', big ? 4 : 3.5);
       for (const p of s.foes) dot(p.x, p.z, '#ff5a3c', big ? 4 : 3.5);
+      if (s.charge) {
+        // the charge: a small diamond, red and pulsing once planted
+        const cx2 = toX(s.charge.x);
+        const cy2 = toY(s.charge.z);
+        const r2 = (big ? 7 : 5.5) * (s.charge.planted ? 1 + 0.25 * Math.sin(performance.now() / 120) : 1);
+        g.beginPath();
+        g.moveTo(cx2, cy2 - r2);
+        g.lineTo(cx2 + r2, cy2);
+        g.lineTo(cx2, cy2 + r2);
+        g.lineTo(cx2 - r2, cy2);
+        g.closePath();
+        g.fillStyle = s.charge.planted ? '#ff4a3a' : '#ffd56a';
+        g.fill();
+        g.strokeStyle = 'rgba(0,0,0,0.8)';
+        g.lineWidth = 1.5;
+        g.stroke();
+      }
       // you: an arrow along the view
       const px = toX(s.x);
       const py = toY(s.z);
@@ -632,8 +703,8 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
   return <canvas ref={cv} width={big ? 360 : 168} height={big ? 360 : 168} className={big ? 'g-ridgeline-bigmap' : 'g-ridgeline-minimap'} />;
 });
 
-/** Screen markers: the live uplink and your teammates' names, placed every frame through refs. */
-export type MarkersApi = { place(list: { key: string; x: number; y: number; on: boolean; text: string; sub?: string; kind: 'site' | 'mate' }[]): void };
+/** Screen markers: the sites, the charge and your teammates' names, placed every frame through refs. */
+export type MarkersApi = { place(list: { key: string; x: number; y: number; on: boolean; text: string; sub?: string; kind: 'site' | 'mate' | 'charge' }[]): void };
 export const Markers = forwardRef<MarkersApi, { children?: ReactNode }>(function Markers(_, ref) {
   const box = useRef<HTMLDivElement>(null);
   const els = useRef(new Map<string, HTMLDivElement>());

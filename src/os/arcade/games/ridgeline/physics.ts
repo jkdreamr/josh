@@ -1,6 +1,6 @@
 // Moving bodies through the world (ground, ice, water, walls, crates, trunks and rocks) and casting rays for bullets
 // and sight lines. Colliders come from the world's grid.
-import { T_HALF, floorAt, normalAt, rayTerrain } from './terrain.ts';
+import { T_HALF, floorAt, heightAt, normalAt, rayTerrain } from './terrain.ts';
 import { ARENA, KIND, K_BOX, K_ROCK, K_TRUNK, type Surface, type World } from './world.ts';
 
 export const RADIUS = 0.36;
@@ -197,7 +197,7 @@ export function stepBody(w: World, b: Body, dt: number, bound = w.arena) {
       b.onGround = true;
     } else b.onGround = false;
     // too steep to stand on: slide down it
-    if (b.onGround && g <= terrainFloor + 0.01) {
+    if (b.onGround && g <= terrainFloor + 0.01 && !(t.ice && terrainFloor > heightAt(t, b.x, b.z) + 0.01)) {
       normalAt(t, b.x, b.z, tmpN);
       if (tmpN.y < 0.62) {
         b.onGround = false;
