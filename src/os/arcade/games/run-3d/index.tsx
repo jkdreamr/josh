@@ -27,6 +27,7 @@ import {
 } from './logic';
 import { SEAT_COLORS, buildWorld, disposeWorld, fromU, renderWorld, resizeWorld, syncWorld, uOf, type GhostView, type World } from './scene';
 import { meta } from './meta';
+import { SEND_EVERY, newField, num, passOn, receive, sampleAt, type RacePacket, type Wire } from './net';
 import './run-3d.css';
 
 const LEVEL_IDS = Array.from({ length: LEVEL_COUNT }, (_, i) => String(i + 1));
@@ -35,8 +36,6 @@ const LEVEL = defineSetting('run-3d:level', LEVEL_IDS, '1');
 const BOT_NAMES = ['Nova', 'Quill', 'Vega'] as const;
 const BOT_SKILL = [0.55, 0.72, 0.88];
 const COUNTDOWN = 3.5;
-const SEND_EVERY = 1 / 12;
-const INTERP_MS = 120;
 const STRAGGLE_MS = 25000;
 const RACE_CAP_MS = 180000;
 
@@ -167,45 +166,7 @@ function useFrameScale() {
 // ---------------------------------------------------------------------------------------------------------------
 // Network
 
-type Sample = { at: number; d: number; u: number; h: number; f: number; t: number };
-type Remote = { samples: Sample[]; ms: number; dist: number; gone: boolean };
-const num = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
-/** One racer as [seat, dist, u, h, flags, finish ms or -1]; flags: 1 falling, 2 finished. */
-type Wire = [number, number, number, number, number, number];
-const isWire = (w: unknown): w is Wire => Array.isArray(w) && w.length === 6 && w.every(num);
 const wire = (seat: number, s: State): Wire => [seat, Math.round(s.dist * 100) / 100, Math.round(uOf(ZONES[s.zi], s.side, s.x) * 100) / 100, Math.round(s.h * 100) / 100, (s.falling ? 1 : 0) | (s.finished ? 2 : 0), s.finished ? Math.round(s.finishT * 1000) : -1];
-
-function push(r: Remote, w: Wire, at: number) {
-  const [, d, u, h, f, t] = w;
-  r.samples.push({ at, d, u, h, f, t });
-  if (r.samples.length > 12) r.samples.shift();
-  if (t >= 0) r.ms = t;
-  r.dist = Math.max(r.dist, d);
-}
-
-/** Where a remote racer was INTERP_MS ago, between the two samples around that moment. */
-function sampleAt(r: Remote, now: number): Sample | null {
-  const list = r.samples;
-  if (!list.length) return null;
-  const at = now - INTERP_MS;
-  for (let i = list.length - 1; i > 0; i--) {
-    const a = list[i - 1];
-    const b = list[i];
-    if (a.at <= at && at <= b.at) {
-      const k = (at - a.at) / Math.max(1, b.at - a.at);
-      const jump = Math.abs(b.d - a.d) > 30 || Math.abs(b.u - a.u) > 6;
-      if (jump) return b;
-      return { at, d: a.d + (b.d - a.d) * k, u: a.u + (b.u - a.u) * k, h: a.h + (b.h - a.h) * k, f: b.f, t: b.t };
-    }
-  }
-  const last = list[list.length - 1];
-  const prev = list[list.length - 2];
-  if (!prev || at < list[0].at) return last;
-  // a little past the last sample: keep running at the last speed for up to a quarter second
-  const ahead = Math.min(250, at - last.at) / 1000;
-  const v = (last.d - prev.d) / Math.max(0.001, (last.at - prev.at) / 1000);
-  return { ...last, d: last.d + (last.f & 2 ? 0 : Math.max(0, v) * ahead) };
-}
 
 type Bot = { seat: number; name: string; s: State; mind: BotMind };
 type Toast = { key: number; text: string };
@@ -232,7 +193,7 @@ function Play() {
   }
   const state = useRef<State>(first.current);
   const bots = useRef<Bot[]>([]);
-  const remotes = useRef(new Map<number, Remote>());
+  const field = useRef(newField());
   const sendT = useRef(0);
   const cfgT = useRef(0);
   const over = useRef(false);
@@ -267,7 +228,7 @@ function Play() {
     if (!online) return;
     const list = [...online.players, ...online.bots.filter((b) => !online.players.some((p) => p.seat === b.seat))].filter((p) => p.seat !== online.seat);
     setRoster(list.sort((a, b) => a.seat - b.seat));
-    for (const [k, r] of remotes.current) r.gone = !list.some((p) => p.seat === k);
+    for (const [k, r] of field.current.remotes) r.gone = !list.some((p) => p.seat === k);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rosterKey]);
 
@@ -300,22 +261,18 @@ function Play() {
     if (!online) return;
     return online.onMessage((from, d) => {
       if (!d || typeof d !== 'object') return;
-      const p = d as { game?: string; k?: string; seed?: unknown; go?: unknown; me?: unknown; b?: unknown; order?: unknown };
+      const p = d as { game?: string; k?: string; seed?: unknown; go?: unknown; me?: unknown; b?: unknown; at?: unknown; ag?: unknown; order?: unknown };
       if (p.game !== 'run-3d') return;
-      const now = performance.now();
       if (p.k === 'cfg' && from === 0 && !online.isHost && num(p.seed) && num(p.go)) {
         const s = state.current;
         if (s.track.seed !== p.seed) state.current = create(raceTrack(p.seed), { respawn: true, hold: Math.max(0, p.go / 1000) });
         else if (s.hold > 0 && Math.abs(s.hold - p.go / 1000) > 0.25) s.hold = Math.max(0.01, p.go / 1000);
       } else if (p.k === 'p') {
-        const list = [p.me, ...(from === 0 && Array.isArray(p.b) ? p.b : [])];
-        for (const w of list) {
-          if (!isWire(w)) continue;
-          const who = w[0];
-          if (who === online.seat || (w !== p.me && from !== 0) || (w === p.me && who !== from)) continue;
-          let r = remotes.current.get(who);
-          if (!r) remotes.current.set(who, (r = { samples: [], ms: -1, dist: 0, gone: false }));
-          push(r, w, now);
+        const now = performance.now();
+        // the host passes each guest on to everyone else the moment it hears from them
+        if (receive(field.current, online.seat, from, p, now) && online.isHost && from !== 0) {
+          const out = passOn(field.current, from, now);
+          if (out) online.send(out, { fast: true });
         }
       } else if (p.k === 'end' && from === 0 && Array.isArray(p.order)) {
         const order = (p.order as unknown[]).filter((x): x is [number, number, number] => Array.isArray(x) && x.length === 3 && x.every(num)).map(([seatNo, ms, dist]) => ({ seat: seatNo, ms, dist }));
@@ -392,11 +349,11 @@ function Play() {
   };
 
   useGameLoop(
-    (dt) => {
+    // (now: the moment this step ends at, which online reports are stamped with)
+    (dt, now) => {
       const w = world.current;
       let s = state.current;
       const o = onlineRef.current;
-      const now = performance.now();
       const held = keys.down('up', 'action') || tap.current.held > 0;
       const jump = keys.pressed('up', 'action') || tap.current.jump;
       tap.current.jump = false;
@@ -440,7 +397,8 @@ function Play() {
         sendT.current += dt;
         if (sendT.current >= SEND_EVERY) {
           sendT.current = 0;
-          o.send({ game: 'run-3d', k: 'p', me: wire(o.seat, s), b: o.isHost ? bots.current.map((b) => wire(b.seat, b.s)) : undefined }, { fast: true });
+          const p: RacePacket = { game: 'run-3d', k: 'p', me: wire(o.seat, s), b: o.isHost ? bots.current.map((b) => wire(b.seat, b.s)) : undefined, at: Math.round(now) };
+          o.send(p, { fast: true });
         }
         if (o.isHost) {
           cfgT.current -= dt;
@@ -453,7 +411,7 @@ function Play() {
           const z = ZONES[b.s.zi];
           views.push({ seat: b.seat, dist: b.s.dist, u: uOf(z, b.s.side, b.s.x), h: b.s.h, falling: b.s.falling, finished: b.s.finished, vu: b.s.vx, color: SEAT_COLORS[b.seat % 4] });
         }
-        for (const [who, r] of remotes.current) {
+        for (const [who, r] of field.current.remotes) {
           if (r.gone || bots.current.some((b) => b.seat === who)) continue;
           const smp = sampleAt(r, now);
           if (!smp) continue;
@@ -466,7 +424,7 @@ function Play() {
         // standings
         const all: Finisher[] = [{ seat: o.seat, ms: s.finished ? Math.round(s.finishT * 1000) : -1, dist: s.dist }];
         for (const b of bots.current) all.push({ seat: b.seat, ms: b.s.finished ? Math.round(b.s.finishT * 1000) : -1, dist: b.s.dist });
-        for (const [who, r] of remotes.current) if (!r.gone && !bots.current.some((b) => b.seat === who)) all.push({ seat: who, ms: r.ms, dist: r.dist });
+        for (const [who, r] of field.current.remotes) if (!r.gone && !bots.current.some((b) => b.seat === who)) all.push({ seat: who, ms: r.ms, dist: r.dist });
         const order = finishOrder(all);
         const mine = order.findIndex((f) => f.seat === o.seat) + 1;
         if (mine !== place) setPlace(mine);
@@ -511,6 +469,9 @@ function Play() {
       const w = world.current;
       if (w) renderWorld(w);
     },
+    // online, a slow frame is caught up rather than run in slow motion: everyone else's race (and the host's bots) runs
+    // on the wall clock, so a slow device would fall behind them
+    { realtime: !!online },
   );
 
   const onPointerDown = (e: React.PointerEvent) => {
