@@ -9,7 +9,7 @@ import { autoQuality, createView, flyover, type Quality, type View } from './gfx
 import { kitOf, paletteOf } from './gfx/soldiers.ts';
 import { Ammo, BannerView, BreachPrompts, BuyMenu, DeathPanel, Feed, Markers, MedalView, Minimap, Reticle, RoyalePrompts, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type MedalPop, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi } from './hud.tsx';
 import { MAPS, MAP_IDS, type MapId } from './maps.ts';
-import { DEFUSE_HALF, DEFUSE_TIME, DEG, PLANT_TIME, type Medal, canDefuse, canShop, createMatch, currentGun, eyeY, finalScore, idleInput, lootNear, owns, plantSite, spareOf, spreadOf, standings, step, viewDir, type Actor, type Input, type Match, type ShopItem } from './match.ts';
+import { DEFUSE_HALF, DEFUSE_TIME, DEG, PERSON_HEALTH, PLANT_TIME, type Medal, canDefuse, canShop, createMatch, currentGun, eyeY, finalScore, idleInput, lootNear, owns, plantSite, spareOf, spreadOf, standings, step, viewDir, type Actor, type Input, type Match, type ShopItem } from './match.ts';
 import { HEAL, ROYALE_PLAYERS, ZONES, itemName, planeAt } from './royale.ts';
 import { newBrain } from './bots.ts';
 import { Session, type OnlineApi } from './online.ts';
@@ -950,6 +950,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       pips: [m.actors.filter((o) => o.team === you.team).map((o) => o.alive), m.actors.filter((o) => o.team !== you.team).map((o) => o.alive)],
       breach: m.mode === 'breach' ? breachHud(m, you) : null,
       hp: a.hp,
+      hpMax: a.bot ? 100 : Math.round(100 * PERSON_HEALTH),
       armor: a.armor,
       credits: you.credits,
       gun: g && w ? { name: w.name, mag: g.mag, reserve: m.mode === 'royale' ? spareOf(m, a, g) : g.reserve, max: w.mag, cls: w.cls } : null,
