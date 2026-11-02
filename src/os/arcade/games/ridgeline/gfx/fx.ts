@@ -1,8 +1,10 @@
 // Effects: billboard particles (dust, sparks, splashes, smoke, fire), bullet tracers, bullet holes, grenades in the
-// air, smoke clouds and the weather. Each kind is one instanced draw whose buffers are refilled each frame.
+// air, smoke clouds, a royale supply crate's column of colored smoke and the weather. Each kind is one instanced draw
+// whose buffers are refilled each frame.
 import type { Match } from '../match.ts';
 import type { Surface, World } from '../world.ts';
 import { mulberry32 } from '../noise.ts';
+import { SUPPLY_SMOKE } from '../royale.ts';
 import { ADDITIVE, COMMON, DOUBLE, NORMAL_BLEND, lin, type Shared, type T, type Three } from './common.ts';
 import { worldMaterial, type Part } from './models.ts';
 
@@ -387,6 +389,7 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
   }
 
   const smokeIds = new WeakSet<object>();
+  let columnT = 0;
   const v = new THREE.Vector3();
   const rnd = (a: number) => (Math.random() - 0.5) * a;
 
@@ -450,7 +453,7 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
           // a flashbang: a hot white burst and a few sparks, gone in a blink
           for (let i = 0; i < 6; i++) add.spawn(e.x + rnd(0.2), e.y + 0.2 + rnd(0.2), e.z + rnd(0.2), rnd(1), rnd(1), rnd(1), 0.12 + Math.random() * 0.06, 1.2, 4.2, 14, 14, 13, 1, 0, 5);
           for (let i = 0; i < 12; i++) add.spawn(e.x, e.y + 0.2, e.z, rnd(10), Math.random() * 6, rnd(10), 0.25 + Math.random() * 0.2, 0.05, 0.02, 9, 8, 6, 1, 9.8, 0.5);
-        } else if (e.t === 'boom') {
+        } else if (e.t === 'boom' || (e.t === 'shell' && Math.hypot(cam.x - e.x, cam.z - e.z) < 450)) {
           for (let i = 0; i < 10; i++) add.spawn(e.x + rnd(0.6), e.y + 0.4 + rnd(0.6), e.z + rnd(0.6), rnd(6), rnd(5) + 3, rnd(6), 0.28 + Math.random() * 0.2, 0.8, 3.4, 12, 6.5, 2, 1, -1, 4);
           litRGB(0x3a3632, e.x, e.z, rgb);
           for (let i = 0; i < 16; i++) alpha.spawn(e.x + rnd(1.5), e.y + 0.5 + Math.random(), e.z + rnd(1.5), rnd(4), Math.random() * 3 + 1.5, rnd(4), 2.2 + Math.random() * 1.8, 1, 4.5, rgb[0], rgb[1], rgb[2], 0.75, -0.4, 1.4);
@@ -459,6 +462,18 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
           for (let i = 0; i < 16; i++) add.spawn(e.x, e.y + 0.3, e.z, rnd(18), Math.random() * 12, rnd(18), 0.4 + Math.random() * 0.3, 0.05, 0.02, 9, 5, 1.5, 1, 9.8, 0.5);
         }
       }
+      // a landed supply crate's smoke: a tall blue column, thick at first and thinning out toward its end, so it can be
+      // seen (and found) from across the map
+      columnT += dt * 14;
+      const puffs = Math.floor(columnT);
+      columnT -= puffs;
+      for (let p = 0; p < puffs; p++)
+        for (const s of m.supplies) {
+          const age = s.landed < 0 ? -1 : m.time - s.landed;
+          if (age < 0 || age > SUPPLY_SMOKE || Math.random() > 1 - (age / SUPPLY_SMOKE) * 0.6) continue;
+          litRGB(0x2a7cf0, s.x, s.z, rgb);
+          alpha.spawn(s.x + rnd(0.5), s.y + 0.9, s.z + rnd(0.5), rnd(0.8) + 0.5, 4.5 + Math.random() * 2.5, rnd(0.8), 8 + Math.random() * 4, 0.7, 5.5 + Math.random() * 2, rgb[0] * 1.15, rgb[1] * 1.15 + 0.01, rgb[2] * 1.15 + 0.04, 0.85, -0.05, 0.12);
+        }
       // smoke clouds: puffs are added while a cloud grows, then live as long as it does
       for (const s of m.smokes) {
         if (smokeIds.has(s)) continue;

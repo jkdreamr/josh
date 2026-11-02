@@ -1,8 +1,10 @@
 // What a royale adds to the scene: the transport flying its line, a canopy over everyone gliding in, the zone's wall of
-// haze, and the loot lying around (drawn only near you, rebuilt when it changes or you move on).
+// haze, supply crates coming down under their parachutes, a red wall around a bombardment, and the loot lying around
+// (drawn only near you, rebuilt when it changes or you move on).
 import type { Assets } from '../assets.ts';
 import type { Match } from '../match.ts';
-import { planeAt, type AmmoKind, type Item } from '../royale.ts';
+import { SUPPLY_MAX, planeAt, type AmmoKind, type Item } from '../royale.ts';
+import { floorAt } from '../terrain.ts';
 import type { WeaponId } from '../weapons.ts';
 import { DOUBLE, canvas, lin, patch, roundBox, type Shared, type T, type Three } from './common.ts';
 import { gunLiteGeometry, gunModel } from './guns.ts';
@@ -96,6 +98,59 @@ function canopyGeometry(THREE: Three) {
   return merged(THREE, parts);
 }
 
+/** A supply crate, about 1.3 m square and a meter tall, its bottom at the origin: blue panels in a dark steel frame
+ * with a yellow band round it. */
+function crateGeometry(THREE: Three) {
+  const parts: [T.BufferGeometry, number][] = [];
+  const add = (g: T.BufferGeometry, c: number, x: number, y: number, z: number) => {
+    g.translate(x, y, z);
+    parts.push([g, c]);
+  };
+  const frame = 0x262c31;
+  add(roundBox(THREE, 1.24, 0.9, 1.24, 0.06, 2), 0x2b6ca3, 0, 0.47, 0);
+  add(new THREE.BoxGeometry(1.28, 0.12, 1.28), 0xd9a92c, 0, 0.5, 0);
+  for (const sx of [-1, 1])
+    for (const sz of [-1, 1]) add(new THREE.BoxGeometry(0.1, 0.98, 0.1), frame, sx * 0.62, 0.49, sz * 0.62);
+  for (const y of [0.04, 0.94]) {
+    for (const s of [-1, 1]) {
+      add(new THREE.BoxGeometry(1.32, 0.08, 0.08), frame, 0, y, s * 0.62);
+      add(new THREE.BoxGeometry(0.08, 0.08, 1.32), frame, s * 0.62, y, 0);
+    }
+  }
+  return merged(THREE, parts);
+}
+
+/** A round cargo parachute in orange and white gores, about 7 m across, with lines down to the corners of the crate
+ * hanging under it (whose top is 1 m above the origin). */
+function chuteGeometry(THREE: Three) {
+  const parts: [T.BufferGeometry, number][] = [];
+  const R = 3.5;
+  const theta = Math.PI / 2.5;
+  const lift = 8;
+  const squash = 0.55;
+  const gores = 12;
+  for (let k = 0; k < gores; k++) {
+    const g = new THREE.SphereGeometry(R, 3, 7, (k / gores) * Math.PI * 2, (Math.PI * 2) / gores, 0, theta);
+    g.scale(1, squash, 1);
+    g.translate(0, lift, 0);
+    parts.push([g, k % 2 ? 0xeeeae0 : 0xe0582a]);
+  }
+  const rimR = R * Math.sin(theta);
+  const rimY = lift + R * Math.cos(theta) * squash;
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * Math.PI * 2 + Math.PI / 8;
+    const top = new THREE.Vector3(Math.cos(a) * rimR, rimY, Math.sin(a) * rimR);
+    const bottom = new THREE.Vector3(Math.sign(Math.cos(a)) * 0.6, 1, Math.sign(Math.sin(a)) * 0.6);
+    const len = top.distanceTo(bottom);
+    const line = new THREE.BoxGeometry(0.03, 0.03, len);
+    line.translate(0, 0, len / 2);
+    line.lookAt(new THREE.Vector3().subVectors(top, bottom));
+    line.translate(bottom.x, bottom.y, bottom.z);
+    parts.push([line, 0x2a2a28]);
+  }
+  return merged(THREE, parts);
+}
+
 const CANOPY_COLORS = [0x4f5a3a, 0xc8b28a, 0xd06a2c, 0xe8e6de, 0x3d6a8f, 0x7a2a2a, 0x2f3a2f];
 
 const ZONE_VERT = /* glsl */ `
@@ -110,6 +165,7 @@ void main() {
 const ZONE_FRAG = /* glsl */ `
 uniform float uTime;
 uniform vec3 uColor;
+uniform float uFade;
 varying vec3 vWp;
 varying float vY;
 void main() {
@@ -119,7 +175,7 @@ void main() {
   float a = low * low * 0.55 * bands + low * 0.12 + 0.06;
   float d = distance(cameraPosition.xz, vWp.xz);
   a *= 0.6 + 0.4 * smoothstep(3.0, 50.0, d);
-  gl_FragColor = vec4(uColor, min(a, 0.8));
+  gl_FragColor = vec4(uColor, min(a, 0.8) * uFade);
 }`;
 
 export type Royale = { group: T.Group; update(m: Match, camera: T.Camera, time: number): void; dispose(): void };
@@ -161,7 +217,7 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
     new THREE.ShaderMaterial({
       vertexShader: ZONE_VERT,
       fragmentShader: ZONE_FRAG,
-      uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(...lin(0xd86a3a, 1.4)) } },
+      uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(...lin(0xd86a3a, 1.4)) }, uFade: { value: 1 } },
       transparent: true,
       depthWrite: false,
       side: DOUBLE,
@@ -173,6 +229,42 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
   zone.frustumCulled = false;
   zone.renderOrder = 3;
   group.add(zone);
+
+  // a bombardment: a lower wall of red haze round its circle, faint while it is only marked
+  const redMat = keep(
+    new THREE.ShaderMaterial({
+      vertexShader: ZONE_VERT,
+      fragmentShader: ZONE_FRAG,
+      uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(...lin(0xe0281e, 1.6)) }, uFade: { value: 0.5 } },
+      transparent: true,
+      depthWrite: false,
+      side: DOUBLE,
+    }),
+  );
+  const redWall = new THREE.Mesh(zoneGeo, redMat);
+  redWall.frustumCulled = false;
+  redWall.renderOrder = 3;
+  redWall.visible = false;
+  group.add(redWall);
+
+  // supply crates, each under its parachute while it comes down (the canopy folds away once it lands)
+  const crateMat = keep(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.35 }));
+  patch(crateMat, shared, { key: 'dz-crate' });
+  const chuteMat = keep(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: DOUBLE }));
+  patch(chuteMat, shared, { key: 'dz-chute', noBaked: true });
+  const crateGeo = keep(crateGeometry(THREE));
+  const chuteGeo = keep(chuteGeometry(THREE));
+  const crates = Array.from({ length: SUPPLY_MAX }, () => {
+    const crate = new THREE.Mesh(crateGeo, crateMat);
+    crate.castShadow = shadows;
+    crate.receiveShadow = true;
+    crate.visible = false;
+    const chute = new THREE.Mesh(chuteGeo, chuteMat);
+    chute.castShadow = shadows;
+    chute.visible = false;
+    group.add(crate, chute);
+    return { crate, chute };
+  });
 
   // loot: a few instanced meshes, filled with what lies within reach of the camera
   const R = 60;
@@ -340,6 +432,35 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
         zone.scale.set(Math.max(0.5, z.r), 640, Math.max(0.5, z.r));
         zoneMat.uniforms.uTime.value = time;
       }
+      // the bombardment
+      const red = m.red;
+      redWall.visible = !!red;
+      if (red) {
+        redWall.position.set(red.x, floorAt(m.world.terrain, red.x, red.z) - 15, red.z);
+        redWall.scale.set(red.r, 50, red.r);
+        redMat.uniforms.uTime.value = time;
+        redMat.uniforms.uFade.value = red.warn > 0 ? 0.45 + 0.15 * Math.sin(time * 5) : 0.85 + 0.15 * Math.sin(time * 9);
+      }
+      // supply crates: swaying a little under the canopy on the way down, the canopy collapsing to one side once down
+      crates.forEach(({ crate, chute }, i) => {
+        const s = m.supplies[i];
+        crate.visible = !!s;
+        if (!s) {
+          chute.visible = false;
+          return;
+        }
+        const age = s.landed < 0 ? -1 : m.time - s.landed;
+        const sway = age < 0 ? Math.sin(time * 1.3 + i) * 0.06 : 0;
+        crate.position.set(s.x, s.y, s.z);
+        crate.rotation.set(sway, s.id * 0.7, sway * 0.6, 'YXZ');
+        const fold = age < 0 ? 0 : Math.min(1, age / 1.8);
+        chute.visible = fold < 1;
+        if (chute.visible) {
+          chute.position.set(s.x + fold * 2.5, s.y - fold * 0.6, s.z);
+          chute.rotation.set(sway, s.id * 0.7, sway * 0.6 - fold * 1.1, 'YXZ');
+          chute.scale.set(1 + fold * 0.3, Math.max(0.05, 1 - fold), 1 + fold * 0.3);
+        }
+      });
       // loot near the camera
       const cx = camera.position.x;
       const cz = camera.position.z;

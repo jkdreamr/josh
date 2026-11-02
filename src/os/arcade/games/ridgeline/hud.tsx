@@ -81,6 +81,9 @@ export type RoyaleHud = {
   heal: number;
   healName: string | null;
   pickup: string | null;
+  /** A bombardment you are inside: meters out to its edge, whether shells are falling yet (else the seconds until
+   * they do), and whether a roof keeps you safe where you stand. Null when you are clear of it. */
+  red: { edge: number; live: boolean; t: number; cover: boolean } | null;
 };
 
 export const blankHud = (mode: Mode): Hud => ({
@@ -431,6 +434,13 @@ export function RoyalePrompts({ h, touch }: { h: Hud; touch: boolean }) {
           outside the zone, -{r.dps} health a second. {Math.ceil(r.outside)} m to safety
         </div>
       )}
+      {r.red && !r.drop && (
+        <div className="g-ridgeline-outside is-red">
+          {r.red.cover
+            ? `${r.red.live ? 'shells falling' : 'bombardment coming'}. under a roof: they can't reach you here`
+            : `${r.red.live ? 'shells falling' : `bombardment in ${Math.ceil(r.red.t)} s`}. get under a roof or ${Math.ceil(r.red.edge)} m out of the red`}
+        </div>
+      )}
     </>
   );
 }
@@ -690,6 +700,9 @@ export type MapState = {
   /** Royale: the zone now and next, and the transport's line with where it is. */
   zone?: { x: number; z: number; r: number; nx: number; nz: number; nr: number } | null;
   plane?: { ax: number; az: number; bx: number; bz: number; x: number; z: number } | null;
+  /** Royale: a bombardment marked (shells falling once live), and supply crates with loot left (falling or down). */
+  red?: { x: number; z: number; r: number; live: boolean } | null;
+  drops?: { x: number; z: number; landed: boolean }[];
 };
 export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(function Minimap({ world, big }, ref) {
   const cv = useRef<HTMLCanvasElement>(null);
@@ -739,6 +752,18 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
         g.arc(toX(z.x), toY(z.z), Math.max(1, z.r * scale), 0, Math.PI * 2);
         g.stroke();
       }
+      if (s.red) {
+        // the bombardment: a red disc, throbbing once the shells fall
+        const r = s.red;
+        const live = r.live ? 0.5 + 0.5 * Math.sin(performance.now() / 140) : 0;
+        g.beginPath();
+        g.arc(toX(r.x), toY(r.z), Math.max(2, r.r * scale), 0, Math.PI * 2);
+        g.fillStyle = `rgba(220,40,30,${0.28 + live * 0.18})`;
+        g.fill();
+        g.lineWidth = big ? 2 : 1.5;
+        g.strokeStyle = 'rgba(255,70,50,0.95)';
+        g.stroke();
+      }
       if (s.plane) {
         const p = s.plane;
         g.setLineDash([6, 5]);
@@ -785,6 +810,34 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
         g.lineWidth = 1;
         g.stroke();
       };
+      if (s.drops)
+        for (const d of s.drops) {
+          // a supply crate: a small blue box (hollow while still coming down), held to the minimap's rim when far
+          let px = toX(d.x);
+          let py = toY(d.z);
+          const half = big ? 5 : 4;
+          if (!big) {
+            const ox = px - size / 2;
+            const oy = py - size / 2;
+            const ol = Math.hypot(ox, oy);
+            const rim = size / 2 - half - 2;
+            if (ol > rim) {
+              px = size / 2 + (ox / ol) * rim;
+              py = size / 2 + (oy / ol) * rim;
+            }
+          }
+          g.lineWidth = 2;
+          g.strokeStyle = 'rgba(0,0,0,0.8)';
+          g.strokeRect(px - half, py - half, half * 2, half * 2);
+          if (d.landed) {
+            g.fillStyle = '#3fb6ff';
+            g.fillRect(px - half, py - half, half * 2, half * 2);
+          } else {
+            g.lineWidth = 1.5;
+            g.strokeStyle = '#3fb6ff';
+            g.strokeRect(px - half + 1, py - half + 1, half * 2 - 2, half * 2 - 2);
+          }
+        }
       for (const p of s.mates) dot(p.x, p.z, '#4fb4ff', big ? 4 : 3.5);
       for (const p of s.foes) dot(p.x, p.z, '#ff5a3c', big ? 4 : 3.5);
       if (s.charge) {
@@ -829,8 +882,9 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
   return <canvas ref={cv} width={big ? 360 : 168} height={big ? 360 : 168} className={big ? 'g-ridgeline-bigmap' : 'g-ridgeline-minimap'} />;
 });
 
-/** Screen markers: the sites, the charge and your teammates' names, placed every frame through refs. */
-export type MarkersApi = { place(list: { key: string; x: number; y: number; on: boolean; text: string; sub?: string; kind: 'site' | 'mate' | 'charge' }[]): void };
+/** Screen markers: the sites, the charge, your teammates' names and (royale) supply crates, placed every frame through
+ * refs. */
+export type MarkersApi = { place(list: { key: string; x: number; y: number; on: boolean; text: string; sub?: string; kind: 'site' | 'mate' | 'charge' | 'supply' }[]): void };
 export const Markers = forwardRef<MarkersApi, { children?: ReactNode }>(function Markers(_, ref) {
   const box = useRef<HTMLDivElement>(null);
   const els = useRef(new Map<string, HTMLDivElement>());

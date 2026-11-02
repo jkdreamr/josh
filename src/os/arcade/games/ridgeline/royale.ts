@@ -110,6 +110,47 @@ export function nextCircle(w: World, r: Rng, x: number, z: number, cur: number, 
   return [x, z];
 }
 
+/** Supply drops: one after each of the first zones closes, at most SUPPLY_MAX a match. A crate drops under its
+ * canopy from SUPPLY_HIGH above the ground at SUPPLY_FALL m/s, somewhere inside the next circle, and once down its
+ * smoke burns for SUPPLY_SMOKE seconds so everyone can see where it is. */
+export const SUPPLY_MAX = 4;
+export const SUPPLY_HIGH = 140;
+export const SUPPLY_FALL = 7;
+export const SUPPLY_SMOKE = 90;
+/** A crate on its way down or landed: where, the ground under it, when it landed (-1 still falling), and the loot
+ * it put out (ids into the match's loot). */
+export type Supply = { id: number; x: number; y: number; z: number; ground: number; landed: number; items: number[] };
+
+/** What a crate holds: one of the best guns and all the ammo it can carry, the best vest and helmet, a med kit or
+ * two, and sometimes a pair of frags. A gun's count is filled in by the match (its magazine). */
+export function supplyContents(r: Rng): [ItemKind, string, number][] {
+  const g = (['longbow', 'lancer', 'kestrel'] as WeaponId[])[Math.floor(r() * 3)];
+  const out: [ItemKind, string, number][] = [
+    ['gun', g, 0],
+    ['ammo', AMMO_OF[g], AMMO_MAX[AMMO_OF[g]]],
+    ['vest', '3', 1],
+    ['helmet', '3', 1],
+    ['heal', 'kit', r() < 0.5 ? 1 : 2],
+  ];
+  if (r() < 0.5) out.push(['nade', 'frag', 2]);
+  return out;
+}
+
+/** The bombardment ("red zone"): now and then a circle RED_R wide (radius, from and to) inside the zone is marked,
+ * RED_WARN seconds later it is shelled for RED_LIVE seconds, a shell every RED_EVERY seconds or so, each hurting
+ * anyone in the open within SHELL_R (a roof over your head keeps you safe). The first comes RED_FIRST seconds in,
+ * then one every RED_GAP. */
+export const RED_R: [number, number] = [30, 45];
+export const RED_WARN = 8;
+export const RED_LIVE = 15;
+export const RED_EVERY: [number, number] = [0.16, 0.38];
+export const RED_FIRST: [number, number] = [110, 150];
+export const RED_GAP: [number, number] = [75, 110];
+export const SHELL_R = 9;
+export const SHELL_DMG = 125;
+/** A bombardment: its circle, the warning left, the shelling left, and the time to the next shell. */
+export type Red = { x: number; z: number; r: number; warn: number; left: number; next: number };
+
 const pick = <T,>(r: Rng, table: [T, number][]): T => {
   let roll = r() * table.reduce((s, [, p]) => s + p, 0);
   for (const [v, p] of table) {

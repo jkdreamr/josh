@@ -627,6 +627,19 @@
   text-shadow: none;
   background: #d8432c;
 }
+.g-ridgeline .g-ridgeline-mark.is-supply b {
+  display: grid;
+  place-items: center;
+  min-width: 26px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 3px;
+  color: #04121c;
+  font-size: 11px;
+  font-weight: 800;
+  text-shadow: none;
+  background: #3fb6ff;
+}
 .g-ridgeline .g-ridgeline-mark.is-mate b {
   font-size: 11px;
   font-weight: 600;
@@ -1191,6 +1204,10 @@
   color: #fff;
   background: rgba(190, 70, 30, 0.82);
   white-space: nowrap;
+}
+.g-ridgeline .g-ridgeline-outside.is-red {
+  top: 124px;
+  background: rgba(196, 28, 22, 0.86);
 }
 .g-ridgeline .g-ridgeline-btn.is-use {
   right: 220px;
