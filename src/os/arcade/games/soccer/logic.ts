@@ -814,7 +814,8 @@ function foul(world: World, player: Player, enemy: Player, kind: 'tackle' | 'sli
   applyStoppageCard(world);
 }
 
-function slideStep(world: World, player: Player, dt: number) {
+/** A slide's run along the ground (fast, then slowing, for half a second), and how much of `dt` it still ran. */
+export function slideMotion(player: Player, dt: number) {
   const slide = player.slide!;
   const active = Math.min(dt, Math.max(0, 0.5 - slide.t));
   const speed = 9 * Math.max(0, 1 - slide.t / 0.65);
@@ -823,6 +824,12 @@ function slideStep(world: World, player: Player, dt: number) {
   player.x = clamp(player.x + player.vx * active, -FIELD.length / 2 + 0.3, FIELD.length / 2 - 0.3);
   player.z = clamp(player.z + player.vz * active, -FIELD.width / 2 + 0.3, FIELD.width / 2 - 0.3);
   player.facing = Math.atan2(slide.x, slide.z);
+  return active;
+}
+
+function slideStep(world: World, player: Player, dt: number) {
+  const slide = player.slide!;
+  const active = slideMotion(player, dt);
   if (active > 0 && !slide.won) {
     const enemy = world.players.filter((p) => p.team !== player.team && !p.sentOff && distance(p, world.ball) < 2.5)
       .sort((a, b) => distance(a, world.ball) - distance(b, world.ball))[0];
@@ -1183,6 +1190,95 @@ function goalCrossing(world: World, previousX: number) {
   return false;
 }
 
+/**
+ * One player's step while play waits on a restart (other than a set piece): the restarting side's humans move, except a
+ * kickoff taker waiting on the ball, and everyone keeps off the ball, and in his own half for a kickoff. An online guest
+ * predicts its own player with it too.
+ */
+export function restartStep(world: World, p: Player, command: Command | undefined, taker: Player, t: number) {
+  const humanKickoff = world.restart === 'kickoff' && taker.human;
+  if (p.team === world.restartTeam && p.controlled && !(humanKickoff && p.id === taker.id)) {
+    const multipliers = worldMultipliers(world, p.id);
+    movePlayer(p, command?.move ?? { x: 0, z: 0 }, !!command?.sprint, false, t, false, multipliers.speed, multipliers.stamina, multipliers.dribble);
+  }
+  if (p.sentOff) return;
+  if (world.restart === 'kickoff' && p.id !== taker.id) {
+    const direction = teamDir(p.team, world.endsSwapped);
+    if (p.x * direction > 0) p.x = -direction * 0.8;
+    if (Math.hypot(p.x, p.z) < FIELD.centerRadius + 0.25) {
+      const radius = FIELD.centerRadius + 0.25;
+      const x = Math.sqrt(Math.max(0, radius * radius - Math.min(radius, Math.abs(p.z)) ** 2));
+      p.x = -direction * x;
+    }
+  } else if (p.team !== world.restartTeam && distance(p, world.restartAt) < FIELD.centerRadius) {
+    const dx = p.x - world.restartAt.x;
+    const dz = p.z - world.restartAt.z;
+    const d = Math.hypot(dx, dz) || 1;
+    p.x = world.restartAt.x + dx / d * FIELD.centerRadius;
+    p.z = world.restartAt.z + dz / d * FIELD.centerRadius;
+    clampPlayerToField(p);
+  }
+}
+
+/**
+ * Where a player runs this step and how: his stick, or the run onto a pass coming to him, the assist toward a loose ball
+ * near him, or goal side of a carrier he contains. Null when he stands this step out (a human nobody steers). stepWorld
+ * moves everyone with it, and an online guest predicts its own player with it on its copy of the world (settle false
+ * leaves that copy as the host sent it).
+ */
+export function runFor(world: World, p: Player, command: Command | undefined, carrier: Player | undefined, settle = true) {
+  const move = command?.move ?? { x: 0, z: 0 };
+  const stickLength = Math.hypot(move.x, move.z);
+  const neutral = stickLength < 0.15;
+  const assistedTarget = receiverAssistActive(world, p, move);
+  const receiving = world.passTarget === p.id && !carrier
+    && (!p.human || neutral || assistedTarget !== null);
+  if (p.human && !receiving && !p.buffer && (!p.controlled || !command)) return null;
+  if (settle && receiving && world.passPoint && distance(p, world.passPoint) < 0.7 && !world.setPieceRun) world.passPoint = null;
+  let receiveTarget: Point = assistedTarget ?? world.passPoint ?? world.ball;
+  if (!assistedTarget && p.human && !world.passPoint) {
+    const ballSpeed = Math.hypot(world.ball.vx, world.ball.vz);
+    if (ballSpeed > 2) {
+      const direction = { x: world.ball.vx / ballSpeed, z: world.ball.vz / ballSpeed };
+      const projection = (p.x - world.ball.x) * direction.x + (p.z - world.ball.z) * direction.z;
+      if (projection > 0) receiveTarget = {
+        x: world.ball.x + direction.x * projection,
+        z: world.ball.z + direction.z * projection,
+      };
+    }
+  }
+  const receiveGap = distance(p, receiveTarget);
+  let receiveMove = assistedTarget
+    ? { x: (receiveTarget.x - p.x) / (receiveGap || 1) * Math.max(0.7, stickLength), z: (receiveTarget.z - p.z) / (receiveGap || 1) * Math.max(0.7, stickLength) }
+    : receiving ? { x: (receiveTarget.x - p.x) / Math.max(2, receiveGap), z: (receiveTarget.z - p.z) / Math.max(2, receiveGap) } : move;
+  const enemy = carrier && carrier.team !== p.team ? carrier : undefined;
+  const contain = enemy && (command?.contain || command?.heldAction === 'pass');
+  const jockey = !!command?.jockey || !!(command?.autoJockey && enemy && distance(p, enemy) < 4 && !command.sprint && Math.hypot(command.move.x, command.move.z) > 0.1);
+  const target = contain ? goalSide(world, enemy!, p.team, 1.4) : undefined;
+  const stick = command && Math.hypot(command.move.x, command.move.z);
+  if (p.human && command && !carrier && !receiving && !contain && !jockey && world.ball.y <= 0.75 && stick! >= 0.15) {
+    const gap = distance(p, world.ball);
+    const closestTeammate = world.players.filter((teammate) => teammate.team === p.team && !teammate.sentOff)
+      .sort((a, b) => distance(a, world.ball) - distance(b, world.ball))[0];
+    const predicted = {
+      x: world.ball.x + world.ball.vx * Math.min(0.3, gap / 8),
+      z: world.ball.z + world.ball.vz * Math.min(0.3, gap / 8),
+    };
+    const toBall = { x: predicted.x - p.x, z: predicted.z - p.z };
+    const predictedGap = Math.hypot(toBall.x, toBall.z);
+    const stickAngle = Math.acos(clamp((command.move.x * toBall.x + command.move.z * toBall.z) / (stick! * (predictedGap || 1)), -1, 1));
+    if (gap <= ASSIST_RANGE && closestTeammate?.id === p.id && stickAngle <= ASSIST_CONE) {
+      receiveMove = { x: toBall.x / (predictedGap || 1) * stick!, z: toBall.z / (predictedGap || 1) * stick! };
+    }
+  }
+  return {
+    input: target ? { x: target.x - p.x, z: target.z - p.z } : receiveMove,
+    sprint: !contain && (receiving ? receiveGap > 3 : !!command?.sprint),
+    carrying: carrier?.id === p.id,
+    jockey, contain, enemy, stick,
+  };
+}
+
 export function stepWorld(world: World, dt: number, commands: Map<number, Command> = new Map(), clockScale = 1) {
   const t = Math.min(0.05, Math.max(0, dt));
   const clockStep = t * Math.max(0, Math.min(20, Number.isFinite(clockScale) ? clockScale : 1));
@@ -1225,29 +1321,7 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
       transferControl(world, world.restartTeam, taker.id);
       return;
     }
-    for (const p of world.players) {
-      if (p.team === world.restartTeam && p.controlled && !(humanKickoff && p.id === taker.id)) {
-        const multipliers = worldMultipliers(world, p.id);
-        movePlayer(p, commands.get(p.id)?.move ?? { x: 0, z: 0 }, !!commands.get(p.id)?.sprint, false, t, false, multipliers.speed, multipliers.stamina, multipliers.dribble);
-      }
-      if (p.sentOff) continue;
-      if (world.restart === 'kickoff' && p.id !== taker.id) {
-        const direction = teamDir(p.team, world.endsSwapped);
-        if (p.x * direction > 0) p.x = -direction * 0.8;
-        if (Math.hypot(p.x, p.z) < FIELD.centerRadius + 0.25) {
-          const radius = FIELD.centerRadius + 0.25;
-          const x = Math.sqrt(Math.max(0, radius * radius - Math.min(radius, Math.abs(p.z)) ** 2));
-          p.x = -direction * x;
-        }
-      } else if (p.team !== world.restartTeam && distance(p, world.restartAt) < FIELD.centerRadius) {
-        const dx = p.x - world.restartAt.x;
-        const dz = p.z - world.restartAt.z;
-        const d = Math.hypot(dx, dz) || 1;
-        p.x = world.restartAt.x + dx / d * FIELD.centerRadius;
-        p.z = world.restartAt.z + dz / d * FIELD.centerRadius;
-        clampPlayerToField(p);
-      }
-    }
+    for (const p of world.players) restartStep(world, p, commands.get(p.id), taker, t);
     const action = commands.get(taker.id);
     if (world.restart !== 'kickoff') world.clock = Math.max(0, world.clock - clockStep);
     const moved = !humanKickoff && world.players.some((player) => player.team === world.restartTeam && player.controlled
@@ -1285,52 +1359,11 @@ export function stepWorld(world: World, dt: number, commands: Map<number, Comman
       if (world.phase !== 'live') return;
       continue;
     }
-    const move = command?.move ?? { x: 0, z: 0 };
-    const stickLength = Math.hypot(move.x, move.z);
-    const neutral = stickLength < 0.15;
-    const assistedTarget = receiverAssistActive(world, p, move);
-    const receiving = world.passTarget === p.id && !carrier
-      && (!p.human || neutral || assistedTarget !== null);
-    if (p.human && !receiving && !p.buffer && (!p.controlled || !command)) continue;
-    if (receiving && world.passPoint && distance(p, world.passPoint) < 0.7 && !world.setPieceRun) world.passPoint = null;
-    let receiveTarget: Point = assistedTarget ?? world.passPoint ?? world.ball;
-    if (!assistedTarget && p.human && !world.passPoint) {
-      const ballSpeed = Math.hypot(world.ball.vx, world.ball.vz);
-      if (ballSpeed > 2) {
-        const direction = { x: world.ball.vx / ballSpeed, z: world.ball.vz / ballSpeed };
-        const projection = (p.x - world.ball.x) * direction.x + (p.z - world.ball.z) * direction.z;
-        if (projection > 0) receiveTarget = {
-          x: world.ball.x + direction.x * projection,
-          z: world.ball.z + direction.z * projection,
-        };
-      }
-    }
-    const receiveGap = distance(p, receiveTarget);
-    let receiveMove = assistedTarget
-      ? { x: (receiveTarget.x - p.x) / (receiveGap || 1) * Math.max(0.7, stickLength), z: (receiveTarget.z - p.z) / (receiveGap || 1) * Math.max(0.7, stickLength) }
-      : receiving ? { x: (receiveTarget.x - p.x) / Math.max(2, receiveGap), z: (receiveTarget.z - p.z) / Math.max(2, receiveGap) } : move;
-    const enemy = carrier && carrier.team !== p.team ? carrier : undefined;
-    const contain = enemy && (command?.contain || command?.heldAction === 'pass');
-    const jockey = !!command?.jockey || !!(command?.autoJockey && enemy && distance(p, enemy) < 4 && !command.sprint && Math.hypot(command.move.x, command.move.z) > 0.1);
-    const target = contain ? goalSide(world, enemy!, p.team, 1.4) : undefined;
-    const stick = command && Math.hypot(command.move.x, command.move.z);
-    if (p.human && command && !carrier && !receiving && !contain && !jockey && world.ball.y <= 0.75 && stick! >= 0.15) {
-      const gap = distance(p, world.ball);
-      const closestTeammate = world.players.filter((teammate) => teammate.team === p.team && !teammate.sentOff)
-        .sort((a, b) => distance(a, world.ball) - distance(b, world.ball))[0];
-      const predicted = {
-        x: world.ball.x + world.ball.vx * Math.min(0.3, gap / 8),
-        z: world.ball.z + world.ball.vz * Math.min(0.3, gap / 8),
-      };
-      const toBall = { x: predicted.x - p.x, z: predicted.z - p.z };
-      const predictedGap = Math.hypot(toBall.x, toBall.z);
-      const stickAngle = Math.acos(clamp((command.move.x * toBall.x + command.move.z * toBall.z) / (stick! * (predictedGap || 1)), -1, 1));
-      if (gap <= ASSIST_RANGE && closestTeammate?.id === p.id && stickAngle <= ASSIST_CONE) {
-        receiveMove = { x: toBall.x / (predictedGap || 1) * stick!, z: toBall.z / (predictedGap || 1) * stick! };
-      }
-    }
+    const run = runFor(world, p, command, carrier);
+    if (!run) continue;
+    const { jockey, contain, enemy, stick } = run;
     const multipliers = worldMultipliers(world, p.id);
-    movePlayer(p, target ? { x: target.x - p.x, z: target.z - p.z } : receiveMove, !contain && (receiving ? receiveGap > 3 : !!command?.sprint), carrier?.id === p.id, t, jockey || !!contain, multipliers.speed, multipliers.stamina, multipliers.dribble);
+    movePlayer(p, run.input, run.sprint, run.carrying, t, jockey || !!contain, multipliers.speed, multipliers.stamina, multipliers.dribble);
     if (command && p.knockOn && p.touchCd! > 0 && world.lastToucherId === p.id && stick! >= 0.5) {
       const toBallX = world.ball.x - p.x;
       const toBallZ = world.ball.z - p.z;
