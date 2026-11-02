@@ -112,6 +112,8 @@ export type Actor = {
   walking: boolean;
   credits: number;
   boughtArmor: number;
+  /** Breach: the armor you bought, put back on at the start of every round. */
+  armorKit: number;
   kills: number;
   deaths: number;
   assists: number;
@@ -328,6 +330,7 @@ function newActor(id: number, name: string, team: number, bot: boolean, level: L
     walking: false,
     credits: START_CREDITS,
     boughtArmor: 0,
+    armorKit: 0,
     kills: 0,
     deaths: 0,
     assists: 0,
@@ -662,11 +665,7 @@ function die(m: Match, v: Actor, from: number, w: Cause, head: boolean) {
       const foes = m.actors.filter((o) => o.alive && o.team !== v.team).length;
       if (mates.length === 1 && foes >= 2) m.clutch[v.team] = { a: mates[0].id, vs: foes };
     }
-    v.guns[0] = null;
-    v.armor = 0;
-    v.frags = 0;
-    v.smokes = 0;
-    v.flashes = 0;
+    // (your guns, armor and grenades are yours for the match: a knockout takes nothing, the next round you have it all)
     const c = m.charge;
     if (c.plantBy === v.id) {
       c.plantBy = -1;
@@ -725,22 +724,14 @@ function resetCombat(a: Actor) {
 
 export function startRound(m: Match) {
   m.round++;
-  // the half: the sides swap, and both teams start over with pistols and the starting credits
+  // the half: the sides swap (everyone keeps what they have)
   const swap = m.round === HALF + 1;
   if (swap) {
     m.attack = 1 - m.attack;
     m.lossStreak = [0, 0];
-    for (const a of m.actors) {
-      a.credits = START_CREDITS;
-      a.guns = [null, gun('wren'), null];
-      a.armor = 0;
-      a.frags = 0;
-      a.smokes = 0;
-      a.flashes = 0;
-    }
     m.events.push({ t: 'sides' });
   }
-  const pistol = m.round === 1 || swap;
+  const pistol = m.round === 1;
   m.phase = 'buy';
   m.phaseT = BUY_TIME + (pistol ? 5 : 0);
   m.aim = Math.floor(m.rng() * m.world.sites.length);
@@ -759,10 +750,9 @@ export function startRound(m: Match) {
   for (const a of m.actors) {
     const s = spawnOf(m, a.team);
     const slot = s.slots[seen[a.team]++ % s.slots.length];
-    if (!a.alive) {
-      a.guns = [null, gun('wren'), null];
-      a.armor = 0;
-    }
+    // your loadout carries over (alive or not): guns refilled, armor put back on
+    if (!a.guns[1]) a.guns[1] = gun('wren');
+    a.armor = Math.max(a.armor, a.armorKit);
     for (const g of a.guns) if (g) {
       g.mag = WEAPONS[g.id].mag;
       g.reserve = WEAPONS[g.id].reserve;
@@ -771,7 +761,7 @@ export function startRound(m: Match) {
     a.boughtArmor = 0;
     a.alive = true;
     a.hp = 100;
-    a.slot = a.guns[0] ? 0 : 1;
+    a.slot = a.guns[0] ? 0 : a.guns[2] ? 2 : 1;
     a.dmgFrom.fill(0);
     a.roundKills = 0;
     a.roundDmg = 0;
@@ -1384,7 +1374,7 @@ export function owns(a: Actor, item: ShopItem) {
   if (item === 'frag') return a.frags >= NADES.frag.max;
   if (item === 'smoke') return a.smokes >= NADES.smoke.max;
   if (item === 'flash') return a.flashes >= NADES.flash.max;
-  return a.guns[0]?.id === item || a.guns[1]?.id === item;
+  return a.guns[0]?.id === item || a.guns[1]?.id === item || a.guns[2]?.id === item;
 }
 
 /** Buys one thing; a gun or armor bought this round is refunded when swapped for another. */
@@ -1397,6 +1387,7 @@ export function buy(m: Match, a: Actor, item: ShopItem) {
     if (a.credits < cost) return false;
     a.credits -= cost;
     a.armor = ARMOR[item].amount;
+    a.armorKit = Math.max(a.armorKit, ARMOR[item].amount);
     a.boughtArmor = ARMOR[item].price;
   } else if (item === 'frag' || item === 'smoke' || item === 'flash') {
     if (a.credits < NADES[item].price) return false;
@@ -1406,14 +1397,16 @@ export function buy(m: Match, a: Actor, item: ShopItem) {
     else a.flashes++;
   } else {
     const def = WEAPONS[item];
-    const k = def.slot === 'primary' ? 0 : 1;
+    // two long guns and a sidearm: a long gun goes into a free long slot, else it replaces the long gun in hand (the
+    // first if the sidearm is out)
+    const k: 0 | 1 | 2 = def.slot !== 'primary' ? 1 : !a.guns[0] ? 0 : !a.guns[2] ? 2 : a.slot === 2 ? 2 : 0;
     const old = a.guns[k];
     if (old?.fresh) refund = WEAPONS[old.id].price;
     const cost = def.price - refund;
     if (a.credits < cost) return false;
     a.credits -= cost;
     a.guns[k] = { ...gun(item), fresh: true };
-    a.slot = k as 0 | 1;
+    a.slot = k;
     a.switchT = def.equip;
     a.reloadT = 0;
   }
