@@ -70,6 +70,21 @@ export function usePlayingReport(game: string | null | undefined, room?: string 
   }, [active]);
 }
 
+/** Rounds under way in a game window on screen (see reportInPlay). */
+const inPlay = new Set<symbol>();
+
+/** Says a game's round is under way in a window on screen, until the returned function is called. */
+export function reportInPlay(): () => void {
+  const key = Symbol('in play');
+  inPlay.add(key);
+  return () => {
+    inPlay.delete(key);
+  };
+}
+
+/** Whether a game's round is under way on screen right now: keys pressed then are its controls. */
+export const gameInPlay = () => inPlay.size > 0;
+
 /** What the visitor is playing right now, if anything. */
 export function usePlaying(): Playing | null {
   return useSyncExternalStore(onPlaying, currentPlaying, () => null);

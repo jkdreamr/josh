@@ -15,7 +15,7 @@ import { MAX_SEATS, botPlayers, canStartNext, handOffScores, handOffSeat, handOf
 import { createRoom, quickRoom, RoomLink, type RoomPlayer, type RoomTransport } from './room';
 import { countPlay } from '../../stats';
 import { useBadge } from '../../badges';
-import { usePlayingReport } from '../playing';
+import { reportInPlay, usePlayingReport } from '../playing';
 import './kit.css';
 
 export type GameShellProps = {
@@ -210,6 +210,9 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   const raceRef = useRef<{ link: RoomLink | null; seat: number | null; round: number; scores: RaceScores }>({ link: null, seat: null, round: 0, scores: {} });
   const raceReported = useRef(-1);
   const active = onlineMode || (host.active && docVisible && seen);
+  // (while a round is under way on screen, keys are the game's controls: the 3D laptop only snaps its keys, see Laptop3D)
+  const inPlay = status === 'playing' && host.active && docVisible && seen;
+  useEffect(() => (inPlay ? reportInPlay() : undefined), [inPlay]);
   const consumedRoom = useRef<string | null>(null);
   const autoPhoneConnect = useRef(false);
   const router = useMemo(() => new RoundRouter(), []);

@@ -63,8 +63,8 @@ export type LaptopController = {
   closeLid(): Promise<void>;
   /** Ease the camera back to the front view. */
   resetView(): Promise<void>;
-  /** Mirror a physical key press on the 3D keyboard. */
-  tapKey(code: string, down: boolean): void;
+  /** Mirror a physical key press on the 3D keyboard (`snap`: move the key at once instead of easing it). */
+  tapKey(code: string, down: boolean, snap?: boolean): void;
   /** Keys that stay depressed (sticky modifiers, caps lock). */
   setHeld(codes: readonly string[]): void;
   enterFs(swap: () => void): Promise<void>;
@@ -1099,10 +1099,11 @@ export function createLaptop(o: LaptopOptions): LaptopController {
         m.material = s.cur > 0.3 ? keyDown : (m.userData.rest as THREE.Material);
         dirty = true;
       } else if (to === 0 && s.to === 0) {
+        // (a key snapped back is already at rest: no frame to draw for it)
+        if (m.position.y !== KEY_Y || m.material !== m.userData.rest) dirty = true;
         m.position.y = KEY_Y;
         m.material = m.userData.rest as THREE.Material;
         press.delete(code);
-        dirty = true;
       }
     }
     if (!drag && (Math.abs(yawV) > 1e-4 || Math.abs(pitchV) > 1e-4)) {
@@ -1188,13 +1189,19 @@ export function createLaptop(o: LaptopOptions): LaptopController {
   const press = new Map<string, { cur: number; to: number }>();
   const held = new Set<string>();
   const releaseTimers = new Map<string, number>();
-  const setPressed = (code: string, down: boolean, sound: boolean) => {
+  const setPressed = (code: string, down: boolean, sound: boolean, snap = false) => {
     const m = keyMeshes.get(code);
     if (!m) return;
     const st = press.get(code) ?? { cur: 0, to: 0 };
     if (down === (st.to === 1) && press.has(code)) return;
     st.to = down ? 1 : 0;
     press.set(code, st);
+    if (snap) {
+      const to = Math.max(st.to, held.has(code) ? 0.6 : 0);
+      st.cur = to;
+      m.position.y = KEY_Y - to * KEY_TRAVEL;
+      m.material = to > 0.3 ? keyDown : (m.userData.rest as THREE.Material);
+    }
     dirty = true;
     if (sound) sounds.key(down, (m.userData.key as Key3).w > 3);
   };
@@ -1397,12 +1404,12 @@ export function createLaptop(o: LaptopOptions): LaptopController {
     },
     closeLid,
     resetView,
-    tapKey(code, down) {
+    tapKey(code, down, snap = false) {
       if (inFs || !keyMeshes.has(code)) return;
       clearTimeout(releaseTimers.get(code));
-      setPressed(code, down, false);
+      setPressed(code, down, false, snap);
       // modifier keyup can be swallowed by the browser (⌘Tab), so never leave a key stuck
-      if (down) releaseTimers.set(code, window.setTimeout(() => setPressed(code, false, false), 1200));
+      if (down) releaseTimers.set(code, window.setTimeout(() => setPressed(code, false, false, snap), 1200));
     },
     setHeld(codes) {
       held.clear();

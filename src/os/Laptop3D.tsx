@@ -1,5 +1,6 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
+import { gameInPlay } from './arcade/playing';
 import { createLaptop, type LaptopController } from './laptop3d/scene';
 import { createTyper, type Mods } from './laptop3d/typing';
 import { lidStickers, palmStickers } from './Stickers';
@@ -77,10 +78,11 @@ const Laptop3D = forwardRef<Laptop3DHandle, Laptop3DProps>(function Laptop3D(pro
       console.warn('WebGL laptop unavailable, using CSS laptop', e);
       live.current.onFail();
     }
-    // the visitor's own keyboard presses the matching 3D keys
+    // the visitor's own keyboard presses the matching 3D keys (with a game in play they snap rather than ease, so the
+    // laptop draws twice a tap instead of for every frame of the ease, on top of the game's own frames)
     const onKey = (e: KeyboardEvent) => {
       if (!e.isTrusted || (e.type === 'keydown' && e.repeat)) return;
-      ctl.current?.tapKey(e.code, e.type === 'keydown');
+      ctl.current?.tapKey(e.code, e.type === 'keydown', gameInPlay());
     };
     const onBlur = () => {
       for (const code of ['MetaLeft', 'MetaRight', 'AltLeft', 'AltRight', 'ControlLeft', 'ShiftLeft', 'ShiftRight']) ctl.current?.tapKey(code, false);
