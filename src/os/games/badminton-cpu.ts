@@ -1,4 +1,7 @@
 import {
+  chargePower,
+  chooseShot,
+  contactAccuracy,
   COURT_HALF_LENGTH,
   CPU_PROFILES,
   cpuReturn,
@@ -8,6 +11,7 @@ import {
   RACKET_REACH,
   opposite,
   planShot,
+  pressuredAccuracy,
   simulateLanding,
   smashPressure,
   smashRecoveryMs,
@@ -17,6 +21,8 @@ import {
   type Difficulty,
   type Direction,
   type FlightState,
+  type Intent,
+  type Point2D,
   type ShotType,
   type Side,
 } from './badminton.ts';
@@ -30,8 +36,37 @@ export { RACKET_REACH } from './badminton.ts';
 export const PLAYER_ACCELERATION = 28;
 export const PLAYER_BRAKING = 34;
 export const PLAYER_SWING_COOLDOWN_MS = 110;
+/** How long a player's swing stays ready to meet the shuttle after the press. */
+export const PLAYER_SWING_MS = 170;
 /** A hold shorter than this is a tap, for the player and the Agent alike. */
 export const CHARGE_MIN_MS = 150;
+
+/** Where the shuttle meets a racket now, if it is in reach and on (or just over the net from) this player's side. */
+export function playerContact(body: { x: number; jump: number }, flight: FlightState, direction: Direction): { contact: Point2D; distance: number } | null {
+  const shuttle = flight.shuttle;
+  if (shuttle.x * direction > 0.12) return null;
+  const racket = racketPoint(body.x, body.jump, direction);
+  const distance = Math.hypot(shuttle.x - racket.x, shuttle.y - racket.y);
+  if (distance > RACKET_REACH) return null;
+  return { contact: { x: shuttle.x, y: shuttle.y }, distance };
+}
+
+/**
+ * The stroke a player's swing plays from this contact: picked by where it meets the shuttle, as precise as the contact
+ * was clean (less under a fast smash), and as hard as the hold has charged by now (or the power it was swung with).
+ */
+export function playerStroke(
+  body: { chargeStart: number | null; power: number; intent: Intent },
+  contact: Point2D,
+  distance: number,
+  clock: number,
+  incoming: ShotType | null,
+  flightSeconds: number,
+): { type: ShotType; accuracy: number; power: number } {
+  const power = body.chargeStart !== null ? chargePower(clock - body.chargeStart) : body.power;
+  const accuracy = pressuredAccuracy(contactAccuracy(distance, RACKET_REACH), smashPressure(incoming, flightSeconds));
+  return { type: chooseShot(body.intent, contact), accuracy, power };
+}
 
 export function stepPlayerBody(body: CpuBody, move: number, direction: Direction, recovering: boolean, charging = false) {
   const targetVx = move * PLAYER_RUN_SPEED * (recovering ? 0.5 : charging ? 0.75 : 1);

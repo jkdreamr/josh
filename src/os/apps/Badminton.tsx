@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import {
   awardPoint,
-  chooseShot,
-  contactAccuracy,
   chargePower,
   cpuReturn,
   CPU_PROFILES,
@@ -18,7 +16,6 @@ import {
   planShot,
   parseDifficulty,
   PLAYER_MAX_ACCURACY,
-  pressuredAccuracy,
   pointSituation,
   recordRally,
   recordSmash,
@@ -45,7 +42,9 @@ import {
   type ShotType,
   type Side,
 } from '../games/badminton';
-import { CHARGE_MIN_MS, clampToHalf, olympicContactReady, PLAYER_GRAVITY, PLAYER_STEP, PLAYER_SWING_COOLDOWN_MS, RACKET_REACH, stepCpuBody, stepPlayerBody, type CpuMind } from '../games/badminton-cpu';
+import {
+  CHARGE_MIN_MS, clampToHalf, olympicContactReady, PLAYER_STEP, PLAYER_SWING_COOLDOWN_MS, PLAYER_SWING_MS, playerStroke, RACKET_REACH, stepCpuBody, stepPlayerBody, type CpuMind,
+} from '../games/badminton-cpu';
 import {
   agentHome,
   agentInsights,
@@ -67,7 +66,8 @@ import { getAppGame } from '../arcade/apps';
 import { boardFor } from '../arcade/kit/leaderboard';
 import { BadmintonAudio } from './badminton-audio';
 import { drawScene, sceneMetrics, type AthleteView, type Impact, type LandingMark } from './badminton-draw';
-import { parseGuestMessage, parseScore, parseSnapshot, trailPoint, type NetAthlete, type NetSnapshot } from './badminton-net';
+import { NET_VERSION, parseGuestMessage, parsePong, parseScore, parseSnapshot, type HitMessage, type Launch, type NetAthlete, type NetSnapshot, type ServeMessage } from './badminton-net';
+import { flightAt, GuestNet, HostNet, LegacyGuest, smashFreezeMs, STEP_MS, type GuestEvent, type GuestView, type Out, type ServeTake } from './badminton-netplay';
 import { AppBoard, onlineAvailable, RoomPanel, useAppRoom, useInvite, usePlayingRoom } from './online-room';
 import './game-controls.css';
 import './Badminton.css';
@@ -77,7 +77,7 @@ type Role = 'host' | 'guest' | null;
 const BADMINTON = getAppGame('badminton')!;
 /** How often the host streams the court to the guest. */
 const SNAPSHOT_MS = 33;
-/** Extra swing window for the guest, whose presses reach the host one trip late. */
+/** Extra swing window for an older guest, whose presses reach the host one trip late. */
 const REMOTE_SWING_MS = 90;
 type Screen = 'menu' | 'howto' | 'play' | 'summary';
 type Phase = 'serve' | 'rally' | 'point' | 'interval' | 'game-end' | 'match-end';
@@ -122,14 +122,19 @@ type Sim = {
   cpuServeAt: number;
   /** the computer whiffed this flight and gets no second go */
   cpuMissed: boolean;
+  /** how the flight in play left the racket, for online guests */
+  launch: Launch | null;
+  /** online host: when the shuttle came down on the guest's side, while the call waits for word of its return */
+  heldAt: number | null;
+  /** times the players have been put in place for a serve (an online guest's word from before then is stale) */
+  warp: number;
 };
 
 const SIDES: Side[] = ['a', 'b'];
 const STEP = PLAYER_STEP;
 const REACH = RACKET_REACH;
-const SWING_MS = 170;
+const SWING_MS = PLAYER_SWING_MS;
 const SWING_DRAW_MS = 230;
-const GRAVITY = PLAYER_GRAVITY;
 const SETTINGS_KEY = 'jk-badminton';
 const DEFAULT_SETTINGS: Settings = { mode: 'cpu', difficulty: 'normal', length: 'game', sound: true };
 
@@ -179,6 +184,9 @@ function newSim(): Sim {
     cpu: { reactAt: 0, target: null, predictAt: 0, home: 3.2 },
     cpuServeAt: 0,
     cpuMissed: false,
+    launch: null,
+    heldAt: null,
+    warp: 0,
   };
 }
 
@@ -227,15 +235,34 @@ export default function Badminton({ args }: AppProps) {
   const hudRef = useRef<Hud>({ rally: 0, shot: '' });
   const callKey = useRef(0);
   const sendRef = useRef<(d: unknown, options?: { fast?: boolean }) => void>(() => {});
-  const pendingSnap = useRef<NetSnapshot | null>(null);
-  const lastSnapClock = useRef(-Infinity);
   const lastSentAt = useRef(-Infinity);
+  /** The launch the host's last snapshot carried. */
+  const sentLaunch = useRef<Launch | null>(null);
   const lastScoreAt = useRef(-Infinity);
+  /** Online host: the guest's moves and shots as they arrive (badminton-netplay.ts). */
+  const hostNetRef = useRef(new HostNet());
+  /** Online guest (or spectator): the host's court on its clock, with this guest's own athlete moved here. */
+  const guestNetRef = useRef(new GuestNet());
+  /** Online guest of an older host: the court the old way. */
+  const legacyRef = useRef(new LegacyGuest());
+  /** Online host: performance.now() at its last frame, to tell a guest's ping the clock between frames. */
+  const frameAtRef = useRef(0);
+  /** The match is inside a step (a serve launched now first moves on this step, not the next). */
+  const steppingRef = useRef(false);
+  /** A guest that moves itself (its host says it can) sends where it is instead of its keys. */
+  const guestMovesItself = () => roleRef.current === 'guest' && guestNetRef.current.modern;
   /** Guest only: sends this screen's controls to the host. */
   const pushControls = (jumped = false) => {
-    if (roleRef.current !== 'guest') return;
+    if (roleRef.current !== 'guest' || guestMovesItself()) return;
     sendRef.current({ t: 'in', c: { ...controlsRef.current.b } });
     if (jumped) sendRef.current({ t: 'jump' });
+  };
+  /** Guest only: what the netplay says to send, on the fast channel, the reliable one, or both. */
+  const sendOut = (out: Out[]) => {
+    for (const { d, fast, reliable } of out) {
+      if (fast) sendRef.current(d, { fast: true });
+      if (!fast || reliable) sendRef.current(d);
+    }
   };
 
   /** performance.now() when each side's hit input went down, while it is held */
@@ -243,12 +270,14 @@ export default function Badminton({ args }: AppProps) {
   const startCharge = (side: Side) => {
     chargeRef.current[side] = performance.now();
     if (roleRef.current !== 'guest') simRef.current.athletes[side].chargeStart = simRef.current.clock;
+    else guestNetRef.current.hold(true);
   };
   /** Ends a hold and returns how long it lasted in ms. */
   const endCharge = (side: Side) => {
     const start = chargeRef.current[side];
     chargeRef.current[side] = null;
     simRef.current.athletes[side].chargeStart = null;
+    if (roleRef.current === 'guest') guestNetRef.current.hold(false);
     return start === null ? 0 : performance.now() - start;
   };
 
@@ -312,6 +341,7 @@ export default function Badminton({ args }: AppProps) {
       athlete.recoverUntil = 0;
     }
     sim.cpu.home = 3.1;
+    sim.warp += 1;
   }, []);
 
   const beginServe = useCallback(
@@ -319,6 +349,8 @@ export default function Badminton({ args }: AppProps) {
       const sim = simRef.current;
       sim.phase = 'serve';
       sim.flight = null;
+      sim.launch = null;
+      sim.heldAt = null;
       sim.trail = [];
       sim.impact = null;
       sim.lastShot = null;
@@ -360,12 +392,13 @@ export default function Badminton({ args }: AppProps) {
     [isLearning, nameOf],
   );
 
+  /** A stroke played now, or (an online guest's return) at the clock `at` it was played on its screen, with its scatter. */
   const strike = useCallback(
-    (side: Side, type: ShotType, contact: Point2D, accuracy: number, options: ShotOptions) => {
+    (side: Side, type: ShotType, contact: Point2D, accuracy: number, options: ShotOptions, at = simRef.current.clock, random: () => number = Math.random) => {
       const sim = simRef.current;
       const state = matchRef.current;
       const direction = directionOf(side, state);
-      const plan = planShot(type, direction, contact, Math.random, accuracy, options);
+      const plan = planShot(type, direction, contact, random, accuracy, options);
       const power = options.power ?? HALF_SMASH_POWER;
       const heading = sim.flight ? sim.flight.heading : 0;
       sim.flight = createFlight(contact, plan.velocity, side, direction, false, heading);
@@ -387,33 +420,36 @@ export default function Badminton({ args }: AppProps) {
       sim.cpuMissed = false;
       const strong = plan.type === 'smash';
       const charge = strong ? smashCharge(power) : 0;
-      sim.impact = { x: contact.x, y: contact.y, at: sim.clock, strong, charge };
+      sim.impact = { x: contact.x, y: contact.y, at, strong, charge };
       if (strong) {
         // A full smash shakes the court hard and holds the frame for a beat; a half smash barely does.
         sim.shake = 1.5 + 6.5 * charge;
-        sim.freezeUntil = sim.clock + 30 + 90 * charge;
+        sim.freezeUntil = at + smashFreezeMs(charge);
         statsRef.current = recordSmash(statsRef.current, side, speed);
-        sim.athletes[side].recoverUntil = sim.clock + smashRecoveryMs(power);
+        sim.athletes[side].recoverUntil = at + smashRecoveryMs(power);
       } else if (plan.type === 'drive') {
         sim.shake = 1.2;
       }
+      sim.launch = { n: sim.rallyShots, at, fz: strong ? sim.freezeUntil : at, s: plan.type, p: power, f: sim.flight };
       if (isCpu(opposite(side))) sim.cpu.reactAt = sim.clock + CPU_PROFILES[settingsRef.current.difficulty].reactionMs;
       audio().hit(plan.type, speed);
     },
     [isCpu, isLearning],
   );
 
+  /** A serve now, or (an online guest's) from where and when it served on its screen, with its scatter. */
   const launchServe = useCallback(
-    (side: Side, intent: Intent) => {
+    (side: Side, intent: Intent, from?: ServeTake) => {
       const sim = simRef.current;
       const state = matchRef.current;
       const direction = directionOf(side, state);
       const athlete = sim.athletes[side];
-      const start = { x: athlete.x + direction * 0.45, y: 1.05 };
+      const at = from ? from.at : sim.clock;
+      const start = { x: (from ? from.x : athlete.x) + direction * 0.45, y: 1.05 };
       const type: ShotType = intent === 'power' ? 'high-serve' : 'serve';
       const accuracy = isCpu(side) ? CPU_PROFILES[settingsRef.current.difficulty].accuracy : PLAYER_MAX_ACCURACY;
-      const plan = planShot(type, direction, start, Math.random, accuracy);
-      athlete.swingStart = sim.clock;
+      const plan = planShot(type, direction, start, from ? from.random : Math.random, accuracy);
+      athlete.swingStart = at;
       athlete.swingUntil = 0;
       athlete.intent = 'soft';
       if (plan.fault) {
@@ -421,6 +457,9 @@ export default function Badminton({ args }: AppProps) {
         return;
       }
       sim.flight = createFlight(start, plan.velocity, side, direction, true);
+      // (served from a key between steps, it first moves on the next one)
+      const launchAt = from || steppingRef.current ? at : at + STEP_MS;
+      sim.launch = { n: 1, at: launchAt, fz: launchAt, s: plan.type, p: HALF_SMASH_POWER, f: sim.flight };
       if (isLearning()) {
         const agent = agentRef.current;
         if (side === 'b') {
@@ -433,11 +472,11 @@ export default function Badminton({ args }: AppProps) {
       }
       sim.trail = [];
       sim.phase = 'rally';
-      sim.rallyStart = sim.clock;
+      sim.rallyStart = at;
       sim.rallyShots = 1;
       sim.lastShot = { type: plan.type, speed: Math.hypot(plan.velocity.vx, plan.velocity.vy) };
       sim.cpuMissed = false;
-      sim.impact = { x: start.x, y: start.y, at: sim.clock, strong: false };
+      sim.impact = { x: start.x, y: start.y, at, strong: false };
       if (isCpu(opposite(side))) sim.cpu.reactAt = sim.clock + CPU_PROFILES[settingsRef.current.difficulty].reactionMs;
       setPhase('rally');
       audio().hit(plan.type, sim.lastShot.speed);
@@ -473,7 +512,11 @@ export default function Badminton({ args }: AppProps) {
       const controls = controlsRef.current[side];
       const intent: Intent = explicit ?? (controls.soft ? 'soft' : controls.jump || athlete.jump > 0.05 ? 'power' : 'normal');
       if (roleRef.current === 'guest') {
-        sendRef.current({ t: 'hit', intent, power });
+        const net = guestNetRef.current;
+        if (!net.modern) sendRef.current({ t: 'hit', intent, power });
+        else if (sim.phase === 'interval' || sim.phase === 'game-end') sendRef.current({ t: 'go' });
+        // (this guest's own swing, played here: a serve, or a swing that meets the shuttle as it is drawn)
+        else sendOut(net.press(intent, power, performance.now()));
         return;
       }
       if (sim.phase === 'serve') {
@@ -530,8 +573,9 @@ export default function Badminton({ args }: AppProps) {
       roleRef.current = next;
       setRole(next);
       netNames.current = { a: players.find((p) => p.seat === 0)?.name ?? 'Host', b: players.find((p) => p.seat === 1)?.name ?? 'Guest' };
-      pendingSnap.current = null;
-      lastSnapClock.current = -Infinity;
+      hostNetRef.current = new HostNet();
+      guestNetRef.current = new GuestNet(seat < 0);
+      legacyRef.current = new LegacyGuest();
       lastSentAt.current = -Infinity;
       lastScoreAt.current = -Infinity;
       startMatch();
@@ -662,12 +706,13 @@ export default function Badminton({ args }: AppProps) {
         strike(side, reply.type, contact, reply.accuracy, reply.options);
         return;
       }
+      // (an online guest that moves itself meets the shuttle on its own screen, and says so)
+      if (side === 'b' && roleRef.current === 'host' && hostNetRef.current.modern) return;
       if (sim.clock > athlete.swingUntil) return;
       athlete.swingUntil = 0;
       // A held key hits at whatever it has charged to by contact.
-      const power = athlete.chargeStart !== null ? chargePower(sim.clock - athlete.chargeStart) : athlete.power;
-      const accuracy = pressuredAccuracy(contactAccuracy(distance, REACH), smashPressure(incoming, flight.elapsed));
-      strike(side, chooseShot(athlete.intent, contact), contact, accuracy, { power });
+      const stroke = playerStroke(athlete, contact, distance, sim.clock, incoming, flight.elapsed);
+      strike(side, stroke.type, contact, stroke.accuracy, { power: stroke.power });
     };
 
     const settleFlight = (sim: Sim) => {
@@ -680,9 +725,24 @@ export default function Badminton({ args }: AppProps) {
         cause = flight.fault === 'net' ? 'net' : flight.fault === 'out' ? 'out' : 'own-side';
         winner = opposite(flight.hitter);
       }
-      sim.marks.push({ x: shuttle.x, at: sim.clock, kind: cause === 'in' ? 'in' : cause === 'net' ? 'net' : 'out' });
-      if (cause === 'net') audio().netCord();
-      else audio().land();
+      // Online, a shuttle down on the guest's side waits for word of a return it may have played just in time.
+      const wait = roleRef.current === 'host' && flight.hitter === 'a' ? hostNetRef.current.grace(sim.clock) : 0;
+      const heard = sim.heldAt === null;
+      if (wait > 0) {
+        sim.heldAt ??= sim.clock;
+        if (heard) {
+          if (cause === 'net') audio().netCord();
+          else audio().land();
+        }
+        if (sim.clock < sim.heldAt + wait) return;
+      }
+      const at = sim.heldAt ?? sim.clock;
+      sim.heldAt = null;
+      sim.marks.push({ x: shuttle.x, at, kind: cause === 'in' ? 'in' : cause === 'net' ? 'net' : 'out' });
+      if (wait <= 0) {
+        if (cause === 'net') audio().netCord();
+        else audio().land();
+      }
       finishRally({ winner, cause, shots: sim.rallyShots, seconds: (sim.clock - sim.rallyStart) / 1000 });
     };
 
@@ -704,6 +764,9 @@ export default function Badminton({ args }: AppProps) {
           }
           settleFlight(sim);
         }
+      } else if (sim.phase === 'rally' && sim.flight) {
+        // (online, a shuttle down and waiting on word from the guest, or one a guest's late return carried down)
+        settleFlight(sim);
       } else if (sim.phase === 'serve' && isCpu(state.server) && sim.clock >= sim.cpuServeAt) {
         launchServe('b', Math.random() < 0.3 ? 'power' : 'normal');
       }
@@ -781,14 +844,6 @@ export default function Badminton({ args }: AppProps) {
       });
     };
 
-    const applyAthlete = (athlete: Athlete, snap: NetAthlete) => {
-      athlete.x = snap.x;
-      athlete.vx = snap.vx;
-      athlete.jump = snap.jump;
-      athlete.jumpVelocity = snap.jumpVelocity;
-      athlete.swingStart = snap.swingStart;
-      athlete.intent = snap.intent;
-    };
     const athleteSnap = (athlete: Athlete): NetAthlete => ({
       x: athlete.x,
       vx: athlete.vx,
@@ -796,80 +851,87 @@ export default function Badminton({ args }: AppProps) {
       jumpVelocity: athlete.jumpVelocity,
       swingStart: athlete.swingStart,
       intent: athlete.intent,
+      cs: athlete.chargeStart,
     });
 
-    // Guest: take the host's latest court, then carry the shuttle and players forward until the next one.
-    const guestStep = (sim: Sim, state: MatchState, dt: number) => {
-      const snap = pendingSnap.current;
-      if (snap) {
-        pendingSnap.current = null;
-        if (snap.impact && snap.impact.at !== sim.impact?.at && snap.lastShot) audio().hit(snap.lastShot.type, snap.lastShot.speed);
-        const mark = snap.marks[snap.marks.length - 1];
-        if (mark && mark.at !== sim.marks[sim.marks.length - 1]?.at) {
-          if (mark.kind === 'net') audio().netCord();
-          else audio().land();
-        }
-        sim.clock = snap.clock;
-        sim.phase = snap.phase;
-        applyAthlete(sim.athletes.a, snap.a);
-        applyAthlete(sim.athletes.b, snap.b);
-        sim.flight = snap.flight;
-        sim.marks = snap.marks;
-        sim.impact = snap.impact;
-        sim.shake = snap.shake;
-        sim.rallyShots = snap.rallyShots;
-        sim.lastShot = snap.lastShot;
-        if (!sim.flight || sim.flight.status !== 'flying') sim.trail = [];
-        else sim.trail = trailPoint(sim.trail, sim.flight.shuttle);
-        return;
+    const hear = (event: GuestEvent) => {
+      if (event.kind === 'hit') audio().hit(event.type, event.speed);
+      else if (event.kind === 'net') audio().netCord();
+      else audio().land();
+    };
+
+    // Guest of a newer host: its own athlete moved here and the court on the host's clock (badminton-netplay.ts).
+    const guestFrame = (sim: Sim) => {
+      const net = guestNetRef.current;
+      const own = sim.athletes.b;
+      if (own.jumpRequested) {
+        own.jumpRequested = false;
+        net.jump();
       }
-      accumulator += dt;
-      while (accumulator >= STEP) {
-        accumulator -= STEP;
-        sim.clock += STEP * 1000;
-        for (const side of SIDES) {
-          const athlete = sim.athletes[side];
-          athlete.x = clampToHalf(athlete.x + athlete.vx * STEP, directionOf(side, state));
-          if (athlete.jumpVelocity !== 0 || athlete.jump > 0) {
-            athlete.jumpVelocity -= GRAVITY * STEP;
-            athlete.jump = Math.max(0, athlete.jump + athlete.jumpVelocity * STEP);
-            if (athlete.jump === 0 && athlete.jumpVelocity < 0) athlete.jumpVelocity = 0;
-          }
-        }
-        if (sim.flight && sim.flight.status === 'flying') {
-          sim.flight = stepFlight(sim.flight, STEP);
-          sim.trail = trailPoint(sim.trail, sim.flight.shuttle);
-        }
+      const controls = controlsRef.current.b;
+      const { view, out, events } = net.frame(performance.now(), { left: controls.left, right: controls.right, seekX: own.seekX });
+      sendOut(out);
+      events.forEach(hear);
+      if (view) showView(sim, view);
+    };
+    const showView = (sim: Sim, view: GuestView) => {
+      sim.clock = view.clock;
+      sim.phase = view.phase;
+      for (const side of SIDES) {
+        const athlete = sim.athletes[side];
+        const from = view.athletes[side];
+        athlete.x = from.x;
+        athlete.vx = from.vx;
+        athlete.jump = from.jump;
+        athlete.jumpVelocity = from.jumpVelocity;
+        athlete.swingStart = from.swingStart;
+        athlete.intent = from.intent;
+        athlete.chargeStart = from.chargeStart;
       }
-      sim.shake = Math.max(0, sim.shake - dt * 16);
+      sim.flight = view.flight;
+      sim.trail = view.trail;
+      sim.marks = view.marks;
+      sim.impact = view.impact;
+      sim.shake = view.shake;
+      sim.rallyShots = view.rallyShots;
+      sim.lastShot = view.lastShot;
     };
 
     const tick = (now: number) => {
       frame = requestAnimationFrame(tick);
       const sim = simRef.current;
-      const dt = Math.min(0.05, (now - last) / 1000);
+      // An online host catches up a slow frame instead of slowing the match its guest plays on its clock.
+      const dt = Math.min(roleRef.current === 'host' ? 0.25 : 0.05, (now - last) / 1000);
       last = now;
       if (screenRef.current !== 'play') return;
       const state = matchRef.current;
       if (roleRef.current === 'guest') {
-        guestStep(sim, state, dt);
+        if (guestNetRef.current.modern) guestFrame(sim);
+        else legacyRef.current.step(sim, dt, { a: directionOf('a', state), b: directionOf('b', state) }).forEach(hear);
         syncHud(sim);
         render(sim, matchRef.current);
         return;
       }
       if (!pausedRef.current) {
         accumulator += dt;
+        steppingRef.current = true;
         while (accumulator >= STEP) {
           accumulator -= STEP;
           sim.clock += STEP * 1000;
           simulate(sim, state);
+          if (roleRef.current === 'host') hostNetRef.current.record(sim.clock, sim.rallyShots, sim.flight);
         }
+        steppingRef.current = false;
+        frameAtRef.current = performance.now();
         sim.shake = Math.max(0, sim.shake - dt * 16);
         advancePhase(sim);
         syncHud(sim);
       }
-      if (roleRef.current === 'host' && sim.clock - lastSentAt.current >= SNAPSHOT_MS) {
+      // (a new flight goes out at once, so a guest knows of the host's return as soon as it can)
+      if (roleRef.current === 'host' && (sim.clock - lastSentAt.current >= SNAPSHOT_MS || sim.launch !== sentLaunch.current)) {
         lastSentAt.current = sim.clock;
+        sentLaunch.current = sim.launch;
+        const latest = matchRef.current;
         const snap: NetSnapshot = {
           t: 's',
           clock: sim.clock,
@@ -882,6 +944,11 @@ export default function Badminton({ args }: AppProps) {
           shake: sim.shake,
           rallyShots: sim.rallyShots,
           lastShot: sim.lastShot,
+          v: NET_VERSION,
+          w: sim.warp,
+          e: latest.endsSwitched,
+          sv: latest.server,
+          l: sim.flight ? sim.launch : null,
         };
         sendRef.current(snap, { fast: true });
         if (sim.clock - lastScoreAt.current >= 1000) {
@@ -970,47 +1037,103 @@ export default function Badminton({ args }: AppProps) {
 
   useEffect(() => () => audioRef.current?.dispose(), []);
 
-  // Online messages. The host takes the guest's controls; the guest takes the host's court and score.
-  useEffect(() => room.onMessage((from, data) => {
-    if (roleRef.current === 'host') {
-      if (from !== 1) return;
-      const message = parseGuestMessage(data);
-      if (!message) return;
-      const athlete = simRef.current.athletes.b;
-      if (message.t === 'in') controlsRef.current.b = { ...message.c };
-      else if (message.t === 'jump') athlete.jumpRequested = true;
-      else if (message.t === 'seek') athlete.seekX = message.x === null ? null : clampToHalf(message.x, directionOf('b', matchRef.current));
-      else if (message.t === 'hit') swing('b', message.intent, message.power);
-      else if (message.t === 'go') continueFlow();
-      return;
-    }
-    if (roleRef.current !== 'guest' || from !== 0) return;
-    const snap = parseSnapshot(data);
-    if (snap) {
-      if (snap.clock < lastSnapClock.current) return;
-      lastSnapClock.current = snap.clock;
-      pendingSnap.current = snap;
-      return;
-    }
-    const score = parseScore(data);
-    if (!score) return;
-    const before = matchRef.current;
-    matchRef.current = score.match;
-    statsRef.current = score.stats;
-    setMatch(score.match);
-    setStats(score.stats);
-    setPhase(score.phase);
-    if (score.call && score.call.key !== callKey.current) {
-      callKey.current = score.call.key;
-      setCall(score.call);
-    }
-    const scored = SIDES.find((side) => score.match.points[side] > before.points[side]);
-    if (scored && screenRef.current === 'play') audio().point(scored === 'b');
-    if (score.phase === 'match-end' && screenRef.current === 'play') {
-      audio().gameOver(score.match.matchWinner === 'b');
-      setScreen('summary');
-    }
-  }), [room.code, room.onMessage, swing, continueFlow]);
+  // Online messages. The host takes the guest's own moves and shots (or an older guest's controls); the guest takes the
+  // host's court and score.
+  useEffect(() => {
+    /** The host's clock now, between its frames. */
+    const hostClock = () => simRef.current.clock + Math.max(0, Math.min(100, performance.now() - frameAtRef.current));
+    /** A return the guest has played on its screen: played here from that moment, if it holds up, and carried on to now. */
+    const takeHit = (message: HitMessage) => {
+      const sim = simRef.current;
+      const athlete = sim.athletes.b;
+      const take = hostNetRef.current.hit(message, {
+        clock: sim.clock, phase: sim.phase, n: sim.rallyShots, flight: sim.flight, incoming: sim.lastShot?.type ?? null, body: athlete, direction: directionOf('b', matchRef.current),
+      });
+      if (!take) return;
+      athlete.swingUntil = 0;
+      athlete.intent = take.intent;
+      sim.heldAt = null;
+      strike('b', take.type, take.contact, take.accuracy, { power: take.power }, take.at, take.random);
+      if (sim.launch) sim.flight = flightAt(sim.launch, sim.clock);
+      hostNetRef.current.record(sim.clock, sim.rallyShots, sim.flight);
+      lastSentAt.current = -Infinity;
+    };
+    /** The guest's serve, from when and where it served on its screen. */
+    const takeServe = (message: ServeMessage) => {
+      const sim = simRef.current;
+      const take = hostNetRef.current.serve(message, {
+        clock: sim.clock, phase: sim.phase, server: matchRef.current.server, warp: sim.warp, body: sim.athletes.b, direction: directionOf('b', matchRef.current),
+      });
+      if (!take) return;
+      launchServe('b', take.intent, take);
+      if (sim.flight && sim.launch) sim.flight = flightAt(sim.launch, sim.clock);
+      hostNetRef.current.record(sim.clock, sim.rallyShots, sim.flight);
+      lastSentAt.current = -Infinity;
+    };
+    return room.onMessage((from, data) => {
+      if (roleRef.current === 'host') {
+        if (from !== 1) return;
+        const message = parseGuestMessage(data);
+        if (!message) return;
+        const sim = simRef.current;
+        const athlete = sim.athletes.b;
+        const host = hostNetRef.current;
+        if (message.t === 'png') {
+          sendRef.current({ t: 'png', q: message.q, c: hostClock() }, { fast: true });
+          return;
+        }
+        if (message.t === 'go') {
+          continueFlow();
+          return;
+        }
+        if (screenRef.current !== 'play') return;
+        if (message.t === 'own') {
+          // (where the guest is, and which way it runs until it next says)
+          if (host.own(athlete, message, sim.clock, sim.warp, directionOf('b', matchRef.current))) {
+            controlsRef.current.b = { left: message.m < 0, right: message.m > 0, jump: false, soft: false };
+            athlete.seekX = null;
+          }
+        } else if (message.t === 'hit' && message.at !== undefined) takeHit(message);
+        else if (message.t === 'sv') takeServe(message);
+        else if (host.modern) return;
+        else if (message.t === 'in') controlsRef.current.b = { ...message.c };
+        else if (message.t === 'jump') athlete.jumpRequested = true;
+        else if (message.t === 'seek') athlete.seekX = message.x === null ? null : clampToHalf(message.x, directionOf('b', matchRef.current));
+        else if (message.t === 'hit') swing('b', message.intent, message.power);
+        return;
+      }
+      if (roleRef.current !== 'guest' || from !== 0) return;
+      const snap = parseSnapshot(data);
+      if (snap) {
+        guestNetRef.current.receive(snap, performance.now());
+        legacyRef.current.receive(snap);
+        return;
+      }
+      const pong = parsePong(data);
+      if (pong) {
+        guestNetRef.current.pong(pong.q, pong.c, performance.now());
+        return;
+      }
+      const score = parseScore(data);
+      if (!score) return;
+      const before = matchRef.current;
+      matchRef.current = score.match;
+      statsRef.current = score.stats;
+      setMatch(score.match);
+      setStats(score.stats);
+      setPhase(score.phase);
+      if (score.call && score.call.key !== callKey.current) {
+        callKey.current = score.call.key;
+        setCall(score.call);
+      }
+      const scored = SIDES.find((side) => score.match.points[side] > before.points[side]);
+      if (scored && screenRef.current === 'play') audio().point(scored === 'b');
+      if (score.phase === 'match-end' && screenRef.current === 'play') {
+        audio().gameOver(score.match.matchWinner === 'b');
+        setScreen('summary');
+      }
+    });
+  }, [room.code, room.onMessage, swing, continueFlow, strike, launchServe]);
 
   // Host: the score goes out whenever it changes.
   useEffect(() => {
@@ -1062,7 +1185,7 @@ export default function Badminton({ args }: AppProps) {
       const direction = directionOf(pointer.side, matchRef.current);
       const seek = clampToHalf(worldX(event.clientX) - direction * 0.3, direction);
       simRef.current.athletes[pointer.side].seekX = seek;
-      if (roleRef.current === 'guest' && (pointer.sentX === undefined || Math.abs(pointer.sentX - seek) > 0.04)) {
+      if (roleRef.current === 'guest' && !guestMovesItself() && (pointer.sentX === undefined || Math.abs(pointer.sentX - seek) > 0.04)) {
         pointer.sentX = seek;
         sendRef.current({ t: 'seek', x: seek });
       }
@@ -1074,7 +1197,7 @@ export default function Badminton({ args }: AppProps) {
     pointersRef.current.delete(event.pointerId);
     simRef.current.athletes[pointer.side].seekX = null;
     const held = endCharge(pointer.side);
-    if (roleRef.current === 'guest' && pointer.sentX !== undefined) sendRef.current({ t: 'seek', x: null });
+    if (roleRef.current === 'guest' && !guestMovesItself() && pointer.sentX !== undefined) sendRef.current({ t: 'seek', x: null });
     if (event.type === 'pointercancel') return;
     if (!pointer.moved && held < 1200) {
       const dy = event.clientY - pointer.startY;
