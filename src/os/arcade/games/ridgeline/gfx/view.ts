@@ -123,7 +123,8 @@ export type Frame = {
   m: Match | null;
   dt: number;
   time: number;
-  eye: { x: number; y: number; z: number; yaw: number; pitch: number };
+  /** Where the camera is and which way it looks (roll: tipped over to the side, radians). */
+  eye: { x: number; y: number; z: number; yaw: number; pitch: number; roll?: number };
   fov: number;
   /** Actor not to draw (the one we look out of), or -1. */
   hide: number;
@@ -369,7 +370,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
       shared.uTime.value = f.time;
       lastHide = f.hide;
       camera.position.set(f.eye.x, f.eye.y, f.eye.z);
-      camera.rotation.set(f.eye.pitch, f.eye.yaw, 0, 'YXZ');
+      camera.rotation.set(f.eye.pitch, f.eye.yaw, f.eye.roll ?? 0, 'YXZ');
       if (Math.abs(camera.fov - f.fov) > 1e-3) {
         camera.fov = f.fov;
         camera.updateProjectionMatrix();

@@ -37,6 +37,9 @@ export type Hud = {
   /** A ballistic shield carried: what it has left (0 to 1), and whether it is raised. */
   pavise: number;
   paviseUp: boolean;
+  /** Lying down (or on the way), and leaning (-1 left to 1 right). */
+  prone: boolean;
+  lean: number;
   /** How white your screen is from a flashbang, 0 to 1. */
   blind: number;
   canBuy: boolean;
@@ -142,6 +145,8 @@ export const blankHud = (mode: Mode): Hud => ({
   pick: 'frag',
   pavise: 0,
   paviseUp: false,
+  prone: false,
+  lean: 0,
   blind: 0,
   canBuy: false,
   alive: true,
@@ -345,6 +350,19 @@ export function Ammo({ h }: { h: Hud }) {
         {h.pavise > 0 && (
           <span className={h.paviseUp ? 'is-on' : ''} data-empty="0">
             <kbd>V</kbd>shield {Math.round(h.pavise * 100)}%
+          </span>
+        )}
+        {(h.prone || Math.abs(h.lean) > 0.2) && (
+          <span className="is-on" data-empty="0">
+            {h.prone ? (
+              <>
+                <kbd>N</kbd>prone
+              </>
+            ) : (
+              <>
+                <kbd>{h.lean < 0 ? 'Y' : 'U'}</kbd>lean {h.lean < 0 ? 'left' : 'right'}
+              </>
+            )}
           </span>
         )}
       </div>

@@ -8,9 +8,9 @@ import { DM_HUBS, botInput, callout, newBrain, type Brain, type BotLevel } from 
 import { blastCars, carHit, carNear, enterCar, hurtCar, leaveCar, rayCars, rideInput, spawnCars, stepCars, type Car } from './cars.ts';
 import { fieldTo, navOf } from './nav.ts';
 import { clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
-import { CROUCH_H, GRAVITY, STAND_H, blockedAt, clearLine, groundAt, newHit, raySphere, rayWorld, stepBody, type Body } from './physics.ts';
+import { CROUCH_H, GRAVITY, PRONE_H, STAND_H, blockedAt, clearLine, groundAt, newHit, raySphere, rayWorld, stepBody, type Body } from './physics.ts';
 import { AMMO_KINDS, AMMO_OF, BOOST, BOOST_DRAIN, BOOST_FAST, BOOST_RUN, CHUTE_GLIDE, CHUTE_OPEN, CHUTE_VY, COMP_BLOOM, COMP_KICK, FALL_FAST, FALL_SLOW, FALL_VY, HEAL, HELMET, RED_EVERY, RED_FIRST, RED_GAP, RED_LIVE, RED_R, RED_WARN, ROYALE_PLAYERS, SHELL_DMG, SHELL_R, SUPPLY_FALL, SUPPLY_HIGH, SUPPLY_MAX, USE, VEST, ZONES, adsOf, adsTimeOf, ammoCap, attach, boostCap, boostHeal, fits, fitted, hasAtt, healCap, magOf, nadeCap, nextCircle, onLand, planeAt, planePath, spawnLoot, supplyContents, type AmmoKind, type AttKind, type BoostKind, type HealKind, type Item, type Mods, type Plane, type Red, type RoyaleNade, type Supply, type UseKind, type Zone as Circle, ROYALE_NADES } from './royale.ts';
-import { floorAt, heightAt } from './terrain.ts';
+import { floorAt, heightAt, normalAt } from './terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, LOSS_STREAK_BONUS, MAX_CREDITS, NADES, PAVISE, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, interval, kickOf, rangeMul, type WeaponDef, type WeaponId } from './weapons.ts';
 import { ARENA, SITE_R, SPAWN_R, yawTo, type Surface, type World } from './world.ts';
 
@@ -26,6 +26,15 @@ export const DEG = Math.PI / 180;
 export const RUN = 5.8;
 export const WALK = 3;
 export const CROUCH_SPEED = 2.1;
+/** Lying down: the crawl, and the seconds it takes to get down and to get up again. */
+export const PRONE_SPEED = 0.85;
+export const PRONE_DOWN = 0.65;
+export const PRONE_UP = 0.75;
+/** Too steep to lie on: ground whose normal points less upward than this. */
+export const PRONE_SLOPE = 0.84;
+/** A full lean: how far the head goes out to the side (metres), and how quickly it gets there (leans a second). */
+export const LEAN = 0.4;
+const LEAN_RATE = 5.5;
 export const JUMP = 6.2;
 export const BULLET_G = 9.81;
 export const ROUNDS_TO_WIN = 7;
@@ -77,8 +86,15 @@ export type Input = {
   item: UseKind | null;
   /** Pressed: raise or lower the ballistic shield. */
   shield: boolean;
+  /** Held: lie down (the controls toggle it); let go, get up. */
+  prone: boolean;
+  /** Lean out to the left (-1) or the right (+1), or stand straight (0). */
+  lean: number;
+  /** Third person: the point the crosshair rests on (along the camera's ray). Shots leave the eye toward it. */
+  aim: Vec3 | null;
 };
-export const idleInput = (yaw = 0, pitch = 0): Input => ({ mx: 0, mz: 0, yaw, pitch, fire: false, ads: false, crouch: false, walk: false, jump: false, reload: false, slot: -1, throw: null, buy: null, use: false, heal: false, ride: false, boost: false, item: null, shield: false });
+export type Vec3 = { x: number; y: number; z: number };
+export const idleInput = (yaw = 0, pitch = 0): Input => ({ mx: 0, mz: 0, yaw, pitch, fire: false, ads: false, crouch: false, walk: false, jump: false, reload: false, slot: -1, throw: null, buy: null, use: false, heal: false, ride: false, boost: false, item: null, shield: false, prone: false, lean: 0, aim: null });
 
 /** A gun carried: its id, rounds in the magazine, spare rounds (breach), whether bought this round (for a refund), and
  * (royale) what is fitted to it. */
@@ -96,6 +112,14 @@ export type Actor = {
   yaw: number;
   pitch: number;
   crouch: number;
+  /** Lying down, 0 up to 1 flat on the ground (in between: getting down or up). */
+  prone: number;
+  /** Leaning, -1 full left to 1 full right (held short of a wall beside it). */
+  lean: number;
+  /** Where the stance is headed: lying down or getting up, and the lean (on an online guest, someone else's as the
+   * host last sent it, eased toward frame by frame; elsewhere as the rules last had it). */
+  proneTo: boolean;
+  leanTo: number;
   alive: boolean;
   hp: number;
   armor: number;
@@ -301,7 +325,7 @@ export type NetHooks = {
   crash?(car: number, hard: number): void;
 };
 /** Online, on the host: the latest of what a remote player's own machine says it is doing. */
-export type RemoteIn = { use: boolean; ads: number; walking: boolean; crouch: number; reloading: boolean };
+export type RemoteIn = { use: boolean; ads: number; walking: boolean; crouch: number; reloading: boolean; prone: boolean; lean: number };
 
 export type Match = {
   mode: Mode;
@@ -375,6 +399,10 @@ function newActor(id: number, name: string, team: number, bot: boolean, level: L
     yaw: 0,
     pitch: 0,
     crouch: 0,
+    prone: 0,
+    lean: 0,
+    proneTo: false,
+    leanTo: 0,
     alive: true,
     hp: 100,
     armor: 0,
@@ -553,7 +581,14 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
   return m;
 }
 
-export const eyeY = (a: Actor) => a.body.y + a.body.height - 0.14;
+/** How far down an actor is, eased (0 up, 1 flat on the ground). */
+export const proneOf = (a: Actor) => smoothstep(0, 1, a.prone);
+/** The body's height for its stance: standing, crouched, or lying down. */
+export const stanceH = (a: Actor) => lerp(lerp(STAND_H, CROUCH_H, a.crouch), PRONE_H, proneOf(a));
+/** Where the eyes are: over the feet, out to the side in a lean (the head tips a little lower doing it). */
+export const eyeX = (a: Actor) => a.body.x + Math.cos(a.yaw) * a.lean * LEAN;
+export const eyeY = (a: Actor) => a.body.y + a.body.height - 0.14 - Math.abs(a.lean) * 0.05;
+export const eyeZ = (a: Actor) => a.body.z - Math.sin(a.yaw) * a.lean * LEAN;
 export const currentGun = (a: Actor) => a.guns[a.slot] ?? a.guns[1] ?? a.guns[0] ?? a.guns[2];
 const NADE_FIELD = { frag: 'frags', smoke: 'smokes', flash: 'flashes', fire: 'fires', impact: 'impacts', decoy: 'decoys' } as const;
 /** Grenades of a kind carried, and adding (or taking away) some. */
@@ -573,15 +608,83 @@ export function viewDir(yaw: number, pitch: number) {
   return { x: -Math.sin(yaw) * cp, y: Math.sin(pitch), z: -Math.cos(yaw) * cp };
 }
 
-/** Hitbox spheres: [height above the feet as a share of body height, radius, zone]. */
+/** Hitbox spheres below the head, upright: [height above the feet as a share of body height, radius, how much of a
+ * lean it goes along with]. */
 // a touch generous, so a shot that looks like it hit, did
-const HITBOX: [number, number, Zone][] = [
-  [0.72, 0.27, 'body'],
-  [0.54, 0.25, 'body'],
-  [0.34, 0.2, 'leg'],
-  [0.13, 0.18, 'leg'],
+const HITBOX: [number, number, number][] = [
+  [0.72, 0.27, 0.55],
+  [0.54, 0.25, 0.25],
+  [0.34, 0.2, 0],
+  [0.13, 0.18, 0],
+];
+/** The same four lying down: [how far back from the head along the ground, height above it, radius]. */
+const PRONE_BOX: [number, number, number][] = [
+  [0.4, 0.24, 0.25],
+  [0.8, 0.2, 0.23],
+  [1.14, 0.15, 0.19],
+  [1.46, 0.12, 0.16],
 ];
 export const HEAD_R = 0.15;
+/** The hit spheres, head first, and what each one is. */
+export const PARTS = 5;
+export const PART_ZONE: readonly Zone[] = ['head', 'body', 'body', 'leg', 'leg'];
+
+/**
+ * Where an actor's hit spheres are right now, as x, y, z and radius in fours (head first). Upright the body stacks
+ * over the feet and the head (and the chest, a little) go out with a lean; lying down it stretches out back along the
+ * ground behind the head, and in between it is on the way.
+ */
+export function partsOf(a: Actor, out: Float64Array) {
+  const b = a.body;
+  const p = proneOf(a);
+  const up = lerp(STAND_H, CROUCH_H, a.crouch);
+  const fx = -Math.sin(a.yaw);
+  const fz = -Math.cos(a.yaw);
+  const lx = Math.cos(a.yaw) * a.lean * LEAN;
+  const lz = -Math.sin(a.yaw) * a.lean * LEAN;
+  // the head leans forward with the pitch a little
+  out[0] = b.x + fx * 0.04 * (1 - p) + lx;
+  out[1] = b.y + b.height - 0.13 - Math.abs(a.lean) * 0.05;
+  out[2] = b.z + fz * 0.04 * (1 - p) + lz;
+  out[3] = HEAD_R;
+  for (let i = 0; i < 4; i++) {
+    const u = HITBOX[i];
+    const q = PRONE_BOX[i];
+    const o = (i + 1) * 4;
+    out[o] = b.x + lx * u[2] - fx * q[0] * p;
+    out[o + 1] = b.y + lerp(up * u[0], q[1], p);
+    out[o + 2] = b.z + lz * u[2] - fz * q[0] * p;
+    out[o + 3] = lerp(u[1], q[2], p);
+  }
+  return out;
+}
+const parts = new Float64Array(PARTS * 4);
+
+/** The first hit sphere a ray (from o, unit direction d, up to max) meets on a live actor, or -1; its part in `hitPart`. */
+export const hitPart = { a: -1, i: -1, t: 0 };
+export function rayActors(m: Match, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, max: number, skip = -1) {
+  hitPart.a = -1;
+  hitPart.i = -1;
+  hitPart.t = max;
+  for (const a of m.actors) {
+    if (!a.alive || a.drop === 1 || a.id === skip) continue;
+    const mx = a.body.x - ox;
+    const my = a.body.y + a.body.height / 2 - oy;
+    const mz = a.body.z - oz;
+    const along = clamp(mx * dx + my * dy + mz * dz, 0, hitPart.t);
+    if ((mx - dx * along) ** 2 + (my - dy * along) ** 2 + (mz - dz * along) ** 2 > 4) continue;
+    partsOf(a, parts);
+    for (let i = 0; i < PARTS; i++) {
+      const t = raySphere(ox, oy, oz, dx, dy, dz, parts[i * 4], parts[i * 4 + 1], parts[i * 4 + 2], parts[i * 4 + 3], hitPart.t);
+      if (t >= 0) {
+        hitPart.a = a.id;
+        hitPart.i = i;
+        hitPart.t = t;
+      }
+    }
+  }
+  return hitPart.a >= 0 ? hitPart.t : -1;
+}
 
 /**
  * Where a ray (from o, unit direction d, up to len) meets an actor's raised shield, or -1. Only from the front: the
@@ -633,14 +736,10 @@ function hitActors(m: Match, b: Bullet, dx: number, dy: number, dz: number, len:
     // a raised shield in front stops what would have hit behind it
     const st: number = a.paviseUp ? shieldHit(a, b.px, b.py, b.pz, dx, dy, dz, best ? best.t : len) : -1;
     if (st >= 0) best = { a, t: st, zone: 'body', shield: true };
-    const limit = best ? best.t : len;
-    // the head leans forward with the pitch a little
-    const f = viewDir(a.yaw, 0);
-    const ht = raySphere(b.px, b.py, b.pz, dx, dy, dz, cx + f.x * 0.04, a.body.y + h - 0.13, cz + f.z * 0.04, HEAD_R, limit);
-    if (ht >= 0) best = { a, t: ht, zone: 'head', shield: false };
-    for (const [k, r, zone] of HITBOX) {
-      const tt = raySphere(b.px, b.py, b.pz, dx, dy, dz, cx, a.body.y + h * k, cz, r, best ? best.t : len);
-      if (tt >= 0) best = { a, t: tt, zone, shield: false };
+    partsOf(a, parts);
+    for (let i = 0; i < PARTS; i++) {
+      const tt = raySphere(b.px, b.py, b.pz, dx, dy, dz, parts[i * 4], parts[i * 4 + 1], parts[i * 4 + 2], parts[i * 4 + 3], best ? best.t : len);
+      if (tt >= 0) best = { a, t: tt, zone: PART_ZONE[i], shield: false };
     }
   }
   return best;
@@ -867,6 +966,10 @@ function place(m: Match, a: Actor, x: number, z: number, yaw: number) {
   a.body.onGround = true;
   a.body.height = STAND_H;
   a.crouch = 0;
+  a.prone = 0;
+  a.lean = 0;
+  a.proneTo = false;
+  a.leanTo = 0;
   a.yaw = yaw;
   a.pitch = 0;
 }
@@ -1977,7 +2080,9 @@ export function spreadOf(a: Actor) {
   // walking (Shift) and crouch walking stay nearly true; running throws shots wide
   s += w.move * ease * smoothstep(0.45, 1, sp) * lerp(1, Math.max(ads, 0.6), a.ads);
   if (!a.body.onGround && !a.body.swim) s += w.air;
-  if (a.crouch > 0.5 && a.body.onGround) s *= 0.8;
+  // braced on the ground lying down is steadiest of all, then crouched
+  if (a.prone >= 1 && a.body.onGround) s *= 0.55;
+  else if (a.crouch > 0.5 && a.body.onGround) s *= 0.8;
   // one handed round a raised shield
   if (a.paviseUp) s += PAVISE.spread;
   return s;
@@ -2012,7 +2117,7 @@ function inCone(r: Rng, dx: number, dy: number, dz: number, deg: number) {
   return { x: dx * c + (ux * cr + vx * sr) * s, y: dy * c + (uy * cr + vy * sr) * s, z: dz * c + (uz * cr + vz * sr) * s };
 }
 
-function fire(m: Match, a: Actor) {
+function fire(m: Match, a: Actor, aim: Vec3 | null = null) {
   const g = currentGun(a);
   if (!g) return;
   const w = WEAPONS[g.id];
@@ -2026,11 +2131,21 @@ function fire(m: Match, a: Actor) {
   a.fireCd += interval(w);
   a.shield = 0;
   const spread = spreadOf(a);
-  const ex = a.body.x;
+  const ex = eyeX(a);
   const ey = eyeY(a);
-  const ez = a.body.z;
+  const ez = eyeZ(a);
+  let look = viewDir(a.yaw, a.pitch);
+  // third person: the crosshair sits on the camera's ray, so the shot leaves the eye for the point it rests on (and
+  // whatever the eye can't see past still stops it)
+  if (aim) {
+    const ax = aim.x - ex;
+    const ay = aim.y - ey;
+    const az = aim.z - ez;
+    const l = Math.hypot(ax, ay, az);
+    if (l > 0.6 && (ax * look.x + ay * look.y + az * look.z) / l > 0.5) look = { x: ax / l, y: ay / l, z: az / l };
+  }
   // a person's shot is drawn a little toward someone just off the crosshair (bots aim on their own)
-  const d = a.bot ? viewDir(a.yaw, a.pitch) : assisted(m, a, viewDir(a.yaw, a.pitch), ex, ey, ez);
+  const d = a.bot ? look : assisted(m, a, look, ex, ey, ez);
   const zero = w.cls === 'crossbow' ? 30 : w.cls === 'pistol' || w.cls === 'smg' || w.cls === 'shotgun' ? 40 : 100;
   const lift = (BULLET_G * (zero / w.speed)) / 2;
   const vel: number[] = [];
@@ -2045,7 +2160,7 @@ function fire(m: Match, a: Actor) {
   if (!m.authority && a.id === m.me) m.net?.fire(g.id, ex, ey, ez, vel);
   const [up, side] = kickOf(w, a.spray);
   const comp = !!g.mods?.comp;
-  const k = (a.crouch > 0.5 ? 0.85 : 1) * (1 - a.ads * 0.15) * (comp ? COMP_KICK : 1);
+  const k = (a.prone >= 1 ? 0.7 : a.crouch > 0.5 ? 0.85 : 1) * (1 - a.ads * 0.15) * (comp ? COMP_KICK : 1);
   // the view climbs for bots only (their aim works against it); a person's crosshair stays where they put it, the
   // kick shows in the gun in hand instead
   if (a.bot) {
@@ -2081,20 +2196,28 @@ function assisted(m: Match, a: Actor, d: { x: number; y: number; z: number }, ex
     // ahead of the crosshair at all?
     if ((dx * d.x + dz * d.z) / flat < 0.9) continue;
     const reach = clamp(Math.atan2(0.55, flat), 0.9 * DEG, 4 * DEG);
-    for (const h of [o.body.height * 0.66, o.body.height - 0.13]) {
-      const ty = o.body.y + h - ey;
-      const len = Math.hypot(dx, ty, dz);
-      const cos = (dx * d.x + ty * d.y + dz * d.z) / len;
+    // the chest and the head, wherever the stance and a lean have put them
+    partsOf(o, parts);
+    const prone = o.prone > 0.5;
+    for (let i = 1; i >= 0; i--) {
+      const px = parts[i * 4];
+      const py = i === 1 && !prone ? o.body.y + o.body.height * 0.66 : parts[i * 4 + 1];
+      const pz = parts[i * 4 + 2];
+      const tx = px - ex;
+      const ty = py - ey;
+      const tz = pz - ez;
+      const len = Math.hypot(tx, ty, tz);
+      const cos = (tx * d.x + ty * d.y + tz * d.z) / len;
       const off = Math.acos(Math.min(1, cos));
       if (off > reach) continue;
       // the nearer to the crosshair, the better (and a head counts as a little nearer)
-      const score = (reach - off) / reach + (h > o.body.height * 0.8 ? 0.05 : 0);
+      const score = (reach - off) / reach + (i === 0 ? 0.05 : 0);
       if (score <= best) continue;
-      if (!clearLine(m.world, ex, ey, ez, o.body.x, o.body.y + h, o.body.z) || smokeBlocks(m, ex, ey, ez, o.body.x, o.body.y + h, o.body.z)) continue;
+      if (!clearLine(m.world, ex, ey, ez, px, py, pz) || smokeBlocks(m, ex, ey, ez, px, py, pz)) continue;
       best = score;
-      bx = dx / len;
+      bx = tx / len;
       by = ty / len;
-      bz = dz / len;
+      bz = tz / len;
     }
   }
   if (best <= 0) return d;
@@ -2136,7 +2259,7 @@ function throwNade(m: Match, a: Actor, kind: NadeKind) {
   addNades(a, kind, -1);
   const d = viewDir(a.yaw, a.pitch + 0.12);
   const sp = 17;
-  const n: Nade = { kind, x: a.body.x + d.x * 0.5, y: eyeY(a) - 0.1, z: a.body.z + d.z * 0.5, vx: d.x * sp + a.body.vx * 0.5, vy: d.y * sp + 1.5, vz: d.z * sp + a.body.vz * 0.5, fuse: FUSE_OF[kind], owner: a.id, rest: false, spin: 0 };
+  const n: Nade = { kind, x: eyeX(a) + d.x * 0.5, y: eyeY(a) - 0.1, z: eyeZ(a) + d.z * 0.5, vx: d.x * sp + a.body.vx * 0.5, vy: d.y * sp + 1.5, vz: d.z * sp + a.body.vz * 0.5, fuse: FUSE_OF[kind], owner: a.id, rest: false, spin: 0 };
   // a decoy plays the thrower's own long gun
   if (kind === 'decoy') n.w = (a.guns[0] ?? a.guns[2] ?? a.guns[1])?.id ?? 'kestrel';
   m.nades.push(n);
@@ -2360,6 +2483,69 @@ export function smokeBlocks(m: Match, ax: number, ay: number, az: number, bx: nu
   return false;
 }
 
+const slope = { x: 0, y: 1, z: 0 };
+const stanceHit = newHit();
+
+/** Can an actor lie down where it is? Not swimming or wading deep, not in a vehicle or in the air, not on a steep bank. */
+export function canProne(m: Match, a: Actor) {
+  const b = a.body;
+  if (!a.alive || a.drop || a.car >= 0 || b.swim) return false;
+  const t = m.world.terrain;
+  // (the face would be under the water)
+  if (t.hasWater && !t.ice && b.y < t.water - 0.25) return false;
+  // on the land itself (not a floor or a crate top): not where it is too steep to lie on
+  if (b.y < floorAt(t, b.x, b.z) + 0.12) {
+    normalAt(t, b.x, b.z, slope);
+    if (slope.y < PRONE_SLOPE) return false;
+  }
+  return true;
+}
+
+/** How far an actor can lean out to one side (0 to 1 of a full lean) before its head meets something. */
+export function leanRoom(m: Match, a: Actor, side: number) {
+  const b = a.body;
+  const dx = Math.cos(a.yaw) * side;
+  const dz = -Math.sin(a.yaw) * side;
+  const ey = b.y + b.height - 0.14;
+  // at the eyes and at the shoulders: neither goes into a wall, so nothing is seen or shot through one
+  let room = 1;
+  for (let k = 0; k < 2; k++) {
+    rayWorld(m.world, b.x, ey - k * 0.3, b.z, dx, 0, dz, LEAN + 0.25, stanceHit);
+    if (stanceHit.kind !== 'none') room = Math.min(room, Math.max(0, stanceHit.t - 0.25) / LEAN);
+  }
+  return room;
+}
+
+/**
+ * Lying down and leaning, for an actor that wants them (held: the controls do the toggling). Getting down and up take
+ * a moment, and not where it can't be done (an actor already down gets up once that changes, or stays down under
+ * something too low to stand). A lean comes out over a fifth of a second, only upright on the ground, and stops short
+ * of a wall beside the head. Then the body takes the stance's height.
+ */
+function stance(m: Match, a: Actor, prone: boolean, lean: number, dt: number) {
+  const b = a.body;
+  let down = prone && canProne(m, a);
+  if (!down && a.prone > 0 && a.alive && !b.swim && a.car < 0) {
+    // getting up: not under something too low to stand
+    rayWorld(m.world, b.x, b.y + 0.3, b.z, 0, 1, 0, CROUCH_H - 0.3, stanceHit);
+    if (stanceHit.kind !== 'none') down = true;
+  }
+  a.prone = clamp(a.prone + (down ? dt / PRONE_DOWN : -dt / PRONE_UP), 0, 1);
+  a.proneTo = down;
+  if (a.prone > 0) a.paviseUp = false;
+  // (flat down, a crouch from before is forgotten: getting up stands)
+  if (a.prone >= 1) a.crouch = 0;
+  const want = a.prone > 0 || b.swim || !b.onGround || a.car >= 0 || !a.alive ? 0 : clamp(Number.isFinite(lean) ? lean : 0, -1, 1);
+  a.lean += clamp(want - a.lean, -dt * LEAN_RATE, dt * LEAN_RATE);
+  if (Math.abs(a.lean) < 1e-4) a.lean = 0;
+  else {
+    const room = leanRoom(m, a, Math.sign(a.lean));
+    if (Math.abs(a.lean) > room) a.lean = Math.sign(a.lean) * room;
+  }
+  a.leanTo = a.lean;
+  if (a.car < 0) b.height = stanceH(a);
+}
+
 /** Applies one actor's input for a frame. */
 function act(m: Match, a: Actor, input: Input, dt: number) {
   let inp = input;
@@ -2438,7 +2624,7 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
     m.events.push({ t: 'swap', a: a.id });
   }
   // the shield: raised, the sidearm comes out in the other hand; lowered, it hangs on your back
-  if (a.car >= 0 || a.pavise <= 0) a.paviseUp = false;
+  if (a.car >= 0 || a.pavise <= 0 || a.prone > 0) a.paviseUp = false;
   else if (inp.shield) {
     a.paviseUp = !a.paviseUp;
     if (a.paviseUp && a.slot !== 1 && a.guns[1]) {
@@ -2497,14 +2683,15 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
     if (a.bot) a.pitch -= back * DEG;
     a.kickP = Math.max(0, a.kickP - back / 0.75);
   }
-  // aiming
-  const canAds = a.reloadT <= 0 && a.switchT <= 0 && !b.swim && !a.paviseUp;
+  // aiming (not while getting down or up)
+  const settled = a.prone <= 0 || a.prone >= 1;
+  const canAds = a.reloadT <= 0 && a.switchT <= 0 && !b.swim && !a.paviseUp && settled;
   const adsTarget = inp.ads && canAds ? 1 : 0;
   a.ads = clamp(a.ads + (adsTarget ? 1 : -1.6) * (dt / (g?.mods ? adsTimeOf(g) : w.adsTime)), 0, 1);
-  // crouch
-  const wantCrouch = inp.crouch && !b.swim;
-  a.crouch = clamp(a.crouch + (wantCrouch ? 1 : -1) * dt * 7, 0, 1);
-  b.height = lerp(STAND_H, CROUCH_H, a.crouch);
+  // crouch, lying down and leaning
+  // (the crouch holds where it was while getting down or up)
+  if (a.prone <= 0) a.crouch = clamp(a.crouch + (inp.crouch && !b.swim ? 1 : -1) * dt * 7, 0, 1);
+  stance(m, a, inp.prone, inp.lean, dt);
   // movement (a rider is carried: the car puts it in its seat)
   if (a.car >= 0) a.walking = false;
   else {
@@ -2516,7 +2703,8 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
       mx /= ml;
       mz /= ml;
     }
-    let speed = b.swim ? 2.4 : a.crouch > 0.5 ? CROUCH_SPEED : inp.walk || a.healT > 0 ? WALK : RUN;
+    // (lying down: a crawl, and hardly a shuffle while getting down or up; leaning out: no more than a walk)
+    let speed = b.swim ? 2.4 : a.prone > 0 ? (a.prone >= 1 ? PRONE_SPEED : 0.25) : a.crouch > 0.5 ? CROUCH_SPEED : inp.walk || a.healT > 0 || Math.abs(a.lean) > 0.3 ? WALK : RUN;
     // (a boost high up puts a little more in a run)
     if (speed === RUN && a.boost >= BOOST_FAST) speed *= BOOST_RUN;
     speed *= w.weight * (a.ads > 0.5 ? 0.78 : 1) * (a.paviseUp ? PAVISE.slow : 1);
@@ -2529,7 +2717,7 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
       const k = 1 - Math.exp(-(ml > 0.05 ? 13 : 17) * dt);
       b.vx += (tx - b.vx) * k;
       b.vz += (tz - b.vz) * k;
-      if (inp.jump && !b.swim && a.crouch < 0.5) {
+      if (inp.jump && !b.swim && a.crouch < 0.5 && a.prone <= 0) {
         b.vy = JUMP;
         b.onGround = false;
         m.events.push({ t: 'jump', a: a.id });
@@ -2569,21 +2757,21 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
     a.fireHeld = inp.fire;
     return;
   }
-  // (a raised shield leaves only the sidearm's hand free)
-  const ready = !!g && a.switchT <= 0 && a.reloadT <= 0 && !(a.paviseUp && a.slot !== 1);
+  // (a raised shield leaves only the sidearm's hand free; getting down or up, both hands are busy)
+  const ready = !!g && a.switchT <= 0 && a.reloadT <= 0 && !(a.paviseUp && a.slot !== 1) && settled;
   if (g && w.burst > 0) {
     // a burst gun: one pull fires the burst on its own, then a pause before the next
     if (inp.fire && !a.fireHeld && a.burstLeft <= 0 && ready && a.fireCd <= 0 && g.mag > 0) a.burstLeft = w.burst;
     if (a.burstLeft > 0) {
       if (!ready || g.mag <= 0) a.burstLeft = 0;
       else if (a.fireCd <= 0) {
-        fire(m, a);
+        fire(m, a, inp.aim);
         a.burstLeft--;
         if (a.burstLeft <= 0) a.fireCd += w.burstGap;
       }
-    } else if (inp.fire && g.mag <= 0 && a.reloadT <= 0 && !a.fireHeld) fire(m, a);
-  } else if (inp.fire && ready && a.fireCd <= 0 && (w.auto || !a.fireHeld)) fire(m, a);
-  else if (inp.fire && g && g.mag <= 0 && a.reloadT <= 0 && !a.fireHeld) fire(m, a);
+    } else if (inp.fire && g.mag <= 0 && a.reloadT <= 0 && !a.fireHeld) fire(m, a, inp.aim);
+  } else if (inp.fire && ready && a.fireCd <= 0 && (w.auto || !a.fireHeld)) fire(m, a, inp.aim);
+  else if (inp.fire && g && g.mag <= 0 && a.reloadT <= 0 && !a.fireHeld) fire(m, a, inp.aim);
   // a crossbow spans the next bolt by itself
   if (g && w.cls === 'crossbow' && g.mag <= 0 && a.fireCd <= 0) startReload(m, a);
   if (a.fireCd < 0) a.fireCd = 0;
@@ -2602,7 +2790,7 @@ function footsteps(m: Match, a: Actor, ox: number, oz: number, walk: boolean) {
   a.stepDist += moved;
   if (a.stepDist <= 2.1) return;
   a.stepDist = 0;
-  const loud = !walk && a.crouch < 0.5 && Math.hypot(b.vx, b.vz) > WALK + 0.4;
+  const loud = !walk && a.crouch < 0.5 && a.prone <= 0 && Math.hypot(b.vx, b.vz) > WALK + 0.4;
   m.events.push({ t: 'step', a: a.id, loud, s: surfaceUnder(m, a) });
   if (loud) m.sounds.push({ x: b.x, z: b.z, t: m.time, team: a.team, range: 24, who: a.id });
 }
@@ -2620,7 +2808,8 @@ function remoteStep(m: Match, a: Actor, dt: number) {
   a.crouch = n.crouch;
   a.ads = n.ads;
   a.reloadT = n.reloading ? Math.max(a.reloadT, 0.1) : 0;
-  b.height = lerp(STAND_H, CROUCH_H, a.crouch);
+  // lying down and leaning as its machine says, but at the pace and within the bounds the rules here allow
+  stance(m, a, n.prone, n.lean, dt);
   footsteps(m, a, a.lastX, a.lastZ, n.walking);
   a.lastX = b.x;
   a.lastZ = b.z;
@@ -2647,6 +2836,10 @@ function puppet(m: Match, a: Actor, dt: number) {
   a.blindT = Math.max(0, a.blindT - dt);
   if (a.reloadT > 0) a.reloadT = Math.max(0.05, a.reloadT - dt);
   if (!a.alive) return;
+  // (the stance the host sent, eased toward: shots fired here hit the body as it lies or leans)
+  a.prone = clamp(a.prone + clamp((a.proneTo ? 1 : 0) - a.prone, -dt / PRONE_UP, dt / PRONE_DOWN), 0, 1);
+  a.lean += clamp(a.leanTo - a.lean, -dt * LEAN_RATE, dt * LEAN_RATE);
+  if (a.car < 0) a.body.height = stanceH(a);
   footsteps(m, a, a.lastX, a.lastZ, a.walking);
   a.lastX = a.body.x;
   a.lastZ = a.body.z;

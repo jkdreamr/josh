@@ -195,6 +195,9 @@ const rows = (v: unknown, each: number, max: number): number[] | null => {
   return v as number[];
 };
 const r2 = (n: number) => Math.round(n * 100) / 100;
+/** A lean in four bits of a flags word (-1 to 1 in sevenths), and back (a bad value reads as no further than full). */
+const leanBits = (l: number) => (Math.round(Math.max(-1, Math.min(1, Number.isFinite(l) ? l : 0)) * 7) + 7) & 15;
+const leanOf = (f: number, shift: number) => Math.max(-1, Math.min(1, (((f >> shift) & 15) - 7) / 7));
 
 /** Everyone's place: 9 numbers each. */
 const POS_N = 9;
@@ -205,7 +208,8 @@ function encodePos(m: Match): number[] {
   const out: number[] = [];
   for (const a of m.actors) {
     const b = a.body;
-    const flags = (a.alive ? 1 : 0) | (b.onGround ? 2 : 0) | (a.walking ? 4 : 0) | (a.ads > 0.5 ? 8 : 0) | (a.reloadT > 0 ? 16 : 0) | (b.swim ? 32 : 0) | (a.paviseUp ? 64 : 0);
+    // (lying down, and the lean in four bits)
+    const flags = (a.alive ? 1 : 0) | (b.onGround ? 2 : 0) | (a.walking ? 4 : 0) | (a.ads > 0.5 ? 8 : 0) | (a.reloadT > 0 ? 16 : 0) | (b.swim ? 32 : 0) | (a.paviseUp ? 64 : 0) | (a.proneTo ? 128 : 0) | (leanBits(a.lean) << 8);
     out.push(Math.round(b.x * 100), Math.round(b.y * 100), Math.round(b.z * 100), Math.round(wrap(a.yaw) * 1000), Math.round(a.pitch * 1000), Math.round(b.vx * 10), Math.round(b.vz * 10), Math.round(a.crouch * 100), flags);
   }
   return out;
@@ -588,8 +592,10 @@ type Peer = {
   drop: number;
 };
 
-/** Hit history: where each actor was, 20 times a second over the last 1.2 seconds (t, x, y, z). */
+/** Hit history: where each actor was, 20 times a second over the last 1.2 seconds: the time, where the feet were, the
+ * top of the body and how far down it lay. */
 const HIST = 24;
+const HN = 6;
 
 export class Session {
   match: Match | null = null;
@@ -755,7 +761,7 @@ export class Session {
   }
 
   private addPeer(a: Actor) {
-    a.net = { use: false, ads: 0, walking: false, crouch: 0, reloading: false };
+    a.net = { use: false, ads: 0, walking: false, crouch: 0, reloading: false, prone: false, lean: 0 };
     a.lastX = a.body.x;
     a.lastZ = a.body.z;
     this.peers.set(a.seat, { clock: new Clock(), track: new Track(), lastMove: this.now(), budget: [], epoch: a.epoch, focus: -1, spent: AMMO_KINDS.map(() => 0), car: a.car, carTrack: new Track(), out: [], inv: true, drop: a.drop });
@@ -935,6 +941,9 @@ export class Session {
       n.reloading = !!(flags & 16);
       a.paviseUp = !!(flags & 32) && a.pavise > 0;
       n.crouch = Math.min(1, Math.max(0, crouch));
+      // lying down and leaning: wanted here, done by the rules (at their pace, never into a wall)
+      n.prone = !!(flags & 64);
+      n.lean = leanOf(flags, 7);
       n.ads = Math.min(1, Math.max(0, ads));
       if ((slot === 0 || slot === 1 || slot === 2) && a.guns[slot]) a.slot = slot;
       return;
@@ -1120,19 +1129,25 @@ export class Session {
     spend.n--;
     if (Math.hypot(o[0] - a.body.x, o[2] - a.body.z) > (a.car >= 0 ? 9 : 5)) return;
     let near = Math.hypot(p[0] - v.body.x, p[2] - v.body.z);
+    // the top of the body, as it stood (or lay) over the last second
+    let top = v.body.y + v.body.height;
+    let low = v.prone;
     const h = this.hist;
     if (h)
       for (let k = 0; k < HIST; k++) {
-        const q = (v.id * HIST + k) * 4;
-        if (t - h[q] < 1) near = Math.min(near, Math.hypot(p[0] - h[q + 1], p[2] - h[q + 3]));
+        const q = (v.id * HIST + k) * HN;
+        if (t - h[q] >= 1) continue;
+        near = Math.min(near, Math.hypot(p[0] - h[q + 1], p[2] - h[q + 3]));
+        top = Math.max(top, h[q + 4]);
+        low = Math.max(low, h[q + 5]);
       }
-    // (a vehicle moves its riders fast: a little more room)
-    if (near > (v.car >= 0 ? 3 : 1.6)) return;
+    // (a vehicle moves its riders fast: a little more room; lying down the legs stretch out further from the head)
+    if (near > (v.car >= 0 ? 3 : 1.6 + low * 0.4)) return;
     // a raised shield between (as the host sees it) stops it
     const sl = Math.hypot(p[0] - o[0], p[1] - o[1], p[2] - o[2]) || 1;
     if (shieldHit(v, o[0], o[1], o[2], (p[0] - o[0]) / sl, (p[1] - o[1]) / sl, (p[2] - o[2]) / sl, sl + 0.05) >= 0) return;
-    const top = v.body.y + v.body.height + 0.4;
-    if (p[1] < v.body.y - 1.2 || p[1] > top + 1.2) return;
+    // nothing above the head: a shot over someone lying down missed them (the top of the head is 2 cm over its height)
+    if (p[1] < v.body.y - 1.2 || p[1] > top + 0.25) return;
     // the line from the muzzle to the hit, stopped just short of it
     const d = Math.hypot(p[0] - o[0], p[1] - o[1], p[2] - o[2]);
     if (d > 0.6) {
@@ -1147,17 +1162,19 @@ export class Session {
     if (t - this.histAt < 0.045) return;
     this.histAt = t;
     const n = m.actors.length;
-    if (!this.hist || this.hist.length !== n * HIST * 4) {
-      this.hist = new Float64Array(n * HIST * 4);
-      for (let i = 0; i < this.hist.length; i += 4) this.hist[i] = -99;
+    if (!this.hist || this.hist.length !== n * HIST * HN) {
+      this.hist = new Float64Array(n * HIST * HN);
+      for (let i = 0; i < this.hist.length; i += HN) this.hist[i] = -99;
     }
     const k = this.histN++ % HIST;
     for (const a of m.actors) {
-      const q = (a.id * HIST + k) * 4;
+      const q = (a.id * HIST + k) * HN;
       this.hist[q] = t;
       this.hist[q + 1] = a.body.x;
       this.hist[q + 2] = a.body.y;
       this.hist[q + 3] = a.body.z;
+      this.hist[q + 4] = a.body.y + a.body.height;
+      this.hist[q + 5] = a.prone;
     }
   }
 
@@ -1165,7 +1182,7 @@ export class Session {
 
   private pushPos(out: number[], a: Actor) {
     const b = a.body;
-    const flags = (a.alive ? 1 : 0) | (b.onGround ? 2 : 0) | (a.walking ? 4 : 0) | (a.ads > 0.5 ? 8 : 0) | (a.reloadT > 0 ? 16 : 0) | (b.swim ? 32 : 0) | (a.drop << 6) | (a.healT > 0 ? 256 : 0) | (a.pavise > 0 ? 512 : 0) | (a.paviseUp ? 1024 : 0);
+    const flags = (a.alive ? 1 : 0) | (b.onGround ? 2 : 0) | (a.walking ? 4 : 0) | (a.ads > 0.5 ? 8 : 0) | (a.reloadT > 0 ? 16 : 0) | (b.swim ? 32 : 0) | (a.drop << 6) | (a.healT > 0 ? 256 : 0) | (a.pavise > 0 ? 512 : 0) | (a.paviseUp ? 1024 : 0) | (a.proneTo ? 2048 : 0) | (leanBits(a.lean) << 12);
     const g = a.guns[a.slot];
     out.push(a.id, Math.round(b.x * 100), Math.round(b.y * 100), Math.round(b.z * 100), Math.round(wrap(a.yaw) * 1000), Math.round(a.pitch * 1000), Math.round(b.vx * 10), Math.round(b.vz * 10), Math.round(a.crouch * 100), flags, gunCode(g?.id) * 4 + a.slot, Math.round(a.hp));
   }
@@ -1480,6 +1497,8 @@ export class Session {
       a.body.onGround = !!(f & 2);
       a.body.swim = !!(f & 32);
       a.paviseUp = !!(f & 64) && a.pavise > 0;
+      a.proneTo = !!(f & 128);
+      a.leanTo = leanOf(f, 8);
     }
   }
 
@@ -1503,6 +1522,8 @@ export class Session {
       // a shield carried, and raised (only the host knows what it has left)
       a.pavise = f & 512 ? a.pavise || PAVISE.hp : 0;
       a.paviseUp = !!(f & 1024) && a.pavise > 0;
+      a.proneTo = !!(f & 2048);
+      a.leanTo = leanOf(f, 12);
       const drop = (f >> 6) & 3;
       if (a.drop !== drop) {
         if (a.drop === 1) this.tracks[i].clear();
@@ -2061,7 +2082,7 @@ export class Session {
     if (me.alive && t - this.moveAt >= MOVE_EVERY) {
       this.moveAt = t;
       const b = me.body;
-      const flags = (me.walking ? 1 : 0) | (this.using ? 2 : 0) | (b.onGround ? 4 : 0) | (b.swim ? 8 : 0) | (me.reloadT > 0 ? 16 : 0) | (me.paviseUp ? 32 : 0);
+      const flags = (me.walking ? 1 : 0) | (this.using ? 2 : 0) | (b.onGround ? 4 : 0) | (b.swim ? 8 : 0) | (me.reloadT > 0 ? 16 : 0) | (me.paviseUp ? 32 : 0) | (me.proneTo ? 64 : 0) | (leanBits(me.lean) << 7);
       const mv: Record<string, unknown> = { k: 'mv', t, ep: this.myEpoch < 0 ? me.epoch : this.myEpoch, p: [r2(b.x), r2(b.y), r2(b.z), r2(b.vx), r2(b.vy), r2(b.vz), Math.round(wrap(me.yaw) * 1000) / 1000, Math.round(me.pitch * 1000) / 1000, r2(me.crouch), flags, r2(me.ads), me.slot, 0, 0] };
       if (m.mode === 'royale') {
         // the drop, the guns' rounds and what was loaded: when it changes, and now and then anyway

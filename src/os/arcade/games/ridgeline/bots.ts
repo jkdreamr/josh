@@ -21,8 +21,8 @@ import {
   idleInput,
   inFire,
   isEnemy,
-
   owns,
+  partsOf,
   plantSite,
   priceOf,
   smokeBlocks,
@@ -46,6 +46,7 @@ import { floorAt, heightAt } from './terrain.ts';
 import { RED_WARN, magOf, planeAt, scopeOf } from './royale.ts';
 import { WEAPONS, type WeaponId } from './weapons.ts';
 import { SITE_R, type World } from './world.ts';
+import { MAPS } from './maps.ts';
 
 export type BotLevel = 'easy' | 'normal' | 'hard';
 type Role = 'entry' | 'support' | 'flank';
@@ -92,6 +93,8 @@ export type Brain = {
   strafe: number;
   strafeT: number;
   crouchT: number;
+  /** Royale: how much longer to lie still (sniping from far off, or hidden in the grass). */
+  proneT: number;
   burst: number;
   restT: number;
   posX: number;
@@ -210,6 +213,7 @@ export function newBrain(level: BotLevel, seed: number): Brain {
     strafe: 1,
     strafeT: 0,
     crouchT: 0,
+    proneT: 0,
     burst: 0,
     restT: 0,
     posX: 0,
@@ -461,6 +465,15 @@ function setGoal(m: Match, br: Brain, x: number, z: number, fieldKey = '') {
 /** Deathmatch roaming points that have distance fields. */
 export const DM_HUBS = 8;
 
+// (PARTS spheres of four numbers: written out, since match.ts and this file import each other and either may load first)
+const seen = new Float64Array(5 * 4);
+
+/** Out on open ground on a map with long grass (where lying down hides you). */
+function grassy(m: Match, a: Actor) {
+  const b = a.body;
+  return MAPS[m.world.id].grass.density >= 0.5 && b.y < floorAt(m.world.terrain, b.x, b.z) + 0.15 && b.y > m.world.terrain.water;
+}
+
 /** Looks for the best enemy in view. */
 function perceive(m: Match, a: Actor, br: Brain) {
   const w = m.world;
@@ -521,14 +534,20 @@ function perceive(m: Match, a: Actor, br: Brain) {
       const still = Math.hypot(o.body.vx, o.body.vz) < 1;
       // (in a breach, past 30 m it falls off faster still: the fights are meant to be won on angles, not by spotting)
       const far = m.mode === 'breach' && d > 30 ? (30 / d) ** 2 : 1;
-      const rate = 7 * (40 / Math.max(d, 14)) ** 2 * far * (still ? 0.5 : 1) * (o.crouch > 0.5 ? 0.7 : 1) * (0.6 + br.skill * 0.6) * (m.mode === 'royale' ? 0.55 : 1);
+      // (lying down is harder to pick out still, and in long grass a good deal harder)
+      const low = o.prone > 0.5 ? (grassy(m, o) ? 0.25 : 0.45) : o.crouch > 0.5 ? 0.7 : 1;
+      const rate = 7 * (40 / Math.max(d, 14)) ** 2 * far * (still ? 0.5 : 1) * low * (0.6 + br.skill * 0.6) * (m.mode === 'royale' ? 0.55 : 1);
       if (br.rng() > 1 - Math.exp(-rate * Math.max(0.1, br.think))) continue;
     } else if (!known && m.mode === 'royale' && d > 6 && br.rng() > 0.3 + br.skill * 0.3) continue; // busy looting: takes a moment to notice
-    const chest = o.body.y + o.body.height * 0.68;
-    const head = o.body.y + o.body.height - 0.13;
-    if (smokeBlocks(m, ex, ey, ez, o.body.x, chest, o.body.z)) continue;
-    const seeChest = clearLine(w, ex, ey, ez, o.body.x, chest, o.body.z);
-    if (!seeChest && !clearLine(w, ex, ey, ez, o.body.x, head, o.body.z)) continue;
+    // the chest and the head where they are (lying down, or a head leant out past a corner)
+    partsOf(o, seen);
+    const low = o.prone > 0.5;
+    const cx = low ? seen[4] : o.body.x;
+    const chest = low ? seen[5] : o.body.y + o.body.height * 0.68;
+    const cz = low ? seen[6] : o.body.z;
+    if (smokeBlocks(m, ex, ey, ez, cx, chest, cz)) continue;
+    const seeChest = clearLine(w, ex, ey, ez, cx, chest, cz);
+    if (!seeChest && !clearLine(w, ex, ey, ez, seen[0], seen[1], seen[2])) continue;
     let score = d * (o.id === br.target ? 0.55 : 1) * (o.bot ? 1 : 0.9);
     if (!seeChest) score *= 1.4;
     if (score < bestScore) {
@@ -1663,9 +1682,13 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     const shielded = tgt.paviseUp && (-dx * tf.x - dz * tf.z) / (d || 1) > 0.3;
     // (a crossbow bolt's arc, from where it was zeroed)
     const drop = w.cls === 'crossbow' ? 4.9 * tof * Math.max(0, tof - 30 / w.speed) * (0.5 + br.skill * 0.5) : br.skill * 4.9 * tof * tof;
-    const ty = (shielded ? tgt.body.y + 0.16 : br.head ? tgt.body.y + tgt.body.height - 0.13 : tgt.body.y + tgt.body.height * 0.66) + drop;
-    const ax = tx - a.body.x;
-    const az = tz - a.body.z;
+    // (lying down: the head, or the back just behind it; a head leant out: where it is)
+    partsOf(tgt, seen);
+    const low = tgt.prone > 0.5;
+    const part = br.head ? 0 : low ? 1 : -1;
+    const ty = (shielded ? tgt.body.y + 0.16 : part >= 0 ? seen[part * 4 + 1] : tgt.body.y + tgt.body.height * 0.66) + drop;
+    const ax = tx + (part >= 0 && !shielded ? seen[part * 4] - tgt.body.x : 0) - a.body.x;
+    const az = tz + (part >= 0 && !shielded ? seen[part * 4 + 2] - tgt.body.z : 0) - a.body.z;
     const ay = ty - eyeY(a);
     wantYaw = Math.atan2(-ax, -az);
     wantPitch = Math.atan2(ay, Math.hypot(ax, az));
@@ -1689,6 +1712,8 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
       br.strafeT = 0.35 + r() * 0.9;
       br.strafe = r() < 0.5 ? -1 : 1;
       br.crouchT = r() < br.skill * 0.35 ? 0.6 + r() * 1.2 : 0;
+      // royale, a long shot through a scope or with a marksman's gun: some get down for it
+      if (m.mode === 'royale' && br.proneT <= 0 && d > 55 && g && (scopeOf(g) || w.cls === 'sniper' || w.cls === 'dmr') && r() < 0.15 + br.skill * 0.25) br.proneT = 4 + r() * 6;
     }
     const toward = Math.atan2(dx, dz);
     const reach = REACH[g?.id ?? 'wren'];
@@ -1859,6 +1884,21 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
           }
         }
       }
+    }
+  }
+  // royale: lying still for a long shot (until it runs out, they come close or it gets hurt), or down in long grass
+  // while patching up, well inside the zone
+  if (m.mode === 'royale' && !burning) {
+    if (br.proneT > 0) {
+      br.proneT -= dt;
+      const near = !!tgt && Math.hypot(tgt.body.x - a.body.x, tgt.body.z - a.body.z) < 25;
+      if (near || (m.time - a.hurtT < 0.25 && a.hp < 70)) br.proneT = 0;
+    }
+    const z = m.zone;
+    const hide = !tgt && a.healT > 0 && !!z && Math.hypot(a.body.x - z.x, a.body.z - z.z) < z.r - 15 && grassy(m, a);
+    if (br.proneT > 0 || hide) {
+      inp.prone = true;
+      moveAng = NaN;
     }
   }
   // on fire: straight out of it, the way away from its middle

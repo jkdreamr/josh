@@ -1380,6 +1380,17 @@
   right: 0;
   bottom: 214px;
 }
+.g-ridgeline .g-ridgeline-btn.is-prone {
+  right: 282px;
+  bottom: 0;
+}
+.g-ridgeline .g-ridgeline-btn.is-view {
+  right: 288px;
+  bottom: 64px;
+  width: 38px;
+  height: 38px;
+  font-size: 10px;
+}
 
 /* small windows and phones */
 @container g-ridgeline-stage (max-width: 640px) {

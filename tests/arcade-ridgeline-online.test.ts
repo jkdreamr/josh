@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { newBrain } from '../src/os/arcade/games/ridgeline/bots.ts';
 import { botInput } from '../src/os/arcade/games/ridgeline/bots.ts';
-import { DM_KILLS, currentGun, idleInput, step, type Actor, type Input, type Match, type Mode } from '../src/os/arcade/games/ridgeline/match.ts';
-import { clearLine, groundAt } from '../src/os/arcade/games/ridgeline/physics.ts';
+import { DM_KILLS, LEAN, PARTS, currentGun, idleInput, partsOf, step, type Actor, type Input, type Match, type Mode } from '../src/os/arcade/games/ridgeline/match.ts';
+import { PRONE_H, STAND_H, blockedAt, clearLine, groundAt } from '../src/os/arcade/games/ridgeline/physics.ts';
 import { floorAt } from '../src/os/arcade/games/ridgeline/terrain.ts';
 import { CARS, hurtCar } from '../src/os/arcade/games/ridgeline/cars.ts';
 import { PAVISE, WEAPON_IDS, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
@@ -784,4 +784,133 @@ for (const mode of ['dm', 'royale'] as const) {
     run(1);
     assert.equal(ga.fires, 1, 'and on the guest');
   });
+}
+
+test('online: lying down and leaning travel both ways, the host judges hits on the low body, and keeps a lean out of a wall', () => {
+  const { net, seats } = room(2);
+  const [host, guest] = seats;
+  for (let i = 0; i < 60 * 40 && host.s.match?.phase !== 'live'; i++) frame(net, seats);
+  const h = host.s.match!;
+  const gm = guest.s.match!;
+  assert.equal(h.phase, 'live');
+  h.phaseT = 999;
+  const me = gm.me;
+  const ga = gm.actors[me];
+  const ha = h.actors[me];
+  // everyone holds still but for what the two people are told to do
+  gm.actors[me].brain = null;
+  for (const a of h.actors)
+    if (a !== ha) {
+      a.bot = false;
+      a.brain = null;
+    }
+  const want = { prone: false, lean: 0 };
+  const hostWant = { prone: false, lean: 0 };
+  guest.input = (_m, a) => ({ ...idleInput(a.yaw, a.pitch), prone: want.prone, lean: want.lean });
+  host.input = (_m, a) => ({ ...idleInput(a.yaw, a.pitch), prone: hostWant.prone, lean: hostWant.lean });
+  const run = (sec: number) => {
+    for (let i = 0; i < sec * 60; i++) frame(net, seats);
+  };
+  run(0.5);
+  // the guest lies down: at once on its own machine, at the host's own pace there
+  want.prone = true;
+  run(1.5);
+  assert.equal(ga.prone, 1, 'down on its own machine');
+  assert.equal(ha.prone, 1, 'and on the host');
+  assert.ok(Math.abs(ha.body.height - PRONE_H) < 1e-6, 'with the low body the host judges hits on');
+  want.prone = false;
+  run(1.5);
+  assert.equal(ha.prone, 0, 'up again on the host');
+  assert.equal(ha.body.height, STAND_H);
+  // the guest leans out: the host leans it as far as the walls there allow
+  want.lean = 1;
+  run(1);
+  assert.ok(ga.lean > 0.3, `leaning on its own machine (${ga.lean.toFixed(2)})`);
+  assert.ok(Math.abs(ha.lean - ga.lean) < 0.16, `and on the host (${ha.lean.toFixed(2)} against ${ga.lean.toFixed(2)})`);
+  want.lean = 0;
+  run(1);
+  assert.equal(ha.lean, 0);
+  // the host's own soldier lies down, then leans: the guest's mirror shows it
+  const v = h.actors[h.me];
+  assert.notEqual(v.team, ha.team, 'the two people are on opposite sides');
+  hostWant.prone = true;
+  run(1.5);
+  const gv = gm.actors[v.id];
+  assert.ok(gv.prone > 0.95 && gv.body.height < PRONE_H + 0.05, `the guest sees it lying down (${gv.prone.toFixed(2)})`);
+  hostWant.prone = false;
+  hostWant.lean = -1;
+  run(1.5);
+  assert.ok(v.lean < -0.2 && Math.abs(gv.lean - v.lean) < 0.16, `and leaning (${gv.lean.toFixed(2)} against ${v.lean.toFixed(2)})`);
+  hostWant.lean = 0;
+  run(1);
+  // the host's soldier down in the open a few meters off: a hit claimed over the body is refused, one on the head taken
+  const eye = { x: ha.body.x, y: ha.body.y + ha.body.height - 0.14, z: ha.body.z };
+  let placed = false;
+  const parts = new Float64Array(PARTS * 4);
+  for (let k = 0; k < 64 && !placed; k++) {
+    const ang = (k / 64) * Math.PI * 2;
+    const x = ha.body.x + Math.sin(ang) * 6;
+    const z = ha.body.z + Math.cos(ang) * 6;
+    const y = groundAt(h.world, x, z, ha.body.y + 2);
+    if (Math.abs(y - ha.body.y) > 0.5 || !clearLine(h.world, eye.x, eye.y, eye.z, x, y + 0.4, z) || !clearLine(h.world, eye.x, eye.y, eye.z, x, y + 1, z)) continue;
+    v.body.x = x;
+    v.body.y = y;
+    v.body.z = z;
+    placed = true;
+  }
+  assert.ok(placed, 'found an open spot');
+  hostWant.prone = true;
+  run(1.6);
+  assert.equal(v.prone, 1);
+  partsOf(v, parts);
+  const claim = (p: number[]) => {
+    const w = WEAPON_IDS.indexOf(currentGun(ha)!.id) + 1;
+    const o = [eye.x, eye.y, eye.z];
+    const l = Math.hypot(p[0] - o[0], p[1] - o[1], p[2] - o[2]);
+    guest.api.send({ tag: NET_TAG, r: guest.api.round, k: 'fire', w, o, v: [((p[0] - o[0]) / l) * 900, ((p[1] - o[1]) / l) * 900, ((p[2] - o[2]) / l) * 900] });
+    guest.api.send({ tag: NET_TAG, r: guest.api.round, k: 'hit', v: v.id, z: 1, w, o, p });
+    run(0.2);
+  };
+  v.shield = 0;
+  const hp = v.hp;
+  claim([v.body.x, v.body.y + 1.0, v.body.z]);
+  assert.equal(v.hp, hp, 'a hit claimed in the air over the body is turned down');
+  claim([parts[0], parts[1], parts[2]]);
+  assert.ok(v.hp < hp, `one on the head counts (${v.hp.toFixed(0)})`);
+  hostWant.prone = false;
+  // a forged lean, full into a wall: the host holds it short of the wall
+  guest.asleep = true;
+  const spot = besideWall(h, ha.body.x, ha.body.z);
+  assert.ok(spot, 'found a wall');
+  // (walked there at a run, as its machine would say; looking toward +z puts the right hand at -x: the wall)
+  const x0 = ha.body.x;
+  const z0 = ha.body.z;
+  const far = Math.hypot(spot.x - x0, spot.z - z0);
+  const walk = Math.ceil((far / 6) * 60);
+  for (let i = 0; i <= walk + 60; i++) {
+    const k = Math.min(1, i / walk);
+    const t = net.time + guest.api.skew;
+    const lean = k >= 1 ? 4 | (14 << 7) : 4 | (7 << 7);
+    guest.api.send({ tag: NET_TAG, r: guest.api.round, k: 'mv', t, ep: ha.epoch, p: [x0 + (spot.x - x0) * k, k >= 1 ? spot.y : ha.body.y, z0 + (spot.z - z0) * k, 0, 0, 0, Math.PI, 0, 0, lean, 0, ha.slot, 0, 0] });
+    frame(net, seats);
+  }
+  assert.ok(Math.abs(ha.body.x - spot.x) < 0.2 && Math.abs(ha.body.z - spot.z) < 0.2, 'where it says it is');
+  assert.ok(ha.lean > 0 && ha.lean < 0.5, `leaning, but not into the wall (${ha.lean.toFixed(2)})`);
+  assert.ok(ha.body.x + Math.cos(ha.yaw) * ha.lean * LEAN > spot.b.x1 + 0.1, 'its eyes stay out of the wall');
+});
+
+/** The nearest tall wall to (x, z) (one that stands from the ground to over head height), and an open spot just out
+ * from its +x face, half way along it. */
+function besideWall(m: Match, x0: number, z0: number) {
+  const w = m.world;
+  const near = [...w.boxes].sort((a, b) => Math.hypot(a.x1 - x0, a.z0 - z0) - Math.hypot(b.x1 - x0, b.z0 - z0));
+  for (const b of near) {
+    if (b.z1 - b.z0 < 1.5) continue;
+    const x = b.x1 + 0.4;
+    const z = (b.z0 + b.z1) / 2;
+    const y = groundAt(w, x, z, b.y0 + 0.5);
+    if (b.y0 > y + 0.2 || b.y1 < y + 2.4 || blockedAt(w, x, z, y)) continue;
+    return { b, x, y, z };
+  }
+  return null;
 }
