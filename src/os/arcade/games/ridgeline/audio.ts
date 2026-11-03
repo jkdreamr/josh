@@ -7,6 +7,7 @@
 import { sfx } from '../../kit';
 import { CARS } from './cars.ts';
 import { echoOfMine, type Ev, type Match } from './match.ts';
+import { planeAt } from './royale.ts';
 import type { Surface } from './world.ts';
 import { WEAPONS, type WeaponClass, type WeaponId } from './weapons.ts';
 
@@ -407,8 +408,17 @@ export function playEvents(m: Match, evs: Ev[], ear: Ear, you: number) {
         break;
       case 'land':
         if (e.a === you) {
-          osc(g, HERE, { freq: 90, to: 50, decay: 0.08, vol: 0.25 });
-          burst(g, HERE, { type: 'lowpass', freq: 800, decay: 0.1, vol: 0.22 });
+          const a = m.actors[you];
+          if (a && m.mode === 'royale' && a.dropT === m.time) {
+            // down from the sky: boots hit hard, a roll through the dirt, the canopy spilling its air behind
+            osc(g, HERE, { freq: 75, to: 38, decay: 0.22, vol: 0.42 });
+            burst(g, HERE, { type: 'lowpass', freq: 650, decay: 0.18, vol: 0.38 });
+            burst(g, HERE, { type: 'lowpass', freq: 1300, attack: 0.05, hold: 0.25, decay: 0.3, vol: 0.12, at: 0.1 });
+            burst(g, HERE, { type: 'bandpass', freq: 500, q: 0.7, attack: 0.15, decay: 0.8, vol: 0.1, at: 0.15 });
+          } else {
+            osc(g, HERE, { freq: 90, to: 50, decay: 0.08, vol: 0.25 });
+            burst(g, HERE, { type: 'lowpass', freq: 800, decay: 0.1, vol: 0.22 });
+          }
         }
         break;
       case 'buy':
@@ -579,10 +589,11 @@ function stopVoice(v: Voice) {
   }
 }
 
-/** Silences every engine (paused, muted, the match over, the game closed). */
+/** Silences every engine (paused, muted, the match over, the game closed), and the wind and the transport too. */
 export function stopEngines() {
   for (const v of voices.values()) stopVoice(v);
   voices.clear();
+  stopAir();
 }
 
 /**
@@ -644,4 +655,112 @@ export function engineSounds(m: Match, ear: Ear, you: number) {
       stopVoice(v);
       voices.delete(id);
     }
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// the air
+
+/** The wind (looped noise through a band that rises with the speed) and the transport's drone (two low saws a little
+ * apart, through a lowpass), each with its own level. */
+type Air = { ctx: AudioContext; src: AudioBufferSourceNode; wf: BiquadFilterNode; wg: GainNode; a: OscillatorNode; b: OscillatorNode; df: BiquadFilterNode; dg: GainNode };
+let air: Air | null = null;
+
+function startAir(g: Graph): Air {
+  const ctx = g.ctx;
+  const src = ctx.createBufferSource();
+  src.buffer = noise(g);
+  src.loop = true;
+  const wf = ctx.createBiquadFilter();
+  wf.type = 'bandpass';
+  wf.frequency.value = 500;
+  wf.Q.value = 0.6;
+  const wg = ctx.createGain();
+  wg.gain.value = 0.0001;
+  src.connect(wf).connect(wg).connect(g.out);
+  const a = ctx.createOscillator();
+  a.type = 'sawtooth';
+  a.frequency.value = 57;
+  const b = ctx.createOscillator();
+  b.type = 'sawtooth';
+  b.frequency.value = 57.8;
+  const df = ctx.createBiquadFilter();
+  df.type = 'lowpass';
+  df.frequency.value = 240;
+  df.Q.value = 1.1;
+  const dg = ctx.createGain();
+  dg.gain.value = 0.0001;
+  a.connect(df);
+  b.connect(df);
+  df.connect(dg).connect(g.out);
+  src.start();
+  a.start();
+  b.start();
+  return { ctx, src, wf, wg, a, b, df, dg };
+}
+
+function stopAir() {
+  const v = air;
+  air = null;
+  if (!v) return;
+  const t = v.ctx.currentTime;
+  try {
+    v.wg.gain.setTargetAtTime(0.0001, t, 0.08);
+    v.dg.gain.setTargetAtTime(0.0001, t, 0.08);
+    v.src.stop(t + 0.5);
+    v.a.stop(t + 0.5);
+    v.b.stop(t + 0.5);
+    v.a.onended = () => {
+      for (const n of [v.src, v.wf, v.wg, v.a, v.b, v.df, v.dg]) n.disconnect();
+    };
+  } catch {
+    /* already stopped */
+  }
+}
+
+/**
+ * A royale's air, once a frame for the one the camera follows: aboard, the transport's drone all round (muffled by
+ * the hull); in freefall a rushing wind that climbs with the speed; under the canopy a softer wind with the cloth
+ * fluttering in it. On the ground the transport is still heard going over while it is near.
+ */
+export function airSounds(m: Match, you: number) {
+  const g = sfx.graph();
+  const a = m.actors[you];
+  if (!g || m.mode !== 'royale' || m.phase === 'over' || !a) {
+    stopAir();
+    return;
+  }
+  let wind = 0;
+  let windF = 400;
+  let drone = 0;
+  let droneF = 240;
+  if (a.alive && a.drop === 2) {
+    const v = Math.hypot(a.body.vx, a.body.vy, a.body.vz);
+    wind = 0.05 + Math.min(1, v / 60) * 0.11;
+    windF = 450 + v * 16;
+  } else if (a.alive && a.drop === 3) {
+    wind = 0.035 * (1 + 0.3 * Math.sin(m.time * 6.3) * Math.sin(m.time * 2.1));
+    windF = 360 + Math.hypot(a.body.vx, a.body.vz) * 20;
+  }
+  if (a.alive && a.drop === 1) {
+    drone = 0.06;
+    droneF = 210;
+  } else if (m.plane) {
+    const p = planeAt(m.plane, m.time);
+    const d = Math.hypot(p.x - a.body.x, m.plane.y - a.body.y, p.z - a.body.z);
+    if (d < 750) {
+      drone = 0.05 * (1 - d / 750) ** 2;
+      droneF = 160 + (1 - d / 750) * 220;
+    }
+  }
+  if (wind <= 0 && drone <= 0) {
+    if (air) stopAir();
+    return;
+  }
+  if (air && air.ctx !== g.ctx) stopAir();
+  if (!air) air = startAir(g);
+  const t = g.ctx.currentTime;
+  air.wg.gain.setTargetAtTime(Math.max(0.0001, wind), t, 0.12);
+  air.wf.frequency.setTargetAtTime(windF, t, 0.15);
+  air.dg.gain.setTargetAtTime(Math.max(0.0001, drone), t, 0.3);
+  air.df.frequency.setTargetAtTime(droneF, t, 0.3);
 }

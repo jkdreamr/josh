@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as
 import { GameShell, Segmented, defineSetting, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { meta } from './meta';
-import { chargeBeeps, engineSounds, playEvents, stopEngines } from './audio.ts';
+import { airSounds, chargeBeeps, engineSounds, playEvents, stopEngines } from './audio.ts';
 import { CARS, carNear } from './cars.ts';
 import { Score, type Mood } from './score.ts';
 import { useAssets } from './assets.ts';
@@ -10,12 +10,13 @@ import { autoQuality, createView, flyover, type Quality, type View } from './gfx
 import { kitOf, paletteOf } from './gfx/soldiers.ts';
 import { Ammo, BannerView, HitInfo, ItemBar, KillConfirm, KitPanel, type KillPop, BreachPrompts, BuyMenu, DeathPanel, Feed, Markers, MedalView, Minimap, Reticle, RoyalePrompts, SHOP_ORDER, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type MedalPop, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi, type HitInfoApi } from './hud.tsx';
 import { MAPS, MAP_IDS, type MapId } from './maps.ts';
-import { DEFUSE_HALF, DEFUSE_TIME, DEG, PERSON_HEALTH, PLANT_TIME, type Medal, type Mode, canDefuse, canShop, canUse, createMatch, currentGun, echoOfMine, eyeY, finalScore, idleInput, lootNear, nadesOf, owns, plantSite, spareOf, sightSwap, spreadOf, standings, step, viewDir, wants, type Actor, type Cause, type Input, type Match, type NadeKind, type ShopItem } from './match.ts';
+import { DEFUSE_HALF, DEFUSE_TIME, DEG, PERSON_HEALTH, PLANT_TIME, RUN, type Medal, type Mode, canDefuse, canShop, canUse, createMatch, currentGun, echoOfMine, eyeX, eyeY, eyeZ, finalScore, idleInput, lootNear, nadesOf, owns, plantSite, spareOf, sightSwap, spreadOf, standings, step, viewDir, wants, type Actor, type Cause, type Input, type Match, type NadeKind, type ShopItem } from './match.ts';
 import { AMMO_KINDS, ROYALE_PLAYERS, USE, ZONES, ammoCap, boostCap, gunLabel, healCap, itemName, magOf, nadeCap, planeAt, scopeOf, zoomOf, type AttKind, type Item, type UseKind } from './royale.ts';
 import { newBrain } from './bots.ts';
 import { Session, type OnlineApi } from './online.ts';
 import { supplyLeft, underRoof } from './match.ts';
 import { newHit, rayWorld } from './physics.ts';
+import { aimPoint, shoulderCam, type Cam } from './camera.ts';
 import { floorAt } from './terrain.ts';
 import { PAVISE, WEAPONS, type WeaponId } from './weapons.ts';
 
@@ -29,6 +30,11 @@ const LEVEL = defineSetting('ridgeline:bots', ['easy', 'normal', 'hard'] as cons
 const QUALITY = defineSetting('ridgeline:quality', ['auto', 'low', 'medium', 'high', 'ultra'] as const, 'auto', { live: true });
 const SENS = defineSetting('ridgeline:sens', ['0.5', '0.75', '1', '1.5', '2'] as const, '1', { live: true });
 const DMGUN = defineSetting('ridgeline:dmgun', ['kestrel', 'talon', 'rampart', 'hornet', 'wasp', 'mauler', 'thresher', 'lancer', 'arbalest', 'longbow'] as const, 'kestrel', { live: true });
+/** The camera a match starts in (O switches it while playing): Auto is over the shoulder in a royale, first person in
+ * the others. Only ever this machine's: online, nobody else sees which. */
+const VIEW = defineSetting('ridgeline:view', ['auto', 'first', 'third'] as const, 'auto', { live: true });
+/** The camera's own motion: the head bobbing with your steps, the jolt of a landing, explosions shaking it. */
+const SHAKE = defineSetting('ridgeline:shake', ['on', 'off'] as const, 'on', { live: true });
 
 const modeOptions = [
   ['breach', 'Breach 5v5'],
@@ -60,6 +66,15 @@ const sensOptions = [
   ['1', '1'],
   ['1.5', '1.5'],
   ['2', '2'],
+] as const;
+const viewOptions = [
+  ['auto', 'Auto'],
+  ['first', 'First person'],
+  ['third', 'Third person'],
+] as const;
+const shakeOptions = [
+  ['on', 'On'],
+  ['off', 'Off'],
 ] as const;
 const gunOptions = [
   ['kestrel', 'Kestrel'],
@@ -97,6 +112,8 @@ function Setup() {
   const [quality, setQuality] = useSetting(QUALITY);
   const [sens, setSens] = useSetting(SENS);
   const [gun, setGun] = useSetting(DMGUN);
+  const [view, setView] = useSetting(VIEW);
+  const [shake, setShake] = useSetting(SHAKE);
   const mouse = !shell.touch || finePointer();
   return (
     <div className="g-ridgeline-setup">
@@ -108,6 +125,9 @@ function Setup() {
       {mode === 'dm' && <Segmented label="Gun" value={gun} options={gunOptions} onChange={setGun} />}
       <Segmented label="Graphics" value={quality} options={qualityOptions} onChange={setQuality} />
       {mouse && <Segmented label="Mouse" value={sens} options={sensOptions} onChange={setSens} />}
+      <Segmented label="View" value={view} options={viewOptions} onChange={setView} />
+      {view === 'auto' && <p className="g-ridgeline-note">over the shoulder in Royale, first person in the others. O switches while you play.</p>}
+      <Segmented label="Camera shake" value={shake} options={shakeOptions} onChange={setShake} />
     </div>
   );
 }
@@ -129,6 +149,8 @@ function OnlineSetup() {
   const [quality, setQuality] = useSetting(QUALITY);
   const [sens, setSens] = useSetting(SENS);
   const [gun, setGun] = useSetting(DMGUN);
+  const [view, setView] = useSetting(VIEW);
+  const [shake, setShake] = useSetting(SHAKE);
   const mouse = !shell.touch || finePointer();
   const host = !online || online.isHost;
   return (
@@ -146,6 +168,8 @@ function OnlineSetup() {
       {(!host || mode === 'dm') && <Segmented label="Deathmatch gun" value={gun} options={gunOptions} onChange={setGun} />}
       <Segmented label="Graphics" value={quality} options={qualityOptions} onChange={setQuality} />
       {mouse && <Segmented label="Mouse" value={sens} options={sensOptions} onChange={setSens} />}
+      <Segmented label="View" value={view} options={viewOptions} onChange={setView} />
+      <Segmented label="Camera shake" value={shake} options={shakeOptions} onChange={setShake} />
     </div>
   );
 }
@@ -297,7 +321,7 @@ const wrapAngle = (a: number) => {
   return d;
 };
 
-type Touch = { stick: number | null; sx: number; sy: number; mx: number; mz: number; look: number | null; lx: number; ly: number; fire: number | null; fx: number; fy: number; ads: boolean; crouch: boolean; jump: boolean; reload: boolean; swap: boolean; frag: boolean; smoke: boolean; flash: boolean; use: boolean; heal: boolean; hold: boolean; util: boolean; next: boolean; shield: boolean };
+type Touch = { stick: number | null; sx: number; sy: number; mx: number; mz: number; look: number | null; lx: number; ly: number; fire: number | null; fx: number; fy: number; ads: boolean; crouch: boolean; jump: boolean; reload: boolean; swap: boolean; frag: boolean; smoke: boolean; flash: boolean; use: boolean; heal: boolean; hold: boolean; util: boolean; next: boolean; shield: boolean; prone: boolean; view: boolean };
 
 /** Royale weapon keys 1, 2, 3: the two long guns, then the sidearm. */
 const ROYALE_SLOTS = [0, 2, 1] as const;
@@ -318,8 +342,10 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
   const [qSetting] = useSetting(QUALITY);
   const [sens] = useSetting(SENS);
   const [dmGun] = useSetting(DMGUN);
-  const settings = useRef({ mode, level, sens: Number(sens), dmGun });
-  settings.current = { mode, level, sens: Number(sens), dmGun };
+  const [viewSetting] = useSetting(VIEW);
+  const [shakeSetting] = useSetting(SHAKE);
+  const settings = useRef({ mode, level, sens: Number(sens), dmGun, view: viewSetting, shake: shakeSetting === 'on' });
+  settings.current = { mode, level, sens: Number(sens), dmGun, view: viewSetting, shake: shakeSetting === 'on' };
   const quality: Quality = qSetting === 'auto' ? autoQuality(shell.touch && !finePointer()) : qSetting;
   const [world, setWorld] = useState<World | null>(() => cachedWorld(mapId, royale));
   const [glError, setGlError] = useState(false);
@@ -358,8 +384,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
 
   // input state
   const look = useRef({ dx: 0, dy: 0 });
-  const mouse = useRef({ fire: false, ads: false, wheel: 0 });
-  const touch = useRef<Touch>({ stick: null, sx: 0, sy: 0, mx: 0, mz: 0, look: null, lx: 0, ly: 0, fire: null, fx: 0, fy: 0, ads: false, crouch: false, jump: false, reload: false, swap: false, frag: false, smoke: false, flash: false, use: false, heal: false, hold: false, util: false, next: false, shield: false });
+  const mouse = useRef({ fire: false, ads: false, wheel: 0, mid: false });
+  const touch = useRef<Touch>({ stick: null, sx: 0, sy: 0, mx: 0, mz: 0, look: null, lx: 0, ly: 0, fire: null, fx: 0, fy: 0, ads: false, crouch: false, jump: false, reload: false, swap: false, frag: false, smoke: false, flash: false, use: false, heal: false, hold: false, util: false, next: false, shield: false, prone: false, view: false });
   /** The grenade G throws (T picks the next one you carry). */
   const nadePick = useRef<NadeKind>('frag');
   const unlockOnPurpose = useRef(false);
@@ -381,6 +407,21 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
   /** At the wheel: where you look relative to the car's heading, and how long the mouse has been still. */
   const carLook = useRef({ off: 0, pitch: -0.2, idle: 0 });
   const camHit = useRef(newHit());
+  /** The camera: over the shoulder or not (null: not picked yet this match, the setting decides), and how far it has
+   * got from one to the other (0 first person, 1 third). */
+  const third = useRef<boolean | null>(null);
+  const thirdK = useRef(0);
+  /** Lying down: N puts you down and up again (crouch or jump gets up too). */
+  const proneOn = useRef(false);
+  /** Freelook (held ` or the middle button): how far the view is turned from where the body faces and aims. */
+  const free = useRef({ yaw: 0, pitch: 0, on: false });
+  /** Third person: where the camera sits and where its crosshair rests (reused every frame). */
+  const tpCam = useRef<Cam>({ x: 0, y: 0, z: 0, dist: 0 });
+  const tpAim = useRef({ x: 0, y: 0, z: 0 });
+  const aimHit = useRef(newHit());
+  /** The camera's own motion: shake left from explosions (0 to 1), the dip of a landing and its speed, the roll of a
+   * landing under the canopy, and what the body was doing last frame (to tell a landing's force and a canopy's end). */
+  const feel = useRef({ shake: 0, dip: 0, dipV: 0, roll: 0, vy: 0, drop: 0, watched: -1 });
   const mapCars = useRef<NonNullable<MapState['cars']>>([]);
   const lastRender = useRef(0);
   /** When the loop last ran (the online host's hidden tab steps the match from a worker's beat instead). */
@@ -467,6 +508,9 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       if (!m) return null;
       matchRef.current = { m, round: s.round };
       camY.current = null;
+      third.current = null;
+      proneOn.current = false;
+      free.current.yaw = free.current.pitch = 0;
       overAt.current = null;
       finished.current = false;
       spec.current = 0;
@@ -535,6 +579,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       if (!now) {
         mouse.current.fire = false;
         mouse.current.ads = false;
+        mouse.current.mid = false;
         if (unlockOnPurpose.current) unlockOnPurpose.current = false;
         else if (shellRef.current.status === 'playing') shellRef.current.pause();
       }
@@ -734,6 +779,20 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         cl.pitch = -0.2;
         cl.idle = 0;
       }
+      // freelook: the mouse turns the view alone, the body (and where it aims) stays as it was; let go, the view
+      // swings back
+      const fl = free.current;
+      fl.on = (k.down('Backquote') || mouse.current.mid) && you.alive && !you.drop && !myCar && !mouse.current.ads && !k.down('KeyZ');
+      if (fl.on) {
+        fl.yaw = Math.max(-2.4, Math.min(2.4, fl.yaw + (yaw - you.yaw)));
+        fl.pitch = Math.max(-1.1, Math.min(1, fl.pitch + (pitch - you.pitch)));
+        yaw = you.yaw;
+        pitch = you.pitch;
+      } else {
+        const back = Math.exp(-dt * 14);
+        fl.yaw *= back;
+        fl.pitch *= back;
+      }
       look.current.dx = 0;
       look.current.dy = 0;
       pitch = Math.max(-1.45, Math.min(1.45, pitch));
@@ -745,7 +804,18 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         inp.mx = (k.down('KeyD', 'ArrowRight') ? 1 : 0) - (k.down('KeyA', 'ArrowLeft') ? 1 : 0) + t.mx;
         const stick = Math.hypot(t.mx, t.mz);
         inp.walk = k.down('ShiftLeft', 'ShiftRight') || (t.stick !== null && stick > 0.05 && stick < 0.55);
+        // lying down: N puts you down and gets you up; down, a crouch or a jump gets you up too
+        const cTap = k.pressed('KeyC');
+        if (k.pressed('KeyN') || t.prone) proneOn.current = !proneOn.current;
+        if (proneOn.current && (cTap || (!myCar && k.pressed('Space')) || t.jump)) {
+          proneOn.current = false;
+          t.jump = false;
+        }
+        if (you.car >= 0 || you.drop) proneOn.current = false;
+        inp.prone = proneOn.current;
         inp.crouch = k.down('KeyC') || t.crouch;
+        // lean out: hold Y (left) or U (right)
+        inp.lean = (k.down('KeyU') ? 1 : 0) - (k.down('KeyY') ? 1 : 0);
         // (at the wheel Space is the handbrake, held)
         inp.jump = myCar ? k.down('Space') || t.jump : k.pressed('Space') || t.jump;
         inp.reload = k.pressed('KeyR') || t.reload;
@@ -803,7 +873,9 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         }
       }
       mouse.current.wheel = 0;
-      t.jump = t.reload = t.swap = t.frag = t.smoke = t.flash = t.use = t.heal = t.util = t.next = t.shield = false;
+      // O (or the touch View button): first or third person, this match
+      if (k.pressed('KeyO') || t.view) third.current = !third.current;
+      t.jump = t.reload = t.swap = t.frag = t.smoke = t.flash = t.use = t.heal = t.util = t.next = t.shield = t.prone = t.view = false;
       const p = pending.current;
       if (p.buy) inp.buy = p.buy;
       p.buy = null;
@@ -816,6 +888,18 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       }
       setBoard(k.down('Tab'));
       if (!touchRef.current) setBigMap(k.down('KeyM'));
+      // third person: the crosshair is on the camera's ray, so the shot is told the point it rests on (aiming down
+      // sights is first person again, and while freelooking the shot goes where the body aims)
+      if (third.current === null) third.current = st.view === 'third' || (st.view === 'auto' && m.mode === 'royale');
+      // (from where the camera is: part of the way in while it eases to first person and back)
+      const tk = thirdK.current;
+      if (third.current && tk > 0.02 && you.alive && !you.drop && (you.car < 0 || you.carSeat > 0) && !fl.on && Math.abs(fl.yaw) < 0.05 && Math.abs(fl.pitch) < 0.05) {
+        const cam = shoulderCam(m, you, inp.yaw, inp.pitch, tpCam.current, aimHit.current);
+        cam.x = eyeX(you) + (cam.x - eyeX(you)) * tk;
+        cam.y = eyeY(you) + (cam.y - eyeY(you)) * tk;
+        cam.z = eyeZ(you) + (cam.z - eyeZ(you)) * tk;
+        inp.aim = aimPoint(m, you, cam, inp.yaw, inp.pitch, tpAim.current, aimHit.current);
+      }
 
       const net = netRef.current;
       net?.before(m);
@@ -823,6 +907,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       if (net) net.using = inp.use;
       step(m, dt, inp);
       net?.after(m);
+      // (where lying down isn't possible, the toggle lets go of it)
+      if (proneOn.current && !you.proneTo) proneOn.current = false;
 
       // feedback from what happened
       for (const e of m.events) {
@@ -898,6 +984,30 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         if (e.t === 'sides') pushBanner('Switching sides', 'everyone keeps their guns and gear', 'info');
         if (e.t === 'medal' && e.a === m.me) setMedal({ ...medalText(e.kind, e.n), key: Date.now() + Math.random() });
       }
+      // the camera's own motion: a landing jolts it (harder the faster the fall, a roll when coming down under the
+      // canopy), explosions close by shake it
+      const fe = feel.current;
+      const seen = watched(m);
+      if (fe.watched !== seen.id) {
+        fe.watched = seen.id;
+        fe.vy = 0;
+        fe.drop = seen.drop;
+      }
+      if (st.shake) {
+        for (const e of m.events) {
+          if (e.t === 'land' && e.a === seen.id) {
+            const chute = fe.drop === 3;
+            fe.dipV -= chute ? 2.6 : Math.min(2.4, Math.max(0, -fe.vy - 2) * 0.22);
+            if (chute) fe.roll = 1;
+          } else if (e.t === 'boom' || e.t === 'shell' || e.t === 'blast') {
+            const reach = e.t === 'boom' ? 32 : e.t === 'shell' ? 48 : 80;
+            const d = Math.hypot(e.x - seen.body.x, e.y - seen.body.y, e.z - seen.body.z);
+            if (d < reach) fe.shake = Math.min(1, fe.shake + (1 - d / reach) ** 2 * 0.9);
+          }
+        }
+      } else fe.shake = fe.dip = fe.dipV = fe.roll = 0;
+      fe.vy = seen.body.vy;
+      fe.drop = seen.drop;
       if (supplyNote.current > 0 && time.current >= supplyNote.current) {
         supplyNote.current = 0;
         if (you.alive) pushBanner('Supply drop incoming', 'top gear inside. follow the blue smoke, or check the map', 'info');
@@ -921,6 +1031,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       playEvents(m, m.events, ear, m.me);
       chargeBeeps(m, ear);
       engineSounds(m, ear, m.me);
+      airSounds(m, eyeA === you ? m.me : eyeA.id);
       score.current.tick(moodOf(m));
 
       // the HUD, ten or so times a second
@@ -947,22 +1058,80 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       }
       const you = m.actors[m.me];
       const a = watched(m);
-      let eye = { x: a.body.x, y: eyeY(a), z: a.body.z, yaw: a.yaw, pitch: a.pitch };
+      const st = settings.current;
+      const fl = free.current;
+      const fe = feel.current;
+      // (freelook turns only the view)
+      const lookYaw = a.yaw + (a === you ? fl.yaw : 0);
+      const lookPitch = Math.max(-1.45, Math.min(1.45, a.pitch + (a === you ? fl.pitch : 0)));
+      let eye = { x: eyeX(a), y: eyeY(a), z: eyeZ(a), yaw: lookYaw, pitch: lookPitch, roll: 0 };
       // smooth steps up (stairs, crates) without lagging falls
+      let stepY = 0;
       if (a === you) {
         const target = eye.y;
         if (camY.current === null || Math.abs(camY.current - target) > 2.5 || target < camY.current) camY.current = target;
         else camY.current += (target - camY.current) * Math.min(1, dt * 16);
+        stepY = camY.current - target;
         eye.y = camY.current;
       }
       let hide = a.id;
+      // over the shoulder (on foot, or riding along): eased in and out, and aiming down sights is first person again
+      const onFoot = a.alive && !a.drop && (a.car < 0 || a.carSeat > 0);
+      const wantThird = third.current && onFoot ? 1 - Math.min(1, Math.max(0, (a.ads - 0.15) / 0.45)) : 0;
+      thirdK.current += (wantThird - thirdK.current) * Math.min(1, dt * (wantThird < thirdK.current ? 16 : 7));
+      if (thirdK.current < 0.002) thirdK.current = 0;
+      const tk = onFoot ? thirdK.current : 0;
+      if (tk > 0) {
+        const cam = shoulderCam(m, a, lookYaw, lookPitch, tpCam.current, camHit.current);
+        eye.x += (cam.x - eye.x) * tk;
+        eye.y += (cam.y + stepY - eye.y) * tk;
+        eye.z += (cam.z - eye.z) * tk;
+        // (pulled right in against a wall, the body would fill the view: then it isn't drawn)
+        if (tk > 0.35 && cam.dist > 0.75) hide = -1;
+      }
+      // the head's own motion (unless camera shake is off): a bob with each step, the dip of a landing (and a roll
+      // coming down under the canopy), explosions close by; a lean always tips the view a little
+      fe.dipV += (-fe.dip * 150 - fe.dipV * 19) * dt;
+      fe.dip = Math.max(-0.45, Math.min(0.2, fe.dip + fe.dipV * dt));
+      fe.shake = Math.max(0, fe.shake - dt * 1.5);
+      if (st.shake && a.alive && !a.drop && a.car < 0) {
+        const sp = a.body.onGround ? Math.min(1, Math.hypot(a.body.vx, a.body.vz) / RUN) : 0;
+        const ph = a.phase * 2.2;
+        const calm = 1 - a.ads * 0.75;
+        eye.y += (0.5 - Math.abs(Math.sin(ph))) * (a.prone > 0.5 ? 0.014 : 0.04) * sp * calm;
+        eye.roll += Math.sin(ph) * 0.006 * sp * calm;
+        eye.y += fe.dip;
+        eye.pitch += fe.dip * 0.22;
+        if (fe.roll > 0) {
+          fe.roll = Math.max(0, fe.roll - dt / 0.75);
+          eye.roll += Math.sin((1 - fe.roll) * Math.PI) * 0.17;
+          eye.pitch -= Math.sin((1 - fe.roll) * Math.PI) * 0.12;
+        }
+      }
+      if (st.shake && fe.shake > 0) {
+        const s2 = fe.shake * fe.shake;
+        const tt = time.current;
+        eye.x += (Math.sin(tt * 41.3) + Math.sin(tt * 23.7)) * 0.025 * s2;
+        eye.y += (Math.sin(tt * 37.9 + 1) + Math.sin(tt * 19.1)) * 0.025 * s2;
+        eye.yaw += Math.sin(tt * 33.1 + 2) * 0.012 * s2;
+        eye.pitch += Math.sin(tt * 28.3 + 4) * 0.012 * s2;
+        eye.roll += Math.sin(tt * 30.7 + 3) * 0.016 * s2;
+      }
+      eye.roll -= a.lean * (0.075 - 0.045 * tk);
       // dropping in: a camera behind (the transport, or you), turned with the mouse
       if (a === you && you.alive && you.drop) {
         // just out of the door the camera eases in from the transport's distance, clear of its tail
-        const dist = you.drop === 1 ? 38 : you.drop === 2 ? 6.5 + 31.5 * Math.max(0, 1 - you.dropT / 1.6) : 8;
+        // (under the canopy, back and up a little, so it shows over you)
+        const dist = you.drop === 1 ? 38 : you.drop === 2 ? 6.5 + 31.5 * Math.max(0, 1 - you.dropT / 1.6) : 8.6;
         const d = viewDir(you.yaw, you.pitch);
-        const ty = you.body.y + (you.drop === 1 ? 2 : 1.2);
-        eye = { x: you.body.x - d.x * dist, y: ty - d.y * dist, z: you.body.z - d.z * dist, yaw: you.yaw, pitch: you.pitch };
+        const ty = you.body.y + (you.drop === 1 ? 2 : you.drop === 3 ? 1.9 : 1.2);
+        eye = { x: you.body.x - d.x * dist, y: ty - d.y * dist, z: you.body.z - d.z * dist, yaw: you.yaw, pitch: you.pitch, roll: 0 };
+        // (a sway under the canopy as you steer, the wind buffeting a freefall)
+        if (st.shake && you.drop >= 2) {
+          const tt = time.current;
+          eye.roll = you.drop === 3 ? Math.sin(tt * 0.9) * 0.025 + (Math.cos(you.yaw) * you.body.vx - Math.sin(you.yaw) * you.body.vz) * -0.012 : Math.sin(tt * 13.1) * 0.006;
+          if (you.drop === 2) eye.pitch += Math.sin(tt * 11.3) * 0.005;
+        }
         eye.y = Math.max(eye.y, floorAt(m.world.terrain, eye.x, eye.z) + 1.5);
         camY.current = null;
         hide = -1;
@@ -978,7 +1147,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         const cz = drivenCar.z;
         const h = rayWorld(m.world, cx, cy, cz, -d.x, -d.y, -d.z, far, camHit.current);
         const dist = h.kind === 'none' ? far : Math.max(1.2, h.t - 0.35);
-        eye = { x: cx - d.x * dist, y: cy - d.y * dist, z: cz - d.z * dist, yaw: you.yaw, pitch: you.pitch };
+        eye = { x: cx - d.x * dist, y: cy - d.y * dist, z: cz - d.z * dist, yaw: you.yaw, pitch: you.pitch, roll: 0 };
         eye.y = Math.max(eye.y, floorAt(m.world.terrain, eye.x, eye.z) + 0.5);
         camY.current = null;
         hide = -1;
@@ -995,7 +1164,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           dl.yaw += wrapAngle(ty - dl.yaw) * Math.min(1, dt * 3);
           dl.pitch += (tp - dl.pitch) * Math.min(1, dt * 3);
         }
-        eye = { x: you.body.x, y: you.body.y + 0.5, z: you.body.z, yaw: dl.yaw, pitch: dl.pitch };
+        eye = { x: you.body.x, y: you.body.y + 0.5, z: you.body.z, yaw: dl.yaw, pitch: dl.pitch, roll: 0 };
         hide = -1;
       }
       const g = a.alive && !a.drop && !drivenCar ? currentGun(a) : null;
@@ -1007,8 +1176,9 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       const dPitch = eye.pitch - lastLook.current.pitch;
       lastLook.current = { yaw: eye.yaw, pitch: eye.pitch };
       const fired = m.events.some((e) => e.t === 'shot' && e.a === a.id);
+      // (no gun in hand drawn over the view while over the shoulder, or while freelook has the head turned away)
       const vmState =
-        a.alive && wdef && g
+        a.alive && wdef && g && tk < 0.05 && Math.abs(fl.yaw) < 0.2 && Math.abs(fl.pitch) < 0.2
           ? {
               gun: g.id,
               ads: a.ads,
@@ -1034,7 +1204,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       const fh = fast.current;
       if (fh) {
         const spreadPx = wdef ? (Math.tan(spreadOf(a) * DEG) / Math.tan((fov * DEG) / 2)) * ((host?.clientHeight ?? 600) / 2) : 0;
-        fh.set(spreadPx, a.alive && !scoped && a.ads < 0.6 && !buyRef.current && !drivenCar);
+        fh.set(spreadPx, a.alive && !scoped && a.ads < 0.6 && !buyRef.current && !drivenCar && !fl.on && Math.abs(fl.yaw) < 0.05);
         fh.tick(dt);
       }
       const hi = hitInfo.current;
@@ -1168,6 +1338,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       pick: nadePick.current,
       pavise: a.pavise / PAVISE.hp,
       paviseUp: a.paviseUp,
+      prone: a.alive && (a.prone > 0.5 || a.proneTo),
+      lean: a.alive ? a.lean : 0,
       blind: a.alive && a.blindT > 0 ? Math.min(1, a.blindT / Math.min(1.2, a.blind0)) : 0,
       canBuy: canShop(m, you),
       alive: you.alive,
@@ -1306,6 +1478,9 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
     }
     mouse.current.fire = (e.buttons & 1) !== 0;
     mouse.current.ads = (e.buttons & 2) !== 0;
+    // (the middle button held: freelook)
+    mouse.current.mid = (e.buttons & 4) !== 0;
+    if (e.button === 1) e.preventDefault();
   };
   const onPointerMove = (e: RPointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'touch') {
@@ -1331,6 +1506,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       look.current.dy += e.movementY;
       mouse.current.fire = (e.buttons & 1) !== 0;
       mouse.current.ads = (e.buttons & 2) !== 0;
+      mouse.current.mid = (e.buttons & 4) !== 0;
     }
   };
   const onPointerUp = (e: RPointerEvent<HTMLDivElement>) => {
@@ -1345,6 +1521,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
     }
     mouse.current.fire = (e.buttons & 1) !== 0;
     mouse.current.ads = (e.buttons & 2) !== 0;
+    mouse.current.mid = (e.buttons & 4) !== 0;
   };
   const onWheel = (e: RWheelEvent<HTMLDivElement>) => {
     if (document.pointerLockElement === hostRef.current && Math.abs(e.deltaY) > 4) mouse.current.wheel = Math.sign(e.deltaY);
@@ -1475,8 +1652,14 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
               <button type="button" className="g-ridgeline-btn is-jump" onPointerDown={tap((t) => (t.jump = true))}>
                 Jump
               </button>
-              <button type="button" className="g-ridgeline-btn is-crouch" data-on={touch.current.crouch ? '1' : '0'} onPointerDown={tap((t) => (t.crouch = !t.crouch))}>
+              <button type="button" className="g-ridgeline-btn is-crouch" data-on={touch.current.crouch ? '1' : '0'} onPointerDown={tap((t) => (proneOn.current ? (proneOn.current = false) : (t.crouch = !t.crouch)))}>
                 Crouch
+              </button>
+              <button type="button" className="g-ridgeline-btn is-prone" data-on={hud.prone ? '1' : '0'} onPointerDown={tap((t) => (t.prone = true))}>
+                Prone
+              </button>
+              <button type="button" className="g-ridgeline-btn is-view" onPointerDown={tap((t) => (t.view = true))} aria-label="Switch first or third person">
+                View
               </button>
               <button type="button" className="g-ridgeline-btn is-reload" onPointerDown={tap((t) => (t.reload = true))}>
                 Reload

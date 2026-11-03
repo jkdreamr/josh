@@ -6,6 +6,8 @@ import { ARENA, KIND, K_BOX, K_ROCK, K_TRUNK, type Surface, type World } from '.
 export const RADIUS = 0.36;
 export const STAND_H = 1.8;
 export const CROUCH_H = 1.25;
+/** Lying down: low enough to vanish in tall grass, still over a step (so walls stop the body). */
+export const PRONE_H = 0.58;
 export const STEP_UP = 0.5;
 export const GRAVITY = 20;
 /** Water deeper than this is swum, not waded. */

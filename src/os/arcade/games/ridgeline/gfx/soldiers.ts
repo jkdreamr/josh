@@ -2,7 +2,7 @@
 // they actually carry, posed every frame. The body is the real soldier model when it has loaded (tinted per kit: your
 // team in warm tan, the other team in charcoal), else the lofted one. In deathmatch everyone draws a kit of their own.
 import type { Actor, Match } from '../match.ts';
-import { RUN, currentGun } from '../match.ts';
+import { PRONE_SPEED, RUN, currentGun } from '../match.ts';
 import { PAVISE, WEAPONS, type WeaponId } from '../weapons.ts';
 import { BONE, LOFT_BUILD, SOLDIER_BUILD, makePoser, skeleton, soldierGeometry } from './body.ts';
 import { patch, roundBox, type Shared, type T, type Three } from './common.ts';
@@ -61,6 +61,17 @@ export const SHIELD_FACE = 0;
 const GUN_IDS = Object.keys(WEAPONS) as WeaponId[];
 /** One number per gun and side, so the per frame lookups build no strings. */
 const gunKey = (id: WeaponId, side: number) => GUN_IDS.indexOf(id) * 2 + side;
+
+/** Lying down, the model (1.57 m, its feet at the origin) tips forward onto its front around a point this far back
+ * from the head, and rests this high on its chest; a full lean rolls it this far over (the spine bends the rest). */
+const LIE_BACK = 1.5;
+const LIE_UP = 0.13;
+const LEAN_ROLL = 0.13;
+
+const smooth = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
 
 /** How far soldiers are drawn at all, at full detail, and with a shadow. */
 const FAR = 330;
@@ -232,9 +243,15 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: P
         // in a vehicle: seated, tilted with it (the driver faces the way it goes, a passenger where they look)
         const car = !dead && a.car >= 0 ? m.cars[a.car] : null;
         const seat = car ? (a.carSeat === 0 ? 1 : 2) : 0;
-        r.mesh.position.set(b.x, b.y - (b.swim ? 0.25 : 0) - fallE * 0.08, b.z);
+        // lying down: down on the knees first, then forward onto the front, the head where the body's eyes are
+        const pr = car || sky ? 0 : a.prone;
+        const lie = smooth(0.35, 1, pr);
+        const kneel = Math.min(1, pr * 2.5) * (1 - lie);
+        const tilt = -lie * Math.PI * 0.5;
+        const back = Math.sin(-tilt) * LIE_BACK;
+        r.mesh.position.set(b.x + Math.sin(a.yaw) * back, b.y - (b.swim ? 0.25 : 0) - fallE * 0.08 * (1 - lie) + lie * LIE_UP, b.z + Math.cos(a.yaw) * back);
         if (car) r.mesh.rotation.set(car.pitch, seat === 1 ? car.yaw : a.yaw, car.roll, 'YXZ');
-        else r.mesh.rotation.set(dead ? fallE * 1.45 : sky === 1 ? -1.25 : 0, a.yaw, 0, 'YXZ');
+        else r.mesh.rotation.set(dead ? (lie > 0.5 ? tilt : fallE * 1.45) : sky === 1 ? -1.25 : tilt, a.yaw, dead ? 0 : -a.lean * LEAN_ROLL, 'YXZ');
         // a shield carried: up in front, or on the back
         if (a.pavise > 0 && !dead && !sky && !car) {
           const sh = shieldFor(r);
@@ -255,7 +272,11 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: P
         const gg = want >= 0 && id ? gunFor(r, id, side) : null;
         pose(r.bones, gg, {
           pitch: seat === 1 ? 0 : a.pitch,
-          crouch: seat ? 0 : a.crouch,
+          crouch: seat ? 0 : Math.max(a.crouch, kneel),
+          lie,
+          tilt,
+          crawl: lie > 0.9 ? Math.min(1, Math.hypot(b.vx, b.vz) / PRONE_SPEED) : 0,
+          lean: dead || seat ? 0 : a.lean,
           speed: seat ? 0 : Math.min(1, Math.hypot(b.vx, b.vz) / RUN),
           phase: a.phase,
           air: !seat && !b.onGround && !b.swim,

@@ -477,6 +477,8 @@ export function enterCar(m: Match, a: Actor, c: Car) {
   a.car = c.id;
   a.carSeat = k;
   a.crouch = 0;
+  a.prone = 0;
+  a.lean = 0;
   a.ads = 0;
   a.healT = 0;
   a.healKind = null;

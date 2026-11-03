@@ -486,6 +486,13 @@ export type Pose = {
   sky?: number;
   /** In a vehicle: 1 at the wheel (both hands on it), 2 riding along (seated, the gun up as usual). */
   seat?: number;
+  /** Lying down, 0 to 1 (the caller tips the whole body forward by `tilt`, radians, face down negative), and how fast
+   * it crawls (0 still, 1 a full crawl). */
+  lie?: number;
+  tilt?: number;
+  crawl?: number;
+  /** Leaning, -1 left to 1 right (the caller rolls the body a little; here the spine bends into it). */
+  lean?: number;
 };
 
 /** Poses one soldier's bones (the gun group, a child of the chest bone, is placed too). */
@@ -596,20 +603,26 @@ export function makePoser(THREE: Three, build: Build = LOFT_BUILD) {
     const sp = p.speed;
     const ph = p.phase * 2.2;
     const air = p.air ? 1 : 0;
+    const lie = p.lie ?? 0;
+    const lean = p.lean ?? 0;
     const bob = Math.abs(Math.sin(ph)) * 0.04 * sp * (1 - p.crouch * 0.5);
-    hipsB.position.y += -p.crouch * 0.33 - air * 0.06 + bob;
-    const hipLean = -0.08 * sp - p.crouch * 0.32;
+    hipsB.position.y += (-p.crouch * 0.33 - air * 0.06 + bob) * (1 - lie);
+    const hipLean = (-0.08 * sp - p.crouch * 0.32) * (1 - lie);
     hipsB.rotation.x = hipLean;
     bones[BONE.hips].rotation.y = Math.sin(ph) * 0.06 * sp;
-    const spineX = p.pitch * 0.25 + p.crouch * 0.2;
-    const chestX = p.pitch * 0.15;
+    // lying down: up on the elbows, the back arched so the chest and the head come up off the ground
+    const spineX = (p.pitch * 0.25 + p.crouch * 0.2) * (1 - lie) + lie * (0.3 + p.pitch * 0.15);
+    const chestX = p.pitch * 0.15 * (1 - lie) + lie * (0.38 + p.pitch * 0.15);
     // behind a long gun the shoulders blade (left one forward), the head turns back to the aim
     const twist = p.gun && !p.pistol ? build.twist : 0;
     bones[BONE.spine].rotation.x = spineX;
     bones[BONE.spine].rotation.y = -Math.sin(ph) * 0.05 * sp - twist * 0.5;
+    // a lean bends the spine over to the side (the caller rolls the body the rest of the way)
+    bones[BONE.spine].rotation.z = -lean * 0.12;
     bones[BONE.chest].rotation.x = chestX;
     bones[BONE.chest].rotation.y = -twist * 0.5;
-    const bodyPitch = hipLean + spineX + chestX;
+    bones[BONE.chest].rotation.z = -lean * 0.1;
+    const bodyPitch = (p.tilt ?? 0) + hipLean + spineX + chestX;
     bones[BONE.neck].rotation.set((p.pitch - bodyPitch) * 0.45, twist * 0.45, 0);
     bones[BONE.head].rotation.set((p.pitch - bodyPitch) * 0.55, twist * 0.55, 0);
     // legs: seated, or a walk cycle, bent for a crouch, tucked in the air
@@ -623,9 +636,13 @@ export function makePoser(THREE: Three, build: Build = LOFT_BUILD) {
       const s = Math.sin(ph + (side > 0 ? 0 : Math.PI));
       const swing = s * 0.55 * sp + p.crouch * 1.05 + air * 0.4 - hipLean;
       const knee = Math.max(0, -Math.cos(ph + (side > 0 ? 0 : Math.PI))) * 0.95 * sp + p.crouch * 1.85 + air * 0.75;
-      bones[side > 0 ? BONE.thighR : BONE.thighL].rotation.set(swing, 0, side * build.splay);
-      bones[side > 0 ? BONE.shinR : BONE.shinL].rotation.x = -knee;
-      bones[side > 0 ? BONE.footR : BONE.footL].rotation.x = knee - swing - hipLean * 0.5;
+      // lying down: legs out straight behind, a little apart, one knee drawn up and out at a time in the crawl
+      const draw = Math.max(0, s) * (p.crawl ?? 0);
+      const lyingSwing = -0.08 + draw * 0.5;
+      const lyingKnee = 0.12 + draw * 0.9;
+      bones[side > 0 ? BONE.thighR : BONE.thighL].rotation.set(swing + (lyingSwing - swing) * lie, 0, side * (build.splay + lie * (0.12 + draw * 0.35)));
+      bones[side > 0 ? BONE.shinR : BONE.shinL].rotation.x = -(knee + (lyingKnee - knee) * lie);
+      bones[side > 0 ? BONE.footR : BONE.footL].rotation.x = (knee - swing - hipLean * 0.5) * (1 - lie) + lie * 0.6;
     }
     if (p.seat === 1) {
       // both hands on the wheel, out in front of the chest

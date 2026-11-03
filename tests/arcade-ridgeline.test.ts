@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { MAP_IDS } from '../src/os/arcade/games/ridgeline/maps.ts';
 import { DM_HUBS, newBrain } from '../src/os/arcade/games/ridgeline/bots.ts';
 import { fieldDist, fieldTo, findPath } from '../src/os/arcade/games/ridgeline/nav.ts';
-import { RADIUS, STAND_H, blockedAt, clearLine, groundAt, newHit, rayWorld, stepBody, type Body } from '../src/os/arcade/games/ridgeline/physics.ts';
+import { PRONE_H, RADIUS, STAND_H, blockedAt, clearLine, groundAt, newHit, rayWorld, stepBody, type Body } from '../src/os/arcade/games/ridgeline/physics.ts';
+import { aimPoint, shoulderCam, type Cam } from '../src/os/arcade/games/ridgeline/camera.ts';
 import { CELL, T_HALF, T_RES, floorAt, generateTerrain, heightAt, normalAt, rayTerrain } from '../src/os/arcade/games/ridgeline/terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, PAVISE, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
 
@@ -27,7 +28,14 @@ import {
   canShop,
   createMatch,
   dropSupply,
+  eyeX,
   eyeY,
+  eyeZ,
+  LEAN,
+  PARTS,
+  canProne,
+  partsOf,
+  spreadOf,
   idleInput,
   lootNear,
   markRed,
@@ -42,6 +50,7 @@ import {
   step,
   supplyLeft,
   underRoof,
+  type Actor,
   type Input,
   type Match,
 } from '../src/os/arcade/games/ridgeline/match.ts';
@@ -790,7 +799,7 @@ test('royale: a chosen kit item is used only when you have it and it would help'
 });
 
 test('royale: a hundred drop in, loot, fight and the zone closes to one left standing', () => {
-  const m = createMatch(worldFor('vale', true), 'royale', 'normal', { seed: 7 });
+  const m = createMatch(worldFor('vale', true), 'royale', 'normal', { seed: 8 });
   assert.equal(m.actors.length, ROYALE_PLAYERS);
   let picks = 0;
   let kills = 0;
@@ -1639,4 +1648,238 @@ test('bots fight with the new guns and their shields up, and shots stop on the s
   assert.ok(raised >= 2, `bots raised their shields (${raised} at once)`);
   assert.ok(blocked > 5, `shots stopped on shields (${blocked})`);
   assert.ok(newShots > 50, `the new guns were fired (${newShots})`);
+});
+
+/** A bullet from actor `from` at (o) toward (t), flown out, and the zones it hit on `on`. */
+function shotAt(m: Match, from: number, on: Actor, o: { x: number; y: number; z: number }, t: { x: number; y: number; z: number }) {
+  const l = Math.hypot(t.x - o.x, t.y - o.y, t.z - o.z);
+  // (a light pistol round: it hurts without knocking anyone out)
+  m.bullets.push({ x: o.x, y: o.y, z: o.z, px: o.x, py: o.y, pz: o.z, vx: ((t.x - o.x) / l) * 900, vy: ((t.y - o.y) / l) * 900, vz: ((t.z - o.z) / l) * 900, owner: from, w: 'wren', life: 1.6, dist: 0, live: true });
+  const hits: string[] = [];
+  const keep = idleInput(m.actors[0].yaw, m.actors[0].pitch);
+  keep.prone = m.actors[0].proneTo;
+  for (let i = 0; i < 8; i++) {
+    step(m, DT, keep);
+    for (const e of m.events) if (e.t === 'hit' && e.v === on.id) hits.push(e.zone);
+  }
+  return hits;
+}
+
+test('prone: getting down takes a moment, the body and its hitbox go low, a shot over it misses, and it crawls', () => {
+  const { m, you, foe } = range(9);
+  you.guns[0] = gun('kestrel');
+  you.slot = 0;
+  you.switchT = 0;
+  const face = aim(m, 0, foe.body.x, foe.body.y + 1, foe.body.z);
+  const down = { ...face, prone: true };
+  step(m, DT, down);
+  assert.ok(you.prone > 0 && you.prone < 0.1, `on the way down (${you.prone.toFixed(2)})`);
+  // getting down takes both hands: no shot until it is done
+  const before = m.bullets.length;
+  step(m, DT, { ...down, fire: true });
+  assert.equal(m.bullets.length, before, 'no shot while getting down');
+  for (let i = 0; i < 60; i++) step(m, DT, down);
+  assert.equal(you.prone, 1, 'flat on the ground');
+  assert.ok(Math.abs(you.body.height - PRONE_H) < 1e-9 && PRONE_H < 0.7, `a low body (${you.body.height})`);
+  assert.ok(eyeY(you) - you.body.y < 0.5, 'the eyes just over the ground');
+  // every hit sphere is down low, stretched out back along the ground behind the head
+  const parts = partsOf(you, new Float64Array(PARTS * 4));
+  for (let i = 0; i < PARTS; i++) assert.ok(parts[i * 4 + 1] + parts[i * 4 + 3] < you.body.y + PRONE_H + 0.05, `sphere ${i} is low`);
+  const behind = (parts[16] - you.body.x) * Math.sin(you.yaw) + (parts[18] - you.body.z) * Math.cos(you.yaw);
+  assert.ok(behind > 1.2, `the legs lie out behind (${behind.toFixed(2)} m)`);
+  // the steadiest way to shoot
+  const flat = spreadOf(you);
+  // a shot across at chest height for someone standing flies over; one at the head hits
+  const over = { x: you.body.x, y: you.body.y + 1.15, z: you.body.z };
+  const from = { x: foe.body.x, y: you.body.y + 1.15, z: foe.body.z };
+  assert.ok(clearLine(m.world, from.x, from.y, from.z, over.x, over.y, over.z), 'a clear line across');
+  const far = { x: over.x * 2 - from.x, y: over.y, z: over.z * 2 - from.z };
+  assert.deepEqual(shotAt(m, foe.id, you, from, far), [], 'a shot over someone lying down misses');
+  const high = { x: foe.body.x, y: foe.body.y + 1.6, z: foe.body.z };
+  const head = { x: parts[0], y: parts[1], z: parts[2] };
+  assert.ok(clearLine(m.world, high.x, high.y, high.z, head.x, head.y, head.z), 'a clear line down to the head');
+  assert.deepEqual(shotAt(m, foe.id, you, high, head), ['head'], 'one at the head hits');
+  assert.ok(you.alive);
+  you.hp = 100;
+  // crawling is slow
+  for (let i = 0; i < 60; i++) step(m, DT, { ...down, mz: 1 });
+  const crawl = Math.hypot(you.body.vx, you.body.vz);
+  assert.ok(crawl > 0.4 && crawl < 1.2, `a crawl (${crawl.toFixed(2)} m/s)`);
+  // up again: it takes a moment, then the same shot across hits
+  step(m, DT, face);
+  assert.ok(you.prone > 0.9 && !you.proneTo, 'getting up');
+  for (let i = 0; i < 60; i++) step(m, DT, face);
+  assert.equal(you.prone, 0);
+  assert.equal(you.body.height, STAND_H);
+  assert.ok(flat < spreadOf(you) * 0.6, `lying down shoots tighter (${flat.toFixed(3)} against ${spreadOf(you).toFixed(3)})`);
+  const across = { x: foe.body.x, y: you.body.y + 1.15, z: foe.body.z };
+  const mid = { x: you.body.x, y: you.body.y + 1.15, z: you.body.z };
+  assert.ok(shotAt(m, foe.id, you, across, { x: mid.x * 2 - across.x, y: mid.y, z: mid.z * 2 - across.z }).length > 0, 'standing, the same shot hits');
+});
+
+test('prone: not swimming, not in deep water, not on a steep bank', () => {
+  const { m, you } = range(9);
+  assert.ok(canProne(m, you), 'on open ground');
+  you.body.swim = true;
+  assert.ok(!canProne(m, you), 'not swimming');
+  you.body.swim = false;
+  // the steepest slope near the middle of the map that a body can stand on
+  const t = m.world.terrain;
+  const n = { x: 0, y: 1, z: 0 };
+  let steep: [number, number] | null = null;
+  for (let x = -ARENA + 8; x < ARENA - 8 && !steep; x += 1.5)
+    for (let z = -ARENA + 8; z < ARENA - 8 && !steep; z += 1.5) {
+      normalAt(t, x, z, n);
+      if (n.y > 0.66 && n.y < 0.8 && heightAt(t, x, z) > t.water + 0.5 && !blockedAt(m.world, x, z, heightAt(t, x, z))) steep = [x, z];
+    }
+  assert.ok(steep, 'found a bank');
+  you.body.x = steep[0];
+  you.body.z = steep[1];
+  you.body.y = floorAt(t, steep[0], steep[1]);
+  assert.ok(!canProne(m, you), 'too steep to lie on');
+  step(m, DT, { ...idleInput(you.yaw, 0), prone: true });
+  assert.equal(you.prone, 0, 'stays up on the bank');
+});
+
+/** A tall wall in the world (one that stands from the ground to over head height), and an open spot just out from its
+ * +x face, half way along it. */
+function besideWall(m: Match) {
+  const w = m.world;
+  for (const b of w.boxes) {
+    if (b.z1 - b.z0 < 1.5) continue;
+    const x = b.x1 + 0.4;
+    const z = (b.z0 + b.z1) / 2;
+    const y = groundAt(w, x, z, b.y0 + 0.5);
+    if (b.y0 > y + 0.2 || b.y1 < y + 2.4 || blockedAt(w, x, z, y)) continue;
+    // and room on the other side
+    if (rayWorld(w, x, y + 1.6, z, 1, 0, 0, 1.5, newHit()).kind !== 'none') continue;
+    return { b, x, y, z };
+  }
+  return null;
+}
+
+test('lean: the head and the eyes go out to the side, and a wall beside them stops them', () => {
+  const { m, you } = range(9);
+  const face = idleInput(you.yaw, 0);
+  const x0 = you.body.x;
+  const z0 = you.body.z;
+  const head0 = partsOf(you, new Float64Array(PARTS * 4)).slice(0, 3);
+  for (let i = 0; i < 30; i++) step(m, DT, { ...face, lean: 1 });
+  assert.ok(you.lean > 0.99, `a full lean in the open (${you.lean.toFixed(2)})`);
+  const parts = partsOf(you, new Float64Array(PARTS * 4));
+  // out to the right: (cos yaw, -sin yaw)
+  const side = (parts[0] - head0[0]) * Math.cos(you.yaw) - (parts[2] - head0[2]) * Math.sin(you.yaw);
+  assert.ok(Math.abs(side - LEAN) < 0.03, `the head went ${side.toFixed(2)} m to the right`);
+  assert.ok(Math.abs(eyeX(you) - x0 - Math.cos(you.yaw) * LEAN) < 0.03 && Math.abs(eyeZ(you) - z0 + Math.sin(you.yaw) * LEAN) < 0.03, 'and the eyes');
+  assert.ok(Math.hypot(parts[16] - you.body.x, parts[18] - you.body.z) < 1e-9, 'the feet stay put');
+  for (let i = 0; i < 30; i++) step(m, DT, { ...face, lean: -1 });
+  assert.ok(you.lean < -0.99, 'and to the left');
+  for (let i = 0; i < 30; i++) step(m, DT, face);
+  assert.equal(you.lean, 0, 'straight again');
+  // beside a wall, facing along it with the wall on the right: no lean into it, a full one away from it
+  const spot = besideWall(m);
+  assert.ok(spot, 'found a wall');
+  you.body.x = spot.x;
+  you.body.y = spot.y;
+  you.body.z = spot.z;
+  you.body.vx = you.body.vz = 0;
+  // looking toward -z puts the right hand at +x (away from the wall) and the left at the wall
+  const along = idleInput(0, 0);
+  for (let i = 0; i < 30; i++) step(m, DT, { ...along, lean: 1 });
+  assert.ok(you.lean > 0.99, 'away from the wall, all the way');
+  for (let i = 0; i < 30; i++) step(m, DT, { ...along, lean: -1 });
+  assert.ok(you.lean > -0.5, `the wall holds the lean back (${you.lean.toFixed(2)})`);
+  assert.ok(eyeX(you) > spot.b.x1 + 0.1, 'the eyes stay out of the wall');
+  const head = partsOf(you, new Float64Array(PARTS * 4));
+  assert.ok(head[0] - head[3] > spot.b.x1 - 0.1, 'and so does the head');
+});
+
+/** Turns a third person view onto a point: the camera moves as the view turns, so a few rounds settle it. */
+function lookAt(m: Match, a: Actor, x: number, y: number, z: number) {
+  const cam: Cam = { x: 0, y: 0, z: 0, dist: 0 };
+  let yaw = a.yaw;
+  let pitch = 0;
+  for (let i = 0; i < 12; i++) {
+    shoulderCam(m, a, yaw, pitch, cam);
+    const dx = x - cam.x;
+    const dy = y - cam.y;
+    const dz = z - cam.z;
+    yaw = Math.atan2(-dx, -dz);
+    pitch = Math.atan2(dy, Math.hypot(dx, dz));
+  }
+  shoulderCam(m, a, yaw, pitch, cam);
+  return { yaw, pitch, cam };
+}
+
+test('third person: a shot leaves the eye for where the crosshair rests, and a wall in front of the soldier still stops it', () => {
+  const { m, you, foe } = range(14);
+  you.guns[0] = gun('lancer');
+  you.slot = 0;
+  you.switchT = 0;
+  const chest = { x: foe.body.x, y: foe.body.y + 1.25, z: foe.body.z };
+  let v = lookAt(m, you, chest.x, chest.y, chest.z);
+  for (let i = 0; i < 20; i++) step(m, DT, idleInput(v.yaw, v.pitch));
+  v = lookAt(m, you, chest.x, chest.y, chest.z);
+  // the camera sits out over the right shoulder and back
+  const rx = (v.cam.x - eyeX(you)) * Math.cos(v.yaw) - (v.cam.z - eyeZ(you)) * Math.sin(v.yaw);
+  assert.ok(rx > 0.4 && v.cam.dist > 2, `over the right shoulder (${rx.toFixed(2)} m out, ${v.cam.dist.toFixed(2)} m back)`);
+  const at = aimPoint(m, you, v.cam, v.yaw, v.pitch, { x: 0, y: 0, z: 0 });
+  assert.ok(Math.hypot(at.x - chest.x, at.z - chest.z) < 0.4 && Math.abs(at.y - chest.y) < 0.3, 'the crosshair rests on them');
+  // the shot goes from the eye to that point (not along the camera's line, which would pass them by off to the side)
+  const n0 = m.bullets.length;
+  const hp = foe.hp;
+  step(m, DT, { ...idleInput(v.yaw, v.pitch), aim: at, fire: true });
+  const b = m.bullets[n0];
+  assert.ok(b, 'fired');
+  assert.ok(Math.hypot(b.px - eyeX(you), b.pz - eyeZ(you)) < 0.05, 'from the eye');
+  const got = Math.atan2(b.vx, b.vz);
+  assert.ok(Math.abs(got - Math.atan2(at.x - b.px, at.z - b.pz)) < 0.01, 'toward the point');
+  assert.ok(Math.abs(got - Math.atan2(-Math.sin(v.yaw), -Math.cos(v.yaw))) > 0.01, 'not along the camera line');
+  for (let i = 0; i < 20; i++) step(m, DT, idleInput(v.yaw, v.pitch));
+  assert.ok(foe.hp < hp || !foe.alive, 'it hit');
+
+  // at a wall's corner looking at the wall, the camera out to the right sees past it to someone behind; the shot
+  // still leaves the eye, and the wall takes it
+  const w = m.world;
+  foe.alive = true;
+  foe.hp = 100;
+  let set = false;
+  for (const box of w.boxes) {
+    if (set) break;
+    // just out from the +z face, near its corner at x0: looking toward -z, the right hand is +x... so the corner is
+    // on the left: stand by the x1 corner instead, where the right hand (+x) is past the edge
+    const sx = box.x1 - 0.15;
+    const sz = box.z1 + 0.75;
+    const sy = groundAt(w, sx, sz, box.y0 + 0.5);
+    if (box.x1 - box.x0 < 1 || box.y0 > sy + 0.2 || box.y1 < sy + 2.6 || blockedAt(w, sx, sz, sy)) continue;
+    const tx = box.x1 + 0.6;
+    const tz = box.z0 - 6;
+    const ty = groundAt(w, tx, tz, sy + 1.5);
+    if (Math.abs(ty - sy) > 0.6 || blockedAt(w, tx, tz, ty)) continue;
+    you.body.x = sx;
+    you.body.y = sy;
+    you.body.z = sz;
+    you.body.vx = you.body.vz = 0;
+    you.yaw = 0;
+    foe.body.x = tx;
+    foe.body.y = ty;
+    foe.body.z = tz;
+    const c = lookAt(m, you, tx, ty + 1.25, tz);
+    if (c.cam.dist < 2.2) continue;
+    if (clearLine(w, eyeX(you), eyeY(you), eyeZ(you), tx, ty + 1.25, tz) || !clearLine(w, c.cam.x, c.cam.y, c.cam.z, tx, ty + 1.25, tz)) continue;
+    const p = aimPoint(m, you, c.cam, c.yaw, c.pitch, { x: 0, y: 0, z: 0 });
+    if (Math.hypot(p.x - tx, p.z - tz) > 0.5) continue;
+    set = true;
+    for (let i = 0; i < 40; i++) step(m, DT, idleInput(c.yaw, c.pitch));
+    you.fireCd = 0;
+    const evs: string[] = [];
+    for (let i = 0; i < 20; i++) {
+      step(m, DT, { ...idleInput(c.yaw, c.pitch), aim: p, fire: i === 0 });
+      for (const e of m.events) if (e.t === 'impact' || (e.t === 'hit' && e.v === foe.id)) evs.push(e.t);
+    }
+    assert.ok(evs.includes('impact'), 'the shot hit the wall');
+    assert.ok(!evs.includes('hit'), 'not them');
+    assert.equal(foe.hp, 100);
+  }
+  assert.ok(set, 'found a corner to look past');
 });
