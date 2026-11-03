@@ -10,7 +10,7 @@ import { autoQuality, createView, flyover, type Quality, type View } from './gfx
 import { kitOf, paletteOf } from './gfx/soldiers.ts';
 import { Ammo, BannerView, HitInfo, ItemBar, KillConfirm, KitPanel, type KillPop, BreachPrompts, BuyMenu, DeathPanel, Feed, Markers, MedalView, Minimap, Reticle, RoyalePrompts, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type MedalPop, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi, type HitInfoApi } from './hud.tsx';
 import { MAPS, MAP_IDS, type MapId } from './maps.ts';
-import { DEFUSE_HALF, DEFUSE_TIME, DEG, PERSON_HEALTH, PLANT_TIME, type Medal, canDefuse, canShop, canUse, createMatch, currentGun, echoOfMine, eyeY, finalScore, idleInput, lootNear, owns, plantSite, spareOf, sightSwap, spreadOf, standings, step, viewDir, wants, type Actor, type Input, type Match, type ShopItem } from './match.ts';
+import { DEFUSE_HALF, DEFUSE_TIME, DEG, PERSON_HEALTH, PLANT_TIME, type Medal, type Mode, canDefuse, canShop, canUse, createMatch, currentGun, echoOfMine, eyeY, finalScore, idleInput, lootNear, owns, plantSite, spareOf, sightSwap, spreadOf, standings, step, viewDir, wants, type Actor, type Input, type Match, type ShopItem } from './match.ts';
 import { AMMO_KINDS, ROYALE_PLAYERS, USE, ZONES, ammoCap, boostCap, gunLabel, healCap, itemName, magOf, nadeCap, planeAt, scopeOf, zoomOf, type AttKind, type Item, type UseKind } from './royale.ts';
 import { newBrain } from './bots.ts';
 import { Session, type OnlineApi } from './online.ts';
@@ -101,27 +101,38 @@ function Setup() {
   );
 }
 
-/** Room settings: online plays the 5v5, the host picks the map and how the bots in the empty seats play. */
+/** What each mode is online. */
+const onlineNotes = {
+  breach: 'Breach 5v5 online: people are split between the two sides, bots fill the empty seats, and a leaver\'s seat goes to a bot.',
+  dm: 'Deathmatch online: everyone for themselves, up to ten people, bots make it eight or more. each picks their own gun. first to 25.',
+  royale: 'Royale online: up to ten people drop in with the bots, a hundred in all. last one standing wins; once out, watch the others.',
+} as const;
+
+/** Room settings: the host picks the mode, the map and how the bots in the empty seats play. */
 function OnlineSetup() {
   const shell = useShell();
   const online = useOnline();
+  const [mode, setMode] = useSetting(MODE);
   const [map, setMap] = useSetting(MAP);
   const [level, setLevel] = useSetting(LEVEL);
   const [quality, setQuality] = useSetting(QUALITY);
   const [sens, setSens] = useSetting(SENS);
+  const [gun, setGun] = useSetting(DMGUN);
   const mouse = !shell.touch || finePointer();
   const host = !online || online.isHost;
   return (
     <div className="g-ridgeline-setup">
-      <p className="g-ridgeline-note">Breach 5v5 online: people are split between the two sides, bots fill the empty seats, and a leaver's seat goes to a bot.</p>
       {host ? (
         <>
+          <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
+          <p className="g-ridgeline-note">{onlineNotes[mode]}</p>
           <Segmented label="Map" value={map} options={mapOptions} onChange={setMap} />
           <Segmented label="Bots" value={level} options={levelOptions} onChange={setLevel} />
         </>
       ) : (
-        <p className="g-ridgeline-note">the host picks the map and the bots.</p>
+        <p className="g-ridgeline-note">the host picks the mode (Breach 5v5, Deathmatch or Royale), the map and the bots.</p>
       )}
+      {(!host || mode === 'dm') && <Segmented label="Deathmatch gun" value={gun} options={gunOptions} onChange={setGun} />}
       <Segmented label="Graphics" value={quality} options={qualityOptions} onChange={setQuality} />
       {mouse && <Segmented label="Mouse" value={sens} options={sensOptions} onChange={setSens} />}
     </div>
@@ -167,19 +178,21 @@ function useOnlineApi() {
   );
 }
 
-/** One online match: its session, the map the host picked (a guest waits to hear it), then the game itself. */
+/** One online match: its session, the mode and map the host picked (a guest waits to hear them), then the game. */
 function OnlineStage() {
   const online = useOnline();
   const api = useOnlineApi();
   const [mapSetting] = useSetting(MAP);
   const [level] = useSetting(LEVEL);
+  const [modeSetting] = useSetting(MODE);
+  const [dmGun] = useSetting(DMGUN);
   const [session, setSession] = useState<Session | null>(null);
-  const [mapId, setMapId] = useState<MapId | null>(null);
+  const [picked, setPicked] = useState<{ map: MapId; mode: Mode } | null>(null);
   useEffect(() => {
     const map: MapId = mapSetting === 'random' ? MAP_IDS[Math.floor(Math.random() * MAP_IDS.length)] : mapSetting;
-    const s = new Session(api, { map, level });
-    if (s.map) setMapId(s.map);
-    s.onMap = (id) => setMapId(id);
+    const s = new Session(api, { map, level, mode: modeSetting, dmPick: dmGun as WeaponId });
+    if (s.map && s.mode) setPicked({ map: s.map, mode: s.mode });
+    s.onMap = (id, mode) => setPicked({ map: id, mode });
     setSession(s);
     // until the host's match is in, ask for it again now and then (the first ask can arrive before the host is ready)
     const ask = window.setInterval(() => s.wait(), 1000);
@@ -204,13 +217,13 @@ function OnlineStage() {
     for (const h of ours.slice(seen.current)) session.handOff(h.from);
     seen.current = ours.length;
   }, [session, online?.handoffs, online?.handedOff]);
-  if (!session || !mapId)
+  if (!session || !picked)
     return (
       <div className="g-ridgeline-wait" role="status">
         waiting for the host's match…
       </div>
     );
-  return <Play key={mapId} mapId={mapId} royale={false} session={session} />;
+  return <Play key={`${picked.map}:${picked.mode}`} mapId={picked.map} royale={picked.mode === 'royale'} session={session} />;
 }
 
 function SoloStage() {
@@ -608,10 +621,22 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
 
   const nameColor = (m: Match, a: Actor) => (m.mode === 'breach' ? TEAM_COLORS[a.team === m.actors[m.me].team ? 0 : 1] : hex(paletteOf(m, a).band));
 
-  /** The actor the camera looks out of: you, or a teammate you watch while you are out. */
+  /** The actor the camera looks out of: you, or a teammate you watch while you are out (a royale online, anyone still
+   * in: who knocked you out first, then whoever a click steps on to). */
   const watched = (m: Match) => {
     const you = m.actors[m.me];
-    if (you.alive || m.mode !== 'breach') return you;
+    if (you.alive || m.mode === 'dm') return you;
+    if (m.mode === 'royale') {
+      if (m.phase === 'over' || m.alive < 1) return you;
+      const killer = m.actors[you.killer];
+      if (spec.current === 0 && killer?.alive) return killer;
+      // (no list built: the n-th one still in, counting round)
+      const n = m.alive;
+      let k = ((spec.current % n) + n) % n;
+      for (const a of m.actors) if (a.alive && a !== you && k-- === 0) return a;
+      for (const a of m.actors) if (a.alive && a !== you) return a;
+      return you;
+    }
     const mates = m.actors.filter((a) => a.alive && a.team === you.team && a !== you);
     if (!mates.length) return you;
     return mates[((spec.current % mates.length) + mates.length) % mates.length];
@@ -624,6 +649,16 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
     const score = finalScore(m);
     const mapName = MAPS[mapId].name;
     const lvl = settings.current.level;
+    // online: everyone reports who won (the people on the winning side, or the person who won), so the room agrees
+    const net = netRef.current;
+    if (net && onlineRef.current) {
+      const r = net.result();
+      try {
+        onlineRef.current.reportResult(onlineRef.current.round, r.winner, m.mode === 'breach' && r.team.length ? r.team : undefined);
+      } catch {
+        /* the room is gone: nothing to tell */
+      }
+    }
     if (m.mode === 'royale') {
       const place = you.alive ? 1 : you.place;
       shellRef.current.gameOver(score, {
@@ -633,16 +668,6 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       });
     } else if (m.mode === 'breach') {
       const won = m.winner === you.team;
-      // online: everyone reports who won (the people on the winning side), so the room agrees
-      const net = netRef.current;
-      if (net && onlineRef.current) {
-        const r = net.result();
-        try {
-          onlineRef.current.reportResult(onlineRef.current.round, r.winner, r.team.length ? r.team : undefined);
-        } catch {
-          /* the room is gone: nothing to tell */
-        }
-      }
       shellRef.current.gameOver(score, {
         title: m.winner < 0 ? 'Draw' : won ? 'Victory' : 'Defeat',
         detail: `${m.score[you.team]} to ${m.score[1 - you.team]} on ${mapName}. you went ${you.kills}/${you.deaths}/${you.assists} with ${Math.round(you.damage)} damage.`,
@@ -858,6 +883,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
 
       // sound from where the camera is
       const eyeA = watched(m);
+      if (net) net.watch = eyeA.id;
       const ear = { x: eyeA.body.x, z: eyeA.body.z, yaw: eyeA.yaw };
       playEvents(m, m.events, ear, m.me);
       chargeBeeps(m, ear);

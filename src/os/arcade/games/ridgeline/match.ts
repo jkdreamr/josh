@@ -266,6 +266,14 @@ export type NetHooks = {
   hit(c: Claim): void;
   buy(item: ShopItem): void;
   throwNade(kind: NadeKind, yaw: number, pitch: number): void;
+  /** Royale: pick up an item (by its id), start a heal or boost (null calls it off), get into a vehicle (its id: the
+   * wheel of the one you sit in, if it is free) or out (-1), rounds loaded from the ammo carried, and a crash of the
+   * vehicle you drive. The host decides each one. */
+  pick?(item: number): void;
+  heal?(kind: UseKind | null): void;
+  ride?(car: number): void;
+  spend?(kind: AmmoKind, n: number): void;
+  crash?(car: number, hard: number): void;
 };
 /** Online, on the host: the latest of what a remote player's own machine says it is doing. */
 export type RemoteIn = { use: boolean; ads: number; walking: boolean; crouch: number; reloading: boolean };
@@ -418,15 +426,17 @@ const newCharge = (): Charge => ({ state: 'carried', holder: -1, x: 0, y: 0, z: 
 export const sideOf = (m: Match, team: number) => (team === m.attack ? 0 : 1);
 export const spawnOf = (m: Match, team: number) => m.world.spawns[sideOf(m, team)];
 
-/** Online breach: who plays each of the ten places (actors 0 to 4 are one team, 5 to 9 the other). */
-export type RosterEntry = { name: string; seat: number; bot: boolean };
+/** Online: who plays each place, from the first (breach: actors 0 to 4 are one team, 5 to 9 the other; a deathmatch
+ * has as many places as entries, at least eight; a royale's entries are its first places, bots after them), and a
+ * person's deathmatch gun. */
+export type RosterEntry = { name: string; seat: number; bot: boolean; pick?: WeaponId };
 
 export function createMatch(world: World, mode: Mode, level: Level, opts: { name?: string; seed?: number; dmPick?: WeaponId; roster?: RosterEntry[]; mySeat?: number } = {}): Match {
   const rng = mulberry32(opts.seed ?? Math.floor(Math.random() * 2 ** 31));
   const names = [...BOT_NAMES, ...(mode === 'royale' ? MORE_NAMES : [])].sort(() => rng() - 0.5);
-  const count = mode === 'royale' ? ROYALE_PLAYERS : mode === 'breach' ? 10 : 8;
+  const roster = opts.roster;
+  const count = mode === 'royale' ? ROYALE_PLAYERS : mode === 'breach' ? 10 : Math.max(8, Math.min(10, roster?.length ?? 0));
   const actors: Actor[] = [];
-  const roster = mode === 'breach' ? opts.roster : undefined;
   let me = 0;
   for (let i = 0; i < count; i++) {
     const team = mode === 'breach' ? (i < 5 ? 0 : 1) : i;
@@ -438,6 +448,7 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
       a.seat = r.bot ? -1 : r.seat;
       a.remote = human && r.seat !== opts.mySeat;
       if (human && r.seat === opts.mySeat) me = i;
+      if (r.pick && WEAPONS[r.pick]) a.dmPick = r.pick;
     }
     actors.push(a);
   }
@@ -656,7 +667,8 @@ export const PERSON_HEALTH = 1.5;
 export const BOT_HITS_PEOPLE: Record<Level, number> = { easy: 0.45, normal: 0.6, hard: 0.8 };
 
 export function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'frag' | 'blast' | 'shell' | 'car', zone: Zone, x: number, y: number, z: number) {
-  if (!v.alive || raw <= 0) return;
+  // (an online guest's crashes and run overs are pictures: the host does the damage)
+  if (!v.alive || raw <= 0 || !m.authority) return;
   if (v.shield > 0) return;
   if (zone === 'head') raw *= HELMET[v.helmet];
   if (!v.bot && w !== 'blast' && m.actors[from]?.bot) raw *= BOT_HITS_PEOPLE[m.level];
@@ -1196,6 +1208,53 @@ function pickup(m: Match, a: Actor, it: Item) {
   m.events.push({ t: 'pickup', a: a.id, item: it });
 }
 
+/** Picks something up (an online guest asks the host instead, see online.ts). */
+function takeLoot(m: Match, a: Actor, it: Item) {
+  if (m.authority) pickup(m, a, it);
+  else m.net?.pick?.(it.id);
+}
+
+/** Online, on the host: a guest's pickup, if it is still there and within reach of where the guest is. */
+export function pickupFor(m: Match, a: Actor, it: Item) {
+  if (!it.live || !a.alive || a.drop || a.car >= 0) return false;
+  const b = a.body;
+  if (Math.hypot(it.x - b.x, it.z - b.z) > 3.2 || it.y < b.y - 1.8 || it.y > b.y + 2) return false;
+  pickup(m, a, it);
+  return true;
+}
+
+/** Starts a heal or boost. An online guest's own runs on its machine for the look of it (slowed, gun down); the host's
+ * copy is the one that counts. */
+export function startHeal(m: Match, a: Actor, kind: UseKind) {
+  a.healKind = kind;
+  a.healT = USE[kind].time;
+  a.reloadT = 0;
+  a.ads = 0;
+  m.events.push({ t: 'heal', a: a.id, done: false });
+  if (!m.authority && a.id === m.me) m.net?.heal?.(kind);
+}
+
+/** A heal or boost under way, done once its time is up (only where the rules run: a guest waits for the host). */
+export function tickHeal(m: Match, a: Actor, dt: number) {
+  a.healT -= dt;
+  if (a.healT > 0 || !a.healKind) return;
+  const k = a.healKind;
+  a.healT = 0;
+  a.healKind = null;
+  if (!m.authority) return;
+  if (k === 'kit' || k === 'bandage') {
+    const h = HEAL[k];
+    a.hp = Math.min(100, Math.max(a.hp, Math.min(h.to, a.hp + h.add)));
+    if (k === 'kit') a.kits--;
+    else a.bandages--;
+  } else {
+    a.boost = Math.min(100, a.boost + BOOST[k].add);
+    if (k === 'drink') a.drinks--;
+    else a.pills--;
+  }
+  m.events.push({ t: 'heal', a: a.id, done: true });
+}
+
 /** Which heal a press uses: a kit when badly hurt, a bandage while it still helps, else a kit. */
 export function healPick(a: Actor): HealKind | null {
   if (a.hp >= 100) return null;
@@ -1301,17 +1360,55 @@ function stepRoyale(m: Match, dt: number) {
     }
     if (p.k >= 1) m.plane = null;
   }
-  // the end: you're out, or one is left
-  const you = m.actors[0];
-  if (!you.alive || m.alive <= 1) {
+  // the end: the people are all out (alone, that is you; online, everyone in the room), or one is left
+  let people = 0;
+  for (const a of m.actors) if (a.alive && isPerson(m, a)) people++;
+  if (!people || m.alive <= 1) {
     m.phase = 'over';
     let last: Actor | null = null;
     for (const a of m.actors) if (a.alive) last = a;
     m.winner = last ? last.id : -1;
     if (last) last.place = 1;
-    you.cs += Math.round((ROYALE_PLAYERS - you.place + 1) * 12) + (you.place === 1 ? 600 : 0);
+    for (const a of m.actors) if (isPerson(m, a)) a.cs += Math.round((ROYALE_PLAYERS - a.place + 1) * 12) + (a.place === 1 ? 600 : 0);
     m.events.push({ t: 'phase', phase: 'over' });
   }
+}
+
+/** Someone a person plays (here, or online on another machine), as opposed to a bot. Your own seat counts even when
+ * the dev autopilot plays it. */
+export const isPerson = (m: Match, a: Actor) => a.id === m.me || !a.bot;
+
+/** Online, on a guest: what of a royale's world runs on between the host's updates (which set it right): the zone
+ * closing, the transport flying on (with whoever is still aboard), crates falling and the bombardment's clocks. */
+function mirrorRoyale(m: Match, dt: number) {
+  const z = m.zone;
+  if (z && z.i < ZONES.length) {
+    z.t = Math.max(0, z.t - dt);
+    if (z.shrinking) {
+      const k = 1 - z.t / ZONES[z.i].shrink;
+      z.x = lerp(z.fx, z.nx, k);
+      z.z = lerp(z.fz, z.nz, k);
+      z.r = lerp(z.fr, z.nr, k);
+    }
+  }
+  if (m.plane) {
+    const p = planeAt(m.plane, m.time);
+    for (const a of m.actors) {
+      if (a.drop !== 1 || !a.alive) continue;
+      a.body.x = p.x;
+      a.body.z = p.z;
+      a.body.y = m.plane.y;
+      // (you jump at the far edge by yourself, as the host would make you)
+      if (a.id === m.me && p.k >= 0.93) jumpOut(m, a);
+    }
+    if (p.k >= 1) m.plane = null;
+  }
+  for (const s of m.supplies) if (s.landed < 0) s.y = Math.max(s.ground, s.y - SUPPLY_FALL * dt);
+  const red = m.red;
+  if (red) {
+    if (red.warn > 0) red.warn = Math.max(0, red.warn - dt);
+    else red.left = Math.max(0, red.left - dt);
+  } else m.redT = Math.max(0, m.redT - dt);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -1458,7 +1555,7 @@ function shell(m: Match, x: number, z: number) {
   }
 }
 
-function jumpOut(m: Match, a: Actor) {
+export function jumpOut(m: Match, a: Actor) {
   if (a.drop !== 1 || !m.plane) return;
   const p = m.plane;
   a.drop = 2;
@@ -2081,61 +2178,41 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
     else if (canShop(m, a) && !owns(a, inp.buy)) m.net?.buy(inp.buy);
   }
   // in a vehicle (F gets out; the driver's keys drive it), or F at a vehicle's door gets in
+  // (an online guest asks the host, who seats it and says so)
   if (m.cars.length) {
     if (a.car >= 0 && inp.ride) {
-      leaveCar(m, a);
+      if (m.authority) leaveCar(m, a);
+      else m.net?.ride?.(-1);
       inp = { ...inp, use: false, ride: false };
     } else if (a.car < 0 && inp.ride) {
       const c = carNear(m, a);
-      if (c && enterCar(m, a, c)) inp = { ...inp, use: false, ride: false };
+      if (c && (m.authority ? enterCar(m, a, c) : (m.net?.ride?.(c.id), true))) inp = { ...inp, use: false, ride: false };
     }
     if (a.car >= 0) inp = rideInput(m, a, inp);
   }
   // picking up and healing
   if (m.mode === 'royale') {
+    // (an online guest asks the host for it, which puts it in its pockets and says so)
     if (inp.use) {
       const it = lootNear(m, a, 2.1, a.bot);
-      if (it) pickup(m, a, it);
+      if (it) takeLoot(m, a, it);
     } else if (!a.bot && Math.floor(m.time * 8) !== Math.floor((m.time - dt) * 8)) {
       // walk over it to take it: ammo, heals, grenades, better armor, and a gun for an empty slot (F swaps a gun)
       const it = autoLoot(m, a);
-      if (it) pickup(m, a, it);
+      if (it) takeLoot(m, a, it);
     }
     if ((inp.heal || inp.boost || inp.item) && a.healT <= 0) {
       // a chosen item (the item bar, its keys or the kit panel), when you have one and it would help; else H: a heal
-      // while one helps, else a boost; the boost key only a boost
+      // while one helps, else a boost; the boost key only a boost (an online guest asks the host, see startHeal)
       const kind = inp.item ? (canUse(a, inp.item) ? inp.item : null) : ((inp.heal ? healPick(a) : null) ?? boostPick(a));
-      if (kind) {
-        a.healKind = kind;
-        a.healT = USE[kind].time;
-        a.reloadT = 0;
-        a.ads = 0;
-        m.events.push({ t: 'heal', a: a.id, done: false });
-      }
+      if (kind) startHeal(m, a, kind);
     }
     if (a.healT > 0) {
       if (inp.fire || inp.slot >= 0 || inp.jump || inp.throw) {
         a.healT = 0;
         a.healKind = null;
-      } else {
-        a.healT -= dt;
-        if (a.healT <= 0 && a.healKind) {
-          const k = a.healKind;
-          if (k === 'kit' || k === 'bandage') {
-            const h = HEAL[k];
-            a.hp = Math.min(100, Math.max(a.hp, Math.min(h.to, a.hp + h.add)));
-            if (k === 'kit') a.kits--;
-            else a.bandages--;
-          } else {
-            a.boost = Math.min(100, a.boost + BOOST[k].add);
-            if (k === 'drink') a.drinks--;
-            else a.pills--;
-          }
-          a.healT = 0;
-          a.healKind = null;
-          m.events.push({ t: 'heal', a: a.id, done: true });
-        }
-      }
+        if (!m.authority) m.net?.heal?.(null);
+      } else tickHeal(m, a, dt);
     }
   }
   // planting or defusing: stand still with the gun down until done or let go
@@ -2170,7 +2247,11 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
         const need = magOf(cg) - cg.mag;
         const take = Math.min(need, spareOf(m, a, cg));
         cg.mag += take;
-        if (m.mode === 'royale') a.ammo[AMMO_OF[cg.id]] -= take;
+        if (m.mode === 'royale') {
+          a.ammo[AMMO_OF[cg.id]] -= take;
+          // (online, a guest's pockets are the host's: it is told what went into the gun)
+          if (!m.authority && a.id === m.me && take > 0) m.net?.spend?.(AMMO_OF[cg.id], take);
+        }
         else if (m.mode !== 'dm') cg.reserve -= take;
       }
     }
@@ -2321,6 +2402,8 @@ function remoteStep(m: Match, a: Actor, dt: number) {
     useIn.use = n.use;
     stepCharge(m, a, useIn, dt);
   }
+  // royale: a heal or boost the guest asked for (see online.ts) is done here
+  if (a.healT > 0) tickHeal(m, a, dt);
 }
 
 /** Online, on a guest: someone this machine only shows (moved by the host's stream): the walk cycle and footsteps. */
@@ -2400,6 +2483,11 @@ export function step(m: Match, dt: number, you: Input) {
     // a guest's clocks run on between the host's updates (which set them right)
     m.phaseT = Math.max(0, m.phaseT - dt);
     if (m.charge.state === 'planted') m.charge.fuse = Math.max(0, m.charge.fuse - dt);
+    if (m.mode === 'royale') mirrorRoyale(m, dt);
+    else if (m.mode === 'dm') {
+      m.clock += dt;
+      for (const a of m.actors) if (!a.alive) a.respawnT = Math.max(0, a.respawnT - dt);
+    }
   }
 }
 

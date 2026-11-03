@@ -678,7 +678,12 @@ export function DeathPanel({ h, touch }: { h: Hud; touch: boolean }) {
         {h.dead.w}
         {h.dead.head ? ', headshot' : ''}
       </span>
-      {h.royale ? <em>you finished #{h.royale.place} of {h.royale.total}</em> : h.mode === 'dm' ? <em>back in {Math.max(0, Math.ceil(h.dead.respawn))}</em> : h.watching ? <em>watching {h.watching}{touch ? ', tap to switch' : ', click to switch'}</em> : <em>your team is out</em>}
+      {h.royale ? (
+        <em>
+          you finished #{h.royale.place} of {h.royale.total}
+          {h.watching ? `. watching ${h.watching}${touch ? ', tap to switch' : ', click to switch'}` : ''}
+        </em>
+      ) : h.mode === 'dm' ? <em>back in {Math.max(0, Math.ceil(h.dead.respawn))}</em> : h.watching ? <em>watching {h.watching}{touch ? ', tap to switch' : ', click to switch'}</em> : <em>your team is out</em>}
     </div>
   );
 }
