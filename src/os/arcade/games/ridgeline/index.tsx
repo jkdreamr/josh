@@ -1383,10 +1383,10 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           <MedalView m={medal} />
           <KillConfirm k={killPop} />
           <ItemBar h={hud} onUse={useItem} />
-          {kitOpen && hud.royale && <KitPanel h={hud} onUse={useItem} onClose={() => openKit(false)} />}
           <DeathPanel h={hud} touch={touchUi} />
           <RoyalePrompts h={hud} touch={touchUi} />
           <BreachPrompts h={hud} touch={touchUi} />
+          {kitOpen && hud.royale && <KitPanel h={hud} onUse={useItem} onClose={() => openKit(false)} />}
           {hud.canBuy && !buyOpen && (
             <div className="g-ridgeline-hint">{touchUi ? 'tap Buy for guns and armor' : 'press B to buy'}</div>
           )}

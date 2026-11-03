@@ -271,12 +271,8 @@ export function Vitals({ h }: { h: Hud }) {
           <span data-on={h.royale.helmet ? '1' : '0'}>helmet {h.royale.helmet || '-'}</span>
           <span data-on={h.royale.vest ? '1' : '0'}>vest {h.royale.vest || '-'}</span>
           <span data-on={h.royale.pack ? '1' : '0'}>pack {h.royale.pack || '-'}</span>
-          <span data-on={h.royale.bandages ? '1' : '0'}>
-            <kbd>H</kbd>bandage {h.royale.bandages}
-          </span>
-          <span data-on={h.royale.kits ? '1' : '0'}>kit {h.royale.kits}</span>
-          <span data-on={h.royale.drinks || h.royale.pills ? '1' : '0'}>
-            <kbd>X</kbd>drink {h.royale.drinks} pills {h.royale.pills}
+          <span data-on="1">
+            <kbd>H</kbd>heal <kbd>X</kbd>boost <kbd>I</kbd>kit
           </span>
         </div>
       )}
