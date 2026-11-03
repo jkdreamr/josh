@@ -11,6 +11,7 @@ import {
   HALF,
   PLANT_TIME,
   ROUND_TIME,
+  boostPick,
   buy,
   canDefuse,
   canShop,
@@ -40,7 +41,7 @@ import { clamp, mulberry32, type Rng } from './noise.ts';
 import { canWalk, fieldDist, fieldStep, fieldTo, findPath } from './nav.ts';
 import { blockedAt, clearLine } from './physics.ts';
 import { floorAt, heightAt } from './terrain.ts';
-import { RED_WARN, planeAt } from './royale.ts';
+import { RED_WARN, magOf, planeAt, scopeOf } from './royale.ts';
 import { WEAPONS, type WeaponId } from './weapons.ts';
 import { SITE_R, type World } from './world.ts';
 
@@ -130,12 +131,14 @@ export type Brain = {
   listenA: number;
   waitT: number;
   heardT: number;
-  /** Royale: where it means to land, the loot it is going for, when to look for more, and a wish to heal. */
+  /** Royale: where it means to land, the loot it is going for, when to look for more, and a wish to heal or to take a
+   * boost. */
   dropX: number;
   dropZ: number;
   loot: number;
   lootT: number;
   healNow: boolean;
+  boostNow: boolean;
   /** Royale: the supply crate it is going for (-1 none), and a bit per crate it has already made up its mind on. */
   supply: number;
   supplySeen: number;
@@ -237,6 +240,7 @@ export function newBrain(level: BotLevel, seed: number): Brain {
     loot: -1,
     lootT: 0,
     healNow: false,
+    boostNow: false,
     supply: -1,
     supplySeen: 0,
     car: -1,
@@ -451,7 +455,7 @@ function perceive(m: Match, a: Actor, br: Brain) {
   // a royale bot still gearing up picks its fights: only close ones, or whoever shoots it
   const geared = m.mode !== 'royale' || ((!!a.guns[0] || !!a.guns[2]) && (a.vest > 0 || a.helmet > 0));
   // breach: a stranger further off than this is a few pixels across a field; nobody picks that out (a scope helps)
-  const scoped = !!currentGun(a) && WEAPONS[currentGun(a)!.id].scope;
+  const scoped = !!currentGun(a) && scopeOf(currentGun(a)!);
   const range = m.mode === 'breach' ? (scoped ? 95 : 55) : m.mode !== 'royale' ? 230 : geared ? 130 : a.guns[0] || a.guns[2] ? 45 : 28;
   for (const o of m.actors) {
     if (!o.alive || !isEnemy(a, o) || o.drop === 1) continue;
@@ -1072,6 +1076,8 @@ function planRoyale(m: Match, a: Actor, br: Brain) {
   const dn = Math.hypot(b.x - z.nx, b.z - z.nz);
   const late = z.shrinking || z.t < 22;
   br.healNow = a.hp < 72 && !!healPick(a) && dz < z.r - 4;
+  // a boost once hurt and out of the fight for a moment (or to top the meter up after a heal)
+  br.boostNow = !br.healNow && a.hp < 95 && a.boost < 30 && m.time - a.hurtT > 3 && !!boostPick(a) && dz < z.r - 4;
   // a long way from where the zone is going: a vehicle parked near gets there sooner
   if (seekCar(m, a, br)) return;
   // out of the zone (or soon to be): head in
@@ -1087,7 +1093,7 @@ function planRoyale(m: Match, a: Actor, br: Brain) {
     br.loot = -1;
     return;
   }
-  if (br.healNow) {
+  if (br.healNow || br.boostNow) {
     setGoal(m, br, b.x, b.z);
     return;
   }
@@ -1542,6 +1548,7 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
           break;
         }
     if (!tgt && br.healNow && a.healT <= 0) inp.heal = true;
+    else if (!tgt && br.boostNow && a.healT <= 0) inp.boost = true;
     // at the door of the vehicle it came for: in
     if (br.car >= 0 && carNear(m, a)?.id === br.car) inp.ride = true;
   }
@@ -1628,10 +1635,11 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     const ready = br.seenFor >= br.react;
     const errNow = Math.hypot(angDiff(a.yaw, wantYaw - br.errY), (a.pitch - (wantPitch - br.errP)) * 1.2);
     const tol = Math.atan2(0.32, Math.max(1, d)) + spreadOf(a) * DEG * 0.35 + (1 - br.skill) * 0.03;
-    const scoped = w.scope || w.cls === 'rifle';
+    const sc = !!g && scopeOf(g);
+    const scoped = sc || w.cls === 'rifle';
     inp.ads = scoped && d > 22 && br.skill > 0.3;
     if (w.cls === 'sniper') inp.ads = d > 8;
-    const aligned = errNow < tol && (!w.scope || a.ads > 0.9 || !inp.ads);
+    const aligned = errNow < tol && (!sc || a.ads > 0.9 || !inp.ads);
     // only in range, and (unless panicking up close) only once the cone is tight enough to land at this distance
     const cone = spreadOf(a) * DEG * d;
     const patience = d > 12 && br.skill > 0.3 && cone > 0.42 + (1 - br.skill) * 0.9;
@@ -1668,7 +1676,7 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     br.seenFor = 0;
     br.burst = 0;
     // reload in a quiet moment
-    if (g && g.mag < WEAPONS[g.id].mag * 0.5 && spareOf(m, a, g) > 0) inp.reload = true;
+    if (g && g.mag < magOf(g) * 0.5 && spareOf(m, a, g) > 0) inp.reload = true;
     // (empty handed there's nothing to hunt them with: keep running to the loot)
     const lostRecently = br.hasLast && m.time - br.lostAt < 4 && !!g;
     if (lostRecently) {

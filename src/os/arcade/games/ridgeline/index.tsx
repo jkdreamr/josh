@@ -8,10 +8,10 @@ import { Score, type Mood } from './score.ts';
 import { useAssets } from './assets.ts';
 import { autoQuality, createView, flyover, type Quality, type View } from './gfx/view.ts';
 import { kitOf, paletteOf } from './gfx/soldiers.ts';
-import { Ammo, BannerView, HitInfo, BreachPrompts, BuyMenu, DeathPanel, Feed, Markers, MedalView, Minimap, Reticle, RoyalePrompts, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type MedalPop, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi, type HitInfoApi } from './hud.tsx';
+import { Ammo, BannerView, HitInfo, ItemBar, KillConfirm, KitPanel, type KillPop, BreachPrompts, BuyMenu, DeathPanel, Feed, Markers, MedalView, Minimap, Reticle, RoyalePrompts, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type MedalPop, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi, type HitInfoApi } from './hud.tsx';
 import { MAPS, MAP_IDS, type MapId } from './maps.ts';
-import { DEFUSE_HALF, DEFUSE_TIME, DEG, PERSON_HEALTH, PLANT_TIME, type Medal, canDefuse, canShop, createMatch, currentGun, echoOfMine, eyeY, finalScore, idleInput, lootNear, owns, plantSite, spareOf, spreadOf, standings, step, viewDir, type Actor, type Input, type Match, type ShopItem } from './match.ts';
-import { HEAL, ROYALE_PLAYERS, ZONES, itemName, planeAt } from './royale.ts';
+import { DEFUSE_HALF, DEFUSE_TIME, DEG, PERSON_HEALTH, PLANT_TIME, type Medal, canDefuse, canShop, canUse, createMatch, currentGun, echoOfMine, eyeY, finalScore, idleInput, lootNear, owns, plantSite, spareOf, sightSwap, spreadOf, standings, step, viewDir, wants, type Actor, type Input, type Match, type ShopItem } from './match.ts';
+import { AMMO_KINDS, ROYALE_PLAYERS, USE, ZONES, ammoCap, boostCap, gunLabel, healCap, itemName, magOf, nadeCap, planeAt, scopeOf, zoomOf, type AttKind, type Item, type UseKind } from './royale.ts';
 import { newBrain } from './bots.ts';
 import { Session, type OnlineApi } from './online.ts';
 import { supplyLeft, underRoof } from './match.ts';
@@ -306,6 +306,16 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
   const [hud, setHud] = useState<Hud>(() => blankHud(mode));
   const [banner, setBanner] = useState<Banner | null>(null);
   const [medal, setMedal] = useState<MedalPop | null>(null);
+  const [killPop, setKillPop] = useState<KillPop | null>(null);
+  const kills = useRef({ at: -9, n: 0 });
+  const [kitOpen, setKitOpen] = useState(false);
+  const kitRef = useRef(false);
+  kitRef.current = kitOpen;
+  useEffect(() => {
+    if (!killPop) return;
+    const t = window.setTimeout(() => setKillPop(null), 1900);
+    return () => window.clearTimeout(t);
+  }, [killPop]);
   const [feed, setFeed] = useState<FeedItem[]>([]);
   const [buyOpen, setBuyOpen] = useState(false);
   const buyRef = useRef(false);
@@ -549,7 +559,20 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
     [unlock],
   );
 
-  const pending = useRef<{ buy: ShopItem | null }>({ buy: null });
+  const pending = useRef<{ buy: ShopItem | null; item: UseKind | null }>({ buy: null, item: null });
+
+  // royale: the kit panel (I) frees the mouse to click its buttons, and gives the keys back when it closes
+  const openKit = useCallback(
+    (open: boolean) => {
+      setKitOpen(open);
+      if (open) unlock();
+      else shellRef.current.root.current?.focus({ preventScroll: true });
+    },
+    [unlock],
+  );
+  const useItem = useCallback((k: UseKind) => {
+    pending.current.item = k;
+  }, []);
 
   const keys = useKeys((code, e) => {
     if (code === 'Tab') e?.preventDefault();
@@ -559,6 +582,11 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       else if (buyRef.current) openBuy(false);
     }
     if (code === 'Escape' && buyRef.current) openBuy(false);
+    if (code === 'KeyI') {
+      const m = matchRef.current?.m;
+      if (m?.mode === 'royale') openKit(!kitRef.current);
+    }
+    if (code === 'Escape' && kitRef.current) openKit(false);
   });
 
   // Escape closes the buy menu instead of pausing
@@ -566,14 +594,15 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
     const root = shell.root.current;
     if (!root) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.code !== 'Escape' || !buyRef.current || shellRef.current.status !== 'playing') return;
+      if (e.code !== 'Escape' || (!buyRef.current && !kitRef.current) || shellRef.current.status !== 'playing') return;
       e.preventDefault();
       e.stopPropagation();
       openBuy(false);
+      openKit(false);
     };
     root.addEventListener('keydown', onKey, true);
     return () => root.removeEventListener('keydown', onKey, true);
-  }, [shell.root, openBuy]);
+  }, [shell.root, openBuy, openKit]);
 
   const pushBanner = (title: string, sub: string, tone: Banner['tone']) => setBanner({ title, sub, tone, key: Date.now() + Math.random() });
 
@@ -643,8 +672,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       const k = keys;
       // look: mouse (pointer locked) or touch drags, slower while zoomed in
       const g0 = currentGun(you);
-      const w0 = g0 ? WEAPONS[g0.id] : null;
-      const zoom = w0 ? 1 + (w0.zoom - 1) * you.ads : 1;
+      const zoom = g0 ? 1 + (zoomOf(g0) - 1) * you.ads : 1;
       const sensK = (touchRef.current ? 0.0052 : 0.0021) * st.sens * (1 / zoom) * (zoom > 1.01 ? 1.15 : 1);
       let yaw = you.yaw - look.current.dx * sensK;
       let pitch = you.pitch - look.current.dy * sensK;
@@ -702,6 +730,12 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           // F also gets into the vehicle at hand, or out of the one you are in
           inp.ride = inp.use;
           inp.heal = k.pressed('KeyH') || t.heal;
+          inp.boost = k.pressed('KeyX');
+          // 6 to 9: a bandage, a med kit, a drink, the painkillers (also on the item bar and in the kit panel)
+          if (k.pressed('Digit6')) inp.item = 'bandage';
+          if (k.pressed('Digit7')) inp.item = 'kit';
+          if (k.pressed('Digit8')) inp.item = 'drink';
+          if (k.pressed('Digit9')) inp.item = 'pills';
         } else {
           if (k.pressed('Digit4', 'KeyG') || t.frag) inp.throw = 'frag';
           if (k.pressed('Digit5', 'KeyQ') || t.smoke) inp.throw = 'smoke';
@@ -715,6 +749,13 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       const p = pending.current;
       if (p.buy) inp.buy = p.buy;
       p.buy = null;
+      if (p.item) inp.item = p.item;
+      p.item = null;
+      // (the kit panel open: hands off the trigger, the feet still move)
+      if (kitRef.current) {
+        inp.fire = false;
+        inp.ads = false;
+      }
       setBoard(k.down('Tab'));
       if (!touchRef.current) setBigMap(k.down('KeyM'));
 
@@ -748,6 +789,13 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           if (kk.victim === m.me) {
             deathLook.current = { yaw: you.yaw, pitch: you.pitch };
             spec.current = 0;
+          }
+          // your knockout: the big confirmation, counting ones that come quickly together
+          if (kk.killer === m.me && kk.victim !== m.me) {
+            const kc = kills.current;
+            kc.n = time.current - kc.at < 4 ? kc.n + 1 : 1;
+            kc.at = time.current;
+            setKillPop({ key: Date.now() + Math.random(), name: va.name, head: kk.head, n: kc.n });
           }
         }
         if (e.t === 'phase') {
@@ -893,9 +941,9 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       }
       const g = a.alive && !a.drop && !drivenCar ? currentGun(a) : null;
       const wdef = g ? WEAPONS[g.id] : null;
-      const zoom = wdef ? 1 + (wdef.zoom - 1) * a.ads : 1;
+      const zoom = g ? 1 + (zoomOf(g) - 1) * a.ads : 1;
       const fov = (2 * Math.atan(Math.tan((baseV * DEG) / 2) / zoom)) / DEG;
-      const scoped = !!wdef?.scope && a.ads > 0.85;
+      const scoped = !!g && scopeOf(g) && a.ads > 0.85;
       const dYaw = wrapAngle(eye.yaw - lastLook.current.yaw);
       const dPitch = eye.pitch - lastLook.current.pitch;
       lastLook.current = { yaw: eye.yaw, pitch: eye.pitch };
@@ -1048,7 +1096,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       hpMax: a.bot ? 100 : Math.round(100 * PERSON_HEALTH),
       armor: a.armor,
       credits: you.credits,
-      gun: g && w ? { name: w.name, mag: g.mag, reserve: m.mode === 'royale' ? spareOf(m, a, g) : g.reserve, max: w.mag, cls: w.cls, scope: w.scope } : null,
+      gun: g && w ? { name: gunLabel(g), mag: g.mag, reserve: m.mode === 'royale' ? spareOf(m, a, g) : g.reserve, max: magOf(g), cls: w.cls, scope: scopeOf(g) } : null,
       slot: a.slot,
       guns: [a.guns[0]?.id ?? null, a.guns[1]?.id ?? null, a.guns[2]?.id ?? null],
       frags: a.frags,
@@ -1061,7 +1109,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       watching: !you.alive && a !== you ? a.name : null,
       feed: [],
       dm: m.mode === 'dm' ? { kills: you.kills, top: top === you ? (st[1]?.kills ?? 0) : top.kills, topName: top === you ? (st[1]?.name ?? '') : top.name, place: st.indexOf(you) + 1, total: m.actors.length } : null,
-      scoped: !!w?.scope && a.alive && a.ads > 0.85,
+      scoped: !!g && scopeOf(g) && a.alive && a.ads > 0.85,
       reload: a.reloadT > 0 && w ? 1 - a.reloadT / w.reload : 0,
       rows: (m.mode === 'breach' ? [...m.actors].sort((x, y) => (x.team === you.team ? 0 : 1) - (y.team === you.team ? 0 : 1) || y.cs - x.cs) : m.mode === 'royale' ? royaleRows(m) : st).map((o) => ({ name: o.name, team: m.mode === 'breach' ? (o.team === you.team ? 0 : 1) : -1, k: o.kills, d: o.deaths, a: o.assists, cs: Math.round(o.cs), credits: m.mode === 'breach' && o.team === you.team ? o.credits : null, alive: o.alive, you: o === you })),
       owned,
@@ -1109,16 +1157,46 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       drop: you.drop,
       vest: you.armor > 0 ? you.vest : 0,
       helmet: you.helmet,
+      pack: you.pack,
       bandages: you.bandages,
       kits: you.kits,
-      heal: you.healT > 0 && you.healKind ? 1 - you.healT / HEAL[you.healKind].time : 0,
-      healName: you.healKind ? HEAL[you.healKind].name : null,
-      // (everything else is taken by walking over it: F is for swapping the gun in hand)
-      pickup: near ? `${near.kind === 'gun' && (WEAPONS[near.what as WeaponId].slot === 'secondary' ? you.guns[1] : you.guns[0] && you.guns[2]) ? 'swap for ' : ''}${itemName(near, (id) => WEAPONS[id].name)}` : null,
+      drinks: you.drinks,
+      pills: you.pills,
+      boost: you.boost,
+      heal: you.healT > 0 && you.healKind ? 1 - you.healT / USE[you.healKind].time : 0,
+      healName: you.healKind ? USE[you.healKind].name : null,
+      // (everything else is taken by walking over it: F is for swapping the gun in hand, a backpack or a sight)
+      pickup: near ? pickupText(you, near) : null,
       red: red && redEdge > -2 ? { edge: Math.max(0, redEdge) + 2, live: red.warn <= 0, t: red.warn, cover: underRoof(m.world, you.body.x, eyeY(you), you.body.z) } : null,
       car: car ? { name: CARS[car.kind].name, kmh: Math.abs(car.speed) * 3.6, hp: car.hp / CARS[car.kind].hp, driving: you.carSeat === 0 } : null,
       drive: door ? `${door.seats[0] < 0 ? 'drive' : 'ride in'} the ${CARS[door.kind].name.toLowerCase()}` : null,
+      using: you.healT > 0 ? you.healKind : null,
+      caps: { bandage: healCap(you.pack, 'bandage'), kit: healCap(you.pack, 'kit'), drink: boostCap(you.pack, 'drink'), pills: boostCap(you.pack, 'pills') },
+      helps: { bandage: canUse(you, 'bandage'), kit: canUse(you, 'kit'), drink: canUse(you, 'drink'), pills: canUse(you, 'pills') },
+      ammo: AMMO_KINDS.map((k) => ({ kind: k, n: you.ammo[k], cap: ammoCap(you.pack, k) })),
+      nades: { frag: you.frags, fragCap: nadeCap(you.pack, 'frag'), smoke: you.smokes, smokeCap: nadeCap(you.pack, 'smoke') },
+      guns: [you.guns[0], you.guns[2], you.guns[1]].filter((g) => !!g).map((g) => gunLabel(g!)),
+      crate: crateNear(m, you),
     };
+  };
+
+  /** The nearest supply crate with gear left, within 25 m: how far (-1 none). */
+  const crateNear = (m: Match, you: Actor) => {
+    let best = -1;
+    for (const s of m.supplies) {
+      if (s.landed < 0 || !supplyLeft(m, s)) continue;
+      const d = Math.hypot(s.x - you.body.x, s.z - you.body.z);
+      if (d < 25 && (best < 0 || d < best)) best = d;
+    }
+    return best;
+  };
+
+  /** What F does with the item in front of you: take it, swap it for yours, or nothing (an attachment no gun takes). */
+  const pickupText = (you: Actor, it: Item) => {
+    const name = itemName(it, (id) => WEAPONS[id].name);
+    if (it.kind === 'att' && !wants(you, it)) return sightSwap(you, it.what as AttKind) ? `swap for ${name}` : `${name}, fits no gun you carry`;
+    const swap = (it.kind === 'gun' && (WEAPONS[it.what as WeaponId].slot === 'secondary' ? you.guns[1] : you.guns[0] && you.guns[2])) || (it.kind === 'pack' && you.pack > 0);
+    return `${swap ? 'swap for ' : ''}${name}`;
   };
 
   /** Royale scoreboard: the most kills first (the living ahead), at most fifteen, and always you. */
@@ -1303,9 +1381,12 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           <Reticle ref={fast} shotgun={gunCls === 'shotgun'} />
           <BannerView b={banner} />
           <MedalView m={medal} />
+          <KillConfirm k={killPop} />
+          <ItemBar h={hud} onUse={useItem} />
           <DeathPanel h={hud} touch={touchUi} />
           <RoyalePrompts h={hud} touch={touchUi} />
           <BreachPrompts h={hud} touch={touchUi} />
+          {kitOpen && hud.royale && <KitPanel h={hud} onUse={useItem} onClose={() => openKit(false)} />}
           {hud.canBuy && !buyOpen && (
             <div className="g-ridgeline-hint">{touchUi ? 'tap Buy for guns and armor' : 'press B to buy'}</div>
           )}

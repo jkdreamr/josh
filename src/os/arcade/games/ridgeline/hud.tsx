@@ -4,6 +4,7 @@
 // crosshair, hit markers and the scope.
 import { forwardRef, useEffect, useImperativeHandle, useRef, type ReactNode } from 'react';
 import type { Mode, Phase, ShopItem } from './match.ts';
+import { BOOST_FAST, HEAL, type UseKind } from './royale.ts';
 import { ARMOR, NADES, WEAPONS, type WeaponId } from './weapons.ts';
 import type { World } from './world.ts';
 
@@ -78,8 +79,14 @@ export type RoyaleHud = {
   drop: number;
   vest: number;
   helmet: number;
+  /** Backpack level (0 none), heals and boosts carried, and the boost meter, 0 to 100. */
+  pack: number;
   bandages: number;
   kits: number;
+  drinks: number;
+  pills: number;
+  boost: number;
+  /** A heal or boost under way, 0 to 1, and what it is. */
   heal: number;
   healName: string | null;
   pickup: string | null;
@@ -90,6 +97,17 @@ export type RoyaleHud = {
   car: { name: string; kmh: number; hp: number; driving: boolean } | null;
   /** A vehicle at hand: what F does there ('drive Jeep', 'ride in Jeep'). */
   drive: string | null;
+  /** The kit item being used now, the most of each you can carry, and whether each would help right now. */
+  using: UseKind | null;
+  caps: Record<UseKind, number>;
+  helps: Record<UseKind, boolean>;
+  /** Ammo by kind (rounds and the most you can carry), grenades and their caps, and your two long guns' names (with
+   * what is fitted) and the sidearm's, for the kit panel. */
+  ammo: { kind: string; n: number; cap: number }[];
+  nades: { frag: number; fragCap: number; smoke: number; smokeCap: number };
+  guns: string[];
+  /** A supply crate with gear left near you: how far (-1 none near). */
+  crate: number;
 };
 
 export const blankHud = (mode: Mode): Hud => ({
@@ -236,6 +254,11 @@ export function Vitals({ h }: { h: Hud }) {
         <span className="g-ridgeline-hpBar">
           <i style={{ width: `${h.hp}%` }} className={h.hp < 35 ? 'is-low' : ''} />
         </span>
+        {h.royale && (
+          <span className="g-ridgeline-boostBar" data-fast={h.royale.boost >= BOOST_FAST ? '1' : '0'} title="boost">
+            <i style={{ width: `${h.royale.boost}%` }} />
+          </span>
+        )}
       </div>
       <div className="g-ridgeline-armor" data-on={h.armor > 0 ? '1' : '0'}>
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -247,10 +270,10 @@ export function Vitals({ h }: { h: Hud }) {
         <div className="g-ridgeline-kit">
           <span data-on={h.royale.helmet ? '1' : '0'}>helmet {h.royale.helmet || '-'}</span>
           <span data-on={h.royale.vest ? '1' : '0'}>vest {h.royale.vest || '-'}</span>
-          <span data-on={h.royale.bandages ? '1' : '0'}>
-            <kbd>H</kbd>bandage {h.royale.bandages}
+          <span data-on={h.royale.pack ? '1' : '0'}>pack {h.royale.pack || '-'}</span>
+          <span data-on="1">
+            <kbd>H</kbd>heal <kbd>X</kbd>boost <kbd>I</kbd>kit
           </span>
-          <span data-on={h.royale.kits ? '1' : '0'}>kit {h.royale.kits}</span>
         </div>
       )}
       {h.mode === 'breach' && (
@@ -407,6 +430,135 @@ export function BuyMenu({ h, onBuy, onClose }: { h: Hud; onBuy: (i: ShopItem) =>
 }
 
 /** Royale prompts: what to do in the air, what is at your feet, a heal under way, and the zone when you are out of it. */
+/** The kit items in the order the item bar shows them, with their keys and how they look. */
+export const KIT_ITEMS: { kind: UseKind; key: string; name: string; icon: string }[] = [
+  { kind: 'bandage', key: '6', name: 'Bandage', icon: 'M5 9h14v6H5zM9 9v6M15 9v6' },
+  { kind: 'kit', key: '7', name: 'Med kit', icon: 'M4 7h16v12H4zM9 7V5h6v2M12 10v6M9 13h6' },
+  { kind: 'drink', key: '8', name: 'Energy drink', icon: 'M8 4h8l1 3v13H7V7zM7 9h10M10 13l3-2-1 3 2-1' },
+  { kind: 'pills', key: '9', name: 'Painkillers', icon: 'M8 7h8v13H8zM7 4h10v3H7zM10 12h4M12 10v4' },
+];
+
+const countOf = (r: RoyaleHud, k: UseKind) => (k === 'bandage' ? r.bandages : k === 'kit' ? r.kits : k === 'drink' ? r.drinks : r.pills);
+
+/**
+ * Royale: what you carry to patch yourself up, always on screen: a bandage, a med kit, a drink and the painkillers,
+ * each with its count, its key (6 to 9), dimmed when you have none or it wouldn't help now, and a ring that fills while
+ * one is being used. Each can also be clicked or tapped.
+ */
+export function ItemBar({ h, onUse }: { h: Hud; onUse: (k: UseKind) => void }) {
+  const r = h.royale;
+  if (!r || !h.alive || r.drop) return null;
+  return (
+    <div className="g-ridgeline-items" role="group" aria-label="Heals and boosts">
+      {KIT_ITEMS.map((it) => {
+        const n = countOf(r, it.kind);
+        const on = r.using === it.kind;
+        return (
+          <button key={it.kind} type="button" className={on ? 'is-on' : ''} data-empty={n ? '0' : '1'} data-helps={r.helps[it.kind] ? '1' : '0'} title={`${it.name} (${it.key})`} onPointerDown={(e) => e.stopPropagation()} onClick={() => onUse(it.kind)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d={it.icon} />
+            </svg>
+            <b>{n}</b>
+            <kbd>{it.key}</kbd>
+            {on && <i style={{ ['--p' as string]: `${Math.round(r.heal * 100)}%` }} />}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Royale: the kit panel (I): everything you carry, with a Use button on each heal and boost. */
+export function KitPanel({ h, onUse, onClose }: { h: Hud; onUse: (k: UseKind) => void; onClose: () => void }) {
+  const r = h.royale;
+  if (!r) return null;
+  return (
+    <div className="g-ridgeline-kitpanel" role="dialog" aria-label="Your kit" onPointerDown={(e) => e.stopPropagation()}>
+      <header>
+        <b>Your kit</b>
+        <button type="button" onClick={onClose}>
+          close <kbd>I</kbd>
+        </button>
+      </header>
+      <section>
+        <h4>Gear</h4>
+        <p>
+          helmet {r.helmet || 'none'} · vest {r.vest || 'none'} ({Math.ceil(h.armor)} armor) · backpack {r.pack || 'none'}
+        </p>
+        <p>{r.guns.length ? r.guns.join(' · ') : 'no guns yet'}</p>
+      </section>
+      <section>
+        <h4>Heals and boosts</h4>
+        <ul>
+          {KIT_ITEMS.map((it) => {
+            const n = countOf(r, it.kind);
+            return (
+              <li key={it.kind}>
+                <span>
+                  {it.name} <small>{n} of {r.caps[it.kind]}</small>
+                </span>
+                <button type="button" disabled={!n || !r.helps[it.kind] || !!r.using} onClick={() => onUse(it.kind)}>
+                  use <kbd>{it.key}</kbd>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        <small>a bandage heals up to {HEAL.bandage.to}, a med kit to full. drinks and painkillers fill the boost meter, which heals you slowly and, when high, speeds you up.</small>
+      </section>
+      <section>
+        <h4>Ammo and grenades</h4>
+        <ul>
+          {r.ammo.map((a) => (
+            <li key={a.kind}>
+              <span>{a.kind}</span>
+              <small>
+                {a.n} of {a.cap}
+              </small>
+            </li>
+          ))}
+          <li>
+            <span>frags</span>
+            <small>
+              {r.nades.frag} of {r.nades.fragCap}
+            </small>
+          </li>
+          <li>
+            <span>smokes</span>
+            <small>
+              {r.nades.smoke} of {r.nades.smokeCap}
+            </small>
+          </li>
+        </ul>
+      </section>
+    </div>
+  );
+}
+
+/**
+ * Every knockout you make, impossible to miss: a big red X with ELIMINATED and their name, a headshot tag, and the
+ * count when they come quickly one after another.
+ */
+export type KillPop = { key: number; name: string; head: boolean; n: number };
+export function KillConfirm({ k }: { k: KillPop | null }) {
+  if (!k) return null;
+  return (
+    <div key={k.key} className="g-ridgeline-killpop" aria-live="polite">
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <path d="M8 8l24 24M32 8L8 32" />
+      </svg>
+      <div>
+        <b>Eliminated</b>
+        <span>
+          {k.name}
+          {k.head && <em>headshot</em>}
+        </span>
+        {k.n > 1 && <small>x{k.n}</small>}
+      </div>
+    </div>
+  );
+}
+
 export function RoyalePrompts({ h, touch }: { h: Hud; touch: boolean }) {
   const r = h.royale;
   if (!r || !h.alive) return null;
@@ -429,6 +581,12 @@ export function RoyalePrompts({ h, touch }: { h: Hud; touch: boolean }) {
         <div className="g-ridgeline-prompt is-car">
           <kbd>{touch ? 'Drive' : 'F'}</kbd>
           {r.drive}
+        </div>
+      )}
+      {!r.drop && !r.car && r.crate >= 0 && !r.pickup && (
+        <div className="g-ridgeline-prompt is-crate">
+          supply crate {r.crate > 3 ? `${Math.round(r.crate)} m` : 'here'}
+          <small>its gear lies on the ground round it: walk over it to take it ({touch ? 'Grab' : 'F'} swaps a gun)</small>
         </div>
       )}
       {!r.drop && !r.car && !r.drive && r.pickup && (

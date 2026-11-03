@@ -302,6 +302,24 @@
 .g-ridgeline .g-ridgeline-hpBar i.is-low {
   background: #ff5a4a;
 }
+/* royale: the boost meter, a thin bar under the health bar, brighter while it is high enough to run faster */
+.g-ridgeline .g-ridgeline-boostBar {
+  width: 150px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.g-ridgeline .g-ridgeline-boostBar i {
+  display: block;
+  height: 100%;
+  background: #e0b13c;
+  transition: width 0.3s linear;
+}
+.g-ridgeline .g-ridgeline-boostBar[data-fast='1'] i {
+  background: #ffd25a;
+  box-shadow: 0 0 6px rgba(255, 210, 90, 0.7);
+}
 .g-ridgeline .g-ridgeline-armor {
   display: flex;
   align-items: center;
@@ -1364,7 +1382,8 @@
   .g-ridgeline .g-ridgeline-mag b {
     font-size: 32px;
   }
-  .g-ridgeline .g-ridgeline-hpBar {
+  .g-ridgeline .g-ridgeline-hpBar,
+  .g-ridgeline .g-ridgeline-boostBar {
     width: 100px;
   }
   .g-ridgeline .g-ridgeline-slots {
@@ -1412,4 +1431,199 @@
   left: auto;
   right: 12px;
   transform: none;
+}
+
+/* royale: the item bar (heals and boosts, keys 6 to 9), bottom middle */
+.g-ridgeline .g-ridgeline-items {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  display: flex;
+  gap: 6px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+.g-ridgeline .g-ridgeline-items button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: 1px solid var(--g-ridgeline-line);
+  border-radius: 6px;
+  background: var(--g-ridgeline-plate);
+  color: #f2f2f2;
+  cursor: pointer;
+  overflow: hidden;
+}
+.g-ridgeline .g-ridgeline-items svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+.g-ridgeline .g-ridgeline-items b {
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  font-size: 12px;
+}
+.g-ridgeline .g-ridgeline-items kbd {
+  position: absolute;
+  left: 3px;
+  top: 2px;
+  font-size: 9px;
+  opacity: 0.75;
+}
+.g-ridgeline .g-ridgeline-items button[data-empty='1'] {
+  opacity: 0.35;
+}
+.g-ridgeline .g-ridgeline-items button[data-empty='0'][data-helps='1'] {
+  border-color: rgba(120, 220, 140, 0.7);
+}
+.g-ridgeline .g-ridgeline-items button.is-on {
+  border-color: var(--g-ridgeline-gold);
+}
+/* the ring that fills while it is being used */
+.g-ridgeline .g-ridgeline-items button i {
+  position: absolute;
+  inset: 0;
+  background: conic-gradient(rgba(255, 213, 106, 0.38) var(--p), transparent 0);
+}
+
+/* royale: the kit panel (I) */
+.g-ridgeline .g-ridgeline-kitpanel {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(440px, calc(100% - 24px));
+  max-height: calc(100% - 140px);
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--g-ridgeline-line);
+  border-radius: 8px;
+  background: rgba(12, 16, 22, 0.9);
+  color: #eef1f4;
+  font-size: 13px;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+.g-ridgeline .g-ridgeline-kitpanel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 15px;
+}
+.g-ridgeline .g-ridgeline-kitpanel h4 {
+  margin: 10px 0 4px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+.g-ridgeline .g-ridgeline-kitpanel p {
+  margin: 2px 0;
+}
+.g-ridgeline .g-ridgeline-kitpanel ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.g-ridgeline .g-ridgeline-kitpanel li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.g-ridgeline .g-ridgeline-kitpanel small {
+  opacity: 0.7;
+}
+.g-ridgeline .g-ridgeline-kitpanel button {
+  padding: 3px 9px;
+  border: 1px solid var(--g-ridgeline-line);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.g-ridgeline .g-ridgeline-kitpanel button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* every knockout of yours: the big confirmation above the crosshair */
+.g-ridgeline .g-ridgeline-killpop {
+  position: absolute;
+  left: 50%;
+  top: calc(50% - 128px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  white-space: nowrap;
+  animation: g-ridgeline-killpop 1.9s ease forwards;
+}
+.g-ridgeline .g-ridgeline-killpop svg {
+  width: 38px;
+  height: 38px;
+  fill: none;
+  stroke: #ff4a3a;
+  stroke-width: 5;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.8));
+}
+.g-ridgeline .g-ridgeline-killpop div {
+  display: grid;
+  line-height: 1.05;
+  text-shadow: 0 0 4px #000, 0 1px 2px #000;
+}
+.g-ridgeline .g-ridgeline-killpop b {
+  color: #ff5a46;
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.g-ridgeline .g-ridgeline-killpop span {
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+}
+.g-ridgeline .g-ridgeline-killpop em {
+  margin-left: 8px;
+  color: var(--g-ridgeline-gold);
+  font-style: normal;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+.g-ridgeline .g-ridgeline-killpop small {
+  color: var(--g-ridgeline-gold);
+  font-size: 16px;
+  font-weight: 800;
+}
+@keyframes g-ridgeline-killpop {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(1.35);
+  }
+  10% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.g-ridgeline .g-ridgeline-prompt.is-crate {
+  border-color: rgba(63, 182, 255, 0.7);
 }
