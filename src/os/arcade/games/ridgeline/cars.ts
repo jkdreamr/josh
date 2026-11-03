@@ -598,7 +598,9 @@ export function leaveCar(m: Match, a: Actor) {
 export function rideInput(m: Match, a: Actor, inp: Input): Input {
   const c = m.cars[a.car];
   // nobody at the wheel: a passenger who steps on it slides over and drives
-  if (c && a.carSeat > 0 && c.seats[0] < 0 && inp.mz !== 0) {
+  // (online, a guest asks the host for the wheel, and drives once it has it)
+  if (c && a.carSeat > 0 && c.seats[0] < 0 && inp.mz !== 0 && !m.authority) m.net?.ride?.(c.id);
+  else if (c && a.carSeat > 0 && c.seats[0] < 0 && inp.mz !== 0) {
     c.seats[a.carSeat] = -1;
     c.seats[0] = a.id;
     a.carSeat = 0;
@@ -622,7 +624,7 @@ export function rideInput(m: Match, a: Actor, inp: Input): Input {
 
 /** Wears a car down; at none it blows up. `from` is who did it (-1 nobody: a crash). */
 export function hurtCar(m: Match, c: Car, dmg: number, from: number) {
-  if (!c.alive || dmg <= 0) return;
+  if (!c.alive || dmg <= 0 || !m.authority) return;
   c.hp -= dmg;
   if (from >= 0) c.lastHit = from;
   c.hurtT = m.time;
@@ -927,10 +929,21 @@ function move(m: Match, c: Car, nx: number, nz: number, nyaw: number, h: number)
   }
 }
 
-/** A hard knock: the car is hurt, and over a point its riders too. */
+/** A hard knock: the car is hurt, and over a point its riders too. (Online, a guest driving its own car tells the host,
+ * which does the hurting.) */
 function crash(m: Match, c: Car, hard: number) {
   if (hard < 5) return;
   m.events.push({ t: 'crash', x: c.x, y: c.y + 0.8, z: c.z, v: hard });
+  if (!m.authority) {
+    if (c.seats[0] === m.me) m.net?.crash?.(c.id, hard);
+    return;
+  }
+  crashHurt(m, c, hard);
+}
+
+/** What a crash does (online, the host does it for a guest's car when told of it). */
+export function crashHurt(m: Match, c: Car, hard: number) {
+  if (hard < 5 || !c.alive) return;
   hurtCar(m, c, (hard - 5) * 11, -1);
   if (hard > 13)
     for (const id of c.seats)
@@ -1000,6 +1013,13 @@ export function stepCars(m: Match, dt: number) {
     const driver = c.seats[0] >= 0 ? m.actors[c.seats[0]] : null;
     let empty = true;
     for (const id of c.seats) if (id >= 0) empty = false;
+    // online: a car is driven on one machine (the host's, or a guest's if the guest drives it) and everyone else is
+    // shown where that machine put it (see online.ts): here only its riders ride along and it pushes people aside
+    if (m.authority ? driver?.remote : driver?.id !== m.me) {
+      for (const id of c.seats) if (id >= 0) seatBody(c, m.actors[id]);
+      bump(m, c, Math.abs(c.speed) > 0.5);
+      continue;
+    }
     if (c.sleep && empty) {
       bump(m, c, false);
       continue;

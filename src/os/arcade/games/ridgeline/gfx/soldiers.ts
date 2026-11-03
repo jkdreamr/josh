@@ -3,9 +3,9 @@
 // team in warm tan, the other team in charcoal), else the lofted one. In deathmatch everyone draws a kit of their own.
 import type { Actor, Match } from '../match.ts';
 import { RUN, currentGun } from '../match.ts';
-import { WEAPONS, type WeaponId } from '../weapons.ts';
+import { PAVISE, WEAPONS, type WeaponId } from '../weapons.ts';
 import { BONE, LOFT_BUILD, SOLDIER_BUILD, makePoser, skeleton, soldierGeometry } from './body.ts';
-import { patch, type Shared, type T, type Three } from './common.ts';
+import { patch, roundBox, type Shared, type T, type Three } from './common.ts';
 import { OUTFITS, outfitMaterials } from './gear.ts';
 import { gunLiteGeometry, gunModel } from './guns.ts';
 import { worldMaterial, type Part } from './models.ts';
@@ -49,7 +49,14 @@ export type Soldiers = {
   dispose(): void;
 };
 
-type Rig = { mesh: T.SkinnedMesh; bones: T.Bone[]; guns: Map<number, T.Mesh>; kit: string; muzzle: T.Vector3; frame: number; posedAt: number; lod: boolean };
+type Rig = { mesh: T.SkinnedMesh; bones: T.Bone[]; guns: Map<number, T.Mesh>; kit: string; muzzle: T.Vector3; frame: number; posedAt: number; lod: boolean; shield: T.Group | null };
+
+/** The ballistic shield on a soldier (model space: its bottom edge, a little left of the middle): raised, square in
+ * front at the height the rules use (lower crouched); carried, slung on the back. The model stands 1.57 m tall. */
+const SHIELD_K = PAVISE.tall / 1.566;
+/** Turns the model's face to the front. */
+export const SHIELD_FACE = 0;
+
 
 const GUN_IDS = Object.keys(WEAPONS) as WeaponId[];
 /** One number per gun and side, so the per frame lookups build no strings. */
@@ -60,13 +67,31 @@ const FAR = 330;
 const NEAR = 45;
 const SHADOW = 50;
 
-export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: Part | null, lod: Part | null): Soldiers {
+export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: Part | null, lod: Part | null, shieldParts: Part[] = []): Soldiers {
   const group = new THREE.Group();
   const build = real ? SOLDIER_BUILD : LOFT_BUILD;
   const kits = new Map<string, { geo: T.BufferGeometry; lod: T.BufferGeometry | null; mats: T.Material[]; camo: T.Texture | null }>();
   const gunMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.3 });
   patch(gunMat, shared, { key: 'dz-gun-lite' });
   const rigs = new Map<number, Rig>();
+  // the shield's parts lit like the world, shared by everyone carrying one (a plain slab if the model didn't load)
+  const shieldLook: { geo: T.BufferGeometry; mat: T.Material }[] = shieldParts.length
+    ? shieldParts.map((p) => ({ geo: p.geo, mat: worldMaterial(THREE, p.mat, shared) }))
+    : [{ geo: roundBox(THREE, 0.62, 1.56, 0.05, 0.2, 2).translate(0, 0.78, 0), mat: new THREE.MeshStandardMaterial({ color: 0x2b2f33, roughness: 0.6, metalness: 0.4 }) }];
+  if (!shieldParts.length) patch(shieldLook[0].mat as T.MeshStandardMaterial, shared, { key: 'dz-shield' });
+  const shieldFor = (r: Rig) => {
+    if (!r.shield) {
+      r.shield = new THREE.Group();
+      for (const p of shieldLook) {
+        const mesh = new THREE.Mesh(p.geo, p.mat);
+        mesh.castShadow = shadows;
+        r.shield.add(mesh);
+      }
+      r.shield.scale.setScalar(SHIELD_K);
+      r.mesh.add(r.shield);
+    }
+    return r.shield;
+  };
   const pose = makePoser(THREE, build);
   const tmp = new THREE.Vector3();
   const frustum = new THREE.Frustum();
@@ -110,7 +135,7 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: P
     mesh.receiveShadow = true;
     mesh.frustumCulled = false;
     group.add(mesh);
-    r = { mesh, bones, guns: new Map(), kit: key, muzzle: new THREE.Vector3(0, -1000, 0), frame: 0, posedAt: -1, lod: false };
+    r = { mesh, bones, guns: new Map(), kit: key, muzzle: new THREE.Vector3(0, -1000, 0), frame: 0, posedAt: -1, lod: false, shield: null };
     rigs.set(a.id, r);
     return r;
   };
@@ -210,6 +235,18 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: P
         r.mesh.position.set(b.x, b.y - (b.swim ? 0.25 : 0) - fallE * 0.08, b.z);
         if (car) r.mesh.rotation.set(car.pitch, seat === 1 ? car.yaw : a.yaw, car.roll, 'YXZ');
         else r.mesh.rotation.set(dead ? fallE * 1.45 : sky === 1 ? -1.25 : 0, a.yaw, 0, 'YXZ');
+        // a shield carried: up in front, or on the back
+        if (a.pavise > 0 && !dead && !sky && !car) {
+          const sh = shieldFor(r);
+          sh.visible = true;
+          if (a.paviseUp) {
+            sh.position.set(-0.04, PAVISE.low[0] + (PAVISE.low[1] - PAVISE.low[0]) * a.crouch, -PAVISE.ahead);
+            sh.rotation.set(0, SHIELD_FACE, 0);
+          } else {
+            sh.position.set(0, 0.42 - a.crouch * 0.4, 0.2);
+            sh.rotation.set(0.08, SHIELD_FACE + Math.PI, 0);
+          }
+        } else if (r.shield) r.shield.visible = false;
         const g = sky || seat === 1 ? null : currentGun(a);
         const id = g?.id ?? null;
         const side = sideOf(m, a);
@@ -246,6 +283,10 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: P
       real?.geo.dispose();
       lod?.geo.dispose();
       gunMat.dispose();
+      for (const p of shieldLook) {
+        p.mat.dispose();
+        p.geo.dispose();
+      }
     },
   };
 }

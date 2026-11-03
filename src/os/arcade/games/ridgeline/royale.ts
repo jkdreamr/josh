@@ -2,18 +2,18 @@
 // shrinking zone's timetable, and the transport's flight line. Pure TS with no state of its own; match.ts runs it.
 import { mulberry32, type Rng } from './noise.ts';
 import { CELL, T_HALF, T_RES, heightAt } from './terrain.ts';
-import { WEAPONS, type WeaponClass, type WeaponId } from './weapons.ts';
+import { PAVISE, WEAPONS, type WeaponClass, type WeaponId } from './weapons.ts';
 import type { World } from './world.ts';
 
 export const ROYALE_PLAYERS = 100;
 
-export type AmmoKind = 'light' | 'rifle' | 'shells' | 'magnum' | 'sniper';
-export const AMMO_KINDS: AmmoKind[] = ['light', 'rifle', 'shells', 'magnum', 'sniper'];
-export const AMMO_OF: Record<WeaponId, AmmoKind> = { wren: 'light', hornet: 'light', bulwark: 'magnum', mauler: 'shells', kestrel: 'rifle', lancer: 'rifle', longbow: 'sniper' };
-export const AMMO_NAME: Record<AmmoKind, string> = { light: '9mm', rifle: '5.56', shells: '12 gauge', magnum: '.50 AE', sniper: '.338' };
+export type AmmoKind = 'light' | 'rifle' | 'shells' | 'magnum' | 'sniper' | 'bolts';
+export const AMMO_KINDS: AmmoKind[] = ['light', 'rifle', 'shells', 'magnum', 'sniper', 'bolts'];
+export const AMMO_OF: Record<WeaponId, AmmoKind> = { wren: 'light', hornet: 'light', bulwark: 'magnum', mauler: 'shells', kestrel: 'rifle', lancer: 'rifle', longbow: 'sniper', talon: 'rifle', rampart: 'rifle', marshal: 'magnum', wasp: 'light', thresher: 'shells', arbalest: 'bolts' };
+export const AMMO_NAME: Record<AmmoKind, string> = { light: '9mm', rifle: '5.56', shells: '12 gauge', magnum: '.50 AE', sniper: '.338', bolts: 'Bolts' };
 /** Rounds in a box on the ground, and the most you can carry. */
-export const AMMO_PACK: Record<AmmoKind, number> = { light: 30, rifle: 30, shells: 10, magnum: 14, sniper: 10 };
-export const AMMO_MAX: Record<AmmoKind, number> = { light: 210, rifle: 210, shells: 60, magnum: 70, sniper: 50 };
+export const AMMO_PACK: Record<AmmoKind, number> = { light: 30, rifle: 30, shells: 10, magnum: 14, sniper: 10, bolts: 6 };
+export const AMMO_MAX: Record<AmmoKind, number> = { light: 210, rifle: 210, shells: 60, magnum: 70, sniper: 50, bolts: 30 };
 
 /** Armor points a vest of each level gives, and how much of a head hit a helmet lets through. */
 export const VEST = [0, 40, 70, 100];
@@ -24,7 +24,10 @@ export const HEAL: Record<HealKind, { time: number; to: number; add: number; max
   bandage: { time: 2.6, to: 75, add: 15, max: 10, name: 'Bandage' },
   kit: { time: 5.5, to: 100, add: 100, max: 3, name: 'Med kit' },
 };
-export const NADE_MAX = { frag: 3, smoke: 2 };
+/** The grenades a royale has (no flashbangs), and how many of each you carry without a backpack. */
+export type RoyaleNade = 'frag' | 'smoke' | 'fire' | 'impact' | 'decoy';
+export const ROYALE_NADES: RoyaleNade[] = ['frag', 'smoke', 'fire', 'impact', 'decoy'];
+export const NADE_MAX: Record<RoyaleNade, number> = { frag: 3, smoke: 2, fire: 2, impact: 2, decoy: 1 };
 
 /** Boosts: an energy drink or a bottle of painkillers fills the boost meter (0 to 100), which drains by BOOST_DRAIN
  * a second. While it is up you mend slowly (BOOST_HEAL a second at the bottom, BOOST_HEAL_TOP at the top, never past
@@ -48,19 +51,22 @@ export const boostHeal = (boost: number) => (boost > 0 ? BOOST_HEAL + (BOOST_HEA
 /** Backpacks, levels 1 to 3: ammo carried goes up by PACK_AMMO, and heals, boosts and grenades by PACK_MORE of each
  * kind (none for level 0, no pack). */
 export const PACK_AMMO = [1, 1.4, 1.8, 2.2];
-export const PACK_MORE: Record<HealKind | BoostKind | 'frag' | 'smoke', number[]> = {
+export const PACK_MORE: Record<HealKind | BoostKind | RoyaleNade, number[]> = {
   bandage: [0, 4, 8, 12],
   kit: [0, 1, 2, 3],
   drink: [0, 2, 4, 6],
   pills: [0, 1, 2, 3],
   frag: [0, 1, 2, 3],
   smoke: [0, 1, 2, 2],
+  fire: [0, 1, 1, 2],
+  impact: [0, 1, 2, 2],
+  decoy: [0, 0, 1, 1],
 };
 /** The most of a kind someone with this pack can carry. */
 export const ammoCap = (pack: number, k: AmmoKind) => Math.round(AMMO_MAX[k] * PACK_AMMO[pack]);
 export const healCap = (pack: number, k: HealKind) => HEAL[k].max + PACK_MORE[k][pack];
 export const boostCap = (pack: number, k: BoostKind) => BOOST[k].max + PACK_MORE[k][pack];
-export const nadeCap = (pack: number, k: 'frag' | 'smoke') => NADE_MAX[k] + PACK_MORE[k][pack];
+export const nadeCap = (pack: number, k: RoyaleNade) => NADE_MAX[k] + PACK_MORE[k][pack];
 
 /** Attachments for long guns: a red dot (a cleaner sight picture and a little zoom), a 4x scope (zoom 4 and the
  * scope view), an extended magazine (half as many rounds again) and a compensator (less bloom and recoil). A gun
@@ -69,7 +75,7 @@ export type AttKind = 'dot' | 'x4' | 'ext' | 'comp';
 export const ATT_NAME: Record<AttKind, string> = { dot: 'Red dot sight', x4: '4x scope', ext: 'Extended magazine', comp: 'Compensator' };
 export const ATT_SHORT: Record<AttKind, string> = { dot: 'dot', x4: '4x', ext: 'ext', comp: 'comp' };
 /** Which classes each fits: a sight only on guns without a scope of their own, nothing on the muzzle of a shotgun. */
-const ATT_FITS: Record<AttKind, WeaponClass[]> = { dot: ['smg', 'rifle', 'shotgun'], x4: ['rifle', 'dmr'], ext: ['smg', 'rifle', 'dmr', 'sniper'], comp: ['smg', 'rifle', 'dmr', 'sniper'] };
+const ATT_FITS: Record<AttKind, WeaponClass[]> = { dot: ['smg', 'rifle', 'shotgun', 'lmg', 'crossbow'], x4: ['rifle', 'dmr', 'lmg', 'crossbow'], ext: ['smg', 'rifle', 'dmr', 'sniper', 'lmg'], comp: ['smg', 'rifle', 'dmr', 'sniper', 'lmg'] };
 export const DOT_ZOOM = 1.4;
 export const X4_ZOOM = 4;
 export const EXT_MAG = 1.5;
@@ -116,10 +122,10 @@ export function attach(g: { id: WeaponId; mods?: Mods | null }, k: AttKind): Att
   return null;
 }
 
-export type ItemKind = 'gun' | 'ammo' | 'vest' | 'helmet' | 'heal' | 'nade' | 'pack' | 'boost' | 'att';
+export type ItemKind = 'gun' | 'ammo' | 'vest' | 'helmet' | 'heal' | 'nade' | 'pack' | 'boost' | 'att' | 'shield';
 /** Something lying on the ground. `what` is a gun id, an ammo kind, a level ('1' to '3'), a heal, boost, grenade or
  * attachment kind. A gun keeps what is fitted to it (`mods`); `by` is whoever put it down (walking over it again
- * never takes it back by itself). */
+ * never takes it back by itself). A shield's count is what it has left before it breaks. */
 export type Item = { id: number; kind: ItemKind; what: string; n: number; x: number; y: number; z: number; live: boolean; mods?: Mods | null; by?: number };
 
 /** One phase of the zone: it holds for `wait` seconds, then closes to radius `r` over `shrink`; outside costs `dps`. */
@@ -217,7 +223,7 @@ export type Supply = { id: number; x: number; y: number; z: number; ground: numb
  * scope and an extended magazine, a med kit or two, painkillers, and sometimes a pair of frags. A gun's count is
  * filled in by the match (its magazine). */
 export function supplyContents(r: Rng): [ItemKind, string, number][] {
-  const g = (['longbow', 'lancer', 'kestrel'] as WeaponId[])[Math.floor(r() * 3)];
+  const g = (['longbow', 'lancer', 'kestrel', 'rampart'] as WeaponId[])[Math.floor(r() * 4)];
   const out: [ItemKind, string, number][] = [
     ['gun', g, 0],
     ['ammo', AMMO_OF[g], AMMO_MAX[AMMO_OF[g]]],
@@ -258,23 +264,35 @@ const pick = <T,>(r: Rng, table: [T, number][]): T => {
 };
 
 const GUNS: [WeaponId, number][] = [
-  ['wren', 20],
-  ['hornet', 18],
-  ['kestrel', 17],
-  ['mauler', 12],
-  ['bulwark', 11],
-  ['lancer', 10],
-  ['longbow', 4],
+  ['wren', 18],
+  ['hornet', 14],
+  ['kestrel', 14],
+  ['mauler', 10],
+  ['bulwark', 9],
+  ['lancer', 8],
+  ['longbow', 3],
+  ['wasp', 10],
+  ['marshal', 7],
+  ['talon', 9],
+  ['thresher', 6],
+  ['arbalest', 5],
+  ['rampart', 3],
 ];
 /** The better guns, a little more often where loot is rich. */
 const RICH_GUNS: [WeaponId, number][] = [
-  ['wren', 8],
-  ['hornet', 18],
-  ['kestrel', 22],
-  ['mauler', 12],
-  ['bulwark', 9],
-  ['lancer', 15],
-  ['longbow', 7],
+  ['wren', 6],
+  ['hornet', 13],
+  ['kestrel', 17],
+  ['mauler', 9],
+  ['bulwark', 7],
+  ['lancer', 12],
+  ['longbow', 6],
+  ['wasp', 9],
+  ['marshal', 6],
+  ['talon', 12],
+  ['thresher', 8],
+  ['arbalest', 6],
+  ['rampart', 7],
 ];
 
 /**
@@ -319,6 +337,7 @@ export function spawnLoot(w: World, seed: number): Item[] {
       ['boost', 8],
       ['att', 8 + k * 4],
       ['pack', 5 + k * 3],
+      ['shield', 1.2 + k * 1.2],
     ]);
     // levels: the third more often (and the first less) the richer the spot
     const level = (): string =>
@@ -352,7 +371,22 @@ export function spawnLoot(w: World, seed: number): Item[] {
         y,
         z,
       );
-    else add('nade', r() < 0.65 ? 'frag' : 'smoke', 1, x, y, z);
+    else if (kind === 'shield') add('shield', '1', PAVISE.hp, x, y, z);
+    else
+      add(
+        'nade',
+        pick<RoyaleNade>(r, [
+          ['frag', 40],
+          ['smoke', 20],
+          ['fire', 15],
+          ['impact', 15],
+          ['decoy', 10],
+        ]),
+        1,
+        x,
+        y,
+        z,
+      );
   }
   for (const it of out) if (it.kind === 'ammo' && it.n === 0) it.n = AMMO_PACK[it.what as AmmoKind];
   for (const it of out) if (it.kind === 'heal' && it.what === 'bandage') it.n = 3;
@@ -378,7 +412,11 @@ export function itemName(it: Item, gunName: (id: WeaponId) => string) {
       return `Backpack, level ${it.what}`;
     case 'att':
       return ATT_NAME[it.what as AttKind];
+    case 'shield':
+      return `Ballistic shield (${Math.round((it.n / PAVISE.hp) * 100)}%)`;
     default:
-      return it.what === 'frag' ? 'Frag grenade' : 'Smoke grenade';
+      return it.n > 1 ? `${NADE_NAME[it.what as RoyaleNade]} x${it.n}` : NADE_NAME[it.what as RoyaleNade];
   }
 }
+
+export const NADE_NAME: Record<RoyaleNade, string> = { frag: 'Frag grenade', smoke: 'Smoke grenade', fire: 'Incendiary', impact: 'Impact grenade', decoy: 'Decoy' };

@@ -4,8 +4,9 @@ import { MAP_IDS } from '../src/os/arcade/games/ridgeline/maps.ts';
 import { DM_HUBS, newBrain } from '../src/os/arcade/games/ridgeline/bots.ts';
 import { fieldDist, fieldTo, findPath } from '../src/os/arcade/games/ridgeline/nav.ts';
 import { RADIUS, STAND_H, blockedAt, clearLine, groundAt, newHit, rayWorld, stepBody, type Body } from '../src/os/arcade/games/ridgeline/physics.ts';
-import { CELL, T_HALF, T_RES, floorAt, generateTerrain, heightAt, rayTerrain } from '../src/os/arcade/games/ridgeline/terrain.ts';
-import { ARMOR, KILL_REWARD, LOSS_REWARD, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
+import { CELL, T_HALF, T_RES, floorAt, generateTerrain, heightAt, normalAt, rayTerrain } from '../src/os/arcade/games/ridgeline/terrain.ts';
+import { ARMOR, KILL_REWARD, LOSS_REWARD, PAVISE, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
+
 import { ARENA, ROYALE_ARENA, SITE_R, worldFor } from '../src/os/arcade/games/ridgeline/world.ts';
 import { AMMO_MAX, AMMO_OF, AMMO_PACK, BOOST, BOOST_DRAIN, HEAL, NADE_MAX, RED_LIVE, RED_WARN, ROYALE_PLAYERS, VEST, X4_ZOOM, ZONES, ammoCap, fits, gunLabel, healCap, magOf, richness, scopeOf, spawnLoot, zoomOf, type AmmoKind, type Item } from '../src/os/arcade/games/ridgeline/royale.ts';
 import {
@@ -32,6 +33,11 @@ import {
   markRed,
   plantSite,
   spawnOf,
+  FIRE_DPS,
+  FIRE_LIFE,
+  gun,
+  inFire,
+  shieldHit,
   startRound,
   step,
   supplyLeft,
@@ -75,7 +81,7 @@ for (const id of MAP_IDS) {
     w.sites.forEach((site, k) => {
       const f = fieldTo(w, `site${k}`, site.x, site.z);
       for (const s of w.spawns) assert.ok(Number.isFinite(fieldDist(w, f, s.x, s.z)), `spawn reaches site ${site.name}`);
-      // walking lengths: the attack about 20 s of running from either site, the defense well nearer
+      // walking lengths: the attack about 20 to 30 s of running to either site, the defense well nearer
       const walk = (a: { x: number; z: number }) => {
         const p = findPath(w, a.x, a.z, site.x, site.z, 200000)!;
         let x = a.x;
@@ -90,13 +96,19 @@ for (const id of MAP_IDS) {
       };
       const atk = walk(w.spawns[0]);
       const def = walk(w.spawns[1]);
-      assert.ok(atk > 70 && atk < 150, `attack walks ${atk.toFixed(0)} m to ${site.name}`);
+      assert.ok(atk > 100 && atk < 170, `attack walks ${atk.toFixed(0)} m to ${site.name}`);
       assert.ok(def < atk * 0.8, `defense walks ${def.toFixed(0)} m to ${site.name}, the attack ${atk.toFixed(0)}`);
     });
     // the spawns are walled yards: nobody sees from one into the other
     const [a, b] = w.spawns;
     for (const p of a.slots) for (const q of b.slots) assert.ok(!clearLine(w, p.x, a.y + 1.66, p.z, q.x, b.y + 1.66, q.z), 'no line of sight from spawn to spawn');
     for (const p of w.dmSpawns) assert.ok(findPath(w, p.x, p.z, w.sites[1].x, w.sites[1].z), 'deathmatch spawns are on the main ground');
+    // the ground you can walk on is bounded by banks, hills or the sea well inside the arena's edge, so nobody walks
+    // into the invisible wall at the edge or up onto the hills between the lanes
+    let reach = 0;
+    for (let j = 0; j < T_RES; j++)
+      for (let i = 0; i < T_RES; i++) if (w.region[j * T_RES + i]) reach = Math.max(reach, Math.abs(i * CELL - T_HALF), Math.abs(j * CELL - T_HALF));
+    assert.ok(reach < ARENA - 6, `walkable ground reaches ${reach.toFixed(0)} m out of ${ARENA}`);
   });
 }
 
@@ -193,7 +205,8 @@ test('bullets fly, drop over distance and hit what they aim at', () => {
     const x = you.body.x + Math.sin(ang) * 30;
     const z = you.body.z + Math.cos(ang) * 30;
     const y = heightAt(m.world.terrain, x, z);
-    if (blockedAt(m.world, x, z, y) || y < m.world.terrain.water) continue;
+    // (on level ground: a target on a bank would slide off it before the shot lands)
+    if (blockedAt(m.world, x, z, y) || y < m.world.terrain.water || normalAt(m.world.terrain, x, z).y < 0.9) continue;
     if (!clearLine(m.world, you.body.x, eye, you.body.z, x, y + 1.1, z) || !clearLine(m.world, you.body.x, eye, you.body.z, x, y + 1.6, z)) continue;
     foe.body.x = x;
     foe.body.z = z;
@@ -788,6 +801,8 @@ test('royale: a hundred drop in, loot, fight and the zone closes to one left sta
   let atts = 0;
   let boosts = 0;
   let modded = 0;
+  // and the newer gear: the new guns, shields and grenades
+  let newGear = 0;
   const step2 = 1 / 30;
   while (m.phase !== 'over' && m.time < 900) {
     // you stay in it to the end (unhurt) so the bots play the whole match out
@@ -799,6 +814,7 @@ test('royale: a hundred drop in, loot, fight and the zone closes to one left sta
       if (e.t === 'pickup') picks++;
       if (e.t === 'pickup' && e.item.kind === 'pack') packs++;
       if (e.t === 'pickup' && e.item.kind === 'att') atts++;
+      if (e.t === 'pickup' && (e.item.kind === 'shield' || ['talon', 'rampart', 'marshal', 'wasp', 'thresher', 'arbalest', 'fire', 'impact', 'decoy'].includes(e.item.what))) newGear++;
       if (e.t === 'kill') kills++;
       if (e.t === 'shot') shots++;
       if (e.t === 'land') landed++;
@@ -816,6 +832,7 @@ test('royale: a hundred drop in, loot, fight and the zone closes to one left sta
   assert.ok(atts > 10, `attachments taken (${atts})`);
   assert.ok(modded > 5, `guns with attachments on (${modded} at once)`);
   assert.ok(boosts > 5, `boosts used when hurt (${boosts})`);
+  assert.ok(newGear > 20, `the new guns, shields and grenades looted (${newGear})`);
 });
 
 /** A royale with only you in it, on open flat ground near the middle of the zone, with nothing lying near you. */
@@ -1283,4 +1300,343 @@ test('royale vehicles: bullets and blasts wear a car down, and it blows up, thro
   you.hp = 100;
   for (let i = 0; i < 30; i++) step(m, DT, { ...idleInput(), ride: true });
   assert.equal(you.car, -1);
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// the new guns, the ballistic shield and the new grenades
+
+/** A live breach with nobody acting but you (actor 0), and one enemy (actor 5) standing `dist` meters off in the open,
+ * still and unarmored. Everyone else is out of the way. */
+function range(dist: number, seed = 4) {
+  const m = createMatch(worldFor('vale'), 'breach', 'normal', { seed });
+  while (m.phase === 'buy') step(m, DT, idleInput());
+  for (const a of m.actors) {
+    a.alive = a.id === 0 || a.id === 5;
+    a.bot = false;
+    a.brain = null;
+  }
+  m.phaseT = 999;
+  const you = m.actors[0];
+  const foe = m.actors[5];
+  foe.armor = 0;
+  const eye = you.body.y + you.body.height - 0.14;
+  let found = false;
+  for (let k = 0; k < 64 && !found; k++) {
+    const ang = (k / 64) * Math.PI * 2;
+    const x = you.body.x + Math.sin(ang) * dist;
+    const z = you.body.z + Math.cos(ang) * dist;
+    const y = heightAt(m.world.terrain, x, z);
+    if (blockedAt(m.world, x, z, y) || y < m.world.terrain.water || Math.abs(y - you.body.y) > 1.5) continue;
+    if (!clearLine(m.world, you.body.x, eye, you.body.z, x, y + 0.2, z) || !clearLine(m.world, you.body.x, eye, you.body.z, x, y + 1.7, z)) continue;
+    foe.body.x = x;
+    foe.body.z = z;
+    foe.body.y = y;
+    found = true;
+  }
+  assert.ok(found, 'found an open line of fire');
+  return { m, you, foe };
+}
+
+const NEW_GUNS: WeaponId[] = ['talon', 'rampart', 'marshal', 'wasp', 'thresher', 'arbalest'];
+
+test('the new guns: each has its slot, price and royale ammo, and the old guns keep their online codes', () => {
+  for (const id of NEW_GUNS) {
+    const w = WEAPONS[id];
+    assert.ok(w.price > 0 && w.mag > 0 && w.dmg > 0, id);
+    assert.equal(w.slot, id === 'marshal' ? 'secondary' : 'primary', id);
+    assert.ok(AMMO_OF[id], `${id} takes ammo in a royale`);
+  }
+  // (online play sends a gun as its place in the list: the first seven keep theirs)
+  assert.deepEqual(Object.keys(WEAPONS).slice(0, 7), ['wren', 'bulwark', 'hornet', 'mauler', 'kestrel', 'lancer', 'longbow']);
+  assert.equal(WEAPONS.talon.burst, 3);
+  assert.equal(WEAPONS.rampart.mag, 75);
+  assert.ok(WEAPONS.rampart.reload > WEAPONS.kestrel.reload * 1.5, 'a machine gun reloads slowly');
+  assert.ok(WEAPONS.wasp.rpm > WEAPONS.hornet.rpm, 'the Wasp fires faster than the Hornet');
+  assert.ok(WEAPONS.thresher.auto && WEAPONS.thresher.pellets > 1);
+  assert.ok(WEAPONS.arbalest.speed < 150 && WEAPONS.arbalest.mag === 1, 'a slow bolt, one at a time');
+  assert.ok(applyDamage(100, 0, WEAPONS.marshal.dmg * WEAPONS.marshal.head).hp <= 0, 'a revolver headshot kills');
+  assert.ok(applyDamage(100, 0, WEAPONS.arbalest.dmg).hp <= 0, 'a bolt to the body kills without armor');
+});
+
+for (const id of NEW_GUNS) {
+  test(`${id}: fires with its own damage, fire mode and magazine`, () => {
+    const w = WEAPONS[id];
+    const dist = id === 'arbalest' ? 12 : 5;
+    const { m, you, foe } = range(dist);
+    you.guns[w.slot === 'secondary' ? 1 : 0] = gun(id);
+    you.slot = w.slot === 'secondary' ? 1 : 0;
+    you.switchT = 0;
+    assert.equal(you.guns[you.slot]!.mag, w.mag, 'a full magazine');
+    foe.hp = 1e6;
+    const inp = aim(m, 0, foe.body.x, foe.body.y + foe.body.height * 0.6, foe.body.z);
+    inp.ads = true;
+    for (let i = 0; i < 30; i++) step(m, DT, inp);
+    // hold the trigger for a second, then let go
+    let shots = 0;
+    const hits: { dmg: number; zone: string }[] = [];
+    for (let i = 0; i < 90; i++) {
+      step(m, DT, { ...inp, fire: i < 60 });
+      for (const e of m.events) {
+        if (e.t === 'shot' && e.a === 0) shots++;
+        if (e.t === 'hit' && e.a === 0 && e.v === 5) hits.push({ dmg: e.dmg, zone: e.zone });
+      }
+    }
+    const g = you.guns[you.slot]!;
+    if (w.burst) assert.equal(shots, w.burst, 'one pull, one burst');
+    else if (w.auto) assert.ok(shots >= Math.min(w.mag, Math.floor(w.rpm / 60)) - 1, `held down it keeps firing (${shots})`);
+    else assert.equal(shots, 1, 'one pull, one shot');
+    if (id === 'arbalest') assert.ok(you.reloadT > 0 || g.mag === 1, 'the crossbow spans the next bolt by itself');
+    else assert.equal(g.mag, w.mag - shots, 'each shot takes a round');
+    assert.ok(hits.length > 0, 'it hit');
+    // (the target is a person: their health counts for more)
+    for (const h of hits) {
+      const mul = h.zone === 'head' ? w.head : h.zone === 'leg' ? w.leg : 1;
+      const want = (w.dmg * mul * rangeMul(w, dist)) / PERSON_HEALTH;
+      assert.ok(Math.abs(h.dmg - want) <= 1.5, `${h.zone} hit ${h.dmg} (want ${want.toFixed(1)})`);
+    }
+  });
+}
+
+test('a burst gun pauses between bursts, and a crossbow bolt flies slow, drops and spans again', () => {
+  const { m, you, foe } = range(12);
+  // (still in the round, out of the way)
+  foe.hp = 1e6;
+  you.guns[0] = gun('talon');
+  you.slot = 0;
+  you.switchT = 0;
+  const inp = idleInput(you.yaw, 0.02);
+  const times: number[] = [];
+  // pulling as fast as possible: bursts of three with a pause between
+  for (let i = 0; i < 90; i++) {
+    step(m, DT, { ...inp, fire: i < 60 && i % 2 === 0 });
+    for (const e of m.events) if (e.t === 'shot') times.push(m.time);
+  }
+  assert.ok(times.length >= 6 && times.length % 3 === 0, `whole bursts (${times.length} shots)`);
+  for (let i = 1; i < times.length; i++) {
+    const gap = times[i] - times[i - 1];
+    if (i % 3 === 0) assert.ok(gap >= WEAPONS.talon.burstGap, `a pause between bursts (${gap.toFixed(3)} s)`);
+    else assert.ok(gap < 0.1, `quick within a burst (${gap.toFixed(3)} s)`);
+  }
+  you.guns[0] = gun('arbalest');
+  you.switchT = 0;
+  you.fireCd = 0;
+  // (up into the open sky)
+  inp.pitch = 0.5;
+  for (let i = 0; i < 20; i++) step(m, DT, inp);
+  const before = m.bullets.length;
+  step(m, DT, { ...inp, fire: true });
+  const b = m.bullets[before];
+  assert.ok(b && b.w === 'arbalest');
+  assert.ok(Math.hypot(b.vx, b.vy, b.vz) < 100, 'slow');
+  assert.ok(b.life > 1.6, 'and flies long enough to arc a long way');
+  const vy0 = b.vy;
+  for (let i = 0; i < 30; i++) step(m, DT, inp);
+  assert.ok(b.vy < vy0 - 2, 'it falls');
+  for (let i = 0; i < 150; i++) step(m, DT, inp);
+  assert.equal(you.guns[0]!.mag, 1, 'spanned again by itself');
+});
+
+test('the ballistic shield: stops a shot from the front but not from behind, slows you, and breaks', () => {
+  const { m, you, foe } = range(10);
+  you.guns[0] = gun('kestrel');
+  you.slot = 0;
+  you.pavise = PAVISE.hp;
+  // raised, facing the foe: the sidearm comes out
+  const face = aim(m, 0, foe.body.x, foe.body.y + 1, foe.body.z);
+  step(m, DT, { ...face, shield: true });
+  assert.ok(you.paviseUp, 'raised');
+  assert.equal(you.slot, 1, 'the sidearm in the other hand');
+  for (let i = 0; i < 60; i++) step(m, DT, face);
+  step(m, DT, { ...face, ads: true });
+  assert.equal(you.ads, 0, 'nothing to aim down');
+  // a rifle round from a point at your chest
+  const shoot = (from: { x: number; y: number; z: number }) => {
+    const tx = you.body.x;
+    const ty = you.body.y + 1.2;
+    const tz = you.body.z;
+    const l = Math.hypot(tx - from.x, ty - from.y, tz - from.z);
+    m.bullets.push({ x: from.x, y: from.y, z: from.z, px: from.x, py: from.y, pz: from.z, vx: ((tx - from.x) / l) * 900, vy: ((ty - from.y) / l) * 900 + 0.1, vz: ((tz - from.z) / l) * 900, owner: 5, w: 'kestrel', life: 1.6, dist: 0, live: true });
+    const evs: { t: string; broke?: boolean }[] = [];
+    for (let i = 0; i < 6; i++) {
+      step(m, DT, face);
+      for (const e of m.events) if (e.t === 'block' || (e.t === 'hit' && e.v === 0)) evs.push(e);
+    }
+    return evs;
+  };
+  const front = { x: foe.body.x, y: foe.body.y + 1.5, z: foe.body.z };
+  const back = { x: you.body.x * 2 - foe.body.x, y: foe.body.y + 1.5, z: you.body.z * 2 - foe.body.z };
+  const toward = (p: { x: number; y: number; z: number }) => {
+    const l = Math.hypot(you.body.x - p.x, you.body.y + 1.2 - p.y, you.body.z - p.z);
+    return shieldHit(you, p.x, p.y, p.z, (you.body.x - p.x) / l, (you.body.y + 1.2 - p.y) / l, (you.body.z - p.z) / l, l);
+  };
+  assert.ok(toward(front) > 0, 'its face is in the way from the front');
+  assert.equal(toward(back), -1, 'and not from behind');
+  const hp = you.hp;
+  assert.deepEqual(shoot(front).map((e) => e.t), ['block'], 'stopped by the shield');
+  assert.equal(you.hp, hp, 'unhurt');
+  assert.ok(you.pavise < PAVISE.hp && you.pavise > PAVISE.hp - 60, `the shield took it (${you.pavise})`);
+  assert.deepEqual(shoot(back).map((e) => e.t), ['hit'], 'a shot from behind hurts');
+  assert.ok(you.hp < hp);
+  // slower with it up
+  const speed = (up: boolean) => {
+    you.paviseUp = up;
+    you.slot = 1;
+    for (let i = 0; i < 40; i++) step(m, DT, { ...face, mz: 1 });
+    return Math.hypot(you.body.vx, you.body.vz);
+  };
+  assert.ok(speed(true) < speed(false) * 0.85, 'a raised shield slows you');
+  // a long gun takes both hands: the shield goes down
+  you.paviseUp = true;
+  step(m, DT, { ...face, slot: 0 });
+  assert.ok(!you.paviseUp);
+  // worn down, the next shot breaks it (and is still stopped)
+  for (let i = 0; i < 30; i++) step(m, DT, face);
+  step(m, DT, { ...face, shield: true });
+  assert.ok(you.paviseUp);
+  for (let i = 0; i < 30; i++) step(m, DT, face);
+  you.pavise = 10;
+  const hp2 = you.hp;
+  const evs = shoot(front);
+  assert.ok(evs.some((e) => e.t === 'block' && e.broke), 'it broke');
+  assert.equal(you.pavise, 0);
+  assert.ok(!you.paviseUp);
+  assert.equal(you.hp, hp2, 'the shot that broke it was still stopped');
+  // bought in the shop, one at a time, and good as new each round
+  const s = createMatch(worldFor('mesa'), 'breach', 'normal', { seed: 3 });
+  const me = s.actors[0];
+  me.credits = 5000;
+  assert.ok(buy(s, me, 'pavise'));
+  assert.equal(me.pavise, PAVISE.hp);
+  assert.ok(!buy(s, me, 'pavise'), 'one at a time');
+  me.pavise = 50;
+  startRound(s);
+  assert.equal(me.pavise, PAVISE.hp);
+});
+
+test('an incendiary burns the ground: hurts an enemy standing in it through armor, never a teammate, and dies down', () => {
+  const { m, you, foe } = range(10);
+  const mate = m.actors[1];
+  mate.alive = true;
+  putOn(m, 1, foe.body.x + 0.8, foe.body.z);
+  foe.armor = 50;
+  you.fires = 1;
+  // thrown: one fewer carried, one in the air
+  step(m, DT, { ...idleInput(you.yaw, 0), throw: 'fire' });
+  assert.equal(you.fires, 0);
+  assert.equal(m.nades.at(-1)?.kind, 'fire');
+  m.nades.length = 0;
+  m.nades.push({ kind: 'fire', x: foe.body.x, y: foe.body.y + 1.2, z: foe.body.z, vx: 0, vy: -2, vz: 0, fuse: 2, owner: 0, rest: false, spin: 0 });
+  let caught = false;
+  for (let i = 0; i < 60; i++) {
+    step(m, DT, idleInput(you.yaw, 0));
+    if (m.events.some((e) => e.t === 'fire')) caught = true;
+  }
+  assert.ok(caught && m.fires.length === 1, 'it caught on landing');
+  assert.ok(inFire(m, foe.body.x, foe.body.y, foe.body.z));
+  for (let i = 0; i < 60 * 2; i++) step(m, DT, idleInput(you.yaw, 0));
+  assert.ok(foe.hp < 100 - FIRE_DPS, `the enemy in it burns (${foe.hp.toFixed(0)})`);
+  assert.equal(foe.armor, 50, 'armor does nothing against fire');
+  assert.equal(mate.hp, 100, 'never a teammate');
+  for (let i = 0; i < 60 * FIRE_LIFE; i++) step(m, DT, idleInput(you.yaw, 0));
+  assert.equal(m.fires.length, 0, 'burned out');
+  // a smoke puts one out
+  m.nades.push({ kind: 'fire', x: foe.body.x, y: foe.body.y + 0.3, z: foe.body.z, vx: 0, vy: -1, vz: 0, fuse: 2, owner: 0, rest: false, spin: 0 });
+  for (let i = 0; i < 30; i++) step(m, DT, idleInput(you.yaw, 0));
+  assert.equal(m.fires.length, 1);
+  m.nades.push({ kind: 'smoke', x: foe.body.x + 1, y: foe.body.y + 0.3, z: foe.body.z, vx: 0, vy: 0, vz: 0, fuse: 0.05, owner: 0, rest: true, spin: 0 });
+  for (let i = 0; i < 10; i++) step(m, DT, idleInput(you.yaw, 0));
+  assert.equal(m.fires.length, 0, 'smothered by the smoke');
+});
+
+test('an impact grenade goes off where it hits, long before a frag would', () => {
+  const { m, you, foe } = range(10);
+  you.impacts = 1;
+  const inp = aim(m, 0, foe.body.x, foe.body.y + 0.4, foe.body.z);
+  step(m, DT, { ...inp, throw: 'impact' });
+  assert.equal(you.impacts, 0);
+  let boomAt = -1;
+  for (let i = 0; i < 180 && boomAt < 0; i++) {
+    step(m, DT, inp);
+    if (m.events.some((e) => e.t === 'boom')) boomAt = (i + 1) * DT;
+  }
+  assert.ok(boomAt > 0 && boomAt < 1.5, `went off on contact (${boomAt.toFixed(2)} s)`);
+  assert.ok(foe.hp < 100, `the enemy near it was hurt (${foe.hp.toFixed(0)})`);
+});
+
+test("a decoy plays gunfire for a while, and the other side's bots take it for an enemy", () => {
+  // a deathmatch with one bot left in it, nobody else in sight (the others wait to come back)
+  const m = createMatch(worldFor('vale'), 'dm', 'normal', { seed: 4 });
+  for (const a of m.actors) {
+    a.alive = a.id === 6;
+    a.respawnT = 999;
+  }
+  const bot = m.actors[6];
+  const at = { x: bot.body.x + 14, z: bot.body.z };
+  m.nades.push({ kind: 'decoy', x: at.x, y: heightAt(m.world.terrain, at.x, at.z) + 0.1, z: at.z, vx: 0, vy: 0, vz: 0, fuse: 11, owner: 0, rest: true, spin: 0, w: 'kestrel' });
+  let fakes = 0;
+  let taken = false;
+  for (let i = 0; i < 60 * 11; i++) {
+    step(m, DT, idleInput());
+    for (const e of m.events) if (e.t === 'decoy') fakes++;
+    if (bot.brain!.hasLast && Math.hypot(bot.brain!.lastX - at.x, bot.brain!.lastZ - at.z) < 1) taken = true;
+  }
+  assert.ok(fakes > 15, `it played bursts of gunfire (${fakes} shots)`);
+  assert.ok(taken, 'the bot took it for an enemy');
+  assert.equal(m.nades.length, 0, 'and it ran out');
+});
+
+test('bots buy the new guns, the shield and the new grenades, and they lie in a royale\'s loot', () => {
+  const m = createMatch(worldFor('frost'), 'breach', 'normal', { seed: 9 });
+  m.actors[0].bot = true;
+  m.actors[0].brain = newBrain('normal', 0);
+  const bought = new Set<string>();
+  for (let r = 0; r < 24; r++) {
+    startRound(m);
+    m.round = 3;
+    for (const a of m.actors) {
+      a.credits = 3000 + ((r * 7 + a.id * 13) % 10) * 600;
+      a.guns[0] = a.guns[2] = null;
+      a.pavise = 0;
+      a.fires = a.impacts = a.decoys = 0;
+    }
+    while (m.phase === 'buy') {
+      step(m, DT, idleInput());
+      for (const e of m.events) if (e.t === 'buy') bought.add(e.item);
+    }
+  }
+  const newGuns = NEW_GUNS.filter((id) => bought.has(id));
+  assert.ok(newGuns.length >= 4, `new guns bought: ${newGuns.join(', ')}`);
+  assert.ok(bought.has('pavise'), 'a shield bought');
+  assert.ok(bought.has('fire') && bought.has('impact') && bought.has('decoy'), `bought: ${[...bought].join(', ')}`);
+  const loot = spawnLoot(worldFor('vale', true), 11);
+  for (const id of NEW_GUNS) assert.ok(loot.some((it) => it.kind === 'gun' && it.what === id), `${id} in the loot`);
+  assert.ok(loot.some((it) => it.kind === 'shield'), 'shields in the loot');
+  for (const k of ['fire', 'impact', 'decoy']) assert.ok(loot.some((it) => it.kind === 'nade' && it.what === k), `${k} in the loot`);
+});
+
+test('bots fight with the new guns and their shields up, and shots stop on the shields', () => {
+  const m = createMatch(worldFor('vale'), 'breach', 'normal', { seed: 31 });
+  m.actors[0].bot = true;
+  m.actors[0].brain = newBrain('normal', 0);
+  let raised = 0;
+  let blocked = 0;
+  let newShots = 0;
+  while (m.phase !== 'over' && m.round < 6 && m.time < 900) {
+    // half of them carry a shield, everyone a new gun
+    if (m.phase === 'buy')
+      for (const a of m.actors) {
+        if (a.id % 2 === 0 && !a.pavise) a.pavise = PAVISE.hp;
+        const id = NEW_GUNS[a.id % NEW_GUNS.length];
+        if (!a.guns[0]) a.guns[0] = gun(id === 'marshal' ? 'talon' : id);
+      }
+    step(m, DT, idleInput());
+    for (const e of m.events) {
+      if (e.t === 'block') blocked++;
+      if (e.t === 'shot' && NEW_GUNS.includes(e.w)) newShots++;
+    }
+    if (Math.floor(m.time) !== Math.floor(m.time - DT)) raised = Math.max(raised, m.actors.filter((a) => a.alive && a.paviseUp).length);
+  }
+  assert.ok(raised >= 2, `bots raised their shields (${raised} at once)`);
+  assert.ok(blocked > 5, `shots stopped on shields (${blocked})`);
+  assert.ok(newShots > 50, `the new guns were fired (${newShots})`);
 });

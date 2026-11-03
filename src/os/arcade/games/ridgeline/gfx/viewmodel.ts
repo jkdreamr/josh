@@ -8,6 +8,9 @@ import type { WeaponId } from '../weapons.ts';
 import { WEAPONS } from '../weapons.ts';
 import { ADDITIVE, DOUBLE, canvas, lin, roundBox, type T, type Three } from './common.ts';
 import { animatedArms, type ArmsState } from './fparms.ts';
+import { bakeModel } from './models.ts';
+import { SHIELD_FACE } from './soldiers.ts';
+
 import { OUTFITS, gunMaterials, outfitMaterials } from './gear.ts';
 import { gunMesh, gunModel, type GunModel } from './guns.ts';
 
@@ -30,6 +33,8 @@ export type ViewState = {
   kit: string;
   /** The magazine is empty (picks the empty reload where a gun has one). */
   empty?: boolean;
+  /** A ballistic shield raised in the other hand. */
+  shield?: boolean;
 };
 
 export type ViewModel = {
@@ -201,6 +206,25 @@ export function viewModel(THREE: Three, sunDir: [number, number, number], sunCol
   camera.add(animFlash);
   const armsSt: ArmsState = { switching: 0, reload: 0, empty: false, ads: 0 };
 
+  // a raised ballistic shield: held off to the left, its inside to you, eased up and down
+  const shield = new THREE.Group();
+  const shieldSrc = assets?.shield ? bakeModel(THREE, assets.shield).parts : [];
+  const shieldOwn: { dispose(): void }[] = [];
+  if (shieldSrc.length)
+    for (const p of shieldSrc) {
+      shield.add(new THREE.Mesh(p.geo, p.mat));
+      shieldOwn.push(p.geo);
+    }
+  else {
+    const geo = roundBox(THREE, 0.62, 1.56, 0.05, 0.2).translate(0, 0.78, 0);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x2b2f33, roughness: 0.6, metalness: 0.4 });
+    shield.add(new THREE.Mesh(geo, mat));
+    shieldOwn.push(geo, mat);
+  }
+  shield.visible = false;
+  camera.add(shield);
+  let shieldUp = 0;
+
   let cur: WeaponId | null = null;
   /** Every gun is showing from a prewarm: hide them on the next update. */
   let warmed = false;
@@ -230,6 +254,16 @@ export function viewModel(THREE: Three, sunDir: [number, number, number], sunCol
       sun.intensity = sunIntensity * st.sun;
       scene.environmentIntensity = st.ambient;
       if (st.kit !== armsKit) buildArms(st.kit);
+      // the shield eases up (or down) in a quarter second
+      shieldUp = Math.max(0, Math.min(1, shieldUp + (st.shield && !st.scoped ? dt : -dt) * 4));
+      shield.visible = shieldUp > 0.01;
+      if (shield.visible) {
+        const e = shieldUp * shieldUp * (3 - 2 * shieldUp);
+        const sway = Math.sin(st.phase * 2.2) * 0.01 * st.speed;
+        shield.position.set(-0.44 + sway, -0.98 - (1 - e) * 0.9 - st.crouch * 0.05, -0.62);
+        shield.rotation.set(0, SHIELD_FACE + 0.38, 0.03);
+        shield.scale.setScalar(0.8);
+      }
       if (st.gun !== cur || warmed) {
         for (const g of guns.values()) g.group.visible = false;
         for (const a of anims.values()) a.holder.visible = false;
@@ -380,6 +414,8 @@ export function viewModel(THREE: Three, sunDir: [number, number, number], sunCol
         a.dispose();
       }
       camera.remove(animFlash);
+      camera.remove(shield);
+      for (const d of shieldOwn) d.dispose();
       flashTex.dispose();
       flash.geometry.dispose();
       flashMat.dispose();

@@ -402,9 +402,23 @@
 }
 .g-ridgeline .g-ridgeline-slots {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 460px;
   gap: 6px;
   margin-top: 4px;
   font-size: 11px;
+}
+.g-ridgeline .g-ridgeline-nadeHint {
+  font-size: 10px;
+  opacity: 0.55;
+}
+.g-ridgeline .g-ridgeline-nadeHint kbd {
+  font: inherit;
+  font-weight: 700;
+}
+.g-ridgeline .g-ridgeline-hud[data-touch='1'] .g-ridgeline-nadeHint {
+  display: none;
 }
 .g-ridgeline .g-ridgeline-slots span {
   padding: 2px 6px;
@@ -1136,6 +1150,20 @@
   right: 132px;
   bottom: 196px;
 }
+.g-ridgeline .g-ridgeline-btn.is-util {
+  right: 196px;
+  bottom: 200px;
+}
+.g-ridgeline .g-ridgeline-btn.is-next {
+  right: 252px;
+  bottom: 207px;
+  width: 36px;
+  height: 36px;
+}
+.g-ridgeline .g-ridgeline-btn.is-shield {
+  right: 232px;
+  bottom: 140px;
+}
 .g-ridgeline .g-ridgeline-btn.is-buy {
   right: 170px;
   bottom: 140px;
@@ -1386,7 +1414,8 @@
   .g-ridgeline .g-ridgeline-boostBar {
     width: 100px;
   }
-  .g-ridgeline .g-ridgeline-slots {
+  .g-ridgeline .g-ridgeline-slots,
+  .g-ridgeline .g-ridgeline-nadeHint {
     display: none;
   }
   .g-ridgeline .g-ridgeline-banner b {

@@ -3,9 +3,9 @@
 // the buy menu, the scoreboard, banners, plant, defuse, pick up and heal prompts, a vehicle's speed and health, the
 // crosshair, hit markers and the scope.
 import { forwardRef, useEffect, useImperativeHandle, useRef, type ReactNode } from 'react';
-import type { Mode, Phase, ShopItem } from './match.ts';
+import type { Mode, NadeKind, Phase, ShopItem } from './match.ts';
 import { BOOST_FAST, HEAL, type UseKind } from './royale.ts';
-import { ARMOR, NADES, WEAPONS, type WeaponId } from './weapons.ts';
+import { ARMOR, NADES, PAVISE, WEAPONS, type WeaponId } from './weapons.ts';
 import type { World } from './world.ts';
 
 export type FeedItem = { id: number; killer: string; victim: string; kc: string; vc: string; w: string; head: boolean; mine: boolean };
@@ -29,6 +29,14 @@ export type Hud = {
   frags: number;
   smokes: number;
   flashes: number;
+  fires: number;
+  impacts: number;
+  decoys: number;
+  /** The grenade G throws (T steps through what you carry). */
+  pick: NadeKind;
+  /** A ballistic shield carried: what it has left (0 to 1), and whether it is raised. */
+  pavise: number;
+  paviseUp: boolean;
   /** How white your screen is from a flashbang, 0 to 1. */
   blind: number;
   canBuy: boolean;
@@ -128,6 +136,12 @@ export const blankHud = (mode: Mode): Hud => ({
   frags: 0,
   smokes: 0,
   flashes: 0,
+  fires: 0,
+  impacts: 0,
+  decoys: 0,
+  pick: 'frag',
+  pavise: 0,
+  paviseUp: false,
   blind: 0,
   canBuy: false,
   alive: true,
@@ -315,17 +329,27 @@ export function Ammo({ h }: { h: Hud }) {
             </span>
           );
         })}
-        <span data-empty={h.frags ? '0' : '1'}>
-          <kbd>4</kbd>frag {h.frags}
-        </span>
-        <span data-empty={h.smokes ? '0' : '1'}>
-          <kbd>5</kbd>smoke {h.smokes}
-        </span>
-        {h.mode === 'breach' && (
-          <span data-empty={h.flashes ? '0' : '1'}>
-            <kbd>6</kbd>flash {h.flashes}
+        {NADE_CHIPS.map(([kind, key, label]) => {
+          const n = nadeCount(h, kind);
+          // (a royale has no flashbangs, and keeps its number keys for the kit: the others are thrown with G)
+          if (kind === 'flash' && h.mode !== 'breach') return null;
+          if (!n && h.mode !== 'breach' && kind !== 'frag' && kind !== 'smoke') return null;
+          const k = h.mode === 'royale' && key > 5 ? '' : String(key);
+          return (
+            <span key={kind} className={h.pick === kind && n ? 'is-on' : ''} data-empty={n ? '0' : '1'}>
+              {k && <kbd>{k}</kbd>}
+              {label} {n}
+            </span>
+          );
+        })}
+        {h.pavise > 0 && (
+          <span className={h.paviseUp ? 'is-on' : ''} data-empty="0">
+            <kbd>V</kbd>shield {Math.round(h.pavise * 100)}%
           </span>
         )}
+      </div>
+      <div className="g-ridgeline-nadeHint">
+        <kbd>G</kbd> throw {NADE_LABEL[h.pick]} <kbd>T</kbd> next
       </div>
     </div>
   );
@@ -371,28 +395,51 @@ export function BannerView({ b }: { b: Banner | null }) {
   );
 }
 
+/** The grenades in the slot bar: kind, number key, label. */
+const NADE_CHIPS: [NadeKind, number, string][] = [
+  ['frag', 4, 'frag'],
+  ['smoke', 5, 'smoke'],
+  ['flash', 6, 'flash'],
+  ['fire', 7, 'fire'],
+  ['impact', 8, 'impact'],
+  ['decoy', 9, 'decoy'],
+];
+const NADE_LABEL: Record<NadeKind, string> = { frag: 'frag', smoke: 'smoke', flash: 'flash', fire: 'incendiary', impact: 'impact', decoy: 'decoy' };
+const nadeCount = (h: Hud, k: NadeKind) => (k === 'frag' ? h.frags : k === 'smoke' ? h.smokes : k === 'flash' ? h.flashes : k === 'fire' ? h.fires : k === 'impact' ? h.impacts : h.decoys);
+
 const SHOP: { group: string; items: ShopItem[] }[] = [
-  { group: 'Sidearms', items: ['wren', 'bulwark'] },
-  { group: 'SMG and shotgun', items: ['hornet', 'mauler'] },
-  { group: 'Rifles', items: ['kestrel', 'lancer'] },
-  { group: 'Sniper', items: ['longbow'] },
-  { group: 'Armor', items: ['light', 'heavy'] },
-  { group: 'Grenades', items: ['frag', 'smoke', 'flash'] },
+  { group: 'Sidearms', items: ['wren', 'bulwark', 'marshal'] },
+  { group: 'SMG and shotgun', items: ['hornet', 'wasp', 'mauler', 'thresher'] },
+  { group: 'Rifles', items: ['kestrel', 'talon', 'lancer', 'rampart'] },
+  { group: 'Sniper and crossbow', items: ['longbow', 'arbalest'] },
+  { group: 'Armor and shield', items: ['light', 'heavy', 'pavise'] },
+  { group: 'Grenades', items: ['frag', 'smoke', 'flash', 'fire', 'impact', 'decoy'] },
 ];
 export const SHOP_ORDER = SHOP.flatMap((g) => g.items);
 
-const itemName = (i: ShopItem) => (i === 'light' ? 'Light Armor' : i === 'heavy' ? 'Heavy Armor' : i === 'frag' ? 'Frag' : i === 'smoke' ? 'Smoke' : i === 'flash' ? 'Flashbang' : WEAPONS[i].name);
-const itemPrice = (i: ShopItem) => (i === 'light' || i === 'heavy' ? ARMOR[i].price : i === 'frag' || i === 'smoke' || i === 'flash' ? NADES[i].price : WEAPONS[i].price);
-const itemLine = (i: ShopItem) => {
-  if (i === 'light') return 'soaks 25';
-  if (i === 'heavy') return 'soaks 50';
-  if (i === 'frag') return 'big blast, 2 s fuse';
-  if (i === 'smoke') return 'blocks sight 15 s';
-  if (i === 'flash') return 'blinds whoever looks at it';
-  const w = WEAPONS[i];
-  const dmg = w.pellets > 1 ? `${w.pellets}x${w.dmg}` : `${w.dmg}`;
-  return `${dmg} dmg, ${w.rpm} rpm, ${w.mag} rounds${w.scope ? ', scoped' : ''}`;
+const NAMES: Partial<Record<ShopItem, string>> = { light: 'Light Armor', heavy: 'Heavy Armor', pavise: 'Ballistic Shield', frag: 'Frag', smoke: 'Smoke', flash: 'Flashbang', fire: 'Incendiary', impact: 'Impact Grenade', decoy: 'Decoy' };
+const LINES: Partial<Record<ShopItem, string>> = {
+  light: 'soaks 25',
+  heavy: 'soaks 50',
+  pavise: `stops shots from the front, ${PAVISE.hp} hp. V: up, sidearm only`,
+  frag: 'big blast, 2 s fuse',
+  smoke: 'blocks sight 15 s',
+  flash: 'blinds whoever looks at it',
+  fire: 'burns the ground 7 s',
+  impact: 'goes off where it hits',
+  decoy: 'fakes gunfire for 10 s',
 };
+const itemName = (i: ShopItem) => NAMES[i] ?? WEAPONS[i as WeaponId].name;
+const itemPrice = (i: ShopItem) => (i === 'light' || i === 'heavy' ? ARMOR[i].price : i === 'pavise' ? PAVISE.price : i in NADES ? NADES[i as NadeKind].price : WEAPONS[i as WeaponId].price);
+const itemLine = (i: ShopItem) => {
+  const line = LINES[i];
+  if (line) return line;
+  const w = WEAPONS[i as WeaponId];
+  const dmg = w.pellets > 1 ? `${w.pellets}x${w.dmg}` : `${w.dmg}`;
+  const mode = w.burst ? `${w.burst} round bursts` : w.cls === 'crossbow' ? 'arcing bolts' : `${w.rpm} rpm`;
+  return `${dmg} dmg, ${mode}, ${w.mag} ${w.mag === 1 ? 'bolt' : 'rounds'}${w.scope ? ', scoped' : ''}`;
+};
+
 
 export function BuyMenu({ h, onBuy, onClose }: { h: Hud; onBuy: (i: ShopItem) => void; onClose: () => void }) {
   return (
@@ -678,7 +725,12 @@ export function DeathPanel({ h, touch }: { h: Hud; touch: boolean }) {
         {h.dead.w}
         {h.dead.head ? ', headshot' : ''}
       </span>
-      {h.royale ? <em>you finished #{h.royale.place} of {h.royale.total}</em> : h.mode === 'dm' ? <em>back in {Math.max(0, Math.ceil(h.dead.respawn))}</em> : h.watching ? <em>watching {h.watching}{touch ? ', tap to switch' : ', click to switch'}</em> : <em>your team is out</em>}
+      {h.royale ? (
+        <em>
+          you finished #{h.royale.place} of {h.royale.total}
+          {h.watching ? `. watching ${h.watching}${touch ? ', tap to switch' : ', click to switch'}` : ''}
+        </em>
+      ) : h.mode === 'dm' ? <em>back in {Math.max(0, Math.ceil(h.dead.respawn))}</em> : h.watching ? <em>watching {h.watching}{touch ? ', tap to switch' : ', click to switch'}</em> : <em>your team is out</em>}
     </div>
   );
 }
@@ -972,6 +1024,22 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
         g.arc(toX(p.x), toY(p.z), big ? 6 : 4, 0, Math.PI * 2);
         g.fillStyle = '#ffd56a';
         g.fill();
+      }
+      // the big map names the places: each site's under its letter, and the others where they are
+      if (big && s.sites && !s.zone) {
+        g.font = '600 10px system-ui, sans-serif';
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.lineWidth = 3;
+        g.strokeStyle = 'rgba(0,0,0,0.55)';
+        g.fillStyle = 'rgba(255,255,255,0.8)';
+        for (const t of world.towns) {
+          if (Math.abs(t.x) > world.arena || Math.abs(t.z) > world.arena) continue;
+          const px = toX(t.x);
+          const py = toY(t.z) + (t.site >= 0 ? 15 : 0);
+          g.strokeText(t.name, px, py);
+          g.fillText(t.name, px, py);
+        }
       }
       if (s.sites) world.sites.forEach((site, i) => {
         const on = i === s.plantedOn;
