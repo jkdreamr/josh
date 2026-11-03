@@ -1,14 +1,20 @@
-// The real models (soldier, guns, vehicles, cover and clutter), meshopt compressed glTF in ./models. They load in the
+// The real models (soldier, guns, vehicles, cover, clutter, rocks and loot), meshopt compressed glTF in ./models. They load in the
 // background while the map generates, once per page, and are shared by every view. Anything that fails to load just
 // leaves its procedural stand-in, so the game always starts.
 import { useEffect, useState } from 'react';
 import type * as T from 'three';
 import ak from './models/ak-lite.glb?url';
+import ammoCan from './models/ammo-can.glb?url';
+import ammoCrate from './models/ammo-crate.glb?url';
 import awpLite from './models/awp-lite.glb?url';
 import awp from './models/awp.glb?url';
+import barrel from './models/barrel.glb?url';
 import barricade from './models/barricade.glb?url';
 import berettaLite from './models/beretta-lite.glb?url';
+import boulder from './models/boulder.glb?url';
 import btr from './models/btr.glb?url';
+import crateMil from './models/crate-mil.glb?url';
+import crateWood from './models/crate-wood.glb?url';
 import cup from './models/cup.glb?url';
 import deagleLite from './models/deagle-lite.glb?url';
 import deagle from './models/deagle.glb?url';
@@ -18,20 +24,29 @@ import fenceHalf from './models/fence-half.glb?url';
 import fenceWheel from './models/fence-wheel.glb?url';
 import fenceWood from './models/fence-wood.glb?url';
 import gas from './models/gas.glb?url';
+import generator from './models/generator.glb?url';
 import helmet from './models/helmet.glb?url';
 import jerry from './models/jerry.glb?url';
+import jersey from './models/jersey.glb?url';
+import log from './models/log.glb?url';
 import m4Lite from './models/m4-lite.glb?url';
 import m4 from './models/m4.glb?url';
 import m67 from './models/m67.glb?url';
+import medkit from './models/medkit.glb?url';
 import mp5Lite from './models/mp5-lite.glb?url';
 import mp5 from './models/mp5.glb?url';
 import pan from './models/pan.glb?url';
 import pile from './models/pile.glb?url';
 import propane from './models/propane.glb?url';
 import rgd5 from './models/rgd5.glb?url';
+import rock from './models/rock.glb?url';
 import shield from './models/shield.glb?url';
 import soldierLod from './models/soldier-lod.glb?url';
 import soldier from './models/soldier.glb?url';
+import stump from './models/stump.glb?url';
+import stump2 from './models/stump2.glb?url';
+import toolbox from './models/toolbox.glb?url';
+import tyre from './models/tyre.glb?url';
 import ural from './models/ural.glb?url';
 import vmM4 from './models/vm-m4.glb?url';
 import vmMk23 from './models/vm-mk23.glb?url';
@@ -77,6 +92,22 @@ const URLS = {
   'vm-m4': vmM4,
   'vm-vector': vmVector,
   'vm-mk23': vmMk23,
+  // Poly Haven props, rocks and loot (CC0)
+  jersey,
+  'crate-wood': crateWood,
+  'crate-mil': crateMil,
+  'ammo-crate': ammoCrate,
+  barrel,
+  tyre,
+  generator,
+  toolbox,
+  'ammo-can': ammoCan,
+  medkit,
+  boulder,
+  rock,
+  stump,
+  stump2,
+  log,
 } as const;
 
 export type AssetKey = keyof typeof URLS;

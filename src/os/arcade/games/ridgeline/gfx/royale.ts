@@ -381,7 +381,7 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
   const kitMat = keep(new THREE.MeshStandardMaterial({ map: kitTex, roughness: 0.6 }));
   patch(kitMat, shared, { key: 'dz-loot-kit' });
   const dummy = new THREE.Object3D();
-  type Bucket = { mesh: T.InstancedMesh; match: (it: Item) => boolean; place: (it: Item, o: T.Object3D) => void; color?: (it: Item) => number };
+  type Bucket = { mesh: T.InstancedMesh; match: (it: Item) => boolean; place: (it: Item, o: T.Object3D) => void; color?: (it: Item) => number | T.Color };
   const buckets: Bucket[] = [];
   const bucket = (geo: T.BufferGeometry, mat: T.Material, max: number, match: Bucket['match'], place: Bucket['place'], color?: Bucket['color']) => {
     const mesh = new THREE.InstancedMesh(geo, mat, max);
@@ -410,19 +410,43 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
     for (const part of full) bucket(part.geo, keep(worldMaterial(THREE, part.mat, shared)), 8, (it) => it.kind === 'gun' && it.what === id && near(it), lay);
   }
   const AMMO_COLOR: Record<AmmoKind, number> = { light: 0xc9a43e, rifle: 0x5e7d34, shells: 0x9c3227, magnum: 0x6b5b8c, sniper: 0x34527a, bolts: 0x7a5a32 };
-  bucket(keep(roundBox(THREE, 0.32, 0.17, 0.2, 0.15, 2)), plainMat, 120, (it) => it.kind === 'ammo', (it, o) => {
-    o.position.set(it.x, it.y + 0.085, it.z);
-    o.rotation.set(0, yawOf(it), 0);
-  }, (it) => AMMO_COLOR[it.what as AmmoKind]);
+  // ammo: a steel ammo can when it loaded (washed with its kind's color), a colored box otherwise
+  const can = modelOf(THREE, assets, 'ammo-can');
+  if (can) {
+    const white = new THREE.Color(1, 1, 1);
+    const wash = Object.fromEntries(Object.entries(AMMO_COLOR).map(([k, c]) => [k, new THREE.Color(c).lerp(white, 0.45).multiplyScalar(1.5)])) as Record<AmmoKind, T.Color>;
+    for (const part of can.parts) {
+      disposables.push(part.geo);
+      bucket(part.geo, keep(worldMaterial(THREE, part.mat, shared)), 120, (it) => it.kind === 'ammo', (it, o) => {
+        o.position.set(it.x, it.y, it.z);
+        o.rotation.set(0, yawOf(it), 0);
+      }, (it) => wash[it.what as AmmoKind]);
+    }
+  } else
+    bucket(keep(roundBox(THREE, 0.32, 0.17, 0.2, 0.15, 2)), plainMat, 120, (it) => it.kind === 'ammo', (it, o) => {
+      o.position.set(it.x, it.y + 0.085, it.z);
+      o.rotation.set(0, yawOf(it), 0);
+    }, (it) => AMMO_COLOR[it.what as AmmoKind]);
   const LEVEL_COLOR = [0, 0x8b8a78, 0x5f6b45, 0x2b332a];
   bucket(keep(roundBox(THREE, 0.46, 0.1, 0.58, 0.3, 2)), plainMat, 40, (it) => it.kind === 'vest', (it, o) => {
     o.position.set(it.x, it.y + 0.05, it.z);
     o.rotation.set(0, yawOf(it), 0);
   }, (it) => LEVEL_COLOR[Number(it.what)]);
-  bucket(keep(roundBox(THREE, 0.34, 0.13, 0.24, 0.2, 2)), kitMat, 40, (it) => it.kind === 'heal' && it.what === 'kit', (it, o) => {
-    o.position.set(it.x, it.y + 0.065, it.z);
-    o.rotation.set(0, yawOf(it), 0);
-  });
+  // the med kit: a real medical case when it loaded
+  const medkit = modelOf(THREE, assets, 'medkit');
+  if (medkit)
+    for (const part of medkit.parts) {
+      disposables.push(part.geo);
+      bucket(part.geo, keep(worldMaterial(THREE, part.mat, shared)), 40, (it) => it.kind === 'heal' && it.what === 'kit', (it, o) => {
+        o.position.set(it.x, it.y, it.z);
+        o.rotation.set(0, yawOf(it), 0);
+      });
+    }
+  else
+    bucket(keep(roundBox(THREE, 0.34, 0.13, 0.24, 0.2, 2)), kitMat, 40, (it) => it.kind === 'heal' && it.what === 'kit', (it, o) => {
+      o.position.set(it.x, it.y + 0.065, it.z);
+      o.rotation.set(0, yawOf(it), 0);
+    });
   bucket(keep(new THREE.CylinderGeometry(0.05, 0.05, 0.11, 10)), plainMat, 60, (it) => it.kind === 'heal' && it.what === 'bandage', (it, o) => {
     o.position.set(it.x, it.y + 0.05, it.z);
     o.rotation.set(0, 0, Math.PI / 2);

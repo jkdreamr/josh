@@ -2,9 +2,11 @@
 // outward from the crown so a whole tree shades like a soft volume, the sun glows through leaves from behind, and the
 // wind sways them in the vertex shader. Grass blades are placed, planted on the ground, faded and blown entirely on the
 // GPU around the camera: the CPU never touches them.
+import type { Assets } from '../assets.ts';
 import type { TreeKind } from '../maps.ts';
 import { mulberry32, type Rng } from '../noise.ts';
 import { ARENA, type World } from '../world.ts';
+import { bakeModel } from './models.ts';
 import { COMMON, DOUBLE, NO_SPACE, RGBA, UNSIGNED_BYTE, canvas, lin, patch, type Shared, type T, type Three } from './common.ts';
 import { GROUND_DECL } from './terrain.ts';
 
@@ -422,7 +424,7 @@ const TREE_SWAY = /* glsl */ `
 
 export type Veg = { group: T.Group; grass: T.Mesh | null; setGrass(n: number): void; setTreeFrac(f: number): void; casters(x: number, z: number): void; dispose(): void };
 
-export function vegetation(THREE: Three, w: World, shared: Shared, opts: { grass: number; treeFrac: number; shadows: boolean }): Veg {
+export function vegetation(THREE: Three, w: World, shared: Shared, opts: { grass: number; treeFrac: number; shadows: boolean; assets?: Assets }): Veg {
   const group = new THREE.Group();
   const def = w.def;
   const atlas = leafAtlas(THREE);
@@ -565,12 +567,10 @@ export function vegetation(THREE: Three, w: World, shared: Shared, opts: { grass
   };
   setTreeFrac(opts.treeFrac);
 
-  // rocks: three shapes, each in a fine version for the arena and a coarse one beyond
-  const rockMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(...lin(def.ground.rock)), roughness: 0.88 });
-  patch(rockMat, shared, {
-    key: 'dz-rock',
-    fragDecl: GROUND_DECL,
-    albedo: `{
+  // rocks: three shapes, each in a fine version for the arena and a coarse one beyond. Near the fight the first two
+  // are scanned rocks when they loaded (their own shape, normal map and surface detail under the map's rock shading);
+  // the third shape and every far rock stay procedural
+  const rockShade = (scan: boolean) => `{
       vec3 wn = normalize((vec4(vNormal, 0.0) * viewMatrix).xyz);
       float n1 = dzNoise(vDzWp.xz * 1.7 + vDzWp.y * 1.3);
       float n2 = dzNoise(vDzWp.xz * 7.0 - vDzWp.y * 5.0);
@@ -580,15 +580,39 @@ export function vegetation(THREE: Three, w: World, shared: Shared, opts: { grass
       c = mix(c, uGrassA * 0.75, top * 0.45 * (1.0 - uSnowCover) * (1.0 - uSandAmt));
       c = mix(c, uSand, top * uSandAmt * 0.6);
       c = mix(c, uSnow, top * uSnowCover);
+      ${scan ? 'c *= clamp(dot(texture2D(map, vMapUv).rgb, vec3(0.299, 0.587, 0.114)) / uScanMean, 0.55, 1.6);' : ''}
       diffuseColor.rgb = c;
-    }`,
+    }`;
+  const rockMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(...lin(def.ground.rock)), roughness: 0.88 });
+  patch(rockMat, shared, { key: 'dz-rock', fragDecl: GROUND_DECL, albedo: rockShade(false) });
+  const made: { dispose(): void }[] = [];
+  const scanned = (['boulder', 'rock'] as const).map((key) => {
+    const root = opts.assets?.[key];
+    const part = root ? bakeModel(THREE, root).parts[0] : null;
+    if (!part) return null;
+    const src = part.mat;
+    // fitted to the procedural rock's frame: a unit footprint, from 0.35 under the origin to 1 above
+    const geo = part.geo;
+    geo.computeBoundingBox();
+    const b = geo.boundingBox!;
+    const fit = new THREE.Matrix4()
+      .makeScale(2 / (b.max.x - b.min.x), 1.35 / (b.max.y - b.min.y), 2 / (b.max.z - b.min.z))
+      .multiply(new THREE.Matrix4().makeTranslation(-(b.min.x + b.max.x) / 2, -b.min.y - 0.35 * ((b.max.y - b.min.y) / 1.35), -(b.min.z + b.max.z) / 2));
+    geo.applyMatrix4(fit);
+    geo.computeBoundingSphere();
+    const mat = new THREE.MeshStandardMaterial({ color: rockMat.color, roughness: 0.88, map: src.map, normalMap: src.normalMap });
+    mat.normalScale.set(1.2, 1.2);
+    patch(mat, shared, { key: 'dz-rock-scan', fragDecl: `${GROUND_DECL}\nuniform float uScanMean;`, albedo: rockShade(true), uniforms: { uScanMean: { value: meanLuma(src.map) } } });
+    made.push(geo, mat);
+    return { geo, mat };
   });
   const rockGeos = [0, 1, 2].map((v) => [rockGeometry(THREE, v, 2), rockGeometry(THREE, v, 1)]);
   for (let v = 0; v < 3; v++)
     for (const lite of [false, true]) {
       const list = w.rockList.filter((k) => k.v === v && (Math.abs(k.x) < ARENA + 50 && Math.abs(k.z) < ARENA + 50) !== lite);
       if (!list.length) continue;
-      const mesh = new THREE.InstancedMesh(rockGeos[v][lite ? 1 : 0], rockMat, list.length);
+      const scan = lite ? null : scanned[v] ?? null;
+      const mesh = new THREE.InstancedMesh(scan ? scan.geo : rockGeos[v][lite ? 1 : 0], scan ? scan.mat : rockMat, list.length);
       list.forEach((k, i) => {
         q.setFromAxisAngle(up, k.rot);
         pos.set(k.x, k.y, k.z);
@@ -619,8 +643,28 @@ export function vegetation(THREE: Three, w: World, shared: Shared, opts: { grass
     casters,
     dispose() {
       atlas.dispose();
+      for (const d of made) d.dispose();
     },
   };
+}
+
+/** The mean linear luminance of a texture's image (0.18 when it can't be read), to keep a scanned rock's detail
+ * centered on the map's rock color. */
+function meanLuma(tex: T.Texture | null) {
+  const img = tex?.image as CanvasImageSource | undefined;
+  if (!img) return 0.18;
+  try {
+    const c = canvas(16, 16);
+    const g = c.getContext('2d', { willReadFrequently: true })!;
+    g.drawImage(img, 0, 0, 16, 16);
+    const d = g.getImageData(0, 0, 16, 16).data;
+    let sum = 0;
+    const lin1 = (v: number) => Math.pow(v / 255, 2.2);
+    for (let i = 0; i < d.length; i += 4) sum += 0.299 * lin1(d[i]) + 0.587 * lin1(d[i + 1]) + 0.114 * lin1(d[i + 2]);
+    return Math.max(0.02, sum / (d.length / 4));
+  } catch {
+    return 0.18;
+  }
 }
 
 /** A lumpy boulder: an icosphere pushed in and out by 3D noise, its bottom flattened into the ground. */

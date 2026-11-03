@@ -2,7 +2,7 @@
 // material, the file's node transforms and quantization folded in), drawn instanced with materials lit like the rest of
 // the world.
 import type { Assets, AssetKey } from '../assets.ts';
-import type { ModelKey, World } from '../world.ts';
+import { CRATE_COLOR, CRATE_SIZE, type ModelKey, type Piece, type World } from '../world.ts';
 import { patch, type Shared, type T, type Three } from './common.ts';
 
 export type Part = { geo: T.BufferGeometry; mat: T.MeshStandardMaterial };
@@ -90,7 +90,22 @@ export function instanced(THREE: Three, model: Model, at: T.Matrix4[], shared: S
 }
 
 /** Small things that never cast a shadow (they'd cost a shadow pass draw each for a few pixels). */
-const SMALL: ModelKey[] = ['jerry', 'gas', 'propane', 'helmet', 'shield', 'cup', 'pan'];
+const SMALL: ModelKey[] = ['jerry', 'gas', 'propane', 'helmet', 'shield', 'cup', 'pan', 'tyre', 'toolbox', 'ammo-crate', 'stump', 'stump2', 'log'];
+
+/** A box of the world's crates (cover, and the stacks inside barns). */
+export const isCrate = (p: Piece) =>
+  p.part === 'wood' && p.color === CRATE_COLOR && Math.abs(p.x1 - p.x0 - CRATE_SIZE) < 0.02 && Math.abs(p.z1 - p.z0 - CRATE_SIZE) < 0.02 && Math.abs(p.y1 - p.y0 - CRATE_SIZE) < 0.02;
+
+/** Which crate pieces the real crate stacks draw instead of the buildings (none when neither stack loaded). */
+export function crateSkip(assets: Assets): ((p: Piece) => boolean) | undefined {
+  return assets['crate-wood'] || assets['crate-mil'] ? isCrate : undefined;
+}
+
+/** A stable hash of a point, 0 to 1, to vary the look of things placed there. */
+const hash = (x: number, z: number) => {
+  const s = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453;
+  return s - Math.floor(s);
+};
 
 /** Every model the world placed (cover and clutter), instanced per kind. */
 export function placedModels(THREE: Three, w: World, shared: Shared, shadows: boolean, assets: Assets) {
@@ -105,6 +120,22 @@ export function placedModels(THREE: Three, w: World, shared: Shared, shadows: bo
   for (const [key, at] of byKey) {
     const model = modelOf(THREE, assets, key);
     if (model) group.add(instanced(THREE, model, at, shared, shadows && !SMALL.includes(key)).group);
+  }
+  // each crate box is a stack of real crates, long wooden ones or closed ammo crates, turned a random quarter
+  const stacks = (['crate-wood', 'crate-mil'] as const).filter((k) => assets[k]);
+  if (stacks.length) {
+    const at: T.Matrix4[][] = stacks.map(() => []);
+    for (const p of w.pieces) {
+      if (!isCrate(p)) continue;
+      const x = (p.x0 + p.x1) / 2;
+      const z = (p.z0 + p.z1) / 2;
+      const h = hash(x, z);
+      at[Math.floor(h * stacks.length) % stacks.length].push(new THREE.Matrix4().makeRotationAxis(yAxis, Math.floor(h * 97) * (Math.PI / 2)).setPosition(x, p.y0, z));
+    }
+    stacks.forEach((k, i) => {
+      const model = modelOf(THREE, assets, k);
+      if (model) group.add(instanced(THREE, model, at[i], shared, shadows).group);
+    });
   }
   // cover whose model didn't load still shows where its collider is
   const missing = w.models.filter((p) => p.size && !assets[p.key]);
