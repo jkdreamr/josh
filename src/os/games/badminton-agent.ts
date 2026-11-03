@@ -240,7 +240,7 @@ export function recordReply(brain: AgentBrain, rally: AgentRally, replyType: Sho
 export function agentHome(brain: AgentBrain, played: ShotType): number {
   const habit = brain.replies[played];
   if (!habit || habit.n < 2) return HOME_DEFAULT;
-  const confidence = habit.n / (habit.n + 3);
+  const confidence = habit.n / (habit.n + 1);
   return Math.max(1.7, Math.min(4.3, HOME_DEFAULT + (habit.depth - 3.6) * 0.55 * confidence));
 }
 
