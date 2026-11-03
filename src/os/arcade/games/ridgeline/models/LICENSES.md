@@ -1,13 +1,13 @@
 # Ridgeline model credits
 
-Every model here was downloaded from Sketchfab and then reduced for the game: stray parts removed, re-oriented and
-scaled to meters, simplified, textures resized and re-encoded as WebP, and the files meshopt compressed. The soldier
+Every model in the first table was downloaded from Sketchfab and then reduced for the game: stray parts removed,
+re-oriented and scaled to meters, simplified, textures resized and re-encoded as WebP, and the files meshopt compressed. The soldier
 was also skinned to the game's skeleton. The `-lite` files are low detail copies with the textures baked into vertex
 colors, for guns held by other soldiers. The `vm-` files are animated first person arms with a gun: kept with their
 skins and animations (each clip moved to start at zero and resampled), cameras dropped, materials converted to
 metal/rough.
 
-All are licensed under Creative Commons Attribution 4.0 (CC BY 4.0, <http://creativecommons.org/licenses/by/4.0/>),
+All of those are licensed under Creative Commons Attribution 4.0 (CC BY 4.0, <http://creativecommons.org/licenses/by/4.0/>),
 except the AWP, which is Creative Commons Attribution-NonCommercial 4.0 (CC BY-NC 4.0,
 <http://creativecommons.org/licenses/by-nc/4.0/>) and may only be used non-commercially, and the Mark 23 arms
 (`vm-mk23.glb`), which are under the Sketchfab Standard license (<https://sketchfab.com/licenses>).
@@ -41,3 +41,32 @@ except the AWP, which is Creative Commons Attribution-NonCommercial 4.0 (CC BY-N
 | `vm-m4.glb` | M4 - FPS Weapon Animations Pack v.1 | BarcodeGames | CC BY 4.0 | <https://sketchfab.com/3d-models/m4-fps-weapon-animations-pack-v1-662fc74dda2646cfb48fc610705768ef> |
 | `vm-vector.glb` | Kriss Vector Animated (FREE) | BarcodeGame | CC BY 4.0 | <https://sketchfab.com/3d-models/kriss-vector-animated-free-54530c888cfd4ae7aab3c3852b229c7e> |
 | `vm-mk23.glb` | Mark 23 Animated (FREE) | BarcodeGames | Sketchfab Standard | <https://sketchfab.com/3d-models/mark-23-animated-free-7abebe340aca4f46b36368417b3ca920> |
+
+## Poly Haven models (CC0)
+
+These come from [Poly Haven](https://polyhaven.com) and are dedicated to the public domain under Creative Commons Zero
+(CC0 1.0, <https://creativecommons.org/publicdomain/zero/1.0/>, <https://polyhaven.com/license>): no attribution is
+required, the authors are listed as a courtesy. They were taken as 1K glTF bundles from the copies in
+[m4tthewdavis/fallout-minnesota](https://github.com/m4tthewdavis/fallout-minnesota), whose
+[`assets/CREDITS.md`](https://github.com/m4tthewdavis/fallout-minnesota/blob/main/assets/CREDITS.md) lists each one
+with its Poly Haven page, author and the CC0 license. For the game they were laid out (the crate stacks are four long
+crates, or eight closed ammo crates, fitted to the 1.1 m crate boxes; the barrier is fitted to the barricade's collider),
+grounded and centered, simplified with meshoptimizer, their textures resized to 512 and re-encoded as WebP, and the
+files meshopt compressed.
+
+| File | Model | Author | License | Source | Mirror |
+| --- | --- | --- | --- | --- | --- |
+| `jersey.glb` | Concrete Road Barrier | Amal Kumar | CC0 1.0 | <https://polyhaven.com/a/concrete_road_barrier> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/concrete_road_barrier> |
+| `crate-wood.glb` | Wooden Crate 02 | James Ray Cock, Jurita Burger | CC0 1.0 | <https://polyhaven.com/a/wooden_crate_02> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/wooden_crate_02> |
+| `crate-mil.glb`, `ammo-crate.glb` | Old Military Crate | Jack Mava | CC0 1.0 | <https://polyhaven.com/a/old_military_crate> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/old_military_crate> |
+| `barrel.glb` | Barrel 03 | Serhii Khromov | CC0 1.0 | <https://polyhaven.com/a/barrel_03> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/barrel_03> |
+| `tyre.glb` | Old Tyre | MP | CC0 1.0 | <https://polyhaven.com/a/old_tyre> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/old_tyre> |
+| `generator.glb` | Portable Generator | James Ray Cock | CC0 1.0 | <https://polyhaven.com/a/portable_generator> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/portable_generator> |
+| `toolbox.glb` | Metal Toolbox | Mateusz Sadek | CC0 1.0 | <https://polyhaven.com/a/metal_toolbox> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/metal_toolbox> |
+| `ammo-can.glb` | Ammo Box | DanKit | CC0 1.0 | <https://polyhaven.com/a/ammo_box> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/ammo_box> |
+| `medkit.glb` | Medical Box | Ulan Cabanilla | CC0 1.0 | <https://polyhaven.com/a/medical_box> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/medical_box> |
+| `boulder.glb` | Boulder 01 | Rico Cilliers | CC0 1.0 | <https://polyhaven.com/a/boulder_01> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/boulder_01> |
+| `rock.glb` | Rock 07 | Jenelle van Heerden | CC0 1.0 | <https://polyhaven.com/a/rock_07> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/rock_07> |
+| `stump.glb` | Tree Stump 01 | Rob Tuytel | CC0 1.0 | <https://polyhaven.com/a/tree_stump_01> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/tree_stump_01> |
+| `stump2.glb` | Tree Stump 02 | Rob Tuytel | CC0 1.0 | <https://polyhaven.com/a/tree_stump_02> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/tree_stump_02> |
+| `log.glb` | Dead Tree Trunk | Rob Tuytel | CC0 1.0 | <https://polyhaven.com/a/dead_tree_trunk> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/dead_tree_trunk> |

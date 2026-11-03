@@ -3,7 +3,7 @@
 // corrugated metal, concrete, sandbags) plus matching normal maps. Insides are darkened so rooms read as rooms.
 import { mulberry32 } from '../noise.ts';
 import { heightAt } from '../terrain.ts';
-import type { Part, World } from '../world.ts';
+import type { Part, Piece, World } from '../world.ts';
 import { ADDITIVE, DOUBLE, NO_SPACE, canvas, lin, patch, type Shared, type T, type Three } from './common.ts';
 
 type Paint = { size: number; draw: (g: CanvasRenderingContext2D, h: CanvasRenderingContext2D, r: () => number) => void };
@@ -311,7 +311,8 @@ class Builder {
   }
 }
 
-export function buildings(THREE: Three, w: World, shared: Shared, shadows: boolean) {
+/** `skip` leaves out pieces something else draws (the crates, when their real models loaded). */
+export function buildings(THREE: Three, w: World, shared: Shared, shadows: boolean, skip?: (p: Piece) => boolean) {
   const group = new THREE.Group();
   const builders = new Map<string, Builder>();
   const get = (paint: string) => {
@@ -322,6 +323,7 @@ export function buildings(THREE: Three, w: World, shared: Shared, shadows: boole
   const inside = (x: number, y: number, z: number) => w.interiors.some((q) => x > q.x0 - 0.06 && x < q.x1 + 0.06 && z > q.z0 - 0.06 && z < q.z1 + 0.06 && y > q.y0 && y < q.y1 + 0.35);
   const sizeOf = (paint: string) => PAINTS[paint].size;
   for (const p of w.pieces) {
+    if (skip?.(p)) continue;
     const look = PART_LOOK[p.part];
     const key = `${p.part}`;
     const b = get(key);

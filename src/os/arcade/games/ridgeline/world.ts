@@ -34,7 +34,31 @@ export type Slot = { x: number; z: number; yaw: number };
 export type Vehicle = { x: number; y: number; z: number; rot: number; kind: number };
 /** A placed model; cover also carries its box (across, up, along) for a plain stand-in if the model is missing. */
 export type Placed = { key: ModelKey; x: number; y: number; z: number; yaw: number; size?: [number, number, number] };
-export type ModelKey = 'barricade' | 'pile' | 'wire' | 'dumpsters' | 'fence-base' | 'fence-half' | 'fence-wood' | 'fence-wheel' | 'jerry' | 'gas' | 'propane' | 'helmet' | 'shield' | 'cup' | 'pan';
+export type ModelKey =
+  | 'barricade'
+  | 'jersey'
+  | 'pile'
+  | 'wire'
+  | 'dumpsters'
+  | 'fence-base'
+  | 'fence-half'
+  | 'fence-wood'
+  | 'fence-wheel'
+  | 'jerry'
+  | 'gas'
+  | 'propane'
+  | 'helmet'
+  | 'shield'
+  | 'cup'
+  | 'pan'
+  | 'ammo-crate'
+  | 'tyre'
+  | 'barrel'
+  | 'generator'
+  | 'toolbox'
+  | 'stump'
+  | 'stump2'
+  | 'log';
 /** A team's start: spawns[0] is where the attackers start, spawns[1] the defenders. */
 export type Spawn = { x: number; y: number; z: number; yaw: number; slots: Slot[] };
 export type Town = { name: string; x: number; z: number; site: number };
@@ -389,10 +413,14 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
   }
 }
 
+/** The crates' boxes: their side and color (the renderer draws a stack of real crates in each box of this kind). */
+export const CRATE_SIZE = 1.1;
+export const CRATE_COLOR = 0x9a7a4e;
+
 function crates(c: Ctx, f: Frame, lx: number, lz: number, y: number) {
   const r = c.rng;
-  const s = 1.1;
-  const col = 0x9a7a4e;
+  const s = CRATE_SIZE;
+  const col = CRATE_COLOR;
   f.box(lx - s / 2, y, lz - s / 2, lx + s / 2, y + s, lz + s / 2, 'wood', col);
   if (r() < 0.7) f.box(lx + s / 2 + 0.05, y, lz - s / 2, lx + s * 1.5 + 0.05, y + s, lz + s / 2, 'wood', col);
   if (r() < 0.5) f.box(lx - s / 2 + 0.2, y + s, lz - s / 2 + 0.1, lx + s / 2 + 0.2, y + s * 2, lz + s / 2 + 0.1, 'wood', col);
@@ -457,13 +485,19 @@ const MODEL_COVER: Partial<Record<PropKind, { h: number; s: Surface }>> = {
   dumpsters: { h: 1.35, s: 'metal' },
   fence: { h: 2.3, s: 'stone' },
 };
-const CLUTTER: ModelKey[] = ['jerry', 'gas', 'propane', 'helmet', 'shield', 'jerry', 'propane', 'cup', 'pan'];
+const CLUTTER: ModelKey[] = ['jerry', 'gas', 'propane', 'helmet', 'shield', 'jerry', 'propane', 'cup', 'pan', 'tyre', 'ammo-crate', 'barrel', 'toolbox', 'generator', 'ammo-crate'];
+/** Clutter big enough to stop you and a bullet: half the side of its collider (square, inside its turned outline) and its height. */
+const CLUTTER_SOLID: Partial<Record<ModelKey, [number, number]>> = { barrel: [0.3, 0.92], generator: [0.27, 0.56] };
 const FENCES: ModelKey[] = ['fence-base', 'fence-half', 'fence-wood', 'fence-wheel'];
 
 /** A piece of clutter on the ground at local (lx, lz) of a frame, facing a random way. */
 function clutter(c: Ctx, f: Frame, lx: number, lz: number, key?: ModelKey, y?: number) {
   const [x, z] = f.xz(lx, lz);
-  c.models.push({ key: key ?? CLUTTER[Math.floor(c.deco() * CLUTTER.length)], x, y: y ?? heightAt(c.t, x, z), z, yaw: c.deco() * Math.PI * 2 });
+  const k = key ?? CLUTTER[Math.floor(c.deco() * CLUTTER.length)];
+  const at = y ?? heightAt(c.t, x, z);
+  c.models.push({ key: k, x, y: at, z, yaw: c.deco() * Math.PI * 2 });
+  const solid = CLUTTER_SOLID[k];
+  if (solid) c.colliders.push({ x0: x - solid[0], y0: at, z0: z - solid[0], x1: x + solid[0], y1: at + solid[1], z1: z + solid[0], s: 'metal' });
 }
 
 /** A screen across a road: quarter turns, baskets long, and two high (over head height). */
@@ -539,7 +573,7 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number, sc
     const rr = f.rect(-w / 2, -d / 2, w / 2, d / 2);
     c.colliders.push({ x0: rr.x0, y0: y, z0: rr.z0, x1: rr.x1, y1: y + mc.h, z1: rr.z1, s: mc.s });
     c.blocks.push({ x0: rr.x0, y0: y, z0: rr.z0, x1: rr.x1, y1: y + mc.h, z1: rr.z1 });
-    const key: ModelKey = kind === 'fence' ? FENCES[Math.floor(c.deco() * FENCES.length)] : kind === 'barrier' ? 'barricade' : (kind as 'pile' | 'wire' | 'dumpsters');
+    const key: ModelKey = kind === 'fence' ? FENCES[Math.floor(c.deco() * FENCES.length)] : kind === 'barrier' ? (c.deco() < 0.5 ? 'jersey' : 'barricade') : (kind as 'pile' | 'wire' | 'dumpsters');
     c.models.push({ key, x, y, z, yaw: (-rot * Math.PI) / 2, size: [w, mc.h, d] });
   } else if (kind === 'sandbags') {
     const col = c.def.style === 'cabin' ? 0xcfcfc6 : 0xb3a07a;
@@ -1300,6 +1334,22 @@ export function buildWorld(id: MapId, royale = false): World {
       const col = TREE_COLLIDE[kind];
       if (col) trunks.push({ x, z, r: col[0] * s, y0: y - 0.5, y1: y + col[1] * s });
     }
+
+  // stumps and fallen logs among the trees round the fight, on their own random stream so nothing else moves
+  const lr = mulberry32(def.seed * 41 + 7);
+  const reach = c.arena + 20;
+  for (const tr of trees) {
+    if (tr.kind === 'shrub' || tr.kind === 'palm' || tr.kind === 'cactus' || Math.abs(tr.x) > reach || Math.abs(tr.z) > reach || lr() > 0.06) continue;
+    const a = lr() * Math.PI * 2;
+    const d = 2.6 + lr() * 1.6;
+    const x = tr.x + Math.sin(a) * d;
+    const z = tr.z + Math.cos(a) * d;
+    const key: ModelKey = lr() < 0.45 ? 'log' : lr() < 0.5 ? 'stump' : 'stump2';
+    const pad = key === 'log' ? 2.1 : 1;
+    const y = heightAt(t, x, z);
+    if (y < water + 0.3 || normalAt(t, x, z).y < 0.9 || !free(x, z, pad) || trunks.some((k) => Math.abs(k.x - x) < pad && Math.abs(k.z - z) < pad)) continue;
+    c.models.push({ key, x, y: y - 0.04, z, yaw: lr() * Math.PI * 2 });
+  }
 
   const rockList: Rock[] = [];
   const rocks: RockCol[] = [];
