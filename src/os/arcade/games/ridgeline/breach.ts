@@ -199,7 +199,7 @@ export const PLANS: Record<MapId, Plan> = {
       { at: [15, -40], r: 23 },
       { at: [11, 44], r: 21 },
       // (a wide lagoon with a narrow beach round it, so the wreck lies out in the water)
-      { at: [-16, 4], r: 22, round: true, wet: 0.55, shore: 6 },
+      { at: [-16, 4], r: 22, round: true, wet: 0.55, shore: 9 },
       { at: [-36, 58], r: 13, round: true },
       { at: [-31, -32], r: 10, round: true },
     ],
