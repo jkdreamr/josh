@@ -17,7 +17,7 @@ export type P = [number, number];
 export type Lane = { pts: P[]; w: number };
 /** Open ground round a place: a square (half side r) or a disc, sunk by `dip` meters at its middle, or lying `wet`
  * meters under the water line (ice to walk on, or shallows to wade). */
-export type Plaza = { at: P; r: number; round?: boolean; dip?: number; wet?: number };
+export type Plaza = { at: P; r: number; round?: boolean; dip?: number; wet?: number; shore?: number };
 export type PlaceKind = 'farm' | 'square' | 'quarry' | 'compound' | 'pumps' | 'gate' | 'station' | 'lumber' | 'pond' | 'dock' | 'wreck' | 'hamlet' | 'ruins';
 /** A place on a plaza (by index): what it is and its name on the map. */
 export type Place = { kind: PlaceKind; plaza: number; name: string; site: number };
@@ -198,7 +198,8 @@ export const PLANS: Record<MapId, Plan> = {
     plazas: [
       { at: [15, -40], r: 23 },
       { at: [11, 44], r: 21 },
-      { at: [-16, 4], r: 21, round: true, wet: 0.55 },
+      // (a wide lagoon with a narrow beach round it, so the wreck lies out in the water)
+      { at: [-16, 4], r: 22, round: true, wet: 0.55, shore: 6 },
       { at: [-36, 58], r: 13, round: true },
       { at: [-31, -32], r: 10, round: true },
     ],
@@ -669,7 +670,8 @@ const DRAFT: Record<PlaceKind, Drafter> = {
   },
   // a wreck in the lagoon: an old hull run aground, flotsam round it
   wreck(d) {
-    d.some('wreck', 1, 8, 18);
+    // out in the water near the middle if it fits clear of the ways through, else nearer the edge
+    if (!d.some('wreck', 1, 3, 9)) d.some('wreck', 1, 8, 18);
     d.someProps(['crates', 'pile', 'crates'], 4, 6, 17);
     d.ring([['ruin', 7, 6]], 2);
   },
@@ -833,7 +835,7 @@ export function sculpt(t: Terrain, def: MapDef, plan: Plan, items: Item[], arena
       for (const { p, at } of wetPlazas) {
         const dd = p.round ? Math.hypot(x - at[0], z - at[1]) : Math.max(Math.abs(x - at[0]), Math.abs(z - at[1]));
         if (p.dip) base -= p.dip * (1 - smoothstep(p.r * 0.4, p.r, dd));
-        if (p.wet) base = lerp(base, water - p.wet, 1 - smoothstep(p.r - 13, p.r - 1, dd + n.fbm(x / 14, z / 14, 2) * 3));
+        if (p.wet) base = lerp(base, water - p.wet, 1 - smoothstep(p.r - 1 - (p.shore ?? 12), p.r - 1, dd + n.fbm(x / 14, z / 14, 2) * 3));
       }
       if (sea && lu > sea.u0 && lu < sea.u1) {
         // (shoaling toward either end of the coast, where the banks come down to meet it)
