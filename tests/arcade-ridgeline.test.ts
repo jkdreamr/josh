@@ -4,7 +4,7 @@ import { MAP_IDS } from '../src/os/arcade/games/ridgeline/maps.ts';
 import { DM_HUBS, newBrain } from '../src/os/arcade/games/ridgeline/bots.ts';
 import { fieldDist, fieldTo, findPath } from '../src/os/arcade/games/ridgeline/nav.ts';
 import { RADIUS, STAND_H, blockedAt, clearLine, groundAt, newHit, rayWorld, stepBody, type Body } from '../src/os/arcade/games/ridgeline/physics.ts';
-import { CELL, T_HALF, T_RES, floorAt, generateTerrain, heightAt, rayTerrain } from '../src/os/arcade/games/ridgeline/terrain.ts';
+import { CELL, T_HALF, T_RES, floorAt, generateTerrain, heightAt, normalAt, rayTerrain } from '../src/os/arcade/games/ridgeline/terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, PAVISE, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
 
 import { ARENA, ROYALE_ARENA, SITE_R, worldFor } from '../src/os/arcade/games/ridgeline/world.ts';
@@ -81,7 +81,7 @@ for (const id of MAP_IDS) {
     w.sites.forEach((site, k) => {
       const f = fieldTo(w, `site${k}`, site.x, site.z);
       for (const s of w.spawns) assert.ok(Number.isFinite(fieldDist(w, f, s.x, s.z)), `spawn reaches site ${site.name}`);
-      // walking lengths: the attack about 20 s of running from either site, the defense well nearer
+      // walking lengths: the attack about 20 to 30 s of running to either site, the defense well nearer
       const walk = (a: { x: number; z: number }) => {
         const p = findPath(w, a.x, a.z, site.x, site.z, 200000)!;
         let x = a.x;
@@ -96,13 +96,19 @@ for (const id of MAP_IDS) {
       };
       const atk = walk(w.spawns[0]);
       const def = walk(w.spawns[1]);
-      assert.ok(atk > 70 && atk < 150, `attack walks ${atk.toFixed(0)} m to ${site.name}`);
+      assert.ok(atk > 100 && atk < 170, `attack walks ${atk.toFixed(0)} m to ${site.name}`);
       assert.ok(def < atk * 0.8, `defense walks ${def.toFixed(0)} m to ${site.name}, the attack ${atk.toFixed(0)}`);
     });
     // the spawns are walled yards: nobody sees from one into the other
     const [a, b] = w.spawns;
     for (const p of a.slots) for (const q of b.slots) assert.ok(!clearLine(w, p.x, a.y + 1.66, p.z, q.x, b.y + 1.66, q.z), 'no line of sight from spawn to spawn');
     for (const p of w.dmSpawns) assert.ok(findPath(w, p.x, p.z, w.sites[1].x, w.sites[1].z), 'deathmatch spawns are on the main ground');
+    // the ground you can walk on is bounded by banks, hills or the sea well inside the arena's edge, so nobody walks
+    // into the invisible wall at the edge or up onto the hills between the lanes
+    let reach = 0;
+    for (let j = 0; j < T_RES; j++)
+      for (let i = 0; i < T_RES; i++) if (w.region[j * T_RES + i]) reach = Math.max(reach, Math.abs(i * CELL - T_HALF), Math.abs(j * CELL - T_HALF));
+    assert.ok(reach < ARENA - 6, `walkable ground reaches ${reach.toFixed(0)} m out of ${ARENA}`);
   });
 }
 
@@ -199,7 +205,8 @@ test('bullets fly, drop over distance and hit what they aim at', () => {
     const x = you.body.x + Math.sin(ang) * 30;
     const z = you.body.z + Math.cos(ang) * 30;
     const y = heightAt(m.world.terrain, x, z);
-    if (blockedAt(m.world, x, z, y) || y < m.world.terrain.water) continue;
+    // (on level ground: a target on a bank would slide off it before the shot lands)
+    if (blockedAt(m.world, x, z, y) || y < m.world.terrain.water || normalAt(m.world.terrain, x, z).y < 0.9) continue;
     if (!clearLine(m.world, you.body.x, eye, you.body.z, x, y + 1.1, z) || !clearLine(m.world, you.body.x, eye, you.body.z, x, y + 1.6, z)) continue;
     foe.body.x = x;
     foe.body.z = z;

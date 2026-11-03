@@ -1104,7 +1104,10 @@ function planDefense(m: Match, a: Actor, br: Brain) {
     const k = siteFor(m, a, br);
     const e = entryOf(m, k);
     const side = (br.holdA < 0.5 ? -1 : 1) * (0.55 + Math.abs(br.holdA - 0.5) * 1.6);
-    const spot = siteSpot(m, k, e.x, e.z, side, 4 + br.holdA * 6);
+    // (some hold from the far side of the site instead, back toward their own spawn, so a push onto it has open
+    // ground to cross under their guns)
+    const deep = Math.abs(br.holdA - 0.5) < 0.3;
+    const spot = deep ? siteSpot(m, k, e.x, e.z, Math.PI + side * 0.6, 7 + br.holdA * 6) : siteSpot(m, k, e.x, e.z, side, 4 + br.holdA * 6);
     setGoal(m, br, spot.x, spot.z, `site${k}`);
     br.faceX = e.x;
     br.faceZ = e.z;

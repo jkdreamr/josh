@@ -1025,6 +1025,22 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
         g.fillStyle = '#ffd56a';
         g.fill();
       }
+      // the big map names the places: each site's under its letter, and the others where they are
+      if (big && s.sites && !s.zone) {
+        g.font = '600 10px system-ui, sans-serif';
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.lineWidth = 3;
+        g.strokeStyle = 'rgba(0,0,0,0.55)';
+        g.fillStyle = 'rgba(255,255,255,0.8)';
+        for (const t of world.towns) {
+          if (Math.abs(t.x) > world.arena || Math.abs(t.z) > world.arena) continue;
+          const px = toX(t.x);
+          const py = toY(t.z) + (t.site >= 0 ? 15 : 0);
+          g.strokeText(t.name, px, py);
+          g.fillText(t.name, px, py);
+        }
+      }
       if (s.sites) world.sites.forEach((site, i) => {
         const on = i === s.plantedOn;
         g.fillStyle = on ? '#ffd56a' : 'rgba(255,255,255,0.75)';
