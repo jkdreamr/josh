@@ -1,6 +1,7 @@
 // Buildings, cover, and the site, charge and spawn markers. Every box of every building is merged into one mesh per material
-// (about eight draw calls for a whole town), textured with surfaces painted at load (plaster, planks, roof tiles,
-// corrugated metal, concrete, sandbags) plus matching normal maps. Insides are darkened so rooms read as rooms.
+// (about eight draw calls for a whole town), textured with photographed surfaces (Poly Haven plaster, planks, roof
+// tiles, corrugated metal and concrete, with their normal and roughness maps) where those loaded, and surfaces painted at
+// load otherwise (and for the sandbags and wire baskets). Insides are darkened so rooms read as rooms.
 import { mulberry32 } from '../noise.ts';
 import { heightAt } from '../terrain.ts';
 import type { Part, Piece, World } from '../world.ts';
@@ -249,6 +250,28 @@ function paintSet(THREE: Three, key: string, seed: number) {
   return { map, nmap, size: p.size };
 }
 
+/** Photographed finishes (Poly Haven) that replace a painted one when their images loaded: meters per repeat. */
+const PHOTO_SIZE: Partial<Record<string, number>> = { plaster: 2.6, wood: 2.2, roof: 2.4, metal: 1.8, concrete: 3 };
+export type Photos = Partial<Record<'plaster' | 'plaster-n' | 'wood' | 'wood-n' | 'roof' | 'roof-n' | 'metal' | 'metal-n' | 'concrete' | 'concrete-n', ImageBitmap>>;
+
+/** Color (roughness in alpha) and normal map from a photographed finish, or null when it didn't load. */
+function photoSet(THREE: Three, key: string, photos: Photos | undefined) {
+  const size = PHOTO_SIZE[key];
+  const a = photos?.[key as keyof Photos];
+  const n = photos?.[`${key}-n` as keyof Photos];
+  if (!size || !a || !n) return null;
+  const tex = (img: ImageBitmap, srgb: boolean) => {
+    const t = new THREE.CanvasTexture(img as unknown as HTMLCanvasElement);
+    t.colorSpace = srgb ? THREE.SRGBColorSpace : NO_SPACE;
+    t.flipY = false;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.anisotropy = 8;
+    t.needsUpdate = true;
+    return t;
+  };
+  return { map: tex(a, true), nmap: tex(n, false), size };
+}
+
 const PART_LOOK: Record<Part, { paint: string; rough: number; metal: number }> = {
   wall: { paint: 'plaster', rough: 0.92, metal: 0 },
   trim: { paint: 'wood', rough: 0.78, metal: 0 },
@@ -312,8 +335,13 @@ class Builder {
 }
 
 /** `skip` leaves out pieces something else draws (the crates, when their real models loaded). */
-export function buildings(THREE: Three, w: World, shared: Shared, shadows: boolean, skip?: (p: Piece) => boolean) {
+export function buildings(THREE: Three, w: World, shared: Shared, shadows: boolean, skip?: (p: Piece) => boolean, photos?: Photos) {
   const group = new THREE.Group();
+  const photo = new Map<string, ReturnType<typeof photoSet>>();
+  const photoOf = (paint: string) => {
+    if (!photo.has(paint)) photo.set(paint, photoSet(THREE, paint, photos));
+    return photo.get(paint) ?? null;
+  };
   const builders = new Map<string, Builder>();
   const get = (paint: string) => {
     let b = builders.get(paint);
@@ -321,7 +349,7 @@ export function buildings(THREE: Three, w: World, shared: Shared, shadows: boole
     return b;
   };
   const inside = (x: number, y: number, z: number) => w.interiors.some((q) => x > q.x0 - 0.06 && x < q.x1 + 0.06 && z > q.z0 - 0.06 && z < q.z1 + 0.06 && y > q.y0 && y < q.y1 + 0.35);
-  const sizeOf = (paint: string) => PAINTS[paint].size;
+  const sizeOf = (paint: string) => photoOf(paint)?.size ?? PAINTS[paint].size;
   for (const p of w.pieces) {
     if (skip?.(p)) continue;
     const look = PART_LOOK[p.part];
@@ -386,17 +414,22 @@ export function buildings(THREE: Three, w: World, shared: Shared, shadows: boole
     const look = PART_LOOK[key as Part];
     let tex = paints.get(look.paint);
     if (!tex) {
-      tex = paintSet(THREE, look.paint, seed++);
+      tex = photoOf(look.paint) ?? paintSet(THREE, look.paint, seed++);
       paints.set(look.paint, tex);
       textures.push(tex.map, tex.nmap);
     }
-    const mat = new THREE.MeshStandardMaterial({ map: tex.map, normalMap: tex.nmap, roughness: look.rough, metalness: look.metal, vertexColors: true });
+    const real = !!photoOf(look.paint);
+    // a photographed finish carries its own roughness (in the color's alpha), centered on the part's
+    const mat = new THREE.MeshStandardMaterial({ map: tex.map, normalMap: tex.nmap, roughness: real ? Math.min(1.2, look.rough + 0.15) : look.rough, metalness: look.metal, vertexColors: true });
     mat.normalScale.set(0.9, 0.9);
     patch(mat, shared, {
-      key: 'dz-build',
+      key: real ? 'dz-build-photo' : 'dz-build',
+      fragDecl: real ? 'float dzMapRough = 1.0;' : '',
       albedo: `#include <map_fragment>
+      ${real ? 'dzMapRough = sampledDiffuseColor.a; diffuseColor.a = 1.0;' : ''}
       diffuseColor.rgb *= 0.9 + 0.2 * dzNoise(vDzWp.xz * 0.35 + vDzWp.y * 0.2);
       diffuseColor.rgb *= mix(0.72, 1.0, smoothstep(-0.2, 1.2, vDzWp.y - dzHeight(vDzWp.xz)));`,
+      rough: real ? 'float roughnessFactor = clamp(roughness * dzMapRough, 0.05, 1.0);' : undefined,
     });
     const mesh = new THREE.Mesh(b.build(THREE), mat);
     mesh.castShadow = shadows;

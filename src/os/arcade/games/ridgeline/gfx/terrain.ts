@@ -1,6 +1,8 @@
 // The ground and the water. The ground is one grid cut into chunks (so the camera skips what it cannot see), shaded by
 // a stock PBR material taught to paint itself: grass, dirt, layered rock, beach sand and snow chosen per pixel from
-// height, slope and noise, with per pixel normals from the height data and the baked light on top. No image files.
+// height, slope and noise, with per pixel normals from the height data and the baked light on top. Up close, above the
+// low tier, photographed ground (Poly Haven) takes over: each layer's texture tinted by the map's palette and blended
+// by its own height, rock projected from the side on steep slopes. The water reflects the sky photo.
 import { CELL, T_HALF, T_RES } from '../terrain.ts';
 import { ARENA, type World } from '../world.ts';
 import { CLAMP, COMMON, HALF_FLOAT, NO_SPACE, NORMAL_BLEND, RGBA, SKY, UNSIGNED_BYTE, lin, patch, toHalf, type Shared, type T, type Three } from './common.ts';
@@ -87,6 +89,12 @@ vec3 dzN;
 float dzRoughV;
 float dzAO;
 float dzObjShadow;
+#ifdef DZ_TEX
+uniform sampler2DArray uGroundA;
+uniform sampler2DArray uGroundN;
+// meters per repeat of each layer: grass, dirt, rock, sand, snow
+const float DZ_TILE[5] = float[5](2.4, 2.8, 5.5, 3.2, 3.6);
+#endif
 `;
 
 const TERRAIN_ALBEDO = /* glsl */ `
@@ -101,9 +109,10 @@ const TERRAIN_ALBEDO = /* glsl */ `
   float fine = dzNoise(p * 1.7) * 0.55 + dzNoise(p * 6.3) * 0.45 * near + 0.225 * (1.0 - near);
   float gm;
   vec4 L = dzLayers(vDzWp, n0, baked.a, gm);
-  vec3 grass = dzGrassColor(vDzWp, gm, fine);
   float strata = sin(vDzWp.y * 1.9 + dzNoise(p * 0.05) * 7.0) * 0.5 + 0.5;
-  vec3 rock = uRock * (0.72 + 0.34 * dzNoise(p * 0.35 + vDzWp.y * 0.21) + uStrata * (strata - 0.5) * 0.55) * (0.9 + 0.2 * fine);
+  vec3 rockBase = uRock * (0.72 + 0.34 * dzNoise(p * 0.35 + vDzWp.y * 0.21) + uStrata * (strata - 0.5) * 0.55);
+  vec3 grass = dzGrassColor(vDzWp, gm, fine);
+  vec3 rock = rockBase * (0.9 + 0.2 * fine);
   vec3 sand = uSand * (0.9 + 0.16 * fine);
   vec3 dirt = uDirt * (0.78 + 0.4 * fine);
   vec3 snow = uSnow * (0.93 + 0.07 * fine);
@@ -112,11 +121,7 @@ const TERRAIN_ALBEDO = /* glsl */ `
   col = mix(col, sand, L.y);
   col = mix(col, rock, L.x);
   col = mix(col, snow, L.w);
-  // wet ground at the water's edge
-  float wet = (1.0 - smoothstep(0.0, 0.7, vDzWp.y - uWater)) * step(-500.0, uWater) * (1.0 - L.w);
-  col *= 1.0 - wet * 0.45;
-  diffuseColor.rgb = col;
-  dzRoughV = mix(0.93, 0.78, L.x) - wet * 0.55 - L.w * 0.25;
+  dzRoughV = mix(0.93, 0.78, L.x) - L.w * 0.25;
   // detail normal: noise slopes, strongest on rock and sand ripples, faded with distance
   float e = 0.35;
   float h0 = dzNoise(p * 1.3);
@@ -124,6 +129,86 @@ const TERRAIN_ALBEDO = /* glsl */ `
   float hz = dzNoise((p + vec2(0.0, e)) * 1.3);
   float amt = (0.25 + L.x * 0.9 + L.y * 0.35) * near;
   dzN = normalize(n0 + vec3(h0 - hx, 0.0, h0 - hz) * amt * 2.2);
+#ifdef DZ_TEX
+  // photographed ground up close: each layer's texture (its own colors taken out, so the map's palette tints it) blended
+  // by the height in its texture, so stones and roots poke through grass and snow settles between rocks; past a couple
+  // hundred meters it hands over to the painted colors above (the textures average to them)
+  float texFar = smoothstep(150.0, 260.0, camD);
+  if (texFar < 0.999) {
+    // the painted mix above as weights: grass, then dirt, sand, rock and snow laid over it in turn
+    float wS = L.w;
+    float wR = L.x * (1.0 - L.w);
+    float wA = L.y * (1.0 - L.x) * (1.0 - L.w);
+    float wD = L.z * (1.0 - L.y) * (1.0 - L.x) * (1.0 - L.w);
+    float wt[5] = float[5](max(0.0, 1.0 - wS - wR - wA - wD), wD, wR, wA, wS);
+    vec3 base[5] = vec3[5](dzGrassColor(vDzWp, gm, 0.6), uDirt, rockBase, uSand, uSnow);
+    // rock faces the way the ground does: projected from the side on steep slopes
+    vec3 bw = pow(abs(n0), vec3(4.0));
+    bw /= bw.x + bw.y + bw.z;
+    vec4 nh[5];
+    float hv[5];
+    float hm = 0.0;
+    for (int i = 0; i < 5; i++) {
+      nh[i] = vec4(0.5, 0.5, 0.0, 1.0);
+      hv[i] = -1.0;
+      if (wt[i] > 0.003) {
+        float l = float(i);
+        float s = 1.0 / DZ_TILE[i];
+#ifdef DZ_TRI
+        if (i == 2 && bw.y < 0.98)
+          nh[i] = texture(uGroundN, vec3(vDzWp.zy * s, l)) * bw.x + texture(uGroundN, vec3(p * s, l)) * bw.y + texture(uGroundN, vec3(vDzWp.xy * s, l)) * bw.z;
+        else
+#endif
+        nh[i] = texture(uGroundN, vec3(p * s, l));
+        hv[i] = nh[i].b * 0.45 + wt[i];
+        hm = max(hm, hv[i]);
+      }
+    }
+    float sum = 0.0;
+    for (int i = 0; i < 5; i++) {
+      wt[i] = max(hv[i] - (hm - 0.16), 0.0);
+      sum += wt[i];
+    }
+    vec3 tc = vec3(0.0);
+    float tr = 0.0;
+    float tao = 0.0;
+    vec3 dn = vec3(0.0);
+    for (int i = 0; i < 5; i++) {
+      float w = wt[i] / max(sum, 1e-4);
+      if (w < 0.004) continue;
+      float l = float(i);
+      float s = 1.0 / DZ_TILE[i];
+      vec4 a;
+      vec2 t = nh[i].rg * 2.0 - 1.0;
+#ifdef DZ_TRI
+      if (i == 2 && bw.y < 0.98) {
+        a = texture(uGroundA, vec3(vDzWp.zy * s, l)) * bw.x + texture(uGroundA, vec3(p * s, l)) * bw.y + texture(uGroundA, vec3(vDzWp.xy * s, l)) * bw.z;
+        // each projection's tilt in its own plane: from the side along x (z, y), from above (x, z), along z (x, y)
+        dn += (vec3(0.0, t.y, t.x) * bw.x + vec3(t.x, 0.0, t.y) * bw.y + vec3(t.x, t.y, 0.0) * bw.z) * w;
+      } else
+#endif
+      {
+        a = texture(uGroundA, vec3(p * s, l));
+        // a second, broader look at the same ground breaks up the repeat
+        float big = dot(texture(uGroundA, vec3(p * s * 0.21 + 0.37, l)).rgb, vec3(0.3333));
+        a.rgb *= 0.55 + 0.9 * big;
+        dn += vec3(t.x, 0.0, t.y) * w;
+      }
+      tc += base[i] * a.rgb * 2.0 * w;
+      tr += a.a * w;
+      tao += nh[i].a * w;
+    }
+    col = mix(tc, col, texFar);
+    dzRoughV = mix(tr, dzRoughV, texFar);
+    dzAO *= mix(mix(1.0, tao, 0.75), 1.0, texFar);
+    dzN = normalize(mix(normalize(n0 + dn * 0.9), dzN, texFar));
+  }
+#endif
+  // wet ground at the water's edge
+  float wet = (1.0 - smoothstep(0.0, 0.7, vDzWp.y - uWater)) * step(-500.0, uWater) * (1.0 - L.w);
+  col *= 1.0 - wet * 0.45;
+  dzRoughV -= wet * 0.55;
+  diffuseColor.rgb = col;
 }
 `;
 
@@ -139,11 +224,36 @@ const TERRAIN_LIGHT = /* glsl */ `
 }
 `;
 
-export function terrainMesh(THREE: Three, w: World, shared: Shared, step: number) {
+/**
+ * The photographed ground layers as two texture arrays, from the loaded strips (five square layers stacked top to
+ * bottom): color with roughness in alpha, and normal, height and occlusion. Null when either image is missing.
+ */
+export function groundTextures(THREE: Three, albedo: ImageBitmap | undefined, normal: ImageBitmap | undefined) {
+  if (!albedo || !normal) return null;
+  const make = (img: ImageBitmap, srgb: boolean) => {
+    const size = img.width;
+    const tex = new THREE.DataArrayTexture(img as unknown as Uint8Array, size, size, Math.round(img.height / size));
+    tex.format = RGBA;
+    tex.type = UNSIGNED_BYTE;
+    tex.colorSpace = srgb ? THREE.SRGBColorSpace : NO_SPACE;
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
+    tex.magFilter = THREE.LinearFilter;
+    tex.minFilter = THREE.LinearMipmapLinearFilter;
+    tex.generateMipmaps = true;
+    tex.anisotropy = 4;
+    tex.needsUpdate = true;
+    return tex;
+  };
+  return { albedo: make(albedo, true), normal: make(normal, false) };
+}
+
+export function terrainMesh(THREE: Three, w: World, shared: Shared, step: number, ground?: { albedo: T.Texture; normal: T.Texture; tri: boolean } | null) {
   const group = new THREE.Group();
   const mat = new THREE.MeshStandardMaterial({ roughness: 0.92, metalness: 0 });
+  if (ground) mat.defines = ground.tri ? { DZ_TEX: '', DZ_TRI: '' } : { DZ_TEX: '' };
   patch(mat, shared, {
-    key: 'dz-terrain',
+    key: ground ? (ground.tri ? 'dz-terrain-tri' : 'dz-terrain-tex') : 'dz-terrain',
+    uniforms: ground ? { uGroundA: { value: ground.albedo }, uGroundN: { value: ground.normal } } : undefined,
     fragDecl: TERRAIN_FRAG_DECL,
     albedo: TERRAIN_ALBEDO,
     rough: 'float roughnessFactor = clamp(dzRoughV, 0.08, 1.0);',

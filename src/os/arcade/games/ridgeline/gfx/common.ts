@@ -98,6 +98,11 @@ export function makeShared(THREE: Three, def: MapDef, sun: [number, number, numb
     uDirtAmt: { value: g.dirtAmt },
     uSandAmt: { value: g.sandAmt },
     uWind: { value: new THREE.Vector2(0.8, 0.6) },
+    // the sky photo (see applySky): off until its image arrives
+    uSkyTex: { value: null },
+    uSkyOn: { value: 0 },
+    uSkyScale: { value: 1 },
+    uSkyRot: { value: new THREE.Vector2(0, 0) },
   };
 }
 
@@ -116,6 +121,25 @@ uniform sampler2D uLight;
 uniform float uWater;
 uniform float uShadowRange;
 uniform vec2 uWind;
+uniform sampler2D uSkyTex;
+uniform float uSkyOn;
+uniform float uSkyScale;
+uniform vec2 uSkyRot;
+
+/** Where a direction falls on the sky photo: across by azimuth (turned so its sun is the map's), down from the zenith. */
+vec2 dzSkyUV(vec3 d) {
+  float u = uSkyRot.x - (atan(d.x, d.z) - uSkyRot.y) * 0.15915494;
+  return vec2(u, 1.0 - asin(clamp(d.y, 0.0, 1.0)) * 0.63661977);
+}
+/** The photo stores x / (1 + x) for the light x over its scale. */
+vec3 dzSkyDecode(vec3 e) {
+  e = min(e, vec3(0.97));
+  return e / (1.0 - e) * uSkyScale;
+}
+/** The sky photo in a direction, blurred to a mip level (the haze takes the sky's color just over the horizon). */
+vec3 dzSkyLod(vec3 d, float lod) {
+  return dzSkyDecode(textureLod(uSkyTex, dzSkyUV(d), lod).rgb);
+}
 
 vec2 dzUV(vec2 xz) { return ((xz + 512.0) * 0.5 + 0.5) / 513.0; }
 float dzHeight(vec2 xz) { return texture2D(uTerrainData, dzUV(xz)).r; }
@@ -156,7 +180,10 @@ vec3 dzFog(vec3 col, vec3 wp) {
   float amount = abs(b) > 0.0001 ? a * dist * (1.0 - exp(-b)) / b : a * dist;
   float f = 1.0 - exp(-max(amount, 0.0));
   float s = pow(max(dot(dir, uSunDir), 0.0), 6.0);
-  return mix(col, mix(uFogColor, uFogSun, s * 0.75), clamp(f, 0.0, 1.0));
+  vec3 haze = uFogColor;
+  // with the sky photo up, the haze is the sky's own color low over the horizon that way, so far hills melt into it
+  if (uSkyOn > 0.5) haze = dzSkyLod(normalize(vec3(dir.x, 0.05 + max(dir.y, 0.0) * 0.4, dir.z)), 5.0) * 0.96;
+  return mix(col, mix(haze, uFogSun, s * (0.75 - 0.5 * uSkyOn)), clamp(f, 0.0, 1.0));
 }
 `;
 
@@ -174,15 +201,33 @@ uniform float uDisc;
 vec3 dzSkyBase(vec3 dir) {
   float y = dir.y;
   vec3 c = mix(uZenith, uHorizon, pow(1.0 - clamp(y, 0.0, 1.0), 3.5));
+  if (uSkyOn > 0.5) c = dzSkyLod(dir, 1.0);
   c = mix(c, uGround, smoothstep(0.0, -0.2, y));
   float sd = max(dot(dir, uSunDir), 0.0);
-  c += uFogSun * (pow(sd, 5.0) * 0.3 + pow(sd, 42.0) * 0.55) * uGlow;
+  c += uFogSun * (pow(sd, 5.0) * 0.3 + pow(sd, 42.0) * 0.55) * uGlow * (1.0 - uSkyOn * 0.75);
   return c;
 }
 
+/** The sky photo, sampled with its seam kept sharp (the gradients of the turn wrap round with it). */
+vec3 dzSkyPhoto(vec3 d) {
+  vec2 uv = dzSkyUV(d);
+  vec2 gx = dFdx(uv);
+  vec2 gy = dFdy(uv);
+  gx.x -= floor(gx.x + 0.5);
+  gy.x -= floor(gy.x + 0.5);
+  return dzSkyDecode(textureGrad(uSkyTex, uv, gx, gy).rgb);
+}
+
 vec3 dzSky(vec3 dir, vec3 from, int octaves) {
-  vec3 c = dzSkyBase(dir);
   float sd = max(dot(dir, uSunDir), 0.0);
+  if (uSkyOn > 0.5) {
+    vec3 c = dzSkyPhoto(dir);
+    c = mix(c, uGround, smoothstep(0.0, -0.2, dir.y));
+    c += uFogSun * pow(sd, 42.0) * 0.14 * uGlow;
+    c += uSunColor * smoothstep(0.99955, 0.9998, sd) * 3.0 * uDisc * smoothstep(-0.02, 0.02, dir.y);
+    return c;
+  }
+  vec3 c = dzSkyBase(dir);
   if (dir.y > 0.005 && uClouds > 0.0) {
     float t = (1100.0 - from.y) / dir.y;
     vec2 p = (from.xz + dir.xz * t) * 0.0009 + uWind * uTime * 0.0035;
