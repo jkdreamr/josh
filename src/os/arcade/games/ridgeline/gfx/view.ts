@@ -1,7 +1,8 @@
 // Puts the whole picture together: renderer, scene, sky light, sun shadows that follow you (snapped to the shadow
 // map's texels so their edges never crawl), the soldiers, effects and viewmodel, and the post chain. A governor watches
-// the frame time and trims the render scale before frames drop, then raises it again when there is room.
-import type { Assets } from '../assets.ts';
+// the frame time and trims the render scale before frames drop, then raises it again when there is room. The sky photo
+// streams in after the first frame: it lights the scene as soon as it arrives (the environment map is baked again).
+import { skyImage, type Assets } from '../assets.ts';
 import type { Match } from '../match.ts';
 import { currentGun, me } from '../match.ts';
 import { clamp } from '../noise.ts';
@@ -13,22 +14,27 @@ import { effects, type Fx } from './fx.ts';
 import { Post } from './post.ts';
 import { carsView } from './cars.ts';
 import { buildings, markers } from './props.ts';
-import { skyDome, skyEnv } from './sky.ts';
+import { applySky, skyDome, skyEnv } from './sky.ts';
+import { brush } from './brush.ts';
 import { disposeGuns, installRealGuns } from './guns.ts';
 import { crateSkip, modelOf, placedModels } from './models.ts';
 import { royaleFx } from './royale.ts';
 import { kitOf, paletteOf, soldiers } from './soldiers.ts';
-import { terrainMesh, terrainTextures, waterMesh } from './terrain.ts';
+import { groundTextures, terrainMesh, terrainTextures, waterMesh } from './terrain.ts';
 import { vegetation } from './veg.ts';
 import { vehicles } from './vehicles.ts';
 import { viewModel, type ViewState } from './viewmodel.ts';
 
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
-export const QUALITY: Record<Quality, { dpr: number; scale: number; shadows: number; extent: number; grass: number; trees: number; bloom: boolean; msaa: number; step: number; clouds: number }> = {
-  low: { dpr: 1, scale: 0.8, shadows: 0, extent: 0, grass: 0, trees: 0.5, bloom: false, msaa: 0, step: 2, clouds: 2 },
-  medium: { dpr: 1.25, scale: 0.9, shadows: 1024, extent: 36, grass: 30000, trees: 0.75, bloom: true, msaa: 0, step: 1, clouds: 3 },
-  high: { dpr: 1.5, scale: 1, shadows: 2048, extent: 52, grass: 64000, trees: 1, bloom: true, msaa: 4, step: 1, clouds: 4 },
-  ultra: { dpr: 2, scale: 1, shadows: 4096, extent: 70, grass: 110000, trees: 1, bloom: true, msaa: 4, step: 1, clouds: 5 },
+/**
+ * Per tier: `ground` 0 paints the ground, 1 adds the photographed ground, 2 also projects rock from the side on steep
+ * slopes; `brush` is the undergrowth's density (0 none); `sky` picks the large sky photo.
+ */
+export const QUALITY: Record<Quality, { dpr: number; scale: number; shadows: number; extent: number; grass: number; trees: number; bloom: boolean; msaa: number; step: number; clouds: number; ground: number; brush: number; sky: boolean }> = {
+  low: { dpr: 1, scale: 0.8, shadows: 0, extent: 0, grass: 0, trees: 0.5, bloom: false, msaa: 0, step: 2, clouds: 2, ground: 0, brush: 0, sky: false },
+  medium: { dpr: 1.25, scale: 0.9, shadows: 1024, extent: 36, grass: 30000, trees: 0.75, bloom: true, msaa: 0, step: 1, clouds: 3, ground: 1, brush: 0.6, sky: false },
+  high: { dpr: 1.5, scale: 1, shadows: 2048, extent: 52, grass: 64000, trees: 1, bloom: true, msaa: 4, step: 1, clouds: 4, ground: 2, brush: 1, sky: true },
+  ultra: { dpr: 2, scale: 1, shadows: 4096, extent: 70, grass: 110000, trees: 1, bloom: true, msaa: 4, step: 1, clouds: 5, ground: 2, brush: 1.3, sky: true },
 };
 
 /** The GPU's name, where the browser tells it (lower case), else ''. */
@@ -145,10 +151,20 @@ export type View = {
   lost(): boolean;
   /** Draw calls and triangles in the last frame, all passes. */
   info(): { calls: number; triangles: number };
+  /** Live textures and geometries, and roughly how many megabytes the scene's textures take (with mipmaps). */
+  memory(): { textures: number; geometries: number; texMB: number; plants: number };
   scale(): number;
   fps(): number;
   dispose(): void;
 };
+
+/** Bytes a texture takes on the GPU, roughly: 4 per texel per layer, a third more with mipmaps. */
+function texBytes(t: T.Texture) {
+  const img = t.image as { width?: number; height?: number; depth?: number } | null;
+  if (!img?.width || !img.height) return 0;
+  const half = (t as T.DataTexture).type === 1016 ? 2 : 1;
+  return img.width * img.height * (img.depth ?? 1) * 4 * half * (t.generateMipmaps || t.mipmaps?.length ? 4 / 3 : 1);
+}
 
 export function createView(THREE: Three, host: HTMLElement, w: World, quality: Quality, assets: Assets): View | null {
   const Q = QUALITY[quality];
@@ -191,16 +207,19 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
   shared.uShadowRange.value = Q.shadows ? Q.extent * 0.8 : 0;
 
   const scene = new THREE.Scene();
-  const env = skyEnv(THREE, renderer, shared);
+  let env = skyEnv(THREE, renderer, shared);
   scene.environment = env.texture;
   scene.environmentIntensity = def.ambient * AMBIENT_K;
   const dome = skyDome(THREE, shared, Q.clouds);
   scene.add(dome);
-  scene.add(terrainMesh(THREE, w, shared, Q.step));
+  const ground = Q.ground ? groundTextures(THREE, assets.images?.['ground-albedo'], assets.images?.['ground-normal']) : null;
+  scene.add(terrainMesh(THREE, w, shared, Q.step, ground && { ...ground, tri: Q.ground > 1 }));
   if (w.terrain.hasWater) scene.add(waterMesh(THREE, w, shared));
   const veg = vegetation(THREE, w, shared, { grass: Q.grass, treeFrac: Q.trees, shadows: Q.shadows > 0, assets });
   scene.add(veg.group);
-  scene.add(buildings(THREE, w, shared, Q.shadows > 0, crateSkip(assets)));
+  const under = brush(THREE, w, shared, assets, Q.brush);
+  scene.add(under.group);
+  scene.add(buildings(THREE, w, shared, Q.shadows > 0, crateSkip(assets), assets.images));
   scene.add(vehicles(THREE, w, shared, Q.shadows > 0, assets));
   scene.add(placedModels(THREE, w, shared, Q.shadows > 0, assets));
   const mark = markers(THREE, w);
@@ -245,6 +264,24 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
   camera.rotation.order = 'YXZ';
   const vm = viewModel(THREE, w.sun, def.sun.color, def.sun.intensity * SUN_K, assets);
   vm.setEnv(env.texture, def.ambient * AMBIENT_K * 1.3);
+
+  // the sky photo: once it arrives it is the sky, the haze and (baked again into the environment map) the sky light
+  let skyTex: T.Texture | null = null;
+  let disposed = false;
+  skyImage(def.id, Q.sky).then((img) => {
+    if (!img || disposed) return;
+    try {
+      skyTex = applySky(THREE, shared, def.id, def, w.sun, img, AMBIENT_K);
+      renderer.initTexture(skyTex);
+      const next = skyEnv(THREE, renderer, shared);
+      scene.environment = next.texture;
+      vm.setEnv(next.texture, def.ambient * AMBIENT_K * 1.3);
+      env.dispose();
+      env = next;
+    } catch {
+      /* a lost context: the painted sky stays */
+    }
+  });
 
   const gl = renderer.getContext();
   const floatRT = !!renderer.extensions.has('EXT_color_buffer_float') || !!renderer.extensions.has('EXT_color_buffer_half_float');
@@ -347,6 +384,27 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
     },
     lost: () => isLost,
     info: () => ({ calls: lastInfo.calls, triangles: lastInfo.triangles }),
+    memory() {
+      const seen = new Set<T.Texture>();
+      const add = (v: unknown) => {
+        if (v && (v as T.Texture).isTexture) seen.add(v as T.Texture);
+      };
+      for (const root of [scene, vm.scene])
+        root.traverse((o) => {
+          const mats = (o as T.Mesh).material;
+          if (!mats) return;
+          for (const mat of Array.isArray(mats) ? mats : [mats]) {
+            for (const v of Object.values(mat as unknown as Record<string, unknown>)) add(v);
+            for (const u of Object.values((mat as T.ShaderMaterial).uniforms ?? {})) add(u?.value);
+          }
+        });
+      for (const u of Object.values(shared)) add(u.value);
+      if (ground) seen.add(ground.albedo).add(ground.normal);
+      let bytes = 0;
+      for (const t of seen) bytes += texBytes(t);
+      const mem = renderer.info.memory;
+      return { textures: mem.textures, geometries: mem.geometries, texMB: Math.round(bytes / 1e5) / 10, plants: under.shown() };
+    },
     scale: () => gov.scale,
     fps: () => fpsAvg,
     render(f) {
@@ -364,6 +422,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
         veg.setGrass(Math.round(Q.grass * [1, 0.55, 0.3, 0][shed]));
         renderer.shadowMap.autoUpdate = shed < 2;
         post.setBloom(Q.bloom && shed < 3);
+        under.group.visible = shed < 2;
       }
       if (!renderer.shadowMap.autoUpdate && (frameNo & 1) === 0) renderer.shadowMap.needsUpdate = true;
       frameNo++;
@@ -377,6 +436,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
       }
       camera.updateMatrixWorld();
       dome.position.copy(camera.position);
+      under.near(camera.position.x, camera.position.z);
       // the shadow box sits a little ahead of where you look, snapped to its texels
       if (Q.shadows) {
         veg.casters(camera.position.x, camera.position.z);
@@ -462,9 +522,14 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
       );
     },
     dispose() {
+      disposed = true;
       canvas.removeEventListener('webglcontextlost', onLost);
       canvas.removeEventListener('webglcontextrestored', onRestored);
       veg.dispose();
+      under.dispose();
+      skyTex?.dispose();
+      ground?.albedo.dispose();
+      ground?.normal.dispose();
       vm.dispose();
       troops.dispose();
       royale.dispose();

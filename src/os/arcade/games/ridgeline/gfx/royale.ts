@@ -447,10 +447,21 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
       o.position.set(it.x, it.y + 0.065, it.z);
       o.rotation.set(0, yawOf(it), 0);
     });
-  bucket(keep(new THREE.CylinderGeometry(0.05, 0.05, 0.11, 10)), plainMat, 60, (it) => it.kind === 'heal' && it.what === 'bandage', (it, o) => {
-    o.position.set(it.x, it.y + 0.05, it.z);
-    o.rotation.set(0, 0, Math.PI / 2);
-  }, () => 0xe2d9c4);
+  // bandages: a real roll of medical tape when it loaded (a little over life size, so it reads on the ground)
+  const tape = modelOf(THREE, assets, 'tape', new THREE.Matrix4().makeScale(2.2, 2.2, 2.2));
+  if (tape)
+    for (const part of tape.parts) {
+      disposables.push(part.geo);
+      bucket(part.geo, keep(worldMaterial(THREE, part.mat, shared)), 60, (it) => it.kind === 'heal' && it.what === 'bandage', (it, o) => {
+        o.position.set(it.x, it.y, it.z);
+        o.rotation.set(0, yawOf(it), 0);
+      });
+    }
+  else
+    bucket(keep(new THREE.CylinderGeometry(0.05, 0.05, 0.11, 10)), plainMat, 60, (it) => it.kind === 'heal' && it.what === 'bandage', (it, o) => {
+      o.position.set(it.x, it.y + 0.05, it.z);
+      o.rotation.set(0, 0, Math.PI / 2);
+    }, () => 0xe2d9c4);
   bucket(keep(new THREE.CylinderGeometry(0.035, 0.035, 0.14, 10)), plainMat, 40, (it) => it.kind === 'nade' && it.what === 'smoke', (it, o) => {
     o.position.set(it.x, it.y + 0.035, it.z);
     o.rotation.set(0, yawOf(it), Math.PI / 2);

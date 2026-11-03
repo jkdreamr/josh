@@ -1,5 +1,6 @@
 // The four maps: how each one is generated (terrain shape, places, trees) and how it looks (light, sky, fog, ground
-// colors, grade). Colors are sRGB hex; the renderer converts them to linear.
+// colors, grade). Colors are sRGB hex; the renderer converts them to linear. Each sun stands about where the sun is in
+// its map's sky photo (gfx/sky.ts), and has that photo's color.
 
 export type MapId = 'vale' | 'mesa' | 'frost' | 'isles';
 export const MAP_IDS: readonly MapId[] = ['vale', 'mesa', 'frost', 'isles'];
@@ -62,7 +63,7 @@ export const MAPS: Record<MapId, MapDef> = {
   vale: {
     id: 'vale',
     name: 'Verdant Vale',
-    tag: 'rolling farmland, oak woods and a misty lake at sunrise',
+    tag: 'rolling farmland, oak woods and a lake under a summer sky',
     seed: 1207,
     water: 1.5,
     ice: false,
@@ -76,7 +77,7 @@ export const MAPS: Record<MapId, MapDef> = {
     forest: 0.55,
     rocks: 0.5,
     grass: { density: 1, height: 0.55, dry: 0.15 },
-    sun: { az: 118, el: 21, color: 0xffd6a6, intensity: 3.4 },
+    sun: { az: 118, el: 43, color: 0xffe2b4, intensity: 3.4 },
     sky: { zenith: 0x3d74c4, horizon: 0xc4d6e6, ground: 0x6b7a6a, glow: 0.9, clouds: 0.42, cloudColor: 0xfff4e8, cloudShade: 0x8592a8 },
     fog: { color: 0xb8cadc, density: 0.0021, falloff: 0.035, sun: 0xffd2a0 },
     ambient: 1,
@@ -117,7 +118,7 @@ export const MAPS: Record<MapId, MapDef> = {
     forest: 0.18,
     rocks: 1,
     grass: { density: 0.35, height: 0.42, dry: 1 },
-    sun: { az: 232, el: 38, color: 0xffe0ba, intensity: 3.8 },
+    sun: { az: 232, el: 38, color: 0xfff0dc, intensity: 3.8 },
     sky: { zenith: 0x4a82c4, horizon: 0xe3ccad, ground: 0x9a6b4a, glow: 0.6, clouds: 0.14, cloudColor: 0xfff6ea, cloudShade: 0xb09a8a },
     fog: { color: 0xd9bc98, density: 0.0017, falloff: 0.02, sun: 0xffd8ac },
     ambient: 0.9,
@@ -156,7 +157,7 @@ export const MAPS: Record<MapId, MapDef> = {
     forest: 0.62,
     rocks: 0.8,
     grass: { density: 0.18, height: 0.38, dry: 0.8 },
-    sun: { az: 158, el: 15, color: 0xe2eaff, intensity: 2.1 },
+    sun: { az: 158, el: 13, color: 0xfaf0dc, intensity: 2.1 },
     sky: { zenith: 0x5a7896, horizon: 0xc8d4e0, ground: 0x9aa6b4, glow: 0.45, clouds: 0.72, cloudColor: 0xf2f5fa, cloudShade: 0x7c8898 },
     fog: { color: 0xc3cfdc, density: 0.0036, falloff: 0.018, sun: 0xeaf0fa },
     ambient: 1.25,
@@ -196,7 +197,7 @@ export const MAPS: Record<MapId, MapDef> = {
     forest: 0.42,
     rocks: 0.45,
     grass: { density: 0.85, height: 0.5, dry: 0.1 },
-    sun: { az: 282, el: 9, color: 0xffad6a, intensity: 3.1 },
+    sun: { az: 282, el: 8, color: 0xffa24a, intensity: 3.1 },
     sky: { zenith: 0x34558f, horizon: 0xf1b388, ground: 0x6a6070, glow: 1.25, clouds: 0.34, cloudColor: 0xffd2b0, cloudShade: 0x7a6a8a },
     fog: { color: 0xe2b694, density: 0.0015, falloff: 0.03, sun: 0xffa060 },
     ambient: 0.95,

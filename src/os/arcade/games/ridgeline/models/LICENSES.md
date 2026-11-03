@@ -70,3 +70,52 @@ files meshopt compressed.
 | `stump.glb` | Tree Stump 01 | Rob Tuytel | CC0 1.0 | <https://polyhaven.com/a/tree_stump_01> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/tree_stump_01> |
 | `stump2.glb` | Tree Stump 02 | Rob Tuytel | CC0 1.0 | <https://polyhaven.com/a/tree_stump_02> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/tree_stump_02> |
 | `log.glb` | Dead Tree Trunk | Rob Tuytel | CC0 1.0 | <https://polyhaven.com/a/dead_tree_trunk> | <https://github.com/m4tthewdavis/fallout-minnesota/tree/main/assets/models/dead_tree_trunk> |
+
+## More Poly Haven assets (CC0)
+
+Also from [Poly Haven](https://polyhaven.com), under CC0 1.0 (<https://creativecommons.org/publicdomain/zero/1.0/>,
+<https://polyhaven.com/license>), taken straight from Poly Haven's file server through its API
+(<https://api.polyhaven.com>). No attribution is required; the authors are listed as a courtesy.
+
+The skies are 4K pure sky HDRIs, cropped to the sky above the horizon with the sun taken out (the game draws its own
+sun disc where it stood), tone compressed as x / (1 + x) and saved as WebP at 4096 x 1024 and 2048 x 512
+(`../textures/sky-<map>-4k.webp` and `-2k.webp`). Each map's sun was set to its HDRI's sun height and color, and the
+sky is turned so its sun stands where the map's sun does.
+
+| File | Asset | Author | License | Source |
+| --- | --- | --- | --- | --- |
+| `../textures/sky-vale-*.webp` | Sunflowers (Pure Sky) | Jarod Guest, Sergej Majboroda | CC0 1.0 | <https://polyhaven.com/a/sunflowers_puresky> |
+| `../textures/sky-mesa-*.webp` | Kloofendal 38d Partly Cloudy (Pure Sky) | Greg Zaal, Jarod Guest | CC0 1.0 | <https://polyhaven.com/a/kloofendal_38d_partly_cloudy_puresky> |
+| `../textures/sky-frost-*.webp` | Table Mountain 1 (Pure Sky) | Greg Zaal, Jarod Guest | CC0 1.0 | <https://polyhaven.com/a/table_mountain_1_puresky> |
+| `../textures/sky-isles-*.webp` | Qwantani Sunset (Pure Sky) | Greg Zaal, Jarod Guest | CC0 1.0 | <https://polyhaven.com/a/qwantani_sunset_puresky> |
+
+The ground textures are 1K PBR sets packed into two strips of five layers (grass, dirt, rock, sand, snow):
+`../textures/ground-albedo.webp` (1024 per layer: color with its mean taken out, so each map's palette tints it, and
+roughness in alpha) and `../textures/ground-normal.webp` (512 per layer: normal x and y, height, ambient occlusion).
+The wall, plank, roof, sheet metal and concrete sets are resized to 512: `../textures/<part>.webp` (color partly
+desaturated, so a building's own color tints it, and roughness in alpha) and `<part>-n.webp` (the normal map).
+
+| File | Asset | Author | License | Source |
+| --- | --- | --- | --- | --- |
+| `../textures/ground-*.webp`, layer 1 | Leafy Grass | Charlotte Baglioni | CC0 1.0 | <https://polyhaven.com/a/leafy_grass> |
+| `../textures/ground-*.webp`, layer 2 | Forest Ground 04 | Rob Tuytel, Rico Cilliers | CC0 1.0 | <https://polyhaven.com/a/forest_ground_04> |
+| `../textures/ground-*.webp`, layer 3 | Rock Face 03 | Dario Barresi, Rico Cilliers | CC0 1.0 | <https://polyhaven.com/a/rock_face_03> |
+| `../textures/ground-*.webp`, layer 4 | Coast Sand 01 | Rob Tuytel | CC0 1.0 | <https://polyhaven.com/a/coast_sand_01> |
+| `../textures/ground-*.webp`, layer 5 | Snow 02 | Rob Tuytel | CC0 1.0 | <https://polyhaven.com/a/snow_02> |
+| `../textures/plaster*.webp` | Rough Plaster Brick 04 | Rob Tuytel | CC0 1.0 | <https://polyhaven.com/a/rough_plaster_brick_04> |
+| `../textures/wood*.webp` | Weathered Plank Siding | Dimitrios Savva | CC0 1.0 | <https://polyhaven.com/a/weathered_plank_siding> |
+| `../textures/roof*.webp` | Clay Roof Tiles 02 | Amal Kumar | CC0 1.0 | <https://polyhaven.com/a/clay_roof_tiles_02> |
+| `../textures/metal*.webp` | Worn Corrugated Iron | Jenelle van Heerden, Dimitrios Savva | CC0 1.0 | <https://polyhaven.com/a/worn_corrugated_iron> |
+| `../textures/concrete*.webp` | Concrete Layers 02 | Rob Tuytel | CC0 1.0 | <https://polyhaven.com/a/concrete_layers_02> |
+
+The plants and the tape are 1K glTF bundles, reduced like the models above: the meshes wanted kept (one of the four
+bushes in Shrub 02 for each of `shrub.glb` and `shrub2.glb`, one of the four ferns), the leaf cards' separate alpha
+map merged into the color, set on the ground at the origin, welded, simplified with meshoptimizer, textures resized to
+512 and re-encoded as WebP, quantized and meshopt compressed with glTF Transform.
+
+| File | Model | Author | License | Source |
+| --- | --- | --- | --- | --- |
+| `shrub.glb`, `shrub2.glb` | Shrub 02 | Rico Cilliers | CC0 1.0 | <https://polyhaven.com/a/shrub_02> |
+| `fern.glb` | Fern 02 | Rob Tuytel, Rico Cilliers | CC0 1.0 | <https://polyhaven.com/a/fern_02> |
+| `branches.glb` | Dry Branches Medium 01 | Rico Cilliers | CC0 1.0 | <https://polyhaven.com/a/dry_branches_medium_01> |
+| `tape.glb` | Medical Tape | Miroslav Turura | CC0 1.0 | <https://polyhaven.com/a/medical_tape> |

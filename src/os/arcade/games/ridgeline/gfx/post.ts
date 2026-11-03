@@ -1,6 +1,7 @@
 // The frame after the scene: HDR scene buffer (multisampled where the GPU can), a dual filter bloom at low
 // resolutions, then one composite pass: filmic tone mapping, per map color grading, contrast adaptive sharpening (so a
-// lower render scale still looks crisp), FXAA when there is no MSAA, vignette, grain and the damage and smoke washes.
+// lower render scale still looks crisp), FXAA when there is no MSAA, a light film grade (split toned shadows and
+// highlights), vignette, grain and the damage and smoke washes.
 import { CLAMP, HALF_FLOAT, NO_SPACE, type T, type Three } from './common.ts';
 
 const VERT = /* glsl */ `
@@ -83,6 +84,7 @@ uniform float uLow;
 uniform float uSmoke;
 uniform vec3 uSmokeColor;
 uniform float uFlash;
+uniform float uFilm;
 varying vec2 vUv;
 
 const mat3 ACESIn = mat3(vec3(0.59719, 0.07600, 0.02840), vec3(0.35458, 0.90834, 0.13383), vec3(0.04823, 0.01566, 0.83777));
@@ -143,6 +145,10 @@ void main() {
   float l = luma(c);
   c = mix(vec3(l), c, uSat * (1.0 - uLow * 0.6));
   c = (c - 0.5) * uContrast + 0.5;
+  // a light film look: a little color drained from the deepest shadows, shadows toward teal, highlights toward amber
+  float fl = luma(c);
+  c = mix(vec3(fl), c, mix(1.0 - 0.18 * uFilm, 1.0, smoothstep(0.02, 0.3, fl)));
+  c += mix(vec3(-0.010, 0.002, 0.012), vec3(0.014, 0.004, -0.012), smoothstep(0.15, 0.85, fl)) * uFilm;
   vec2 d = uv - 0.5;
   float vig = 1.0 - dot(d, d) * uVignette * 2.2;
   c *= vig;
@@ -217,6 +223,7 @@ export class Post {
       uSmoke: { value: 0 },
       uSmokeColor: { value: new THREE.Vector3(0.6, 0.6, 0.6) },
       uFlash: { value: 0 },
+      uFilm: { value: 1 },
     });
     this.scene = new THREE.Scene();
     this.cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
