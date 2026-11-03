@@ -25,7 +25,7 @@ export type GunModel = {
   /** The support hand holds a vertical grip (else it cups the handguard from below). */
   vertical?: boolean;
   /** A real model: its parts for the first person view, and one vertex colored geometry for other soldiers' hands. */
-  real?: { fp: Part[]; lite: T.BufferGeometry | null };
+  real?: { fp: Part[]; lite: T.BufferGeometry | null; mats?: T.Material[] };
 };
 
 /** Collects parts per material, in (side s, up u, forward f) coordinates. */
@@ -373,7 +373,65 @@ function bulwark(b: Builder): Omit<GunModel, 'id' | 'geos'> {
   return { sight: 0.0355, grip: [0, -0.075, 0.05], fore: [0, -0.08, 0.045], muzzle: [0, 0.012, -0.15], butt: [0, -0.075, 0.055] };
 }
 
-const BUILDERS: Record<WeaponId, (b: Builder) => Omit<GunModel, 'id' | 'geos'>> = { wren, bulwark, hornet, mauler, kestrel, lancer, longbow };
+/** An auto shotgun on a box magazine: a slab sided receiver, a straight box, a ribbed handguard and a skeleton stock. */
+function thresher(b: Builder): Omit<GunModel, 'id' | 'geos'> {
+  b.box('polymer', 0.036, 0.062, 0.26, 0, -0.006, 0.02);
+  b.box('steel', 0.0016, 0.022, 0.07, 0.0185, 0.004, 0.04, 0, 0);
+  b.box('anodized', 0.012, 0.0045, 0.07, 0, -0.068, -0.02, 0, 0.2);
+  b.box('steel', 0.004, 0.022, 0.006, 0, -0.052, -0.016, -0.35, 0);
+  b.side('polymer', [[-0.03, -0.036], [-0.064, -0.036], [-0.1, -0.128], [-0.092, -0.138], [-0.064, -0.135], ['q', -0.048, -0.084, -0.03, -0.052]], 0.028, 0, 0.004);
+  // a big straight box magazine and its base plate
+  b.box('polymer', 0.034, 0.15, 0.085, 0, -0.11, 0.075, -0.08, 0.2);
+  b.box('anodized', 0.038, 0.014, 0.09, 0, -0.188, 0.083, -0.08, 0.3);
+  // handguard with ribs, the barrel and a wide muzzle brake
+  b.box('polymer', 0.046, 0.05, 0.2, 0, -0.012, 0.27, 0, 0.4);
+  for (let f = 0.19; f < 0.36; f += 0.022) b.box('polymer', 0.048, 0.052, 0.006, 0, -0.012, f, 0, 0.3);
+  b.tube('steel', 0.011, 0.36, 0, 0.012, 0.4);
+  b.lathe('steel', [[0.001, 0.56], [0.019, 0.56], [0.019, 0.63], [0.001, 0.63]], 0, 0.012);
+  for (const f of [0.575, 0.595, 0.615]) b.box('polymer', 0.04, 0.005, 0.008, 0, 0.012, f, 0, 0);
+  b.rail('anodized', -0.1, 0.14, 0.025);
+  b.box('steel', 0.004, 0.012, 0.006, 0, 0.034, 0.55, 0, 0);
+  // skeleton stock
+  for (const u of [0.0, -0.06]) b.box('anodized', 0.016, 0.016, 0.24, 0, u, -0.24, u ? -0.12 : 0, 0.4);
+  b.box('rubber', 0.036, 0.12, 0.016, 0, -0.04, -0.37, 0, 0.3);
+  const sight = reddot(b, 0.02, 0.031);
+  return { sight, grip: [0, -0.085, 0.05], fore: [0, -0.04, -0.27], muzzle: [0, 0.012, -0.64], butt: [0, -0.04, 0.37] };
+}
+
+/** A crossbow: a wooden stock and a long rail with its flight groove, steel limbs swept forward with the string
+ * drawn back to the latch, a bolt laid ready, a stirrup at the front and a short scope. */
+function arbalest(b: Builder): Omit<GunModel, 'id' | 'geos'> {
+  b.box('wood', 0.04, 0.05, 0.62, 0, -0.012, 0.2, 0, 0.3);
+  b.box('anodized', 0.026, 0.012, 0.6, 0, 0.018, 0.22, 0, 0.2);
+  b.box('polymer', 0.004, 0.004, 0.56, 0, 0.0245, 0.22, 0, 0);
+  // the riser and the limbs, swept forward
+  b.box('anodized', 0.07, 0.05, 0.05, 0, 0.005, 0.47, 0, 0.3);
+  for (const s of [-1, 1]) {
+    b.box('steel', 0.24, 0.022, 0.03, s * 0.14, 0.012, 0.44, 0, 0.3, s * 0.32);
+    b.ball('anodized', 0.012, s * 0.255, 0.012, 0.4);
+    // the string from the limb tip back to the latch
+    b.box('polymer', 0.0035, 0.0035, 0.386, s * 0.128, 0.024, 0.255, 0, 0, s * -0.72);
+  }
+  b.box('anodized', 0.03, 0.02, 0.03, 0, 0.026, 0.11, 0, 0.3);
+  // the stirrup at the front
+  b.box('steel', 0.09, 0.008, 0.008, 0, -0.06, 0.53, 0, 0);
+  for (const s of [-1, 1]) b.box('steel', 0.008, 0.07, 0.008, s * 0.042, -0.028, 0.53, 0, 0);
+  // the bolt: shaft, head and vanes
+  b.tube('fde', 0.0045, 0.4, 0, 0.032, 0.3, 10);
+  b.lathe('steel', [[0.001, 0.5], [0.009, 0.5], [0.001, 0.535]], 0, 0.032, 10);
+  for (const s of [-1, 1]) b.box('od', 0.002, 0.016, 0.05, s * 0.006, 0.036, 0.13, 0, 0);
+  // grip, trigger and a skeleton butt
+  b.side('wood', [[-0.03, -0.034], [-0.064, -0.034], [-0.1, -0.128], [-0.092, -0.138], [-0.064, -0.135], ['q', -0.048, -0.084, -0.03, -0.052]], 0.03, 0, 0.004);
+  b.box('anodized', 0.012, 0.0045, 0.07, 0, -0.062, -0.02, 0, 0.2);
+  b.box('steel', 0.004, 0.022, 0.006, 0, -0.048, -0.016, -0.35, 0);
+  b.side('wood', [[-0.1, 0.012], [-0.4, 0.02], [-0.402, -0.11], [-0.37, -0.115], ['q', -0.24, -0.07, -0.14, -0.06], [-0.1, -0.035]], 0.036, 0, 0.005);
+  b.box('rubber', 0.04, 0.13, 0.016, 0, -0.045, -0.41, 0, 0.3);
+  const sight = scope(b, -0.08, 0.1, 0.03, 0.017, 0.013);
+  return { sight, grip: [0, -0.085, 0.05], fore: [0, -0.036, -0.3], muzzle: [0, 0.032, -0.53], butt: [0, -0.04, 0.41] };
+}
+
+// (the guns with a real model fall back on the nearest procedural one when it fails to load)
+const BUILDERS: Record<WeaponId, (b: Builder) => Omit<GunModel, 'id' | 'geos'>> = { wren, bulwark, hornet, mauler, kestrel, lancer, longbow, talon: kestrel, rampart: kestrel, marshal: bulwark, wasp: hornet, thresher, arbalest };
 
 type V3 = [number, number, number];
 /**
@@ -382,7 +440,7 @@ type V3 = [number, number, number];
  * point is the center of the firing hand round the grip, the fore point sits under the handguard's axis), the muzzle and
  * the butt. An optic is added where the real gun has none. The "-b" models are the other side's version of a gun.
  */
-type RealSpec = { fp?: AssetKey; lite: AssetKey; origin: V3; sight: number; grip: V3; fore: V3; muzzle: V3; butt: V3; optic?: (b: Builder) => number };
+type RealSpec = { fp?: AssetKey; lite: AssetKey; origin: V3; sight: number; grip: V3; fore: V3; muzzle: V3; butt: V3; optic?: (b: Builder) => number; tint?: V3; scale?: number };
 const REAL: Partial<Record<string, RealSpec>> = {
   wren: { fp: 'xd', lite: 'xd-lite', origin: [0, 0.049, -0.005], sight: 0.028, grip: [0, -0.035, 0.05], fore: [0, -0.04, 0.045], muzzle: [0, 0.049, -0.09], butt: [0, -0.06, 0.08] },
   'wren-b': { lite: 'beretta-lite', origin: [0, 0.042, -0.01], sight: 0.028, grip: [0, -0.035, 0.04], fore: [0, -0.04, 0.035], muzzle: [0, 0.042, -0.085], butt: [0, -0.06, 0.07] },
@@ -392,6 +450,25 @@ const REAL: Partial<Record<string, RealSpec>> = {
   'kestrel-b': { lite: 'ak-lite', origin: [0, 0.075, 0.08], sight: 0.04, grip: [0, -0.025, 0.165], fore: [0, 0.058, -0.17], muzzle: [0, 0.075, -0.44], butt: [0, 0.05, 0.44] },
   lancer: { fp: 'm4', lite: 'm4-lite', origin: [0, 0.09, 0.05], sight: 0, grip: [0, -0.025, 0.135], fore: [0, 0.071, -0.17], muzzle: [0, 0.09, -0.42], butt: [0, 0.04, 0.42], optic: (b) => scope(b, -0.12, 0.16, 0.034, 0.021) },
   longbow: { fp: 'awp', lite: 'awp-lite', origin: [0, 0.06, 0.28], sight: 0.048, grip: [0, -0.04, 0.37], fore: [0, 0.023, 0.1], muzzle: [0, 0.06, -0.6], butt: [0, 0, 0.6] },
+  // the new guns on the models we have: the AK for the burst rifle, a bigger M4 in green with a belt box and a bipod
+  // for the machine gun, the Desert Eagle in nickel with a cylinder for the revolver, a blacked out MP5
+  talon: { fp: 'ak-lite', lite: 'ak-lite', origin: [0, 0.075, 0.08], sight: 0.04, grip: [0, -0.025, 0.165], fore: [0, 0.058, -0.17], muzzle: [0, 0.075, -0.44], butt: [0, 0.05, 0.44], optic: (b) => reddot(b, 0.07, 0.022) },
+  rampart: { fp: 'm4', lite: 'm4-lite', origin: [0, 0.09, 0.05], sight: 0, grip: [0, -0.025, 0.135], fore: [0, 0.071, -0.17], muzzle: [0, 0.09, -0.42], butt: [0, 0.04, 0.42], tint: [0.62, 0.72, 0.5], scale: 1.12, optic: (b) => {
+    b.box('od', 0.08, 0.1, 0.12, -0.012, -0.135, 0.07, 0, 0.3);
+    b.box('polymer', 0.07, 0.012, 0.11, -0.012, -0.19, 0.07, 0, 0.3);
+    for (const s of [-1, 1]) b.tube('anodized', 0.005, 0.24, s * 0.013, -0.045, 0.36);
+    b.tube('steel', 0.013, 0.2, 0, 0, 0.57);
+    return holo(b, 0, 0.038);
+  } },
+  marshal: { fp: 'deagle', lite: 'deagle-lite', origin: [0, 0.055, 0], sight: 0.022, grip: [0, -0.035, 0.065], fore: [0, -0.04, 0.06], muzzle: [0, 0.059, -0.135], butt: [0, -0.07, 0.1], tint: [1.35, 1.35, 1.42], optic: (b) => {
+    b.tube('steel', 0.021, 0.042, 0, -0.012, 0.012, 14);
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2;
+      b.box('polymer', 0.0025, 0.0025, 0.044, Math.cos(a) * 0.0205, -0.012 + Math.sin(a) * 0.0205, 0.012, 0, 0);
+    }
+    return 0.022;
+  } },
+  wasp: { fp: 'mp5', lite: 'mp5-lite', origin: [0, 0.05, 0], sight: 0.072, grip: [0, -0.045, 0.06], fore: [0, 0.025, -0.2], muzzle: [0, 0.053, -0.34], butt: [0, 0.02, 0.34], tint: [0.42, 0.44, 0.48], scale: 0.94 },
 };
 
 const cache = new WeakMap<Three, Map<string, GunModel>>();
@@ -410,21 +487,44 @@ function realModel(THREE: Three, id: WeaponId, spec: RealSpec, assets: Assets): 
   const fpSrc = spec.fp ? assets[spec.fp] : undefined;
   if (!liteSrc && !fpSrc) return null;
   const o = spec.origin;
-  const shift = new THREE.Matrix4().makeTranslation(-o[0], -o[1], -o[2]);
+  const k = spec.scale ?? 1;
+  const shift = new THREE.Matrix4().makeScale(k, k, k).multiply(new THREE.Matrix4().makeTranslation(-o[0], -o[1], -o[2]));
   const fp = fpSrc ? bakeModel(THREE, fpSrc, shift).parts : [];
   const liteParts = liteSrc ? bakeModel(THREE, liteSrc, shift).parts : [];
   for (const p of liteParts.slice(1)) p.geo.dispose();
+  const lite = liteParts[0]?.geo ?? null;
+  // a tint: the first person parts get their own material copies, the light model's baked colors are tinted
+  const mats: T.Material[] = [];
+  const tint = spec.tint;
+  if (tint) {
+    for (const p of fp) {
+      const mat = p.mat.clone();
+      mat.color.multiply(new THREE.Color(tint[0], tint[1], tint[2]));
+      p.mat = mat;
+      mats.push(mat);
+    }
+    const col = lite?.getAttribute('color');
+    if (lite && col) {
+      const c = new THREE.BufferAttribute(new Float32Array(col.count * 3), 3);
+      for (let i = 0; i < col.count; i++) c.setXYZ(i, Math.min(1, col.getX(i) * tint[0]), Math.min(1, col.getY(i) * tint[1]), Math.min(1, col.getZ(i) * tint[2]));
+      lite.setAttribute('color', c);
+    }
+  }
   const b = new Builder(THREE);
-  const sight = spec.optic ? spec.optic(b) : spec.sight;
+  const sight = spec.optic ? spec.optic(b) : spec.sight * k;
+  const at = (p: V3): V3 => {
+    const s = sub(p, o);
+    return [s[0] * k, s[1] * k, s[2] * k];
+  };
   return {
     id,
     geos: b.build(),
     sight,
-    grip: sub(spec.grip, o),
-    fore: sub(spec.fore, o),
-    muzzle: sub(spec.muzzle, o),
-    butt: sub(spec.butt, o),
-    real: { fp, lite: liteParts[0]?.geo ?? null },
+    grip: at(spec.grip),
+    fore: at(spec.fore),
+    muzzle: at(spec.muzzle),
+    butt: at(spec.butt),
+    real: { fp, lite, mats },
   };
 }
 
@@ -507,6 +607,8 @@ export function disposeGuns(THREE: Three) {
     for (const g of Object.values(m.geos)) g?.dispose();
     for (const p of m.real?.fp ?? []) p.geo.dispose();
     m.real?.lite?.dispose();
+    for (const mat of m.real?.mats ?? []) mat.dispose();
+
     liteCache.get(m)?.dispose();
     liteCache.delete(m);
   }

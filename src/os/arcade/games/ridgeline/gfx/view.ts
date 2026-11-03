@@ -205,7 +205,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
   const mark = markers(THREE, w);
   scene.add(mark.group);
   installRealGuns(THREE, assets);
-  const troops = soldiers(THREE, shared, Q.shadows > 0, modelOf(THREE, assets, 'soldier')?.parts[0] ?? null, modelOf(THREE, assets, 'soldier-lod')?.parts[0] ?? null);
+  const troops = soldiers(THREE, shared, Q.shadows > 0, modelOf(THREE, assets, 'soldier')?.parts[0] ?? null, modelOf(THREE, assets, 'soldier-lod')?.parts[0] ?? null, modelOf(THREE, assets, 'shield')?.parts);
   const royale = royaleFx(THREE, shared, assets, Q.shadows > 0);
   scene.add(royale.group);
   const cars = carsView(THREE, shared, Q.shadows > 0);

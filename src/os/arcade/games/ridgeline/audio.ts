@@ -139,10 +139,34 @@ const SHOTS: Record<WeaponClass, ShotLook> = {
   rifle: { crack: 5200, body: 1100, bodyQ: 0.8, thump: 110, tail: 0.45, vol: 0.7, range: 260 },
   dmr: { crack: 5600, body: 950, bodyQ: 0.8, thump: 95, tail: 0.6, vol: 0.8, range: 300 },
   sniper: { crack: 6000, body: 800, bodyQ: 0.7, thump: 75, tail: 0.9, vol: 0.95, range: 420 },
+  lmg: { crack: 5000, body: 1000, bodyQ: 0.8, thump: 100, tail: 0.55, vol: 0.75, range: 280 },
+  // (a crossbow has a sound of its own: see twang)
+  crossbow: { crack: 0, body: 600, bodyQ: 2, thump: 160, tail: 0.1, vol: 0.4, range: 40 },
 };
+
+/** A crossbow loosing its bolt: the limbs' thunk and the string's twang, then the hiss of the bolt. */
+function twang(g: Graph, place: Place, mine: boolean) {
+  const v = mine ? 0.8 : 1;
+  osc(g, place, { type: 'triangle', freq: 190, to: 95, decay: 0.16, vol: v * 0.35 });
+  osc(g, place, { type: 'sawtooth', freq: 330, to: 300, decay: 0.12, vol: v * 0.07, lowpass: 1800 });
+  burst(g, place, { type: 'bandpass', freq: 600, q: 2, decay: 0.05, vol: v * 0.3 });
+  burst(g, place, { type: 'highpass', freq: 3500, attack: 0.02, decay: 0.25, vol: v * 0.05, at: 0.03 });
+}
+
+/** Fire catching: a whoosh, then a crackle on and off for as long as it burns. */
+function burning(g: Graph, place: Place) {
+  burst(g, place, { type: 'lowpass', freq: 900, to: 300, attack: 0.05, decay: 0.6, vol: 0.45 });
+  burst(g, place, { type: 'bandpass', freq: 1400, q: 0.8, attack: 0.1, hold: 0.3, decay: 0.5, vol: 0.18 });
+  for (let i = 0; i < 26; i++) burst(g, place, { type: 'bandpass', freq: 1800 + Math.random() * 3000, q: 4, decay: 0.02, vol: 0.06 + Math.random() * 0.05, at: 0.3 + Math.random() * 6.2 });
+  burst(g, place, { type: 'lowpass', freq: 500, attack: 0.5, hold: 5.5, decay: 1, vol: 0.08, at: 0.2 });
+}
 
 /** A gunshot: your own up close and punchy, others by distance (a whip crack when it is fired your way). */
 function shot(g: Graph, cls: WeaponClass, place: Place, mine: boolean) {
+  if (cls === 'crossbow') {
+    twang(g, place, mine);
+    return;
+  }
   const s = SHOTS[cls];
   const v = s.vol * (mine ? 0.75 : 1);
   const near = place.muffle > 0.7;
@@ -220,7 +244,35 @@ export function playEvents(m: Match, evs: Ev[], ear: Ear, you: number) {
         shot(g, cls, p, mine);
         break;
       }
+      case 'decoy': {
+        // a decoy plays a gunshot like the real thing
+        const cls = WEAPONS[e.w].cls;
+        const p = placeAt(ear, e.x, e.z, SHOTS[cls].range);
+        if (!p || (p.muffle < 0.75 && ++far > 4)) break;
+        shot(g, cls, p, false);
+        break;
+      }
+      case 'fire': {
+        const p = placeAt(ear, e.x, e.z, 60, false);
+        if (p) burning(g, p);
+        break;
+      }
+      case 'block': {
+        // a shot rings off a raised shield; one that breaks it, a crash and a clatter
+        const p = e.v === you ? HERE : placeAt(ear, e.x, e.z, 40, false);
+        if (!p) break;
+        if (e.broke) {
+          burst(g, p, { type: 'bandpass', freq: 2200, q: 1.2, decay: 0.35, vol: 0.4 });
+          osc(g, p, { freq: 180, to: 70, decay: 0.3, vol: 0.3 });
+          for (let i = 0; i < 5; i++) burst(g, p, { type: 'bandpass', freq: 3000 + Math.random() * 2000, q: 6, decay: 0.05, vol: 0.08, at: 0.1 + Math.random() * 0.5 });
+        } else {
+          osc(g, p, { type: 'triangle', freq: 1700 + Math.random() * 400, to: 1300, decay: 0.12, vol: e.v === you ? 0.12 : 0.08 });
+          if (e.a === you) osc(g, HERE, { type: 'triangle', freq: 900, decay: 0.05, vol: 0.12 });
+        }
+        break;
+      }
       case 'step': {
+
         const a = m.actors[e.a];
         if (!a) break;
         const mine = e.a === you;

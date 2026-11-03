@@ -44,6 +44,7 @@ import {
   jumpOut,
   pickupFor,
   startHeal,
+  shieldHit,
   throwFor,
   type Actor,
   type Cause,
@@ -62,7 +63,7 @@ import {
 } from './match.ts';
 import { MAP_IDS, type MapId } from './maps.ts';
 import { AMMO_KINDS, AMMO_OF, AMMO_PACK, magOf, spawnLoot, type ItemKind, type Mods, type UseKind } from './royale.ts';
-import { WEAPONS, WEAPON_IDS, type WeaponId } from './weapons.ts';
+import { PAVISE, WEAPONS, WEAPON_IDS, type WeaponId } from './weapons.ts';
 import { ARENA, type World } from './world.ts';
 
 export const NET_TAG = 'rl';
@@ -168,12 +169,12 @@ const PHASES: Phase[] = ['buy', 'live', 'end', 'over'];
 const CHARGE_STATES = ['carried', 'dropped', 'planted', 'defused', 'blown'] as const;
 const WHYS: Why[] = ['elim', 'time', 'blast', 'defuse'];
 const ZONES: Zone[] = ['head', 'body', 'leg'];
-const NADES: NadeKind[] = ['frag', 'smoke', 'flash'];
-const SHOP_ITEMS: ShopItem[] = [...WEAPON_IDS, 'light', 'heavy', 'frag', 'smoke', 'flash'];
+const NADES: NadeKind[] = ['frag', 'smoke', 'flash', 'fire', 'impact', 'decoy'];
+const SHOP_ITEMS: ShopItem[] = [...WEAPON_IDS, 'light', 'heavy', ...NADES, 'pavise'];
 const USES: UseKind[] = ['bandage', 'kit', 'drink', 'pills'];
-const ITEM_KINDS: ItemKind[] = ['gun', 'ammo', 'vest', 'helmet', 'heal', 'nade', 'pack', 'boost', 'att'];
+const ITEM_KINDS: ItemKind[] = ['gun', 'ammo', 'vest', 'helmet', 'heal', 'nade', 'pack', 'boost', 'att', 'shield'];
 const SIGHTS = [null, 'dot', 'x4'] as const;
-const CAUSES: string[] = ['frag', 'zone', 'blast', 'shell', 'car', ...WEAPON_IDS];
+const CAUSES: string[] = ['frag', 'fire', 'impact', 'zone', 'blast', 'shell', 'car', ...WEAPON_IDS];
 const gunCode = (id: WeaponId | null | undefined) => (id ? WEAPON_IDS.indexOf(id) + 1 : 0);
 const gunOf = (n: number): WeaponId | null => WEAPON_IDS[n - 1] ?? null;
 
@@ -197,14 +198,14 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 
 /** Everyone's place: 9 numbers each. */
 const POS_N = 9;
-/** Everything else about each of them: 19 numbers each. */
-const TAB_N = 19;
+/** Everything else about each of them: 23 numbers each. */
+const TAB_N = 23;
 
 function encodePos(m: Match): number[] {
   const out: number[] = [];
   for (const a of m.actors) {
     const b = a.body;
-    const flags = (a.alive ? 1 : 0) | (b.onGround ? 2 : 0) | (a.walking ? 4 : 0) | (a.ads > 0.5 ? 8 : 0) | (a.reloadT > 0 ? 16 : 0) | (b.swim ? 32 : 0);
+    const flags = (a.alive ? 1 : 0) | (b.onGround ? 2 : 0) | (a.walking ? 4 : 0) | (a.ads > 0.5 ? 8 : 0) | (a.reloadT > 0 ? 16 : 0) | (b.swim ? 32 : 0) | (a.paviseUp ? 64 : 0);
     out.push(Math.round(b.x * 100), Math.round(b.y * 100), Math.round(b.z * 100), Math.round(wrap(a.yaw) * 1000), Math.round(a.pitch * 1000), Math.round(b.vx * 10), Math.round(b.vz * 10), Math.round(a.crouch * 100), flags);
   }
   return out;
@@ -249,6 +250,10 @@ function encodeTab(m: Match): Tab {
       o.alive ? 1 : 0,
       Math.round(o.blindT * 10),
       gunCode(o.guns[2]?.id),
+      o.fires,
+      o.impacts,
+      o.decoys,
+      Math.ceil(o.pavise),
     );
   const t: Tab = {
     phase: m.phase,
@@ -449,8 +454,14 @@ const beatsAt = (d: number) => (d < NEAR ? 1 : d < MID ? 2 : d < FAR ? 8 : 40);
 /** The world in a royale tab: the phase, the clock, who is left and who won, the zone, the transport and the
  * bombardment's countdown. */
 const RG_N = 19;
-/** A guest's own soldier in its royale tab (see encodeMe). */
-const ME_N = 54;
+/** A guest's own soldier in its royale tab (see encodeMe): the ammo kinds after the first five (crossbow bolts) and
+ * their rounds spent ride at the end, then the newer grenades and the shield. */
+const NA = AMMO_KINDS.length;
+const ME_X = 54 + (NA - 5) * 2;
+const ME_N = ME_X + 4;
+/** Where an ammo kind's rounds carried, and its rounds spent, sit in a royale tab's soldier. */
+const ammoAt = (i: number) => (i < 5 ? 14 + i : 54 + (i - 5) * 2);
+const spentAt = (i: number) => (i < 5 ? 19 + i : 55 + (i - 5) * 2);
 /** A vehicle's state in a royale tab: health, whole, flooded, and who sits in each of four seats. */
 const RC_N = 7;
 
@@ -485,10 +496,12 @@ function encodeMe(a: Actor, spent: number[]): number[] {
     a.frags,
     a.smokes,
   ];
-  for (const k of AMMO_KINDS) out.push(a.ammo[k]);
+  for (let k = 0; k < 5; k++) out.push(a.ammo[AMMO_KINDS[k]]);
   for (let k = 0; k < 5; k++) out.push(spent[k] ?? 0);
   out.push(a.drop, a.place, a.car, a.carSeat, a.epoch, r2(a.body.x), r2(a.body.y), r2(a.body.z), Math.round(wrap(a.yaw) * 1000) / 1000, a.kills, a.deaths, Math.round(a.damage), Math.round(a.cs), a.alive ? 1 : 0, a.slot);
   for (const g of a.guns) out.push(gunCode(g?.id), g?.mag ?? 0, g?.mods?.sight ? SIGHTS.indexOf(g.mods.sight) : 0, g?.mods?.ext ? 1 : 0, g?.mods?.comp ? 1 : 0);
+  for (let k = 5; k < NA; k++) out.push(a.ammo[AMMO_KINDS[k]], spent[k] ?? 0);
+  out.push(a.fires, a.impacts, a.decoys, Math.ceil(a.pavise));
   return out;
 }
 
@@ -639,7 +652,7 @@ export class Session {
   private lootQ: LootMsg[] = [];
   private lootOn = false;
   /** Royale: rounds loaded from the pockets so far (the host takes them off its count), and requests not yet answered. */
-  private spent = [0, 0, 0, 0, 0];
+  private spent = AMMO_KINDS.map(() => 0);
   private asked = new Map<number, number>();
   private rideAt = -9;
   private healAt = -9;
@@ -745,7 +758,7 @@ export class Session {
     a.net = { use: false, ads: 0, walking: false, crouch: 0, reloading: false };
     a.lastX = a.body.x;
     a.lastZ = a.body.z;
-    this.peers.set(a.seat, { clock: new Clock(), track: new Track(), lastMove: this.now(), budget: [], epoch: a.epoch, focus: -1, spent: [0, 0, 0, 0, 0], car: a.car, carTrack: new Track(), out: [], inv: true, drop: a.drop });
+    this.peers.set(a.seat, { clock: new Clock(), track: new Track(), lastMove: this.now(), budget: [], epoch: a.epoch, focus: -1, spent: AMMO_KINDS.map(() => 0), car: a.car, carTrack: new Track(), out: [], inv: true, drop: a.drop });
   }
 
   private rosterOf(m: Match): RosterEntry[] {
@@ -888,7 +901,7 @@ export class Session {
       const [x, y, z, vx, vy, vz, yaw, pitch, crouch, flags, ads, slot] = p;
       const n = a.net!;
       if (royale) {
-        const r = nums(pk.rr, 9, -1, 1e6);
+        const r = nums(pk.rr, 4 + NA, -1, 1e6);
         if (r) this.royaleMove(m, a, peer, r);
         const c = nums(pk.c, 11);
         if (c && a.car >= 0 && a.carSeat === 0 && c[0] === a.car) this.carMove(m, peer, c, st, t);
@@ -920,6 +933,7 @@ export class Session {
       n.walking = !!(flags & 1);
       n.use = !!(flags & 2);
       n.reloading = !!(flags & 16);
+      a.paviseUp = !!(flags & 32) && a.pavise > 0;
       n.crouch = Math.min(1, Math.max(0, crouch));
       n.ads = Math.min(1, Math.max(0, ads));
       if ((slot === 0 || slot === 1 || slot === 2) && a.guns[slot]) a.slot = slot;
@@ -936,7 +950,8 @@ export class Session {
       // every shot fired buys its pellets' worth of hits, for a little while
       peer.budget.push({ t, n: v.length / 3 });
       const vel = v as number[];
-      for (let i = 0; i < vel.length; i += 3) m.bullets.push({ x: o[0], y: o[1], z: o[2], px: o[0], py: o[1], pz: o[2], vx: vel[i], vy: vel[i + 1], vz: vel[i + 2], owner: a.id, w: id, life: 1.6, dist: 0, live: true, vis: true });
+      for (let i = 0; i < vel.length; i += 3) m.bullets.push({ x: o[0], y: o[1], z: o[2], px: o[0], py: o[1], pz: o[2], vx: vel[i], vy: vel[i + 1], vz: vel[i + 2], owner: a.id, w: id, life: WEAPONS[id].cls === 'crossbow' ? 3.2 : 1.6, dist: 0, live: true, vis: true });
+
       const l = Math.hypot(vel[0], vel[1], vel[2]) || 1;
       m.events.push({ t: 'shot', a: a.id, w: id, x: o[0], y: o[1], z: o[2], dx: vel[0] / l, dy: vel[1] / l, dz: vel[2] / l, v: vel });
       m.sounds.push({ x: o[0], z: o[2], t: m.time, team: a.team, range: WEAPONS[id].cls === 'sniper' ? 160 : 90, who: a.id });
@@ -1023,7 +1038,7 @@ export class Session {
       if (!v) return;
       peer.inv = true;
       this.takeKit(a, v);
-      for (let i = 0; i < 5; i++) peer.spent[i] = Math.max(0, Math.round(v[19 + i]));
+      for (let i = 0; i < NA; i++) peer.spent[i] = Math.max(0, Math.round(v[spentAt(i)]));
     }
   }
 
@@ -1044,7 +1059,7 @@ export class Session {
       const g = a.guns[k];
       if (g && r[1 + k] >= 0) g.mag = Math.min(magOf(g), Math.round(r[1 + k]));
     }
-    for (let i = 0; i < 5; i++) {
+    for (let i = 0; i < NA; i++) {
       const s = Math.round(r[4 + i]);
       const more = s - peer.spent[i];
       if (more > 0 && more < 2000) {
@@ -1082,8 +1097,12 @@ export class Session {
     a.boost = n(9, 100);
     a.frags = n(12, 9);
     a.smokes = n(13, 9);
+    a.fires = n(ME_X, 9);
+    a.impacts = n(ME_X + 1, 9);
+    a.decoys = n(ME_X + 2, 9);
+    a.pavise = n(ME_X + 3, PAVISE.hp);
     a.armor = Math.max(a.armor, n(1, 100));
-    AMMO_KINDS.forEach((k, i) => (a.ammo[k] = n(14 + i, 600)));
+    AMMO_KINDS.forEach((k, i) => (a.ammo[k] = n(ammoAt(i), 600)));
     for (let k = 0; k < 3; k++) {
       const g = gunFrom(v, 39 + k * 5);
       if (g) a.guns[k] = g;
@@ -1109,6 +1128,9 @@ export class Session {
       }
     // (a vehicle moves its riders fast: a little more room)
     if (near > (v.car >= 0 ? 3 : 1.6)) return;
+    // a raised shield between (as the host sees it) stops it
+    const sl = Math.hypot(p[0] - o[0], p[1] - o[1], p[2] - o[2]) || 1;
+    if (shieldHit(v, o[0], o[1], o[2], (p[0] - o[0]) / sl, (p[1] - o[1]) / sl, (p[2] - o[2]) / sl, sl + 0.05) >= 0) return;
     const top = v.body.y + v.body.height + 0.4;
     if (p[1] < v.body.y - 1.2 || p[1] > top + 1.2) return;
     // the line from the muzzle to the hit, stopped just short of it
@@ -1143,7 +1165,7 @@ export class Session {
 
   private pushPos(out: number[], a: Actor) {
     const b = a.body;
-    const flags = (a.alive ? 1 : 0) | (b.onGround ? 2 : 0) | (a.walking ? 4 : 0) | (a.ads > 0.5 ? 8 : 0) | (a.reloadT > 0 ? 16 : 0) | (b.swim ? 32 : 0) | (a.drop << 6) | (a.healT > 0 ? 256 : 0);
+    const flags = (a.alive ? 1 : 0) | (b.onGround ? 2 : 0) | (a.walking ? 4 : 0) | (a.ads > 0.5 ? 8 : 0) | (a.reloadT > 0 ? 16 : 0) | (b.swim ? 32 : 0) | (a.drop << 6) | (a.healT > 0 ? 256 : 0) | (a.pavise > 0 ? 512 : 0) | (a.paviseUp ? 1024 : 0);
     const g = a.guns[a.slot];
     out.push(a.id, Math.round(b.x * 100), Math.round(b.y * 100), Math.round(b.z * 100), Math.round(wrap(a.yaw) * 1000), Math.round(a.pitch * 1000), Math.round(b.vx * 10), Math.round(b.vz * 10), Math.round(a.crouch * 100), flags, gunCode(g?.id) * 4 + a.slot, Math.round(a.hp));
   }
@@ -1349,7 +1371,8 @@ export class Session {
       fire: (w, x, y, z, vel) => this.send({ k: 'fire', w: gunCode(w), o: [r2(x), r2(y), r2(z)], v: vel.map(r2) }),
       hit: (c: Claim) => this.send({ k: 'hit', v: c.v, z: ZONES.indexOf(c.zone), w: gunCode(c.w), o: [r2(c.ox), r2(c.oy), r2(c.oz)], p: [r2(c.x), r2(c.y), r2(c.z)] }),
       buy: (item) => this.send({ k: 'buy', item }),
-      throwNade: (kind, yaw, pitch) => this.send({ k: 'throw', kind, yaw: r2(yaw * 10) / 10, pitch: r2(pitch * 10) / 10 }),
+      // (the look turned into one turn: a guest that has spun round many times still throws)
+      throwNade: (kind, yaw, pitch) => this.send({ k: 'throw', kind, yaw: r2(wrap(yaw) * 10) / 10, pitch: r2(pitch * 10) / 10 }),
       pick: (i) => {
         const t = this.now();
         if (t - (this.asked.get(i) ?? -9) < 0.6) return;
@@ -1456,6 +1479,7 @@ export class Session {
       a.reloadT = f & 16 ? Math.max(a.reloadT, 0.3) : 0;
       a.body.onGround = !!(f & 2);
       a.body.swim = !!(f & 32);
+      a.paviseUp = !!(f & 64) && a.pavise > 0;
     }
   }
 
@@ -1476,6 +1500,9 @@ export class Session {
       a.body.onGround = !!(f & 2);
       a.body.swim = !!(f & 32);
       a.healT = f & 256 ? 1 : 0;
+      // a shield carried, and raised (only the host knows what it has left)
+      a.pavise = f & 512 ? a.pavise || PAVISE.hp : 0;
+      a.paviseUp = !!(f & 1024) && a.pavise > 0;
       const drop = (f >> 6) & 3;
       if (a.drop !== drop) {
         if (a.drop === 1) this.tracks[i].clear();
@@ -1535,6 +1562,14 @@ export class Session {
       a.flashes = v[o + 13];
       a.roundKills = v[o + 14];
       a.roundDmg = v[o + 15];
+      a.fires = v[o + 19];
+      a.impacts = v[o + 20];
+      a.decoys = v[o + 21];
+      // a shield the host says broke: down, with the crash of it
+      const pv = Math.max(0, v[o + 22]);
+      if (a.pavise > 0 && pv <= 0) m.events.push({ t: 'block', a: -1, v: a.id, x: a.body.x, y: a.body.y + 1, z: a.body.z, broke: true });
+      a.pavise = pv;
+      if (pv <= 0) a.paviseUp = false;
       if (a === me) {
         if (epoch !== this.myEpoch) {
           // put somewhere new by the host (a round start, a respawn, joining): go there, guns refilled, once the host's
@@ -1721,7 +1756,15 @@ export class Session {
     }
     a.frags = v[12];
     a.smokes = v[13];
-    AMMO_KINDS.forEach((k, i) => (a.ammo[k] = Math.max(0, v[14 + i] - (this.spent[i] - v[19 + i]))));
+    a.fires = v[ME_X];
+    a.impacts = v[ME_X + 1];
+    a.decoys = v[ME_X + 2];
+    // a shield the host says broke: down, with the crash of it
+    const pv = Math.max(0, v[ME_X + 3]);
+    if (a.pavise > 0 && pv <= 0) m.events.push({ t: 'block', a: -1, v: a.id, x: a.body.x, y: a.body.y + 1, z: a.body.z, broke: true });
+    a.pavise = pv;
+    if (pv <= 0) a.paviseUp = false;
+    AMMO_KINDS.forEach((k, i) => (a.ammo[k] = Math.max(0, v[ammoAt(i)] - (this.spent[i] - v[spentAt(i)]))));
     a.place = v[25];
     a.car = v[26];
     a.carSeat = v[27];
@@ -1839,7 +1882,8 @@ export class Session {
           v.killedHead = e.k.head;
           if (m.mode === 'dm') v.respawnT = RESPAWN;
           if (m.mode === 'royale') {
-            v.place = m.alive;
+            // (a place the board already gave is the host's own word: the count left here may have moved on since)
+            if (v.place <= 0) v.place = m.alive;
             if (v.car >= 0) {
               const c = m.cars[v.car];
               if (c && c.seats[v.carSeat] === v.id) c.seats[v.carSeat] = -1;
@@ -2017,7 +2061,7 @@ export class Session {
     if (me.alive && t - this.moveAt >= MOVE_EVERY) {
       this.moveAt = t;
       const b = me.body;
-      const flags = (me.walking ? 1 : 0) | (this.using ? 2 : 0) | (b.onGround ? 4 : 0) | (b.swim ? 8 : 0) | (me.reloadT > 0 ? 16 : 0);
+      const flags = (me.walking ? 1 : 0) | (this.using ? 2 : 0) | (b.onGround ? 4 : 0) | (b.swim ? 8 : 0) | (me.reloadT > 0 ? 16 : 0) | (me.paviseUp ? 32 : 0);
       const mv: Record<string, unknown> = { k: 'mv', t, ep: this.myEpoch < 0 ? me.epoch : this.myEpoch, p: [r2(b.x), r2(b.y), r2(b.z), r2(b.vx), r2(b.vy), r2(b.vz), Math.round(wrap(me.yaw) * 1000) / 1000, Math.round(me.pitch * 1000) / 1000, r2(me.crouch), flags, r2(me.ads), me.slot, 0, 0] };
       if (m.mode === 'royale') {
         // the drop, the guns' rounds and what was loaded: when it changes, and now and then anyway

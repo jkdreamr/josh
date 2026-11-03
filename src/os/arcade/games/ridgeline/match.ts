@@ -9,16 +9,18 @@ import { blastCars, carHit, carNear, enterCar, hurtCar, leaveCar, rayCars, rideI
 import { fieldTo, navOf } from './nav.ts';
 import { clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
 import { CROUCH_H, GRAVITY, STAND_H, blockedAt, clearLine, groundAt, newHit, raySphere, rayWorld, stepBody, type Body } from './physics.ts';
-import { AMMO_KINDS, AMMO_OF, BOOST, BOOST_DRAIN, BOOST_FAST, BOOST_RUN, CHUTE_GLIDE, CHUTE_OPEN, CHUTE_VY, COMP_BLOOM, COMP_KICK, FALL_FAST, FALL_SLOW, FALL_VY, HEAL, HELMET, RED_EVERY, RED_FIRST, RED_GAP, RED_LIVE, RED_R, RED_WARN, ROYALE_PLAYERS, SHELL_DMG, SHELL_R, SUPPLY_FALL, SUPPLY_HIGH, SUPPLY_MAX, USE, VEST, ZONES, adsOf, adsTimeOf, ammoCap, attach, boostCap, boostHeal, fits, fitted, hasAtt, healCap, magOf, nadeCap, nextCircle, onLand, planeAt, planePath, spawnLoot, supplyContents, type AmmoKind, type AttKind, type BoostKind, type HealKind, type Item, type Mods, type Plane, type Red, type Supply, type UseKind, type Zone as Circle } from './royale.ts';
+import { AMMO_KINDS, AMMO_OF, BOOST, BOOST_DRAIN, BOOST_FAST, BOOST_RUN, CHUTE_GLIDE, CHUTE_OPEN, CHUTE_VY, COMP_BLOOM, COMP_KICK, FALL_FAST, FALL_SLOW, FALL_VY, HEAL, HELMET, RED_EVERY, RED_FIRST, RED_GAP, RED_LIVE, RED_R, RED_WARN, ROYALE_PLAYERS, SHELL_DMG, SHELL_R, SUPPLY_FALL, SUPPLY_HIGH, SUPPLY_MAX, USE, VEST, ZONES, adsOf, adsTimeOf, ammoCap, attach, boostCap, boostHeal, fits, fitted, hasAtt, healCap, magOf, nadeCap, nextCircle, onLand, planeAt, planePath, spawnLoot, supplyContents, type AmmoKind, type AttKind, type BoostKind, type HealKind, type Item, type Mods, type Plane, type Red, type RoyaleNade, type Supply, type UseKind, type Zone as Circle, ROYALE_NADES } from './royale.ts';
 import { floorAt, heightAt } from './terrain.ts';
-import { ARMOR, KILL_REWARD, LOSS_REWARD, LOSS_STREAK_BONUS, MAX_CREDITS, NADES, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, interval, kickOf, rangeMul, type WeaponId } from './weapons.ts';
+import { ARMOR, KILL_REWARD, LOSS_REWARD, LOSS_STREAK_BONUS, MAX_CREDITS, NADES, PAVISE, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, interval, kickOf, rangeMul, type WeaponDef, type WeaponId } from './weapons.ts';
 import { ARENA, SITE_R, SPAWN_R, yawTo, type Surface, type World } from './world.ts';
 
 export type Mode = 'breach' | 'royale' | 'dm';
 export type Level = BotLevel;
 export type Zone = 'head' | 'body' | 'leg';
-export type NadeKind = 'frag' | 'smoke' | 'flash';
-export type ShopItem = WeaponId | 'light' | 'heavy' | NadeKind;
+export type NadeKind = 'frag' | 'smoke' | 'flash' | 'fire' | 'impact' | 'decoy';
+/** Breach also sells the ballistic shield (the Pavise). */
+export type ShopItem = WeaponId | 'light' | 'heavy' | NadeKind | 'pavise';
+export const NADE_KINDS: NadeKind[] = ['frag', 'smoke', 'flash', 'fire', 'impact', 'decoy'];
 
 export const DEG = Math.PI / 180;
 export const RUN = 5.8;
@@ -73,8 +75,10 @@ export type Input = {
   boost: boolean;
   /** Use this one thing from the kit (royale): a bandage, a med kit, a drink or the painkillers. */
   item: UseKind | null;
+  /** Pressed: raise or lower the ballistic shield. */
+  shield: boolean;
 };
-export const idleInput = (yaw = 0, pitch = 0): Input => ({ mx: 0, mz: 0, yaw, pitch, fire: false, ads: false, crouch: false, walk: false, jump: false, reload: false, slot: -1, throw: null, buy: null, use: false, heal: false, ride: false, boost: false, item: null });
+export const idleInput = (yaw = 0, pitch = 0): Input => ({ mx: 0, mz: 0, yaw, pitch, fire: false, ads: false, crouch: false, walk: false, jump: false, reload: false, slot: -1, throw: null, buy: null, use: false, heal: false, ride: false, boost: false, item: null, shield: false });
 
 /** A gun carried: its id, rounds in the magazine, spare rounds (breach), whether bought this round (for a refund), and
  * (royale) what is fitted to it. */
@@ -102,6 +106,16 @@ export type Actor = {
   smokes: number;
   /** Breach: flashbangs carried; how long it stays blinded, and how long that started at (for the fade). */
   flashes: number;
+  /** Incendiaries, impact grenades and decoys carried. */
+  fires: number;
+  impacts: number;
+  decoys: number;
+  /** The ballistic shield: what it has left before it breaks (0: none carried), and whether it is raised (the sidearm
+   * in the other hand). */
+  pavise: number;
+  paviseUp: boolean;
+  /** Rounds still to come in a burst under way (a burst gun). */
+  burstLeft: number;
   blindT: number;
   blind0: number;
   /** Breach, this round: knockouts and damage dealt. */
@@ -181,11 +195,17 @@ export type Actor = {
 
 /** `vis`: only seen, never hurts anyone (a shot this machine is shown but does not judge, online). */
 export type Bullet = { x: number; y: number; z: number; px: number; py: number; pz: number; vx: number; vy: number; vz: number; owner: number; w: WeaponId; life: number; dist: number; live: boolean; vis?: boolean };
-export type Nade = { kind: NadeKind; x: number; y: number; z: number; vx: number; vy: number; vz: number; fuse: number; owner: number; rest: boolean; spin: number };
+/** A grenade in the air or on the ground. A decoy also keeps the gun it plays, the time to its next fake shot and the
+ * shots left in the burst under way. */
+export type Nade = { kind: NadeKind; x: number; y: number; z: number; vx: number; vy: number; vz: number; fuse: number; owner: number; rest: boolean; spin: number; w?: WeaponId; next?: number; left?: number };
+/** A patch of burning ground from an incendiary: where, how big now, how long it has burned and will burn, whose it is,
+ * and the time to its next bite. */
+export type Fire = { x: number; y: number; z: number; r: number; age: number; life: number; owner: number; tick: number };
 export type Smoke = { x: number; y: number; z: number; age: number; life: number; r: number };
-export type Sound = { x: number; z: number; t: number; team: number; range: number; who: number };
+/** `fake`: a decoy's gunfire (nobody is there). */
+export type Sound = { x: number; z: number; t: number; team: number; range: number; who: number; fake?: boolean };
 /** What took someone out: a gun, a frag, the zone, the breach charge, or (royale) a bombardment shell or a vehicle. */
-export type Cause = WeaponId | 'frag' | 'zone' | 'blast' | 'shell' | 'car';
+export type Cause = WeaponId | 'frag' | 'fire' | 'impact' | 'zone' | 'blast' | 'shell' | 'car';
 export type Kill = { t: number; killer: number; victim: number; w: Cause; head: boolean };
 export type Why = 'elim' | 'time' | 'blast' | 'defuse';
 /** Breach highlights: first blood, a headshot kill, two to five kills in a round (five is the whole team, an ace), and a
@@ -254,7 +274,12 @@ export type Ev =
   | { t: 'redzone'; x: number; z: number; r: number; stage: 'warn' | 'live' | 'clear' }
   | { t: 'shell'; x: number; y: number; z: number }
   | { t: 'car'; a: number; car: number; on: boolean }
-  | { t: 'crash'; x: number; y: number; z: number; v: number };
+  | { t: 'crash'; x: number; y: number; z: number; v: number }
+  // (made on each machine, never sent online) an incendiary catching, a decoy's fake shot, and a bullet stopped by a
+  // raised shield (`broke` when that was the end of it)
+  | { t: 'fire'; x: number; y: number; z: number }
+  | { t: 'decoy'; x: number; y: number; z: number; w: WeaponId }
+  | { t: 'block'; a: number; v: number; x: number; y: number; z: number; broke: boolean };
 
 export type Phase = 'buy' | 'live' | 'end' | 'over';
 
@@ -301,6 +326,7 @@ export type Match = {
   bullets: Bullet[];
   nades: Nade[];
   smokes: Smoke[];
+  fires: Fire[];
   sounds: Sound[];
   events: Ev[];
   feed: Kill[];
@@ -357,6 +383,12 @@ function newActor(id: number, name: string, team: number, bot: boolean, level: L
     frags: 0,
     smokes: 0,
     flashes: 0,
+    fires: 0,
+    impacts: 0,
+    decoys: 0,
+    pavise: 0,
+    paviseUp: false,
+    burstLeft: 0,
     blindT: 0,
     blind0: 0,
     roundKills: 0,
@@ -392,7 +424,7 @@ function newActor(id: number, name: string, team: number, bot: boolean, level: L
     stepDist: 0,
     phase: 0,
     dmPick: 'kestrel',
-    ammo: { light: 0, rifle: 0, shells: 0, magnum: 0, sniper: 0 },
+    ammo: { light: 0, rifle: 0, shells: 0, magnum: 0, sniper: 0, bolts: 0 },
     vest: 0,
     helmet: 0,
     pack: 0,
@@ -481,6 +513,7 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
     bullets: [],
     nades: [],
     smokes: [],
+    fires: [],
     sounds: [],
     events: [],
     feed: [],
@@ -513,7 +546,7 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
     m.phase = 'live';
     m.phaseT = DM_TIME;
     for (const a of actors) {
-      if (a.bot) a.dmPick = (['kestrel', 'kestrel', 'hornet', 'lancer', 'mauler', 'kestrel', 'longbow', 'hornet'] as WeaponId[])[Math.floor(rng() * 8)];
+      if (a.bot) a.dmPick = (['kestrel', 'talon', 'hornet', 'lancer', 'mauler', 'rampart', 'longbow', 'wasp', 'thresher', 'arbalest'] as WeaponId[])[Math.floor(rng() * 10)];
       respawn(m, a);
     }
   }
@@ -522,6 +555,14 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
 
 export const eyeY = (a: Actor) => a.body.y + a.body.height - 0.14;
 export const currentGun = (a: Actor) => a.guns[a.slot] ?? a.guns[1] ?? a.guns[0] ?? a.guns[2];
+const NADE_FIELD = { frag: 'frags', smoke: 'smokes', flash: 'flashes', fire: 'fires', impact: 'impacts', decoy: 'decoys' } as const;
+/** Grenades of a kind carried, and adding (or taking away) some. */
+export const nadesOf = (a: Actor, k: NadeKind) => a[NADE_FIELD[k]];
+export const addNades = (a: Actor, k: NadeKind, n: number) => {
+  a[NADE_FIELD[k]] = Math.max(0, a[NADE_FIELD[k]] + n);
+};
+/** How far off a shot is heard (and how far the bots hear it). */
+export const shotRange = (w: WeaponDef) => (w.cls === 'sniper' ? 160 : w.cls === 'crossbow' ? 30 : 90);
 /** Rounds left to reload a gun from: endless in deathmatch, the carried ammo in a royale, else the gun's own. */
 export const spareOf = (m: Match, a: Actor, g: Gun) => (m.mode === 'dm' ? Infinity : m.mode === 'royale' ? a.ammo[AMMO_OF[g.id]] : g.reserve);
 export const isEnemy = (a: Actor, b: Actor) => a.team !== b.team;
@@ -542,9 +583,41 @@ const HITBOX: [number, number, Zone][] = [
 ];
 export const HEAD_R = 0.15;
 
-/** The first hitbox a segment crosses on any live actor other than the shooter's team. */
-function hitActors(m: Match, b: Bullet, dx: number, dy: number, dz: number, len: number): { a: Actor; t: number; zone: Zone } | null {
-  let best: { a: Actor; t: number; zone: Zone } | null = null;
+/**
+ * Where a ray (from o, unit direction d, up to len) meets an actor's raised shield, or -1. Only from the front: the
+ * shield is a flat face held a little in front of the body, square to where it looks, its bottom edge high enough
+ * standing that the shins and feet show under it (crouched it covers nearly everything).
+ */
+export function shieldHit(a: Actor, ox: number, oy: number, oz: number, dx: number, dy: number, dz: number, len: number) {
+  if (!a.paviseUp || a.pavise <= 0 || !a.alive) return -1;
+  const fx = -Math.sin(a.yaw);
+  const fz = -Math.cos(a.yaw);
+  const den = dx * fx + dz * fz;
+  if (den > -0.2) return -1;
+  const cx = a.body.x + fx * PAVISE.ahead;
+  const cz = a.body.z + fz * PAVISE.ahead;
+  const t = ((cx - ox) * fx + (cz - oz) * fz) / den;
+  if (t < 0 || t > len) return -1;
+  const px = ox + dx * t - cx;
+  const pz = oz + dz * t - cz;
+  if (Math.abs(px * Math.cos(a.yaw) - pz * Math.sin(a.yaw)) > PAVISE.half) return -1;
+  const bottom = a.body.y + lerp(PAVISE.low[0], PAVISE.low[1], a.crouch);
+  const py = oy + dy * t;
+  return py < bottom || py > bottom + PAVISE.tall ? -1 : t;
+}
+
+/** A raised shield takes a hit: it breaks once it has taken enough. True when that was the end of it. */
+export function hurtShield(a: Actor, dmg: number) {
+  if (a.pavise <= 0) return false;
+  a.pavise = Math.max(0, a.pavise - dmg);
+  if (a.pavise > 0) return false;
+  a.paviseUp = false;
+  return true;
+}
+
+/** The first hitbox (or raised shield) a segment crosses on any live actor other than the shooter's team. */
+function hitActors(m: Match, b: Bullet, dx: number, dy: number, dz: number, len: number): { a: Actor; t: number; zone: Zone; shield: boolean } | null {
+  let best: { a: Actor; t: number; zone: Zone; shield: boolean } | null = null;
   const shooter = m.actors[b.owner];
   for (const a of m.actors) {
     if (!a.alive || a.drop === 1 || a.id === b.owner || (shooter && !isEnemy(shooter, a))) continue;
@@ -557,14 +630,17 @@ function hitActors(m: Match, b: Bullet, dx: number, dy: number, dz: number, len:
     const mz = cz - b.pz;
     const along = clamp(mx * dx + my * dy + mz * dz, 0, len);
     if ((mx - dx * along) ** 2 + (my - dy * along) ** 2 + (mz - dz * along) ** 2 > 4) continue;
+    // a raised shield in front stops what would have hit behind it
+    const st: number = a.paviseUp ? shieldHit(a, b.px, b.py, b.pz, dx, dy, dz, best ? best.t : len) : -1;
+    if (st >= 0) best = { a, t: st, zone: 'body', shield: true };
     const limit = best ? best.t : len;
     // the head leans forward with the pitch a little
     const f = viewDir(a.yaw, 0);
     const ht = raySphere(b.px, b.py, b.pz, dx, dy, dz, cx + f.x * 0.04, a.body.y + h - 0.13, cz + f.z * 0.04, HEAD_R, limit);
-    if (ht >= 0) best = { a, t: ht, zone: 'head' };
+    if (ht >= 0) best = { a, t: ht, zone: 'head', shield: false };
     for (const [k, r, zone] of HITBOX) {
       const tt = raySphere(b.px, b.py, b.pz, dx, dy, dz, cx, a.body.y + h * k, cz, r, best ? best.t : len);
-      if (tt >= 0) best = { a, t: tt, zone };
+      if (tt >= 0) best = { a, t: tt, zone, shield: false };
     }
   }
   return best;
@@ -605,7 +681,13 @@ function stepBullets(m: Match, dt: number) {
       const hx = b.x + dx * who.t;
       const hy = b.y + dy * who.t;
       const hz = b.z + dz * who.t;
-      if (b.vis) {
+      if (who.shield) {
+        // stopped by a raised shield: it takes the hit (the host judges a remote player's shots at it too)
+        const v = who.a;
+        const broke = m.authority && (!b.vis || !!m.actors[b.owner]?.remote) && hurtShield(v, def.dmg * rangeMul(def, travelled));
+        m.events.push({ t: 'impact', x: hx, y: hy, z: hz, nx: -Math.sin(v.yaw), ny: 0, nz: -Math.cos(v.yaw), s: 'metal' });
+        m.events.push({ t: 'block', a: b.owner, v: v.id, x: hx, y: hy, z: hz, broke });
+      } else if (b.vis) {
         // only a picture of someone else's shot: it stops where it seems to hit, and the host says what it did
       } else if (m.authority) damage(m, who.a, def.dmg * mul * rangeMul(def, travelled), b.owner, b.w, who.zone, hx, hy, hz);
       else if (b.owner === m.me && m.net) {
@@ -666,7 +748,7 @@ export const PERSON_HEALTH = 1.5;
  * survives long enough to react, turn and fight back. */
 export const BOT_HITS_PEOPLE: Record<Level, number> = { easy: 0.45, normal: 0.6, hard: 0.8 };
 
-export function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponId | 'frag' | 'blast' | 'shell' | 'car', zone: Zone, x: number, y: number, z: number) {
+export function damage(m: Match, v: Actor, raw: number, from: number, w: Exclude<Cause, 'zone'>, zone: Zone, x: number, y: number, z: number) {
   // (an online guest's crashes and run overs are pictures: the host does the damage)
   if (!v.alive || raw <= 0 || !m.authority) return;
   if (v.shield > 0) return;
@@ -676,7 +758,8 @@ export function damage(m: Match, v: Actor, raw: number, from: number, w: WeaponI
   v.healT = 0;
   v.healKind = null;
   const before = v.hp + v.armor;
-  const res = applyDamage(v.hp, v.armor, raw, w === 'frag' || w === 'blast' || w === 'shell' || w === 'car' ? 1 : WEAPONS[w].armorPen);
+  // (armor does nothing against fire)
+  const res = applyDamage(v.hp, v.armor, raw, w === 'fire' ? 0 : w === 'frag' || w === 'impact' || w === 'blast' || w === 'shell' || w === 'car' ? 1 : WEAPONS[w].armorPen);
   const hadArmor = v.armor > 0;
   v.hp = res.hp;
   v.armor = Math.max(0, res.armor);
@@ -708,6 +791,7 @@ function die(m: Match, v: Actor, from: number, w: Cause, head: boolean) {
   v.deaths++;
   v.reloadT = 0;
   v.ads = 0;
+  v.paviseUp = false;
   const att = m.actors[from];
   if (att && att !== v && isEnemy(att, v)) {
     att.kills++;
@@ -798,6 +882,8 @@ function resetCombat(a: Actor) {
   a.fireHeld = false;
   a.blindT = 0;
   a.blind0 = 0;
+  a.burstLeft = 0;
+  a.paviseUp = false;
 }
 
 export function startRound(m: Match) {
@@ -820,6 +906,7 @@ export function startRound(m: Match) {
   m.bullets = [];
   m.nades = [];
   m.smokes = [];
+  m.fires = [];
   m.sounds = [];
   m.last = null;
   m.firstBlood = false;
@@ -831,6 +918,8 @@ export function startRound(m: Match) {
     // your loadout carries over (alive or not): guns refilled, armor put back on
     if (!a.guns[1]) a.guns[1] = gun('wren');
     a.armor = Math.max(a.armor, a.armorKit);
+    // a shield still in one piece is good as new again
+    if (a.pavise > 0) a.pavise = PAVISE.hp;
     for (const g of a.guns) if (g) {
       g.mag = WEAPONS[g.id].mag;
       g.reserve = WEAPONS[g.id].reserve;
@@ -962,8 +1051,8 @@ function dropAll(m: Match, v: Actor) {
   if (v.bandages > 0) things.push(['heal', 'bandage', v.bandages, null]);
   if (v.drinks > 0) things.push(['boost', 'drink', v.drinks, null]);
   if (v.pills > 0) things.push(['boost', 'pills', v.pills, null]);
-  if (v.frags > 0) things.push(['nade', 'frag', v.frags, null]);
-  if (v.smokes > 0) things.push(['nade', 'smoke', v.smokes, null]);
+  for (const k of ROYALE_NADES) if (nadesOf(v, k) > 0) things.push(['nade', k, nadesOf(v, k), null]);
+  if (v.pavise > 0) things.push(['shield', '1', Math.ceil(v.pavise), null]);
   things.forEach(([kind, what, n, mods], i) => {
     const a = (i / Math.max(1, things.length)) * Math.PI * 2 + v.id;
     const r = 0.5 + (i % 2) * 0.4;
@@ -973,7 +1062,10 @@ function dropAll(m: Match, v: Actor) {
   });
   v.guns = [null, null, null];
   for (const k of AMMO_KINDS) v.ammo[k] = 0;
-  v.vest = v.helmet = v.pack = v.kits = v.bandages = v.drinks = v.pills = v.frags = v.smokes = 0;
+  v.vest = v.helmet = v.pack = v.kits = v.bandages = v.drinks = v.pills = 0;
+  for (const k of ROYALE_NADES) addNades(v, k, -nadesOf(v, k));
+  v.pavise = 0;
+  v.paviseUp = false;
   v.boost = 0;
   v.armor = 0;
   m.lootVer++;
@@ -1046,8 +1138,10 @@ export function wants(a: Actor, it: Item) {
       return Number(it.what) > a.pack;
     case 'att':
       return !!attTarget(a, it.what as AttKind);
+    case 'shield':
+      return a.pavise <= 0;
     default:
-      return it.what === 'frag' ? a.frags < nadeCap(a.pack, 'frag') : a.smokes < nadeCap(a.pack, 'smoke');
+      return nadesOf(a, it.what as RoyaleNade) < nadeCap(a.pack, it.what as RoyaleNade);
   }
 }
 
@@ -1098,12 +1192,11 @@ function shed(m: Match, a: Actor, y: number) {
   n = over(a.pills, boostCap(a.pack, 'pills'));
   a.pills -= n;
   put('boost', 'pills', n);
-  n = over(a.frags, nadeCap(a.pack, 'frag'));
-  a.frags -= n;
-  put('nade', 'frag', n);
-  n = over(a.smokes, nadeCap(a.pack, 'smoke'));
-  a.smokes -= n;
-  put('nade', 'smoke', n);
+  for (const k of ROYALE_NADES) {
+    n = over(nadesOf(a, k), nadeCap(a.pack, k));
+    addNades(a, k, -n);
+    put('nade', k, n);
+  }
 }
 
 function pickup(m: Match, a: Actor, it: Item) {
@@ -1121,6 +1214,7 @@ function pickup(m: Match, a: Actor, it: Item) {
       if (old) dropItem(m, 'gun', old.id, old.mag, b.x, b.z, it.y, old.mods ?? null, a.id);
       a.guns[k] = g;
       if (k !== 1 || !a.guns[a.slot] || a.slot === 1) {
+        if (k !== 1) a.paviseUp = false;
         a.slot = k;
         a.switchT = WEAPONS[id].equip;
         a.reloadT = 0;
@@ -1193,13 +1287,19 @@ function pickup(m: Match, a: Actor, it: Item) {
       it.live = false;
       break;
     }
+    case 'shield': {
+      // one at a time: this one for yours (what each has left goes with it)
+      if (a.pavise > 0) dropItem(m, 'shield', '1', Math.ceil(a.pavise), b.x, b.z, it.y, null, a.id);
+      a.pavise = it.n;
+      a.paviseUp = false;
+      it.live = false;
+      break;
+    }
     default: {
-      const frag = it.what === 'frag';
-      const room = frag ? nadeCap(a.pack, 'frag') - a.frags : nadeCap(a.pack, 'smoke') - a.smokes;
-      const take = Math.min(room, it.n);
+      const k = it.what as RoyaleNade;
+      const take = Math.min(nadeCap(a.pack, k) - nadesOf(a, k), it.n);
       if (take <= 0) return;
-      if (frag) a.frags += take;
-      else a.smokes += take;
+      addNades(a, k, take);
       it.n -= take;
       if (it.n <= 0) it.live = false;
     }
@@ -1795,9 +1895,12 @@ export function canShop(m: Match, a: Actor) {
   return Math.hypot(a.body.x - s.x, a.body.z - s.z) < SPAWN_R + 2;
 }
 
+const isNade = (item: ShopItem): item is NadeKind => item in NADES;
+
 export function priceOf(item: ShopItem) {
   if (item === 'light' || item === 'heavy') return ARMOR[item].price;
-  if (item === 'frag' || item === 'smoke' || item === 'flash') return NADES[item].price;
+  if (item === 'pavise') return PAVISE.price;
+  if (isNade(item)) return NADES[item].price;
   return WEAPONS[item].price;
 }
 
@@ -1805,9 +1908,8 @@ export function priceOf(item: ShopItem) {
 export function owns(a: Actor, item: ShopItem) {
   if (item === 'light') return a.armor >= ARMOR.light.amount;
   if (item === 'heavy') return a.armor >= ARMOR.heavy.amount;
-  if (item === 'frag') return a.frags >= NADES.frag.max;
-  if (item === 'smoke') return a.smokes >= NADES.smoke.max;
-  if (item === 'flash') return a.flashes >= NADES.flash.max;
+  if (item === 'pavise') return a.pavise > 0;
+  if (isNade(item)) return nadesOf(a, item) >= NADES[item].max;
   return a.guns[0]?.id === item || a.guns[1]?.id === item || a.guns[2]?.id === item;
 }
 
@@ -1823,12 +1925,14 @@ export function buy(m: Match, a: Actor, item: ShopItem) {
     a.armor = ARMOR[item].amount;
     a.armorKit = Math.max(a.armorKit, ARMOR[item].amount);
     a.boughtArmor = ARMOR[item].price;
-  } else if (item === 'frag' || item === 'smoke' || item === 'flash') {
+  } else if (item === 'pavise') {
+    if (a.credits < PAVISE.price) return false;
+    a.credits -= PAVISE.price;
+    a.pavise = PAVISE.hp;
+  } else if (isNade(item)) {
     if (a.credits < NADES[item].price) return false;
     a.credits -= NADES[item].price;
-    if (item === 'frag') a.frags++;
-    else if (item === 'smoke') a.smokes++;
-    else a.flashes++;
+    addNades(a, item, 1);
   } else {
     const def = WEAPONS[item];
     // two long guns and a sidearm: a long gun goes into a free long slot, else it replaces the long gun in hand (the
@@ -1840,6 +1944,7 @@ export function buy(m: Match, a: Actor, item: ShopItem) {
     if (a.credits < cost) return false;
     a.credits -= cost;
     a.guns[k] = { ...gun(item), fresh: true };
+    if (k !== 1) a.paviseUp = false;
     a.slot = k;
     a.switchT = def.equip;
     a.reloadT = 0;
@@ -1873,6 +1978,8 @@ export function spreadOf(a: Actor) {
   s += w.move * ease * smoothstep(0.45, 1, sp) * lerp(1, Math.max(ads, 0.6), a.ads);
   if (!a.body.onGround && !a.body.swim) s += w.air;
   if (a.crouch > 0.5 && a.body.onGround) s *= 0.8;
+  // one handed round a raised shield
+  if (a.paviseUp) s += PAVISE.spread;
   return s;
 }
 
@@ -1924,13 +2031,13 @@ function fire(m: Match, a: Actor) {
   const ez = a.body.z;
   // a person's shot is drawn a little toward someone just off the crosshair (bots aim on their own)
   const d = a.bot ? viewDir(a.yaw, a.pitch) : assisted(m, a, viewDir(a.yaw, a.pitch), ex, ey, ez);
-  const zero = w.cls === 'pistol' || w.cls === 'smg' || w.cls === 'shotgun' ? 40 : 100;
+  const zero = w.cls === 'crossbow' ? 30 : w.cls === 'pistol' || w.cls === 'smg' || w.cls === 'shotgun' ? 40 : 100;
   const lift = (BULLET_G * (zero / w.speed)) / 2;
   const vel: number[] = [];
   for (let p = 0; p < w.pellets; p++) {
     let dir = inCone(m.rng, d.x, d.y, d.z, spread);
     if (w.pellets > 1) dir = inCone(m.rng, dir.x, dir.y, dir.z, w.pelletSpread);
-    const b: Bullet = { x: ex, y: ey, z: ez, px: ex, py: ey, pz: ez, vx: dir.x * w.speed, vy: dir.y * w.speed + lift, vz: dir.z * w.speed, owner: a.id, w: g.id, life: 1.6, dist: 0, live: true };
+    const b: Bullet = { x: ex, y: ey, z: ez, px: ex, py: ey, pz: ez, vx: dir.x * w.speed, vy: dir.y * w.speed + lift, vz: dir.z * w.speed, owner: a.id, w: g.id, life: w.cls === 'crossbow' ? 3.2 : 1.6, dist: 0, live: true };
     m.bullets.push(b);
     vel.push(b.vx, b.vy, b.vz);
   }
@@ -1950,8 +2057,9 @@ function fire(m: Match, a: Actor) {
   a.spray++;
   a.lastShot = m.time;
   m.events.push({ t: 'shot', a: a.id, w: g.id, x: ex, y: ey, z: ez, dx: d.x, dy: d.y, dz: d.z, v: vel });
-  m.sounds.push({ x: ex, z: ez, t: m.time, team: a.team, range: w.cls === 'sniper' ? 160 : 90, who: a.id });
+  m.sounds.push({ x: ex, z: ez, t: m.time, team: a.team, range: shotRange(w), who: a.id });
 }
+
 
 /**
  * Aim assist: a shot that would pass just beside someone (within about half a metre of their chest or head, a few
@@ -2009,15 +2117,28 @@ function startReload(m: Match, a: Actor) {
   m.events.push({ t: 'reload', a: a.id, w: g.id });
 }
 
+/** Seconds from the throw until each kind goes off (an incendiary or an impact grenade sooner, when it lands; a decoy
+ * arms and then plays for DECOY_LIFE). */
+const FUSE_OF: Record<NadeKind, number> = { frag: 2.3, smoke: 1.5, flash: 1.2, fire: 2, impact: 4, decoy: 11.2 };
+/** Incendiary: the burning patch's radius, how long it burns and its damage a second (armor does nothing against it). */
+export const FIRE_R = 3.1;
+export const FIRE_LIFE = 7;
+export const FIRE_DPS = 34;
+/** Impact grenade: a smaller, weaker blast than a frag, but right where it lands. */
+export const IMPACT_R = 5.5;
+export const IMPACT_DMG = 105;
+/** Decoy: how long it plays gunfire once it has landed. */
+export const DECOY_LIFE = 10;
+
 function throwNade(m: Match, a: Actor, kind: NadeKind) {
-  if ((kind === 'frag' ? a.frags : kind === 'smoke' ? a.smokes : a.flashes) <= 0) return;
+  if (nadesOf(a, kind) <= 0) return;
   if (a.switchT > 0.2) return;
-  if (kind === 'frag') a.frags--;
-  else if (kind === 'smoke') a.smokes--;
-  else a.flashes--;
+  addNades(a, kind, -1);
   const d = viewDir(a.yaw, a.pitch + 0.12);
   const sp = 17;
-  const n: Nade = { kind, x: a.body.x + d.x * 0.5, y: eyeY(a) - 0.1, z: a.body.z + d.z * 0.5, vx: d.x * sp + a.body.vx * 0.5, vy: d.y * sp + 1.5, vz: d.z * sp + a.body.vz * 0.5, fuse: kind === 'frag' ? 2.3 : kind === 'flash' ? 1.2 : 1.5, owner: a.id, rest: false, spin: 0 };
+  const n: Nade = { kind, x: a.body.x + d.x * 0.5, y: eyeY(a) - 0.1, z: a.body.z + d.z * 0.5, vx: d.x * sp + a.body.vx * 0.5, vy: d.y * sp + 1.5, vz: d.z * sp + a.body.vz * 0.5, fuse: FUSE_OF[kind], owner: a.id, rest: false, spin: 0 };
+  // a decoy plays the thrower's own long gun
+  if (kind === 'decoy') n.w = (a.guns[0] ?? a.guns[2] ?? a.guns[1])?.id ?? 'kestrel';
   m.nades.push(n);
   a.switchT = Math.max(a.switchT, 0.4);
   a.reloadT = 0;
@@ -2032,6 +2153,8 @@ function stepNades(m: Match, dt: number) {
   const w = m.world;
   for (const n of m.nades) {
     n.fuse -= dt;
+    // an impact grenade armed (a moment out of the hand) goes off on whatever it meets; an incendiary on the ground
+    const armed = n.kind === 'impact' && n.fuse < FUSE_OF.impact - 0.06;
     if (!n.rest) {
       n.vy -= GRAVITY * 0.7 * dt;
       const dx = n.vx * dt;
@@ -2053,6 +2176,7 @@ function stepNades(m: Match, dt: number) {
           if (Math.abs(vn) > 2) m.events.push({ t: 'bounce', x: n.x, y: n.y, z: n.z });
           if (nadeHit.ny > 0.6 && Math.hypot(n.vx, n.vy, n.vz) < 1.2) n.rest = true;
           if (nadeHit.kind === 'water' && !w.terrain.ice) n.rest = true;
+          if (armed || (n.kind === 'fire' && nadeHit.ny > 0.6)) n.fuse = 0;
         } else {
           n.x += dx;
           n.y += dy;
@@ -2066,14 +2190,29 @@ function stepNades(m: Match, dt: number) {
         n.vx *= 0.7;
         n.vz *= 0.7;
         if (Math.hypot(n.vx, n.vy, n.vz) < 1.2) n.rest = true;
+        if (armed || n.kind === 'fire') n.fuse = 0;
       }
+      // an impact grenade also goes off on someone it flies into (not its thrower)
+      if (armed && n.fuse > 0)
+        for (const a of m.actors) {
+          if (!a.alive || a.drop || a.id === n.owner) continue;
+          if (Math.abs(a.body.x - n.x) < 0.45 && Math.abs(a.body.z - n.z) < 0.45 && n.y > a.body.y - 0.1 && n.y < a.body.y + a.body.height + 0.1) {
+            n.fuse = 0;
+            break;
+          }
+        }
     }
+    if (n.kind === 'decoy' && n.fuse > 0 && n.fuse < DECOY_LIFE) decoy(m, n, dt);
     if (n.fuse <= 0) {
-      if (n.kind === 'frag') explode(m, n);
+      if (n.kind === 'frag') explode(m, n, 7.5, 125, 'frag');
+      else if (n.kind === 'impact') explode(m, n, IMPACT_R, IMPACT_DMG, 'impact');
       else if (n.kind === 'flash') flashbang(m, n);
-      else {
+      else if (n.kind === 'fire') ignite(m, n);
+      else if (n.kind === 'smoke') {
         m.smokes.push({ x: n.x, y: n.y, z: n.z, age: 0, life: 15, r: 0 });
         m.events.push({ t: 'smoke', x: n.x, y: n.y, z: n.z });
+        // a smoke on a fire puts it out
+        m.fires = m.fires.filter((f) => Math.hypot(f.x - n.x, f.z - n.z) > 5.2 || Math.abs(f.y - n.y) > 3);
       }
     }
   }
@@ -2083,6 +2222,66 @@ function stepNades(m: Match, dt: number) {
     s.r = 5.6 * smoothstep(0, 1.6, s.age) * (1 - smoothstep(s.life - 1.5, s.life, s.age) * 0.6);
   }
   m.smokes = m.smokes.filter((s) => s.age < s.life);
+  if (m.fires.length) stepFires(m, dt);
+}
+
+/** An incendiary catches where it lies: a patch of burning ground (unless it came down in water). */
+function ignite(m: Match, n: Nade) {
+  const t = m.world.terrain;
+  const y = groundAt(m.world, n.x, n.z, n.y + 0.3);
+  if (t.hasWater && !t.ice && heightAt(t, n.x, n.z) > y - 0.05 && heightAt(t, n.x, n.z) < t.water) {
+    m.events.push({ t: 'smoke', x: n.x, y: t.water, z: n.z });
+    return;
+  }
+  m.fires.push({ x: n.x, y, z: n.z, r: 0, age: 0, life: FIRE_LIFE, owner: n.owner, tick: 0.1 });
+  m.events.push({ t: 'fire', x: n.x, y, z: n.z });
+  m.sounds.push({ x: n.x, z: n.z, t: m.time, team: m.actors[n.owner]?.team ?? -1, range: 40, who: n.owner });
+}
+
+/** Is a point on burning ground? */
+export function inFire(m: Match, x: number, y: number, z: number, pad = 0) {
+  for (const f of m.fires) if (Math.abs(f.x - x) < f.r + pad && Math.abs(f.z - z) < f.r + pad && Math.hypot(f.x - x, f.z - z) < f.r + pad && y > f.y - 0.8 && y < f.y + 1.4) return f;
+  return null;
+}
+
+/** The fires burn: they spread out to full size, bite whoever stands in them four times a second (the thrower too,
+ * never a teammate, like a frag), and die down. */
+function stepFires(m: Match, dt: number) {
+  for (const f of m.fires) {
+    f.age += dt;
+    f.r = FIRE_R * smoothstep(0, 0.45, f.age) * (1 - smoothstep(f.life - 0.8, f.life, f.age) * 0.5);
+    f.tick -= dt;
+    if (f.tick > 0) continue;
+    f.tick += 0.25;
+    // (an online guest's fires are pictures of the host's: the host does the damage)
+    if (!m.authority) continue;
+    const owner = m.actors[f.owner];
+    for (const a of m.actors) {
+      if (!a.alive || a.drop) continue;
+      if (owner && a !== owner && !isEnemy(owner, a)) continue;
+      if (Math.hypot(a.body.x - f.x, a.body.z - f.z) > f.r + 0.25 || a.body.y < f.y - 0.8 || a.body.y > f.y + 1.4) continue;
+      damage(m, a, FIRE_DPS * 0.25, f.owner, 'fire', 'leg', a.body.x, a.body.y + 0.3, a.body.z);
+    }
+  }
+  m.fires = m.fires.filter((f) => f.age < f.life);
+}
+
+/** A decoy on the ground plays bursts of its thrower's gun: heard as a fight by everyone, and taken for an enemy by
+ * the other side's bots. */
+function decoy(m: Match, n: Nade, dt: number) {
+  n.next = (n.next ?? 0) - dt;
+  if (n.next > 0) return;
+  const def = WEAPONS[n.w ?? 'kestrel'];
+  if ((n.left ?? 0) <= 0) {
+    // the next burst, after a pause
+    n.left = def.auto ? 3 + Math.floor(m.rng() * 5) : 1 + Math.floor(m.rng() * 3);
+    n.next = 0.5 + m.rng() * 1.2;
+    return;
+  }
+  n.left = (n.left ?? 1) - 1;
+  n.next = interval(def) * (def.auto ? 1 + m.rng() * 0.2 : 1.6 + m.rng() * 1.5);
+  m.events.push({ t: 'decoy', x: n.x, y: n.y + 0.1, z: n.z, w: def.id });
+  m.sounds.push({ x: n.x, z: n.z, t: m.time, team: m.actors[n.owner]?.team ?? -1, range: shotRange(def), who: n.owner, fake: true });
 }
 
 /** A flashbang goes off: everyone with a clear line to it is blinded, for longer the nearer they are and the more
@@ -2117,12 +2316,12 @@ function flashbang(m: Match, n: Nade) {
   }
 }
 
-function explode(m: Match, n: Nade) {
+/** A frag (or an impact grenade) goes off: hurts everyone within R, less behind cover or a raised shield facing it. */
+function explode(m: Match, n: Nade, R: number, dmg: number, cause: 'frag' | 'impact') {
   m.events.push({ t: 'boom', x: n.x, y: n.y, z: n.z });
   m.sounds.push({ x: n.x, z: n.z, t: m.time, team: m.actors[n.owner]?.team ?? -1, range: 120, who: n.owner });
   // (an online guest's grenades are pictures of the host's: the host does the damage)
   if (!m.authority) return;
-  const R = 7.5;
   for (const a of m.actors) {
     if (!a.alive) continue;
     const owner = m.actors[n.owner];
@@ -2135,10 +2334,15 @@ function explode(m: Match, n: Nade) {
     const dz = a.body.z - n.z;
     const l = Math.hypot(dx, dy, dz) || 1;
     rayWorld(m.world, n.x, n.y + 0.3, n.z, dx / l, dy / l, dz / l, l, nadeHit);
-    const cover = nadeHit.kind === 'none' ? 1 : 0.2;
-    damage(m, a, 125 * Math.pow(1 - d / R, 1.25) * cover, n.owner, 'frag', 'body', a.body.x, cy, a.body.z);
+    let cover = nadeHit.kind === 'none' ? 1 : 0.2;
+    if (a.paviseUp && d > 0.8 && (-dx * -Math.sin(a.yaw) + -dz * -Math.cos(a.yaw)) / l > 0.4) {
+      hurtShield(a, dmg * 0.5);
+      cover *= 0.4;
+    }
+    damage(m, a, dmg * Math.pow(1 - d / R, 1.25) * cover, n.owner, cause, 'body', a.body.x, cy, a.body.z);
   }
-  if (m.cars.length) blastCars(m, n.x, n.y, n.z, R, 260, n.owner);
+  if (m.cars.length) blastCars(m, n.x, n.y, n.z, R, cause === 'frag' ? 260 : 200, n.owner);
+
 }
 
 /** Does any smoke cloud cut the line between two points? */
@@ -2221,7 +2425,7 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
     inp = { ...inp, mx: 0, mz: 0, jump: false, fire: false, ads: false, reload: false, slot: -1, throw: null, walk: true };
     a.reloadT = 0;
   }
-  // weapon switch
+  // weapon switch (a long gun takes both hands: the shield goes down)
   if ((inp.slot === 0 || inp.slot === 1 || inp.slot === 2) && inp.slot !== a.slot && a.guns[inp.slot]) {
     a.slot = inp.slot;
     const nw = WEAPONS[a.guns[inp.slot]!.id];
@@ -2229,6 +2433,22 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
     a.reloadT = 0;
     a.ads = 0;
     a.spray = 0;
+    a.burstLeft = 0;
+    if (a.slot !== 1) a.paviseUp = false;
+    m.events.push({ t: 'swap', a: a.id });
+  }
+  // the shield: raised, the sidearm comes out in the other hand; lowered, it hangs on your back
+  if (a.car >= 0 || a.pavise <= 0) a.paviseUp = false;
+  else if (inp.shield) {
+    a.paviseUp = !a.paviseUp;
+    if (a.paviseUp && a.slot !== 1 && a.guns[1]) {
+      a.slot = 1;
+      a.switchT = WEAPONS[a.guns[1].id].equip;
+      a.reloadT = 0;
+      a.spray = 0;
+      a.burstLeft = 0;
+    }
+    a.ads = 0;
     m.events.push({ t: 'swap', a: a.id });
   }
   const g = currentGun(a);
@@ -2278,7 +2498,7 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
     a.kickP = Math.max(0, a.kickP - back / 0.75);
   }
   // aiming
-  const canAds = a.reloadT <= 0 && a.switchT <= 0 && !b.swim;
+  const canAds = a.reloadT <= 0 && a.switchT <= 0 && !b.swim && !a.paviseUp;
   const adsTarget = inp.ads && canAds ? 1 : 0;
   a.ads = clamp(a.ads + (adsTarget ? 1 : -1.6) * (dt / (g?.mods ? adsTimeOf(g) : w.adsTime)), 0, 1);
   // crouch
@@ -2299,7 +2519,7 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
     let speed = b.swim ? 2.4 : a.crouch > 0.5 ? CROUCH_SPEED : inp.walk || a.healT > 0 ? WALK : RUN;
     // (a boost high up puts a little more in a run)
     if (speed === RUN && a.boost >= BOOST_FAST) speed *= BOOST_RUN;
-    speed *= w.weight * (a.ads > 0.5 ? 0.78 : 1);
+    speed *= w.weight * (a.ads > 0.5 ? 0.78 : 1) * (a.paviseUp ? PAVISE.slow : 1);
     const sy = Math.sin(a.yaw);
     const cy = Math.cos(a.yaw);
     // forward (-sin, -cos), right (cos, -sin)
@@ -2349,10 +2569,26 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
     a.fireHeld = inp.fire;
     return;
   }
-  if (inp.fire && a.switchT <= 0 && a.reloadT <= 0 && a.fireCd <= 0 && g && (w.auto || !a.fireHeld)) fire(m, a);
+  // (a raised shield leaves only the sidearm's hand free)
+  const ready = !!g && a.switchT <= 0 && a.reloadT <= 0 && !(a.paviseUp && a.slot !== 1);
+  if (g && w.burst > 0) {
+    // a burst gun: one pull fires the burst on its own, then a pause before the next
+    if (inp.fire && !a.fireHeld && a.burstLeft <= 0 && ready && a.fireCd <= 0 && g.mag > 0) a.burstLeft = w.burst;
+    if (a.burstLeft > 0) {
+      if (!ready || g.mag <= 0) a.burstLeft = 0;
+      else if (a.fireCd <= 0) {
+        fire(m, a);
+        a.burstLeft--;
+        if (a.burstLeft <= 0) a.fireCd += w.burstGap;
+      }
+    } else if (inp.fire && g.mag <= 0 && a.reloadT <= 0 && !a.fireHeld) fire(m, a);
+  } else if (inp.fire && ready && a.fireCd <= 0 && (w.auto || !a.fireHeld)) fire(m, a);
   else if (inp.fire && g && g.mag <= 0 && a.reloadT <= 0 && !a.fireHeld) fire(m, a);
+  // a crossbow spans the next bolt by itself
+  if (g && w.cls === 'crossbow' && g.mag <= 0 && a.fireCd <= 0) startReload(m, a);
   if (a.fireCd < 0) a.fireCd = 0;
   a.fireHeld = inp.fire;
+
 }
 
 /** The walk cycle and footsteps for a stretch walked: running is loud (heard by bots too), walking and crouching quiet. */

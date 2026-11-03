@@ -8,16 +8,17 @@ import { Score, type Mood } from './score.ts';
 import { useAssets } from './assets.ts';
 import { autoQuality, createView, flyover, type Quality, type View } from './gfx/view.ts';
 import { kitOf, paletteOf } from './gfx/soldiers.ts';
-import { Ammo, BannerView, HitInfo, ItemBar, KillConfirm, KitPanel, type KillPop, BreachPrompts, BuyMenu, DeathPanel, Feed, Markers, MedalView, Minimap, Reticle, RoyalePrompts, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type MedalPop, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi, type HitInfoApi } from './hud.tsx';
+import { Ammo, BannerView, HitInfo, ItemBar, KillConfirm, KitPanel, type KillPop, BreachPrompts, BuyMenu, DeathPanel, Feed, Markers, MedalView, Minimap, Reticle, RoyalePrompts, SHOP_ORDER, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type MedalPop, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi, type HitInfoApi } from './hud.tsx';
 import { MAPS, MAP_IDS, type MapId } from './maps.ts';
-import { DEFUSE_HALF, DEFUSE_TIME, DEG, PERSON_HEALTH, PLANT_TIME, type Medal, type Mode, canDefuse, canShop, canUse, createMatch, currentGun, echoOfMine, eyeY, finalScore, idleInput, lootNear, owns, plantSite, spareOf, sightSwap, spreadOf, standings, step, viewDir, wants, type Actor, type Input, type Match, type ShopItem } from './match.ts';
+import { DEFUSE_HALF, DEFUSE_TIME, DEG, PERSON_HEALTH, PLANT_TIME, type Medal, type Mode, canDefuse, canShop, canUse, createMatch, currentGun, echoOfMine, eyeY, finalScore, idleInput, lootNear, nadesOf, owns, plantSite, spareOf, sightSwap, spreadOf, standings, step, viewDir, wants, type Actor, type Cause, type Input, type Match, type NadeKind, type ShopItem } from './match.ts';
 import { AMMO_KINDS, ROYALE_PLAYERS, USE, ZONES, ammoCap, boostCap, gunLabel, healCap, itemName, magOf, nadeCap, planeAt, scopeOf, zoomOf, type AttKind, type Item, type UseKind } from './royale.ts';
 import { newBrain } from './bots.ts';
 import { Session, type OnlineApi } from './online.ts';
 import { supplyLeft, underRoof } from './match.ts';
 import { newHit, rayWorld } from './physics.ts';
 import { floorAt } from './terrain.ts';
-import { WEAPONS, type WeaponId } from './weapons.ts';
+import { PAVISE, WEAPONS, type WeaponId } from './weapons.ts';
+
 import { buildWorld, cacheWorld, cachedWorld, type World } from './world.ts';
 import './ridgeline.css';
 
@@ -27,7 +28,7 @@ const MAP = defineSetting('ridgeline:map', ['random', 'vale', 'mesa', 'frost', '
 const LEVEL = defineSetting('ridgeline:bots', ['easy', 'normal', 'hard'] as const, 'normal');
 const QUALITY = defineSetting('ridgeline:quality', ['auto', 'low', 'medium', 'high', 'ultra'] as const, 'auto', { live: true });
 const SENS = defineSetting('ridgeline:sens', ['0.5', '0.75', '1', '1.5', '2'] as const, '1', { live: true });
-const DMGUN = defineSetting('ridgeline:dmgun', ['kestrel', 'hornet', 'mauler', 'lancer', 'longbow'] as const, 'kestrel', { live: true });
+const DMGUN = defineSetting('ridgeline:dmgun', ['kestrel', 'talon', 'rampart', 'hornet', 'wasp', 'mauler', 'thresher', 'lancer', 'arbalest', 'longbow'] as const, 'kestrel', { live: true });
 
 const modeOptions = [
   ['breach', 'Breach 5v5'],
@@ -62,11 +63,21 @@ const sensOptions = [
 ] as const;
 const gunOptions = [
   ['kestrel', 'Kestrel'],
+  ['talon', 'Talon'],
+  ['rampart', 'Rampart'],
   ['hornet', 'Hornet'],
+  ['wasp', 'Wasp'],
   ['mauler', 'Mauler'],
+  ['thresher', 'Thresher'],
   ['lancer', 'Lancer'],
+  ['arbalest', 'Arbalest'],
   ['longbow', 'Longbow'],
 ] as const;
+
+/** What took someone out, for the kill feed. */
+const causeName = (w: Cause) => (w === 'frag' ? 'Frag' : w === 'fire' ? 'Fire' : w === 'impact' ? 'Impact' : w === 'zone' ? 'Zone' : w === 'blast' ? 'Blast' : w === 'shell' ? 'Shell' : w === 'car' ? 'Vehicle' : WEAPONS[w].name);
+/** The order G falls back on when the grenade picked has run out, and the order T steps through. */
+const NADE_ORDER: NadeKind[] = ['frag', 'impact', 'fire', 'smoke', 'flash', 'decoy'];
 
 export default function Game({ compact, onExit, roomCode }: GameProps) {
   return (
@@ -286,7 +297,7 @@ const wrapAngle = (a: number) => {
   return d;
 };
 
-type Touch = { stick: number | null; sx: number; sy: number; mx: number; mz: number; look: number | null; lx: number; ly: number; fire: number | null; fx: number; fy: number; ads: boolean; crouch: boolean; jump: boolean; reload: boolean; swap: boolean; frag: boolean; smoke: boolean; flash: boolean; use: boolean; heal: boolean; hold: boolean };
+type Touch = { stick: number | null; sx: number; sy: number; mx: number; mz: number; look: number | null; lx: number; ly: number; fire: number | null; fx: number; fy: number; ads: boolean; crouch: boolean; jump: boolean; reload: boolean; swap: boolean; frag: boolean; smoke: boolean; flash: boolean; use: boolean; heal: boolean; hold: boolean; util: boolean; next: boolean; shield: boolean };
 
 /** Royale weapon keys 1, 2, 3: the two long guns, then the sidearm. */
 const ROYALE_SLOTS = [0, 2, 1] as const;
@@ -348,7 +359,9 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
   // input state
   const look = useRef({ dx: 0, dy: 0 });
   const mouse = useRef({ fire: false, ads: false, wheel: 0 });
-  const touch = useRef<Touch>({ stick: null, sx: 0, sy: 0, mx: 0, mz: 0, look: null, lx: 0, ly: 0, fire: null, fx: 0, fy: 0, ads: false, crouch: false, jump: false, reload: false, swap: false, frag: false, smoke: false, flash: false, use: false, heal: false, hold: false });
+  const touch = useRef<Touch>({ stick: null, sx: 0, sy: 0, mx: 0, mz: 0, look: null, lx: 0, ly: 0, fire: null, fx: 0, fy: 0, ads: false, crouch: false, jump: false, reload: false, swap: false, frag: false, smoke: false, flash: false, use: false, heal: false, hold: false, util: false, next: false, shield: false });
+  /** The grenade G throws (T picks the next one you carry). */
+  const nadePick = useRef<NadeKind>('frag');
   const unlockOnPurpose = useRef(false);
 
   // per match view state
@@ -748,8 +761,25 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
             inp.slot = have[(at + (mouse.current.wheel < 0 ? -1 : 1) + have.length) % have.length];
           }
         }
-        if (m.mode === 'royale') {
-          if (k.pressed('Digit4', 'KeyG') || t.frag) inp.throw = 'frag';
+        // the grenade picked: T steps on to the next kind you carry, G throws it (or the first you have, once it is
+        // gone); the number keys throw one kind each
+        const royale = m.mode === 'royale';
+        const usable = (n: NadeKind) => nadesOf(you, n) > 0 && !(royale && n === 'flash');
+        if (k.pressed('KeyT') || t.next) {
+          const at = NADE_ORDER.indexOf(nadePick.current);
+          for (let i = 1; i <= NADE_ORDER.length; i++) {
+            const n = NADE_ORDER[(at + i) % NADE_ORDER.length];
+            if (usable(n)) {
+              nadePick.current = n;
+              break;
+            }
+          }
+        }
+        if (!usable(nadePick.current)) nadePick.current = NADE_ORDER.find(usable) ?? nadePick.current;
+        if (k.pressed('KeyG') || t.util) inp.throw = nadePick.current;
+        inp.shield = k.pressed('KeyV') || t.shield;
+        if (royale) {
+          if (k.pressed('Digit4') || t.frag) inp.throw = 'frag';
           if (k.pressed('Digit5', 'KeyQ') || t.smoke) inp.throw = 'smoke';
           inp.use = k.pressed('KeyF', 'KeyE') || t.use;
           // F also gets into the vehicle at hand, or out of the one you are in
@@ -762,15 +792,18 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           if (k.pressed('Digit8')) inp.item = 'drink';
           if (k.pressed('Digit9')) inp.item = 'pills';
         } else {
-          if (k.pressed('Digit4', 'KeyG') || t.frag) inp.throw = 'frag';
+          if (k.pressed('Digit4') || t.frag) inp.throw = 'frag';
           if (k.pressed('Digit5', 'KeyQ') || t.smoke) inp.throw = 'smoke';
           if (k.pressed('Digit6', 'KeyX') || t.flash) inp.throw = 'flash';
+          if (k.pressed('Digit7')) inp.throw = 'fire';
+          if (k.pressed('Digit8')) inp.throw = 'impact';
+          if (k.pressed('Digit9')) inp.throw = 'decoy';
           // plant and defuse: held
           inp.use = k.down('KeyF', 'KeyE') || t.hold;
         }
       }
       mouse.current.wheel = 0;
-      t.jump = t.reload = t.swap = t.frag = t.smoke = t.flash = t.use = t.heal = false;
+      t.jump = t.reload = t.swap = t.frag = t.smoke = t.flash = t.use = t.heal = t.util = t.next = t.shield = false;
       const p = pending.current;
       if (p.buy) inp.buy = p.buy;
       p.buy = null;
@@ -809,7 +842,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           const ka = m.actors[kk.killer];
           const va = m.actors[kk.victim];
           const blast = kk.w === 'blast';
-          const item: FeedItem = { id: ++feedId.current, killer: blast ? 'The charge' : (ka?.name ?? (kk.w === 'zone' ? 'The zone' : kk.w === 'shell' ? 'The bombardment' : kk.w === 'car' ? 'A wreck' : '?')), victim: va.name, kc: ka && !blast ? nameColor(m, ka) : '#e8743a', vc: nameColor(m, va), w: kk.w === 'frag' ? 'Frag' : kk.w === 'zone' ? 'Zone' : kk.w === 'blast' ? 'Blast' : kk.w === 'shell' ? 'Shell' : kk.w === 'car' ? 'Vehicle' : WEAPONS[kk.w].name, head: kk.head, mine: kk.killer === m.me || kk.victim === m.me };
+          const item: FeedItem = { id: ++feedId.current, killer: blast ? 'The charge' : (ka?.name ?? (kk.w === 'zone' ? 'The zone' : kk.w === 'shell' ? 'The bombardment' : kk.w === 'car' ? 'A wreck' : '?')), victim: va.name, kc: ka && !blast ? nameColor(m, ka) : '#e8743a', vc: nameColor(m, va), w: causeName(kk.w), head: kk.head, mine: kk.killer === m.me || kk.victim === m.me };
           setFeed((f) => [...f.slice(-5), item]);
           if (kk.victim === m.me) {
             deathLook.current = { yaw: you.yaw, pitch: you.pitch };
@@ -991,6 +1024,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
               sun: 1,
               ambient: 1,
               kit: kitOf(m, a),
+              shield: a.paviseUp,
             }
           : null;
       // a flashbang: white while it lasts, fading out over its last second or so
@@ -1108,7 +1142,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
     const top = st[0];
     const killer = m.actors[you.killer];
     const owned: Hud['owned'] = {};
-    for (const i of ['wren', 'bulwark', 'hornet', 'mauler', 'kestrel', 'lancer', 'longbow', 'light', 'heavy', 'frag', 'smoke', 'flash'] as ShopItem[]) owned[i] = owns(you, i);
+    for (const i of SHOP_ORDER) owned[i] = owns(you, i);
     return {
       mode: m.mode,
       phase: m.phase,
@@ -1128,10 +1162,16 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       frags: a.frags,
       smokes: a.smokes,
       flashes: a.flashes,
+      fires: a.fires,
+      impacts: a.impacts,
+      decoys: a.decoys,
+      pick: nadePick.current,
+      pavise: a.pavise / PAVISE.hp,
+      paviseUp: a.paviseUp,
       blind: a.alive && a.blindT > 0 ? Math.min(1, a.blindT / Math.min(1.2, a.blind0)) : 0,
       canBuy: canShop(m, you),
       alive: you.alive,
-      dead: !you.alive ? { by: you.killedWith === 'zone' ? 'the zone' : you.killedWith === 'blast' ? 'the charge' : you.killedWith === 'shell' ? 'the bombardment' : killer && killer !== you ? killer.name : you.killedWith === 'car' ? 'a wreck' : 'yourself', w: you.killedWith === 'frag' ? 'Frag' : you.killedWith === 'zone' ? 'out in the open too long' : you.killedWith === 'blast' ? 'caught in the blast' : you.killedWith === 'shell' ? 'caught in the open under the shells' : you.killedWith === 'car' ? 'a vehicle' : you.killedWith ? WEAPONS[you.killedWith].name : '', head: you.killedHead, respawn: you.respawnT } : null,
+      dead: !you.alive ? { by: you.killedWith === 'zone' ? 'the zone' : you.killedWith === 'blast' ? 'the charge' : you.killedWith === 'shell' ? 'the bombardment' : killer && killer !== you ? killer.name : you.killedWith === 'car' ? 'a wreck' : 'yourself', w: you.killedWith === 'frag' ? 'Frag' : you.killedWith === 'fire' ? 'burned' : you.killedWith === 'impact' ? 'Impact grenade' : you.killedWith === 'zone' ? 'out in the open too long' : you.killedWith === 'blast' ? 'caught in the blast' : you.killedWith === 'shell' ? 'caught in the open under the shells' : you.killedWith === 'car' ? 'a vehicle' : you.killedWith ? WEAPONS[you.killedWith].name : '', head: you.killedHead, respawn: you.respawnT } : null,
       watching: !you.alive && a !== you ? a.name : null,
       feed: [],
       dm: m.mode === 'dm' ? { kills: you.kills, top: top === you ? (st[1]?.kills ?? 0) : top.kills, topName: top === you ? (st[1]?.name ?? '') : top.name, place: st.indexOf(you) + 1, total: m.actors.length } : null,
@@ -1453,6 +1493,21 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
               {hud.breach && (
                 <button type="button" className="g-ridgeline-btn is-flash" onPointerDown={tap((t) => (t.flash = true))}>
                   Flash
+                </button>
+              )}
+              {hud.fires + hud.impacts + hud.decoys > 0 && (
+                <>
+                  <button type="button" className="g-ridgeline-btn is-util" onPointerDown={tap((t) => (t.util = true))}>
+                    {hud.pick === 'fire' ? 'Fire' : hud.pick === 'impact' ? 'Impact' : hud.pick === 'decoy' ? 'Decoy' : hud.pick === 'smoke' ? 'Smoke' : hud.pick === 'flash' ? 'Flash' : 'Frag'}
+                  </button>
+                  <button type="button" className="g-ridgeline-btn is-next" onPointerDown={tap((t) => (t.next = true))} aria-label="Next grenade">
+                    ⟳
+                  </button>
+                </>
+              )}
+              {hud.pavise > 0 && (
+                <button type="button" className="g-ridgeline-btn is-shield" data-on={hud.paviseUp ? '1' : '0'} onPointerDown={tap((t) => (t.shield = true))}>
+                  Shield
                 </button>
               )}
               {hud.royale && (

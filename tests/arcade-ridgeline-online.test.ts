@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { newBrain } from '../src/os/arcade/games/ridgeline/bots.ts';
 import { botInput } from '../src/os/arcade/games/ridgeline/bots.ts';
-import { DM_KILLS, idleInput, step, type Actor, type Input, type Match, type Mode } from '../src/os/arcade/games/ridgeline/match.ts';
-import { groundAt } from '../src/os/arcade/games/ridgeline/physics.ts';
+import { DM_KILLS, currentGun, idleInput, step, type Actor, type Input, type Match, type Mode } from '../src/os/arcade/games/ridgeline/match.ts';
+import { clearLine, groundAt } from '../src/os/arcade/games/ridgeline/physics.ts';
 import { floorAt } from '../src/os/arcade/games/ridgeline/terrain.ts';
 import { CARS, hurtCar } from '../src/os/arcade/games/ridgeline/cars.ts';
-import type { WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
-import { Clock, Session, Track, type OnlineApi } from '../src/os/arcade/games/ridgeline/online.ts';
+import { PAVISE, WEAPON_IDS, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
+import { Clock, NET_TAG, Session, Track, type OnlineApi } from '../src/os/arcade/games/ridgeline/online.ts';
 import { worldFor } from '../src/os/arcade/games/ridgeline/world.ts';
 
 const DT = 1 / 60;
@@ -660,3 +660,128 @@ test('online royale: a guest asleep while the transport flies on is jumped out b
   assert.ok(Math.hypot(mine.body.x - there.body.x, mine.body.z - there.body.z) < 4, `in the same place (${Math.hypot(mine.body.x - there.body.x, mine.body.z - there.body.z).toFixed(1)} m apart)`);
   assert.equal(m1.plane, null, 'the transport is gone there too');
 });
+
+test('online: the host turns down a guest hit that a raised shield stopped, and takes it once the shield is down', () => {
+  const { net, seats } = room(2);
+  const [host, guest] = seats;
+  for (let i = 0; i < 60 * 40 && host.s.match?.phase !== 'live'; i++) frame(net, seats);
+  const h = host.s.match!;
+  const gm = guest.s.match!;
+  assert.equal(h.phase, 'live');
+  // everyone holds still: the host's bots and the guest's own soldier
+  gm.actors[gm.me].brain = null;
+  const g = h.actors[gm.me];
+  for (const a of h.actors)
+    if (a !== g) {
+      a.bot = false;
+      a.brain = null;
+    }
+  for (let i = 0; i < 30; i++) frame(net, seats);
+  // an enemy a few meters off in the open, its shield up and facing the guest
+  const v = h.actors.find((a) => a.alive && a.team !== g.team)!;
+  const eye = g.body.y + g.body.height - 0.14;
+  let placed = false;
+  for (let k = 0; k < 64 && !placed; k++) {
+    const ang = (k / 64) * Math.PI * 2;
+    const x = g.body.x + Math.sin(ang) * 7;
+    const z = g.body.z + Math.cos(ang) * 7;
+    const y = groundAt(h.world, x, z, g.body.y + 2);
+    if (Math.abs(y - g.body.y) > 1 || !clearLine(h.world, g.body.x, eye, g.body.z, x, y + 1.2, z)) continue;
+    v.body.x = x;
+    v.body.y = y;
+    v.body.z = z;
+    placed = true;
+  }
+  assert.ok(placed, 'found an open spot');
+  v.yaw = Math.atan2(v.body.x - g.body.x, v.body.z - g.body.z);
+  v.pavise = PAVISE.hp;
+  v.paviseUp = true;
+  const claim = () => {
+    const w = WEAPON_IDS.indexOf(currentGun(g)!.id) + 1;
+    const o = [g.body.x, eye, g.body.z];
+    const p = [v.body.x, v.body.y + 1.2, v.body.z];
+    const l = Math.hypot(p[0] - o[0], p[1] - o[1], p[2] - o[2]);
+    guest.api.send({ tag: NET_TAG, r: guest.api.round, k: 'fire', w, o, v: [((p[0] - o[0]) / l) * 900, ((p[1] - o[1]) / l) * 900, ((p[2] - o[2]) / l) * 900] });
+    guest.api.send({ tag: NET_TAG, r: guest.api.round, k: 'hit', v: v.id, z: 1, w, o, p });
+    for (let i = 0; i < 12; i++) frame(net, seats);
+  };
+  const hp = v.hp;
+  claim();
+  assert.equal(v.hp, hp, 'the shield stopped it: no damage');
+  v.paviseUp = false;
+  claim();
+  assert.ok(v.hp < hp, `with the shield down the hit counts (${v.hp.toFixed(0)})`);
+  // the guests see the shield and what is left of it
+  v.paviseUp = true;
+  for (let i = 0; i < 30; i++) frame(net, seats);
+  assert.ok(gm.actors[v.id].pavise > 0 && gm.actors[v.id].paviseUp, 'a guest mirrors the shield');
+});
+
+for (const mode of ['dm', 'royale'] as const) {
+  test(`online ${mode}: the shield and the new grenades reach the guest, and its shield and throws reach the host`, () => {
+    const world = worldFor('vale', mode === 'royale');
+    const { net, seats } = room(2, 4242, { mode });
+    const [host, guest] = seats;
+    const run = (sec: number) => {
+      for (let i = 0; i < sec * 30; i++) {
+        frame(net, seats, world, 1 / 30);
+        if (host.s.match) shieldPeople(host.s.match, 1e9);
+      }
+    };
+    // (a royale: down from the transport first)
+    for (let i = 0; i < 30 * 220 && !(guest.s.match && !guest.s.match.actors[guest.s.match.me].drop && guest.s.match.time > 8); i++) run(1 / 30);
+    const h = host.s.match!;
+    const gm = guest.s.match!;
+    const me = gm.me;
+    assert.equal(gm.actors[me].drop, 0, 'the guest is on the ground');
+    // the guest's own hands from here on
+    let shieldKey = false;
+    let throwKey: 'fire' | null = null;
+    guest.input = (_m, a) => {
+      const inp = idleInput(a.yaw, a.pitch);
+      inp.shield = shieldKey;
+      inp.throw = throwKey;
+      shieldKey = false;
+      throwKey = null;
+      return inp;
+    };
+    // the host hands the guest a shield and the new grenades: its machine has them
+    const ha = h.actors[me];
+    ha.pavise = PAVISE.hp;
+    ha.fires = 2;
+    ha.impacts = 1;
+    ha.decoys = 1;
+    run(1.5);
+    const ga = gm.actors[me];
+    assert.equal(ga.pavise, PAVISE.hp, 'the guest carries the shield');
+    assert.deepEqual([ga.fires, ga.impacts, ga.decoys], [2, 1, 1], 'and the grenades');
+    // raised on the guest's machine: raised on the host's
+    shieldKey = true;
+    run(1);
+    assert.ok(ga.paviseUp, 'raised on its own machine');
+    assert.ok(ha.paviseUp, 'and on the host');
+    // someone else's raised shield shows on the guest
+    const other = h.actors.find((a) => a.alive && a.id !== me && !a.drop && Math.hypot(a.body.x - ha.body.x, a.body.z - ha.body.z) < 60) ?? h.actors.find((a) => a.alive && a.id !== me)!;
+    other.pavise = PAVISE.hp;
+    other.paviseUp = true;
+    other.body.x = ha.body.x + 6;
+    other.body.z = ha.body.z;
+    other.body.y = groundAt(h.world, other.body.x, other.body.z, ha.body.y + 2);
+    other.epoch++;
+    other.bot = false;
+    other.brain = null;
+    run(1.5);
+    assert.ok(gm.actors[other.id].pavise > 0 && gm.actors[other.id].paviseUp, "the guest sees the other's shield up");
+    // an incendiary thrown by the guest: the host throws the real one, and counts it off
+    throwKey = 'fire';
+    let thrown = false;
+    for (let i = 0; i < 30 && !thrown; i++) {
+      run(1 / 30);
+      thrown = h.nades.some((n) => n.kind === 'fire' && n.owner === me) || h.fires.some((f) => f.owner === me);
+    }
+    assert.ok(thrown, 'the host threw it');
+    assert.equal(ha.fires, 1, 'one fewer on the host');
+    run(1);
+    assert.equal(ga.fires, 1, 'and on the guest');
+  });
+}
