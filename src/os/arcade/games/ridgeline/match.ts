@@ -71,8 +71,10 @@ export type Input = {
   ride: boolean;
   /** Take a boost (royale). */
   boost: boolean;
+  /** Use this one thing from the kit (royale): a bandage, a med kit, a drink or the painkillers. */
+  item: UseKind | null;
 };
-export const idleInput = (yaw = 0, pitch = 0): Input => ({ mx: 0, mz: 0, yaw, pitch, fire: false, ads: false, crouch: false, walk: false, jump: false, reload: false, slot: -1, throw: null, buy: null, use: false, heal: false, ride: false, boost: false });
+export const idleInput = (yaw = 0, pitch = 0): Input => ({ mx: 0, mz: 0, yaw, pitch, fire: false, ads: false, crouch: false, walk: false, jump: false, reload: false, slot: -1, throw: null, buy: null, use: false, heal: false, ride: false, boost: false, item: null });
 
 /** A gun carried: its id, rounds in the magazine, spare rounds (breach), whether bought this round (for a refund), and
  * (royale) what is fitted to it. */
@@ -1202,6 +1204,19 @@ export function healPick(a: Actor): HealKind | null {
   return a.kits > 0 ? 'kit' : null;
 }
 
+/** How many of a kit item you carry. */
+export function carried(a: Actor, k: UseKind) {
+  return k === 'bandage' ? a.bandages : k === 'kit' ? a.kits : k === 'drink' ? a.drinks : a.pills;
+}
+
+/** Would using this help now (you have one, and a heal is below what it heals to, a boost below full)? */
+export function canUse(a: Actor, k: UseKind) {
+  if (carried(a, k) <= 0) return false;
+  if (k === 'bandage') return a.hp < HEAL.bandage.to;
+  if (k === 'kit') return a.hp < 100;
+  return a.boost < 95;
+}
+
 /** Which boost a press uses: painkillers while the meter is low, else a drink; none once it is nearly full. */
 export function boostPick(a: Actor): BoostKind | null {
   if (a.boost >= 95) return null;
@@ -2086,9 +2101,10 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
       const it = autoLoot(m, a);
       if (it) pickup(m, a, it);
     }
-    if ((inp.heal || inp.boost) && a.healT <= 0) {
-      // H: a heal while one helps, else a boost; the boost key only a boost
-      const kind = (inp.heal ? healPick(a) : null) ?? boostPick(a);
+    if ((inp.heal || inp.boost || inp.item) && a.healT <= 0) {
+      // a chosen item (the item bar, its keys or the kit panel), when you have one and it would help; else H: a heal
+      // while one helps, else a boost; the boost key only a boost
+      const kind = inp.item ? (canUse(a, inp.item) ? inp.item : null) : ((inp.heal ? healPick(a) : null) ?? boostPick(a));
       if (kind) {
         a.healKind = kind;
         a.healT = USE[kind].time;

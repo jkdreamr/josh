@@ -751,6 +751,31 @@ test('royale: a bombardment is marked inside the zone and never over you', () =>
   assert.equal(markRed(m), null);
 });
 
+test('royale: a chosen kit item is used only when you have it and it would help', () => {
+  const m = createMatch(worldFor('mesa', true), 'royale', 'normal', { seed: 13 });
+  const you = m.actors[0];
+  you.drop = 0;
+  you.body.x = m.zone!.x;
+  you.body.z = m.zone!.z;
+  you.body.y = 200;
+  for (let i = 0; i < 600 && !you.body.onGround; i++) step(m, DT, idleInput());
+  you.hp = 100;
+  you.bandages = 2;
+  you.kits = 1;
+  step(m, DT, { ...idleInput(you.yaw, you.pitch), item: 'bandage' });
+  assert.equal(you.healT, 0, 'nothing to heal at full health');
+  // (at 70, H would pick a bandage)
+  you.hp = 70;
+  step(m, DT, { ...idleInput(you.yaw, you.pitch), item: 'drink' });
+  assert.equal(you.healT, 0, 'no drink carried');
+  step(m, DT, { ...idleInput(you.yaw, you.pitch), item: 'kit' });
+  assert.equal(you.healKind, 'kit', 'the med kit, as asked (not the bandage H would pick)');
+  for (let i = 0; i < 60 * 7; i++) step(m, DT, idleInput(you.yaw, you.pitch));
+  assert.equal(you.kits, 0);
+  assert.equal(you.bandages, 2);
+  assert.ok(you.hp >= 99, `healed to full (${you.hp})`);
+});
+
 test('royale: a hundred drop in, loot, fight and the zone closes to one left standing', () => {
   const m = createMatch(worldFor('vale', true), 'royale', 'normal', { seed: 7 });
   assert.equal(m.actors.length, ROYALE_PLAYERS);
