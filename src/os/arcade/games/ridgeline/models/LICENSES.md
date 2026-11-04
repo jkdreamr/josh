@@ -1,8 +1,8 @@
 # Ridgeline model credits
 
-## The project owner's soldier outfit
+## The soldier outfit (provided by the project owner)
 
-`outfit.glb` and `outfit-lod.glb` are the project owner's own Soldier Outfit (v1) and its helmet (Soldier Helmet
+`outfit.glb` and `outfit-lod.glb` are the Soldier Outfit (v1) and its helmet (Soldier Helmet
 Outfit v1), with their texture sets, provided by the project owner for this game. They are not under the licenses
 below. For the game the outfit and the helmet were baked into one file: posed as bound, turned to face the game's
 front and scaled to its soldier, the sniper rifle slung on the back left out, the fingers curled round a grip, the skin
