@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState, type CSSProperties, type RefObject } from 'react';
 import type { T } from './gl';
-import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useShell, useThree } from '../../kit';
+import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useOnline, useRankedRun, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { createGL, damp, disposeTree, type GL } from './gl';
-import { BASE, HEIGHT, chimeFor, create, drop, hueFor, revealView, step, towerTop, type Slab, type State } from './logic';
+import { BASE, HEIGHT, STEP, chimeFor, create, drop, hueFor, revealView, tick, towerTop, type Slab, type State } from './logic';
 import { meta } from './meta';
 import './stack.css';
 
@@ -180,6 +180,17 @@ function Play() {
   const [sky, setSky] = useState<number | null>(null);
   const dropQueued = useRef(false);
   useFrameScale(shell.root, shell.touch);
+  // The global board takes a score only from a tower the Worker replays (see verify.ts): the run is asked for as the
+  // round opens, and the slab waits a moment for it before it starts to slide. Without it (offline, or it was slow)
+  // the tower still plays, unranked.
+  const online = useOnline();
+  const rankedRun = useRankedRun(meta.id, !online && !shell.compact);
+  useEffect(() => {
+    rankedRun();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  /** began: the slab has started to slide; ranked: the Worker replays this tower; acc: time toward the next STEP. */
+  const ranking = useRef({ began: false, ranked: false, wait: 0, acc: 0 }).current;
 
   useEffect(() => {
     const host = ref.current;
@@ -209,13 +220,16 @@ function Play() {
     const parts = [s.score === 1 ? '1 Slab High' : `${s.score} Slabs High`];
     if (s.perfects) parts.push(s.perfects === 1 ? '1 Perfect Drop' : `${s.perfects} Perfect Drops`);
     if (s.bestStreak >= 3) parts.push(`Best Run of ${s.bestStreak}`);
-    shell.gameOver(s.score, { detail: `${parts.join(', ')}.` });
+    // the end of the tower goes off to be checked now; a score submitted from the card waits for the answer
+    const run = ranking.ranked ? rankedRun()?.end(s.score) : undefined;
+    shell.gameOver(s.score, { detail: `${parts.join(', ')}.`, ...(run ? { run } : {}) });
   };
 
   const doDrop = () => {
     const w = world.current;
     const s = state.current;
     if (!w || !THREE || s.over) return;
+    if (ranking.ranked) rankedRun()?.record(s.ticks);
     const { result, level, grew } = drop(s);
     const tumble = (slab: Slab, dirX: number, dirZ: number, miss: boolean) => {
       const mesh = new THREE.Mesh(w.geo, new THREE.MeshLambertMaterial({ color: colorFor(THREE, level, w.hueSeed) }));
@@ -291,14 +305,33 @@ function Play() {
       const w = world.current;
       const s = state.current;
       if (!w) return;
-      if (keys.pressed('action') || dropQueued.current) {
+      if (!ranking.began) {
+        const ranked = rankedRun();
+        // (a moment's wait for the run, if it is still on its way, so the tower can count globally: the slab holds
+        // still at the edge till then, and a drop there would only miss)
+        if (ranked?.pending && ranking.wait < 1.5) {
+          ranking.wait += dt;
+          keys.pressed('action');
+          dropQueued.current = false;
+        } else {
+          ranking.began = true;
+          if (ranked && ranked.seed !== null && ranked.begin({})) ranking.ranked = true;
+        }
+      }
+      if (ranking.began && (keys.pressed('action') || dropQueued.current)) {
         dropQueued.current = false;
         doDrop();
       }
-      if (!s.over) {
-        step(s, dt);
+      if (ranking.began && !s.over) {
+        // in fixed steps, so a ranked run's drops land where the Worker's replay puts them at any frame rate
+        ranking.acc += dt;
+        while (ranking.acc >= STEP && !s.over) {
+          ranking.acc -= STEP;
+          tick(s);
+        }
         fitSlab(w.moving, s.moving, s.stack.length);
       }
+      if (ranking.ranked) rankedRun()?.clock(s.ticks);
 
       for (let i = w.debris.length - 1; i >= 0; i--) {
         const d = w.debris[i];
@@ -373,6 +406,8 @@ function Play() {
       if (!w || w.gl.lost()) return;
       w.gl.renderer.render(w.scene, w.camera);
     },
+    // (a slow frame is caught up rather than played in slow motion: slowed-down slabs are easier to land)
+    { realtime: true },
   );
 
   const playing = shell.status === 'playing';

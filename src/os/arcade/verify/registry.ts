@@ -4,9 +4,11 @@ import type { Verifier } from './protocol.ts';
 import { verifier as flappy } from '../games/flappy/verify.ts';
 import { verifier as game2048 } from '../games/2048/verify.ts';
 import { verifier as snake } from '../games/snake/verify.ts';
+import { verifier as stack } from '../games/stack/verify.ts';
 
 export const VERIFIERS: Record<string, Verifier<any>> = {
   flappy,
   '2048': game2048,
   snake,
+  stack,
 };

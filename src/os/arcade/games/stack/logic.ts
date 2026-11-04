@@ -45,6 +45,8 @@ export type State = {
   perfects: number;
   bestStreak: number;
   over: boolean;
+  /** Fixed steps the slab has slid (STEP each): a ranked run's drops are stamped with them, so the Worker can replay it. */
+  ticks: number;
 };
 
 export const MIN_SPEED = 2.4;
@@ -66,8 +68,11 @@ function spawn(stack: Slab[], axis: Axis, grow: boolean): Slab {
 
 export function create(): State {
   const stack = [{ x: 0, z: 0, w: BASE, d: BASE }];
-  return { stack, moving: spawn(stack, 'x', false), axis: 'x', dir: 1, pos: -RANGE, speed: speedFor(0), streak: 0, score: 0, perfects: 0, bestStreak: 0, over: false };
+  return { stack, moving: spawn(stack, 'x', false), axis: 'x', dir: 1, pos: -RANGE, speed: speedFor(0), streak: 0, score: 0, perfects: 0, bestStreak: 0, over: false, ticks: 0 };
 }
+
+/** The page slides the slab in fixed steps this long (short enough that no screen shows them). */
+export const STEP = 1 / 480;
 
 /** Advance the moving slab; it bounces between -RANGE and +RANGE, far enough out that even a full width slab can miss. */
 export function step(s: State, dt: number) {
@@ -82,6 +87,13 @@ export function step(s: State, dt: number) {
   }
   if (s.axis === 'x') s.moving.x = s.pos;
   else s.moving.z = s.pos;
+}
+
+/** One fixed step of the slide, as the page takes them: what a ranked run's replay walks through (see verify.ts). */
+export function tick(s: State) {
+  if (s.over) return;
+  step(s, STEP);
+  s.ticks += 1;
 }
 
 export type DropOutcome = { result: PlaceResult; level: number; grew: boolean };
