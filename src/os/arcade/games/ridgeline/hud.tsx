@@ -1,10 +1,11 @@
 // Everything drawn over the 3D view: the round bar (or a royale's players left and zone clock), health, armor and ammo,
 // the kill feed, the minimap with the sites, the charge and the zone, markers for the sites, the charge and your team,
-// the buy menu, the scoreboard, banners, plant, defuse, pick up and heal prompts, the crosshair, hit markers and the
-// scope.
+// the buy menu, the scoreboard, banners, plant, defuse, pick up and heal prompts, a vehicle's speed and health, the
+// crosshair, hit markers and the scope.
 import { forwardRef, useEffect, useImperativeHandle, useRef, type ReactNode } from 'react';
-import type { Mode, Phase, ShopItem } from './match.ts';
-import { ARMOR, NADES, WEAPONS, type WeaponId } from './weapons.ts';
+import type { Mode, NadeKind, Phase, ShopItem } from './match.ts';
+import { BOOST_FAST, HEAL, type UseKind } from './royale.ts';
+import { ARMOR, NADES, PAVISE, WEAPONS, type WeaponId } from './weapons.ts';
 import type { World } from './world.ts';
 
 export type FeedItem = { id: number; killer: string; victim: string; kc: string; vc: string; w: string; head: boolean; mine: boolean };
@@ -18,14 +19,27 @@ export type Hud = {
   pips: [boolean[], boolean[]];
   breach: BreachHud | null;
   hp: number;
+  /** What a full bar reads: people are tougher than bots (their health counts for more). */
+  hpMax: number;
   armor: number;
   credits: number;
-  gun: { name: string; mag: number; reserve: number; max: number; cls: string } | null;
+  gun: { name: string; mag: number; reserve: number; max: number; cls: string; scope: boolean } | null;
   slot: number;
   guns: (WeaponId | null)[];
   frags: number;
   smokes: number;
   flashes: number;
+  fires: number;
+  impacts: number;
+  decoys: number;
+  /** The grenade G throws (T steps through what you carry). */
+  pick: NadeKind;
+  /** A ballistic shield carried: what it has left (0 to 1), and whether it is raised. */
+  pavise: number;
+  paviseUp: boolean;
+  /** Lying down (or on the way), and leaning (-1 left to 1 right). */
+  prone: boolean;
+  lean: number;
   /** How white your screen is from a flashbang, 0 to 1. */
   blind: number;
   canBuy: boolean;
@@ -76,11 +90,35 @@ export type RoyaleHud = {
   drop: number;
   vest: number;
   helmet: number;
+  /** Backpack level (0 none), heals and boosts carried, and the boost meter, 0 to 100. */
+  pack: number;
   bandages: number;
   kits: number;
+  drinks: number;
+  pills: number;
+  boost: number;
+  /** A heal or boost under way, 0 to 1, and what it is. */
   heal: number;
   healName: string | null;
   pickup: string | null;
+  /** A bombardment you are inside: meters out to its edge, whether shells are falling yet (else the seconds until
+   * they do), and whether a roof keeps you safe where you stand. Null when you are clear of it. */
+  red: { edge: number; live: boolean; t: number; cover: boolean } | null;
+  /** In a vehicle: what it is, its speed in km/h, its health (0 to 1), and whether you drive it. */
+  car: { name: string; kmh: number; hp: number; driving: boolean } | null;
+  /** A vehicle at hand: what F does there ('drive Jeep', 'ride in Jeep'). */
+  drive: string | null;
+  /** The kit item being used now, the most of each you can carry, and whether each would help right now. */
+  using: UseKind | null;
+  caps: Record<UseKind, number>;
+  helps: Record<UseKind, boolean>;
+  /** Ammo by kind (rounds and the most you can carry), grenades and their caps, and your two long guns' names (with
+   * what is fitted) and the sidearm's, for the kit panel. */
+  ammo: { kind: string; n: number; cap: number }[];
+  nades: { frag: number; fragCap: number; smoke: number; smokeCap: number };
+  guns: string[];
+  /** A supply crate with gear left near you: how far (-1 none near). */
+  crate: number;
 };
 
 export const blankHud = (mode: Mode): Hud => ({
@@ -92,6 +130,7 @@ export const blankHud = (mode: Mode): Hud => ({
   pips: [[], []],
   breach: null,
   hp: 100,
+  hpMax: 150,
   armor: 0,
   credits: 0,
   gun: null,
@@ -100,6 +139,14 @@ export const blankHud = (mode: Mode): Hud => ({
   frags: 0,
   smokes: 0,
   flashes: 0,
+  fires: 0,
+  impacts: 0,
+  decoys: 0,
+  pick: 'frag',
+  pavise: 0,
+  paviseUp: false,
+  prone: false,
+  lean: 0,
   blind: 0,
   canBuy: false,
   alive: true,
@@ -222,10 +269,15 @@ export function Vitals({ h }: { h: Hud }) {
   return (
     <div className="g-ridgeline-vitals">
       <div className="g-ridgeline-hp">
-        <b>{Math.ceil(h.hp)}</b>
+        <b>{Math.ceil((h.hp * h.hpMax) / 100)}</b>
         <span className="g-ridgeline-hpBar">
           <i style={{ width: `${h.hp}%` }} className={h.hp < 35 ? 'is-low' : ''} />
         </span>
+        {h.royale && (
+          <span className="g-ridgeline-boostBar" data-fast={h.royale.boost >= BOOST_FAST ? '1' : '0'} title="boost">
+            <i style={{ width: `${h.royale.boost}%` }} />
+          </span>
+        )}
       </div>
       <div className="g-ridgeline-armor" data-on={h.armor > 0 ? '1' : '0'}>
         <svg viewBox="0 0 24 24" aria-hidden="true">
@@ -237,10 +289,10 @@ export function Vitals({ h }: { h: Hud }) {
         <div className="g-ridgeline-kit">
           <span data-on={h.royale.helmet ? '1' : '0'}>helmet {h.royale.helmet || '-'}</span>
           <span data-on={h.royale.vest ? '1' : '0'}>vest {h.royale.vest || '-'}</span>
-          <span data-on={h.royale.bandages ? '1' : '0'}>
-            <kbd>H</kbd>bandage {h.royale.bandages}
+          <span data-on={h.royale.pack ? '1' : '0'}>pack {h.royale.pack || '-'}</span>
+          <span data-on="1">
+            <kbd>H</kbd>heal <kbd>X</kbd>boost <kbd>I</kbd>kit
           </span>
-          <span data-on={h.royale.kits ? '1' : '0'}>kit {h.royale.kits}</span>
         </div>
       )}
       {h.mode === 'breach' && (
@@ -264,6 +316,7 @@ export function Ammo({ h }: { h: Hud }) {
             <span>/ {h.mode === 'dm' ? '∞' : g.reserve}</span>
           </div>
           <div className="g-ridgeline-gunName">{g.name}</div>
+          {g.scope && !h.scoped && <div className="g-ridgeline-scopeHint">right click or hold Z to scope</div>}
           {h.reload > 0 && (
             <div className="g-ridgeline-reload">
               <i style={{ width: `${h.reload * 100}%` }} />
@@ -272,7 +325,7 @@ export function Ammo({ h }: { h: Hud }) {
         </>
       )}
       <div className="g-ridgeline-slots">
-        {(h.mode === 'royale' ? [0, 2, 1] : [0, 1]).map((k, i) => {
+        {[0, 2, 1].map((k, i) => {
           const id = h.guns[k];
           return (
             <span key={k} className={k === h.slot ? 'is-on' : ''} data-empty={id ? '0' : '1'}>
@@ -281,17 +334,40 @@ export function Ammo({ h }: { h: Hud }) {
             </span>
           );
         })}
-        <span data-empty={h.frags ? '0' : '1'}>
-          <kbd>{h.mode === 'royale' ? 4 : 3}</kbd>frag {h.frags}
-        </span>
-        <span data-empty={h.smokes ? '0' : '1'}>
-          <kbd>{h.mode === 'royale' ? 5 : 4}</kbd>smoke {h.smokes}
-        </span>
-        {h.mode === 'breach' && (
-          <span data-empty={h.flashes ? '0' : '1'}>
-            <kbd>5</kbd>flash {h.flashes}
+        {NADE_CHIPS.map(([kind, key, label]) => {
+          const n = nadeCount(h, kind);
+          // (a royale has no flashbangs, and keeps its number keys for the kit: the others are thrown with G)
+          if (kind === 'flash' && h.mode !== 'breach') return null;
+          if (!n && h.mode !== 'breach' && kind !== 'frag' && kind !== 'smoke') return null;
+          const k = h.mode === 'royale' && key > 5 ? '' : String(key);
+          return (
+            <span key={kind} className={h.pick === kind && n ? 'is-on' : ''} data-empty={n ? '0' : '1'}>
+              {k && <kbd>{k}</kbd>}
+              {label} {n}
+            </span>
+          );
+        })}
+        {h.pavise > 0 && (
+          <span className={h.paviseUp ? 'is-on' : ''} data-empty="0">
+            <kbd>V</kbd>shield {Math.round(h.pavise * 100)}%
           </span>
         )}
+        {(h.prone || Math.abs(h.lean) > 0.2) && (
+          <span className="is-on" data-empty="0">
+            {h.prone ? (
+              <>
+                <kbd>N</kbd>prone
+              </>
+            ) : (
+              <>
+                <kbd>{h.lean < 0 ? 'Y' : 'U'}</kbd>lean {h.lean < 0 ? 'left' : 'right'}
+              </>
+            )}
+          </span>
+        )}
+      </div>
+      <div className="g-ridgeline-nadeHint">
+        <kbd>G</kbd> throw {NADE_LABEL[h.pick]} <kbd>T</kbd> next
       </div>
     </div>
   );
@@ -337,28 +413,51 @@ export function BannerView({ b }: { b: Banner | null }) {
   );
 }
 
+/** The grenades in the slot bar: kind, number key, label. */
+const NADE_CHIPS: [NadeKind, number, string][] = [
+  ['frag', 4, 'frag'],
+  ['smoke', 5, 'smoke'],
+  ['flash', 6, 'flash'],
+  ['fire', 7, 'fire'],
+  ['impact', 8, 'impact'],
+  ['decoy', 9, 'decoy'],
+];
+const NADE_LABEL: Record<NadeKind, string> = { frag: 'frag', smoke: 'smoke', flash: 'flash', fire: 'incendiary', impact: 'impact', decoy: 'decoy' };
+const nadeCount = (h: Hud, k: NadeKind) => (k === 'frag' ? h.frags : k === 'smoke' ? h.smokes : k === 'flash' ? h.flashes : k === 'fire' ? h.fires : k === 'impact' ? h.impacts : h.decoys);
+
 const SHOP: { group: string; items: ShopItem[] }[] = [
-  { group: 'Sidearms', items: ['wren', 'bulwark'] },
-  { group: 'SMG and shotgun', items: ['hornet', 'mauler'] },
-  { group: 'Rifles', items: ['kestrel', 'lancer'] },
-  { group: 'Sniper', items: ['longbow'] },
-  { group: 'Armor', items: ['light', 'heavy'] },
-  { group: 'Grenades', items: ['frag', 'smoke', 'flash'] },
+  { group: 'Sidearms', items: ['wren', 'bulwark', 'marshal'] },
+  { group: 'SMG and shotgun', items: ['hornet', 'wasp', 'mauler', 'thresher'] },
+  { group: 'Rifles', items: ['kestrel', 'talon', 'lancer', 'rampart'] },
+  { group: 'Sniper and crossbow', items: ['longbow', 'arbalest'] },
+  { group: 'Armor and shield', items: ['light', 'heavy', 'pavise'] },
+  { group: 'Grenades', items: ['frag', 'smoke', 'flash', 'fire', 'impact', 'decoy'] },
 ];
 export const SHOP_ORDER = SHOP.flatMap((g) => g.items);
 
-const itemName = (i: ShopItem) => (i === 'light' ? 'Light Armor' : i === 'heavy' ? 'Heavy Armor' : i === 'frag' ? 'Frag' : i === 'smoke' ? 'Smoke' : i === 'flash' ? 'Flashbang' : WEAPONS[i].name);
-const itemPrice = (i: ShopItem) => (i === 'light' || i === 'heavy' ? ARMOR[i].price : i === 'frag' || i === 'smoke' || i === 'flash' ? NADES[i].price : WEAPONS[i].price);
-const itemLine = (i: ShopItem) => {
-  if (i === 'light') return 'soaks 25';
-  if (i === 'heavy') return 'soaks 50';
-  if (i === 'frag') return 'big blast, 2 s fuse';
-  if (i === 'smoke') return 'blocks sight 15 s';
-  if (i === 'flash') return 'blinds whoever looks at it';
-  const w = WEAPONS[i];
-  const dmg = w.pellets > 1 ? `${w.pellets}x${w.dmg}` : `${w.dmg}`;
-  return `${dmg} dmg, ${w.rpm} rpm, ${w.mag} rounds${w.scope ? ', scoped' : ''}`;
+const NAMES: Partial<Record<ShopItem, string>> = { light: 'Light Armor', heavy: 'Heavy Armor', pavise: 'Ballistic Shield', frag: 'Frag', smoke: 'Smoke', flash: 'Flashbang', fire: 'Incendiary', impact: 'Impact Grenade', decoy: 'Decoy' };
+const LINES: Partial<Record<ShopItem, string>> = {
+  light: 'soaks 25',
+  heavy: 'soaks 50',
+  pavise: `stops shots from the front, ${PAVISE.hp} hp. V: up, sidearm only`,
+  frag: 'big blast, 2 s fuse',
+  smoke: 'blocks sight 15 s',
+  flash: 'blinds whoever looks at it',
+  fire: 'burns the ground 7 s',
+  impact: 'goes off where it hits',
+  decoy: 'fakes gunfire for 10 s',
 };
+const itemName = (i: ShopItem) => NAMES[i] ?? WEAPONS[i as WeaponId].name;
+const itemPrice = (i: ShopItem) => (i === 'light' || i === 'heavy' ? ARMOR[i].price : i === 'pavise' ? PAVISE.price : i in NADES ? NADES[i as NadeKind].price : WEAPONS[i as WeaponId].price);
+const itemLine = (i: ShopItem) => {
+  const line = LINES[i];
+  if (line) return line;
+  const w = WEAPONS[i as WeaponId];
+  const dmg = w.pellets > 1 ? `${w.pellets}x${w.dmg}` : `${w.dmg}`;
+  const mode = w.burst ? `${w.burst} round bursts` : w.cls === 'crossbow' ? 'arcing bolts' : `${w.rpm} rpm`;
+  return `${dmg} dmg, ${mode}, ${w.mag} ${w.mag === 1 ? 'bolt' : 'rounds'}${w.scope ? ', scoped' : ''}`;
+};
+
 
 export function BuyMenu({ h, onBuy, onClose }: { h: Hud; onBuy: (i: ShopItem) => void; onClose: () => void }) {
   return (
@@ -396,6 +495,135 @@ export function BuyMenu({ h, onBuy, onClose }: { h: Hud; onBuy: (i: ShopItem) =>
 }
 
 /** Royale prompts: what to do in the air, what is at your feet, a heal under way, and the zone when you are out of it. */
+/** The kit items in the order the item bar shows them, with their keys and how they look. */
+export const KIT_ITEMS: { kind: UseKind; key: string; name: string; icon: string }[] = [
+  { kind: 'bandage', key: '6', name: 'Bandage', icon: 'M5 9h14v6H5zM9 9v6M15 9v6' },
+  { kind: 'kit', key: '7', name: 'Med kit', icon: 'M4 7h16v12H4zM9 7V5h6v2M12 10v6M9 13h6' },
+  { kind: 'drink', key: '8', name: 'Energy drink', icon: 'M8 4h8l1 3v13H7V7zM7 9h10M10 13l3-2-1 3 2-1' },
+  { kind: 'pills', key: '9', name: 'Painkillers', icon: 'M8 7h8v13H8zM7 4h10v3H7zM10 12h4M12 10v4' },
+];
+
+const countOf = (r: RoyaleHud, k: UseKind) => (k === 'bandage' ? r.bandages : k === 'kit' ? r.kits : k === 'drink' ? r.drinks : r.pills);
+
+/**
+ * Royale: what you carry to patch yourself up, always on screen: a bandage, a med kit, a drink and the painkillers,
+ * each with its count, its key (6 to 9), dimmed when you have none or it wouldn't help now, and a ring that fills while
+ * one is being used. Each can also be clicked or tapped.
+ */
+export function ItemBar({ h, onUse }: { h: Hud; onUse: (k: UseKind) => void }) {
+  const r = h.royale;
+  if (!r || !h.alive || r.drop) return null;
+  return (
+    <div className="g-ridgeline-items" role="group" aria-label="Heals and boosts">
+      {KIT_ITEMS.map((it) => {
+        const n = countOf(r, it.kind);
+        const on = r.using === it.kind;
+        return (
+          <button key={it.kind} type="button" className={on ? 'is-on' : ''} data-empty={n ? '0' : '1'} data-helps={r.helps[it.kind] ? '1' : '0'} title={`${it.name} (${it.key})`} onPointerDown={(e) => e.stopPropagation()} onClick={() => onUse(it.kind)}>
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d={it.icon} />
+            </svg>
+            <b>{n}</b>
+            <kbd>{it.key}</kbd>
+            {on && <i style={{ ['--p' as string]: `${Math.round(r.heal * 100)}%` }} />}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Royale: the kit panel (I): everything you carry, with a Use button on each heal and boost. */
+export function KitPanel({ h, onUse, onClose }: { h: Hud; onUse: (k: UseKind) => void; onClose: () => void }) {
+  const r = h.royale;
+  if (!r) return null;
+  return (
+    <div className="g-ridgeline-kitpanel" role="dialog" aria-label="Your kit" onPointerDown={(e) => e.stopPropagation()}>
+      <header>
+        <b>Your kit</b>
+        <button type="button" onClick={onClose}>
+          close <kbd>I</kbd>
+        </button>
+      </header>
+      <section>
+        <h4>Gear</h4>
+        <p>
+          helmet {r.helmet || 'none'} · vest {r.vest || 'none'} ({Math.ceil(h.armor)} armor) · backpack {r.pack || 'none'}
+        </p>
+        <p>{r.guns.length ? r.guns.join(' · ') : 'no guns yet'}</p>
+      </section>
+      <section>
+        <h4>Heals and boosts</h4>
+        <ul>
+          {KIT_ITEMS.map((it) => {
+            const n = countOf(r, it.kind);
+            return (
+              <li key={it.kind}>
+                <span>
+                  {it.name} <small>{n} of {r.caps[it.kind]}</small>
+                </span>
+                <button type="button" disabled={!n || !r.helps[it.kind] || !!r.using} onClick={() => onUse(it.kind)}>
+                  use <kbd>{it.key}</kbd>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
+        <small>a bandage heals up to {HEAL.bandage.to}, a med kit to full. drinks and painkillers fill the boost meter, which heals you slowly and, when high, speeds you up.</small>
+      </section>
+      <section>
+        <h4>Ammo and grenades</h4>
+        <ul>
+          {r.ammo.map((a) => (
+            <li key={a.kind}>
+              <span>{a.kind}</span>
+              <small>
+                {a.n} of {a.cap}
+              </small>
+            </li>
+          ))}
+          <li>
+            <span>frags</span>
+            <small>
+              {r.nades.frag} of {r.nades.fragCap}
+            </small>
+          </li>
+          <li>
+            <span>smokes</span>
+            <small>
+              {r.nades.smoke} of {r.nades.smokeCap}
+            </small>
+          </li>
+        </ul>
+      </section>
+    </div>
+  );
+}
+
+/**
+ * Every knockout you make, impossible to miss: a big red X with ELIMINATED and their name, a headshot tag, and the
+ * count when they come quickly one after another.
+ */
+export type KillPop = { key: number; name: string; head: boolean; n: number };
+export function KillConfirm({ k }: { k: KillPop | null }) {
+  if (!k) return null;
+  return (
+    <div key={k.key} className="g-ridgeline-killpop" aria-live="polite">
+      <svg viewBox="0 0 40 40" aria-hidden="true">
+        <path d="M8 8l24 24M32 8L8 32" />
+      </svg>
+      <div>
+        <b>Eliminated</b>
+        <span>
+          {k.name}
+          {k.head && <em>headshot</em>}
+        </span>
+        {k.n > 1 && <small>x{k.n}</small>}
+      </div>
+    </div>
+  );
+}
+
 export function RoyalePrompts({ h, touch }: { h: Hud; touch: boolean }) {
   const r = h.royale;
   if (!r || !h.alive) return null;
@@ -414,10 +642,37 @@ export function RoyalePrompts({ h, touch }: { h: Hud; touch: boolean }) {
         </div>
       )}
       {r.drop === 3 && <div className="g-ridgeline-prompt is-drop">steer to your spot. the canopy glides down</div>}
-      {!r.drop && r.pickup && (
+      {!r.drop && !r.car && r.drive && (
+        <div className="g-ridgeline-prompt is-car">
+          <kbd>{touch ? 'Drive' : 'F'}</kbd>
+          {r.drive}
+        </div>
+      )}
+      {!r.drop && !r.car && r.crate >= 0 && !r.pickup && (
+        <div className="g-ridgeline-prompt is-crate">
+          supply crate {r.crate > 3 ? `${Math.round(r.crate)} m` : 'here'}
+          <small>its gear lies on the ground round it: walk over it to take it ({touch ? 'Grab' : 'F'} swaps a gun)</small>
+        </div>
+      )}
+      {!r.drop && !r.car && !r.drive && r.pickup && (
         <div className="g-ridgeline-prompt">
           <kbd>{touch ? 'Grab' : 'F'}</kbd>
           {r.pickup}
+        </div>
+      )}
+      {r.car && (
+        <div className="g-ridgeline-car" data-low={r.car.hp < 0.3 ? '1' : '0'}>
+          <b>
+            {Math.round(r.car.kmh)}
+            <small>km/h</small>
+          </b>
+          <span className="g-ridgeline-carHp">
+            <i style={{ width: `${Math.max(0, r.car.hp) * 100}%` }} />
+          </span>
+          <em>
+            {r.car.name}
+            {touch ? '. Exit to get out' : r.car.driving ? '. F get out, Space handbrake' : '. F get out'}
+          </em>
         </div>
       )}
       {r.heal > 0 && r.healName && (
@@ -429,6 +684,13 @@ export function RoyalePrompts({ h, touch }: { h: Hud; touch: boolean }) {
       {r.outside > 0 && !r.drop && (
         <div className="g-ridgeline-outside">
           outside the zone, -{r.dps} health a second. {Math.ceil(r.outside)} m to safety
+        </div>
+      )}
+      {r.red && !r.drop && (
+        <div className="g-ridgeline-outside is-red">
+          {r.red.cover
+            ? `${r.red.live ? 'shells falling' : 'bombardment coming'}. under a roof: they can't reach you here`
+            : `${r.red.live ? 'shells falling' : `bombardment in ${Math.ceil(r.red.t)} s`}. get under a roof or ${Math.ceil(r.red.edge)} m out of the red`}
         </div>
       )}
     </>
@@ -481,7 +743,12 @@ export function DeathPanel({ h, touch }: { h: Hud; touch: boolean }) {
         {h.dead.w}
         {h.dead.head ? ', headshot' : ''}
       </span>
-      {h.royale ? <em>you finished #{h.royale.place} of {h.royale.total}</em> : h.mode === 'dm' ? <em>back in {Math.max(0, Math.ceil(h.dead.respawn))}</em> : h.watching ? <em>watching {h.watching}{touch ? ', tap to switch' : ', click to switch'}</em> : <em>your team is out</em>}
+      {h.royale ? (
+        <em>
+          you finished #{h.royale.place} of {h.royale.total}
+          {h.watching ? `. watching ${h.watching}${touch ? ', tap to switch' : ', click to switch'}` : ''}
+        </em>
+      ) : h.mode === 'dm' ? <em>back in {Math.max(0, Math.ceil(h.dead.respawn))}</em> : h.watching ? <em>watching {h.watching}{touch ? ', tap to switch' : ', click to switch'}</em> : <em>your team is out</em>}
     </div>
   );
 }
@@ -490,9 +757,14 @@ export function Scope({ on }: { on: boolean }) {
   if (!on) return null;
   return (
     <div className="g-ridgeline-scope" aria-hidden="true">
+      <div className="g-ridgeline-scopeMask" />
       <div className="g-ridgeline-scopeLens">
         <i className="is-h" />
         <i className="is-v" />
+        <i className="is-l" />
+        <i className="is-r" />
+        <i className="is-b" />
+        <b />
       </div>
     </div>
   );
@@ -571,6 +843,109 @@ export const Reticle = forwardRef<FastHud, { shotgun: boolean }>(function Reticl
   );
 });
 
+/**
+ * What your hits did, where they landed: a damage number that pops off the spot and rises (gold for the head, red for
+ * the kill; quick hits on the same soldier add up into one), and a health bar over whoever you last hit, so there is
+ * never a doubt whether a shot connected. Moved every frame through refs.
+ */
+export type HitInfoApi = {
+  pop(x: number, y: number, z: number, dmg: number, kind: 'hit' | 'head' | 'kill', target: number): void;
+  place(project: (x: number, y: number, z: number, out: { x: number; y: number; z: number }) => void, w: number, h: number, dt: number, actor: (id: number) => { x: number; y: number; z: number; hp: number; alive: boolean } | null): void;
+};
+type Pop = { x: number; y: number; z: number; t: number; dmg: number; kind: 'hit' | 'head' | 'kill'; target: number; el: HTMLElement };
+const POP_LIFE = 0.85;
+export const HitInfo = forwardRef<HitInfoApi, { children?: ReactNode }>(function HitInfo(_, ref) {
+  const box = useRef<HTMLDivElement>(null);
+  const bar = useRef<HTMLDivElement>(null);
+  const pops = useRef<Pop[]>([]);
+  const target = useRef({ id: -1, t: 0, shown: 100 });
+  const pt = useRef({ x: 0, y: 0, z: 0 });
+  useImperativeHandle(ref, () => ({
+    pop(x, y, z, dmg, kind, who) {
+      const root = box.current;
+      if (!root) return;
+      target.current.id = who;
+      target.current.t = 2.2;
+      if (dmg <= 0 && kind !== 'kill') return;
+      // a burst, or a shotgun's pellets: one number that counts up
+      const last = pops.current[pops.current.length - 1];
+      if (last && last.target === who && last.t > POP_LIFE - 0.35 && kind !== 'kill' && last.kind !== 'kill') {
+        last.dmg += dmg;
+        last.t = POP_LIFE;
+        if (kind === 'head') last.kind = 'head';
+        last.el.textContent = String(Math.round(last.dmg));
+        last.el.dataset.kind = last.kind;
+        last.el.style.animation = 'none';
+        void last.el.offsetWidth;
+        last.el.style.animation = '';
+        return;
+      }
+      const el = document.createElement('b');
+      el.dataset.kind = kind;
+      el.textContent = kind === 'kill' && dmg <= 0 ? 'KO' : String(Math.round(dmg));
+      root.appendChild(el);
+      pops.current.push({ x, y, z, t: POP_LIFE, dmg, kind, target: who, el });
+      if (pops.current.length > 10) pops.current.shift()?.el.remove();
+    },
+    place(project, w, h, dt, actor) {
+      const p = pt.current;
+      pops.current = pops.current.filter((q) => {
+        q.t -= dt;
+        if (q.t <= 0) {
+          q.el.remove();
+          return false;
+        }
+        project(q.x, q.y, q.z, p);
+        const age = POP_LIFE - q.t;
+        const on = p.z < 1 && p.x > -40 && p.x < w + 40 && p.y > -40 && p.y < h + 40;
+        q.el.style.display = on ? '' : 'none';
+        if (on) {
+          q.el.style.transform = `translate(${p.x + 14 + age * 18}px, ${p.y - 16 - age * 46}px) translate(-50%, -50%)`;
+          q.el.style.opacity = String(Math.min(1, q.t * 3.5));
+        }
+        return true;
+      });
+      // the bar over the one you last hit
+      const tg = target.current;
+      const el = bar.current;
+      if (!el) return;
+      tg.t -= dt;
+      const a = tg.id >= 0 && tg.t > 0 ? actor(tg.id) : null;
+      if (!a) {
+        el.style.display = 'none';
+        return;
+      }
+      project(a.x, a.y, a.z, p);
+      const on = p.z < 1 && p.x > 0 && p.x < w && p.y > 0 && p.y < h;
+      el.style.display = on ? '' : 'none';
+      if (!on) return;
+      const hp = a.alive ? Math.max(0, Math.min(100, a.hp)) : 0;
+      // the bar eases down to where the health is now, so a hit visibly takes a bite
+      tg.shown = hp > tg.shown ? hp : tg.shown + (hp - tg.shown) * Math.min(1, dt * 7);
+      el.style.transform = `translate(${p.x}px, ${p.y}px) translate(-50%, -100%)`;
+      el.style.opacity = String(Math.min(1, tg.t * 2.5));
+      (el.firstChild as HTMLElement).style.width = `${tg.shown}%`;
+      (el.lastChild as HTMLElement).style.width = `${hp}%`;
+      el.dataset.dead = a.alive ? '' : '1';
+    },
+  }));
+  useEffect(
+    () => () => {
+      for (const q of pops.current) q.el.remove();
+      pops.current = [];
+    },
+    [],
+  );
+  return (
+    <div ref={box} className="g-ridgeline-hitinfo" aria-hidden="true">
+      <div ref={bar} className="g-ridgeline-hpbar" style={{ display: 'none' }}>
+        <i />
+        <i />
+      </div>
+    </div>
+  );
+});
+
 /** The minimap: the baked map picture, the sites and the charge, your team, enemies your team can see, and you. Drawn
  * on demand. */
 export type MinimapApi = { draw(s: MapState): void };
@@ -587,6 +962,11 @@ export type MapState = {
   /** Royale: the zone now and next, and the transport's line with where it is. */
   zone?: { x: number; z: number; r: number; nx: number; nz: number; nr: number } | null;
   plane?: { ax: number; az: number; bx: number; bz: number; x: number; z: number } | null;
+  /** Royale: a bombardment marked (shells falling once live), and supply crates with loot left (falling or down). */
+  red?: { x: number; z: number; r: number; live: boolean } | null;
+  drops?: { x: number; z: number; landed: boolean }[];
+  /** Royale: the vehicles (x, z, heading, a wreck or not, a bike or not); the same list every frame, refilled. */
+  cars?: { x: number; z: number; yaw: number; wreck: boolean; bike: boolean }[];
 };
 export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(function Minimap({ world, big }, ref) {
   const cv = useRef<HTMLCanvasElement>(null);
@@ -636,6 +1016,18 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
         g.arc(toX(z.x), toY(z.z), Math.max(1, z.r * scale), 0, Math.PI * 2);
         g.stroke();
       }
+      if (s.red) {
+        // the bombardment: a red disc, throbbing once the shells fall
+        const r = s.red;
+        const live = r.live ? 0.5 + 0.5 * Math.sin(performance.now() / 140) : 0;
+        g.beginPath();
+        g.arc(toX(r.x), toY(r.z), Math.max(2, r.r * scale), 0, Math.PI * 2);
+        g.fillStyle = `rgba(220,40,30,${0.28 + live * 0.18})`;
+        g.fill();
+        g.lineWidth = big ? 2 : 1.5;
+        g.strokeStyle = 'rgba(255,70,50,0.95)';
+        g.stroke();
+      }
       if (s.plane) {
         const p = s.plane;
         g.setLineDash([6, 5]);
@@ -650,6 +1042,22 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
         g.arc(toX(p.x), toY(p.z), big ? 6 : 4, 0, Math.PI * 2);
         g.fillStyle = '#ffd56a';
         g.fill();
+      }
+      // the big map names the places: each site's under its letter, and the others where they are
+      if (big && s.sites && !s.zone) {
+        g.font = '600 10px system-ui, sans-serif';
+        g.textAlign = 'center';
+        g.textBaseline = 'middle';
+        g.lineWidth = 3;
+        g.strokeStyle = 'rgba(0,0,0,0.55)';
+        g.fillStyle = 'rgba(255,255,255,0.8)';
+        for (const t of world.towns) {
+          if (Math.abs(t.x) > world.arena || Math.abs(t.z) > world.arena) continue;
+          const px = toX(t.x);
+          const py = toY(t.z) + (t.site >= 0 ? 15 : 0);
+          g.strokeText(t.name, px, py);
+          g.fillText(t.name, px, py);
+        }
       }
       if (s.sites) world.sites.forEach((site, i) => {
         const on = i === s.plantedOn;
@@ -682,6 +1090,53 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
         g.lineWidth = 1;
         g.stroke();
       };
+      if (s.drops)
+        for (const d of s.drops) {
+          // a supply crate: a small blue box (hollow while still coming down), held to the minimap's rim when far
+          let px = toX(d.x);
+          let py = toY(d.z);
+          const half = big ? 5 : 4;
+          if (!big) {
+            const ox = px - size / 2;
+            const oy = py - size / 2;
+            const ol = Math.hypot(ox, oy);
+            const rim = size / 2 - half - 2;
+            if (ol > rim) {
+              px = size / 2 + (ox / ol) * rim;
+              py = size / 2 + (oy / ol) * rim;
+            }
+          }
+          g.lineWidth = 2;
+          g.strokeStyle = 'rgba(0,0,0,0.8)';
+          g.strokeRect(px - half, py - half, half * 2, half * 2);
+          if (d.landed) {
+            g.fillStyle = '#3fb6ff';
+            g.fillRect(px - half, py - half, half * 2, half * 2);
+          } else {
+            g.lineWidth = 1.5;
+            g.strokeStyle = '#3fb6ff';
+            g.strokeRect(px - half + 1, py - half + 1, half * 2 - 2, half * 2 - 2);
+          }
+        }
+      // vehicles: a small block along the way each one faces (grey once burnt out)
+      if (s.cars)
+        for (const c of s.cars) {
+          const px = toX(c.x);
+          const py = toY(c.z);
+          if (px < -8 || py < -8 || px > size + 8 || py > size + 8) continue;
+          // (true to size where the map is close enough, never smaller than a mark you can see)
+          const l = Math.max(c.bike ? 4 : 7, (c.bike ? 2.2 : 4.4) * scale);
+          const wd = Math.max(c.bike ? 2.5 : 4, (c.bike ? 0.9 : 2) * scale);
+          g.save();
+          g.translate(px, py);
+          g.rotate(-c.yaw);
+          g.fillStyle = c.wreck ? 'rgba(90,90,90,0.8)' : '#e8d36a';
+          g.strokeStyle = 'rgba(0,0,0,0.75)';
+          g.lineWidth = 1;
+          g.fillRect(-wd / 2, -l / 2, wd, l);
+          g.strokeRect(-wd / 2, -l / 2, wd, l);
+          g.restore();
+        }
       for (const p of s.mates) dot(p.x, p.z, '#4fb4ff', big ? 4 : 3.5);
       for (const p of s.foes) dot(p.x, p.z, '#ff5a3c', big ? 4 : 3.5);
       if (s.charge) {
@@ -726,8 +1181,9 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
   return <canvas ref={cv} width={big ? 360 : 168} height={big ? 360 : 168} className={big ? 'g-ridgeline-bigmap' : 'g-ridgeline-minimap'} />;
 });
 
-/** Screen markers: the sites, the charge and your teammates' names, placed every frame through refs. */
-export type MarkersApi = { place(list: { key: string; x: number; y: number; on: boolean; text: string; sub?: string; kind: 'site' | 'mate' | 'charge' }[]): void };
+/** Screen markers: the sites, the charge, your teammates' names and (royale) supply crates, placed every frame through
+ * refs. */
+export type MarkersApi = { place(list: { key: string; x: number; y: number; on: boolean; text: string; sub?: string; kind: 'site' | 'mate' | 'charge' | 'supply' }[]): void };
 export const Markers = forwardRef<MarkersApi, { children?: ReactNode }>(function Markers(_, ref) {
   const box = useRef<HTMLDivElement>(null);
   const els = useRef(new Map<string, HTMLDivElement>());

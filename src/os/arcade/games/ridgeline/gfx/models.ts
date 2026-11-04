@@ -2,8 +2,8 @@
 // material, the file's node transforms and quantization folded in), drawn instanced with materials lit like the rest of
 // the world.
 import type { Assets, AssetKey } from '../assets.ts';
-import type { ModelKey, World } from '../world.ts';
-import { patch, type Shared, type T, type Three } from './common.ts';
+import { CRATE_COLOR, CRATE_SIZE, type ModelKey, type Piece, type World } from '../world.ts';
+import { lin, patch, type Shared, type T, type Three } from './common.ts';
 
 export type Part = { geo: T.BufferGeometry; mat: T.MeshStandardMaterial };
 export type Model = { parts: Part[]; min: T.Vector3; max: T.Vector3 };
@@ -63,14 +63,16 @@ export function worldMaterial(THREE: Three, mat: T.MeshStandardMaterial, shared:
  * Instanced copies of a model at the given transforms: one draw call per part. Returns the group and a disposer for
  * what it created (the loaded textures stay, they belong to the shared assets).
  */
-export function instanced(THREE: Three, model: Model, at: T.Matrix4[], shared: Shared, shadows: boolean) {
+export function instanced(THREE: Three, model: Model, at: T.Matrix4[], shared: Shared, shadows: boolean, tints?: (T.Color | null)[]) {
   const group = new THREE.Group();
   const made: { geo: T.BufferGeometry; mat: T.Material }[] = [];
   if (!at.length) return { group, dispose() {} };
+  const white = new THREE.Color(1, 1, 1);
   for (const p of model.parts) {
     const mat = worldMaterial(THREE, p.mat, shared);
     const mesh = new THREE.InstancedMesh(p.geo, mat, at.length);
     at.forEach((mm, i) => mesh.setMatrixAt(i, mm));
+    if (tints) tints.forEach((c, i) => mesh.setColorAt(i, c ?? white));
     mesh.instanceMatrix.needsUpdate = true;
     mesh.computeBoundingSphere();
     mesh.castShadow = shadows;
@@ -90,21 +92,73 @@ export function instanced(THREE: Three, model: Model, at: T.Matrix4[], shared: S
 }
 
 /** Small things that never cast a shadow (they'd cost a shadow pass draw each for a few pixels). */
-const SMALL: ModelKey[] = ['jerry', 'gas', 'propane', 'helmet', 'shield', 'cup', 'pan'];
+const SMALL: ModelKey[] = ['jerry', 'gas', 'propane', 'helmet', 'shield', 'cup', 'pan', 'tyre', 'toolbox', 'ammo-crate', 'stump', 'stump2', 'log'];
+
+/** A box of the world's crates (cover, and the stacks inside barns). */
+export const isCrate = (p: Piece) =>
+  p.part === 'wood' && p.color === CRATE_COLOR && Math.abs(p.x1 - p.x0 - CRATE_SIZE) < 0.02 && Math.abs(p.z1 - p.z0 - CRATE_SIZE) < 0.02 && Math.abs(p.y1 - p.y0 - CRATE_SIZE) < 0.02;
+
+/** Which crate pieces the real crate stacks draw instead of the buildings (none when neither stack loaded). */
+export function crateSkip(assets: Assets): ((p: Piece) => boolean) | undefined {
+  return assets['crate-wood'] || assets['crate-mil'] ? isCrate : undefined;
+}
+
+/** The barrel photo's mean color (the drums are painted over it). */
+const BARREL = 0x45576c;
+
+/** A stable hash of a point, 0 to 1, to vary the look of things placed there. */
+const hash = (x: number, z: number) => {
+  const s = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453;
+  return s - Math.floor(s);
+};
 
 /** Every model the world placed (cover and clutter), instanced per kind. */
 export function placedModels(THREE: Three, w: World, shared: Shared, shadows: boolean, assets: Assets) {
   const group = new THREE.Group();
-  const byKey = new Map<ModelKey, T.Matrix4[]>();
+  const byKey = new Map<ModelKey, { at: T.Matrix4[]; tint: (T.Color | null)[]; lie: boolean[] }>();
   const yAxis = new THREE.Vector3(0, 1, 0);
+  let tinted = false;
   for (const p of w.models) {
     let list = byKey.get(p.key);
-    if (!list) byKey.set(p.key, (list = []));
-    list.push(new THREE.Matrix4().makeRotationAxis(yAxis, p.yaw).setPosition(p.x, p.y, p.z));
+    if (!list) byKey.set(p.key, (list = { at: [], tint: [], lie: [] }));
+    list.at.push(new THREE.Matrix4().makeRotationAxis(yAxis, p.yaw).setPosition(p.x, p.y, p.z));
+    // (a painted drum: its paint over the model's own blue as the ratio of the two, so the photo's wear still shows)
+    const [r, g, b] = lin(p.tint ?? 0);
+    const [br, bg, bb] = lin(BARREL);
+    list.tint.push(p.tint === undefined ? null : new THREE.Color((r / br) * 1.3, (g / bg) * 1.3, (b / bb) * 1.3));
+    list.lie.push(!!p.lie);
+    if (p.tint !== undefined) tinted = true;
   }
-  for (const [key, at] of byKey) {
+  for (const [key, list] of byKey) {
     const model = modelOf(THREE, assets, key);
-    if (model) group.add(instanced(THREE, model, at, shared, shadows && !SMALL.includes(key)).group);
+    if (!model) continue;
+    // one lying on its side turns about its own across axis, its middle at its radius over the ground
+    list.lie.forEach((lie, i) => {
+      if (!lie) return;
+      const r = Math.max(model.max.x, model.max.z);
+      const h = model.max.y - model.min.y;
+      const m = list.at[i];
+      const p = new THREE.Vector3().setFromMatrixPosition(m);
+      const yaw = new THREE.Matrix4().extractRotation(m);
+      m.copy(new THREE.Matrix4().makeTranslation(p.x, p.y + r, p.z).multiply(yaw).multiply(new THREE.Matrix4().makeRotationZ(Math.PI / 2)).multiply(new THREE.Matrix4().makeTranslation(0, -model.min.y - h / 2, 0)));
+    });
+    group.add(instanced(THREE, model, list.at, shared, shadows && !SMALL.includes(key), tinted && list.tint.some((c) => c) ? list.tint : undefined).group);
+  }
+  // each crate box is a stack of real crates, long wooden ones or closed ammo crates, turned a random quarter
+  const stacks = (['crate-wood', 'crate-mil'] as const).filter((k) => assets[k]);
+  if (stacks.length) {
+    const at: T.Matrix4[][] = stacks.map(() => []);
+    for (const p of w.pieces) {
+      if (!isCrate(p)) continue;
+      const x = (p.x0 + p.x1) / 2;
+      const z = (p.z0 + p.z1) / 2;
+      const h = hash(x, z);
+      at[Math.floor(h * stacks.length) % stacks.length].push(new THREE.Matrix4().makeRotationAxis(yAxis, Math.floor(h * 97) * (Math.PI / 2)).setPosition(x, p.y0, z));
+    }
+    stacks.forEach((k, i) => {
+      const model = modelOf(THREE, assets, k);
+      if (model) group.add(instanced(THREE, model, at[i], shared, shadows).group);
+    });
   }
   // cover whose model didn't load still shows where its collider is
   const missing = w.models.filter((p) => p.size && !assets[p.key]);

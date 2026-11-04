@@ -1,7 +1,8 @@
 // The guns and gear: damage, fire rate, accuracy, recoil and bullet speed, plus the shop prices. Angles are degrees.
 
-export type WeaponId = 'wren' | 'bulwark' | 'hornet' | 'mauler' | 'kestrel' | 'lancer' | 'longbow';
-export type WeaponClass = 'pistol' | 'smg' | 'shotgun' | 'rifle' | 'dmr' | 'sniper';
+// (new guns go on the end: online play sends a gun as its place in this list)
+export type WeaponId = 'wren' | 'bulwark' | 'hornet' | 'mauler' | 'kestrel' | 'lancer' | 'longbow' | 'talon' | 'rampart' | 'marshal' | 'wasp' | 'thresher' | 'arbalest';
+export type WeaponClass = 'pistol' | 'smg' | 'shotgun' | 'rifle' | 'dmr' | 'sniper' | 'lmg' | 'crossbow';
 
 export type WeaponDef = {
   id: WeaponId;
@@ -18,6 +19,9 @@ export type WeaponDef = {
   pellets: number;
   rpm: number;
   auto: boolean;
+  /** Burst fire: rounds one pull of the trigger fires (at rpm), and the pause after a burst, seconds (0: no burst). */
+  burst: number;
+  burstGap: number;
   mag: number;
   /** Spare ammo you buy it with. */
   reserve: number;
@@ -58,6 +62,8 @@ const W = (d: Partial<WeaponDef> & Pick<WeaponDef, 'id' | 'name' | 'cls' | 'pric
   falloff: [30, 80, 0.8],
   pellets: 1,
   auto: false,
+  burst: 0,
+  burstGap: 0,
   reserve: d.mag * 3,
   reload: 2.2,
   base: 0.25,
@@ -85,13 +91,30 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   kestrel: W({ id: 'kestrel', name: 'Kestrel', cls: 'rifle', price: 2900, dmg: 38, head: 4, rpm: 600, auto: true, mag: 25, reserve: 75, speed: 1500, reload: 2.4, base: 0.18, move: 3, air: 9, ads: 0.55, bloom: 0.26, bloomMax: 3.2, falloff: [60, 160, 0.86], kick: { up: 0.52, grow: 0.06, max: 0.9, side: 0.5, rate: 0.55, from: 7 }, weight: 0.96, zoom: 1.6, adsTime: 0.2 }),
   lancer: W({ id: 'lancer', name: 'Lancer', cls: 'dmr', price: 2400, dmg: 62, head: 2.8, rpm: 250, mag: 12, reserve: 36, speed: 1700, reload: 2.5, base: 0.1, move: 3.8, air: 10, ads: 0.35, bloom: 1.1, bloomMax: 3, falloff: [90, 250, 0.9], kick: { up: 2.1, grow: 0, max: 2.1, side: 0.35, rate: 1, from: 1 }, weight: 0.95, zoom: 3.5, adsTime: 0.24, scope: true }),
   longbow: W({ id: 'longbow', name: 'Longbow', cls: 'sniper', price: 4600, dmg: 150, head: 2, leg: 0.9, rpm: 42, mag: 5, reserve: 15, speed: 1900, reload: 3.4, base: 3.5, move: 7, air: 12, ads: 0.006, bloom: 0, bloomMax: 0, falloff: [400, 600, 1], kick: { up: 6, grow: 0, max: 6, side: 0.6, rate: 1, from: 1 }, weight: 0.86, zoom: 6, adsTime: 0.3, scope: true, equip: 0.8 }),
+  // a three round burst rifle: tight and accurate per burst, a one burst headshot, less damage a second than the Kestrel
+  talon: W({ id: 'talon', name: 'Talon', cls: 'rifle', price: 2500, dmg: 34, head: 4, rpm: 900, burst: 3, burstGap: 0.24, mag: 24, reserve: 72, speed: 1500, reload: 2.3, base: 0.14, move: 3, air: 9, ads: 0.5, bloom: 0.3, bloomMax: 2.2, falloff: [60, 170, 0.85], kick: { up: 0.38, grow: 0.04, max: 0.7, side: 0.25, rate: 0.9, from: 3 }, weight: 0.97, zoom: 1.6, adsTime: 0.2 }),
+  // a light machine gun: a 75 round belt box and a long reload, heavy to carry, steady once the spray settles
+  rampart: W({ id: 'rampart', name: 'Rampart', cls: 'lmg', price: 3600, dmg: 32, head: 3.2, rpm: 720, auto: true, mag: 75, reserve: 150, speed: 1450, reload: 4.6, base: 0.34, move: 5, air: 10, ads: 0.5, bloom: 0.16, bloomMax: 3.4, falloff: [50, 140, 0.82], kick: { up: 0.44, grow: 0.03, max: 0.8, side: 0.6, rate: 0.4, from: 10 }, weight: 0.86, zoom: 1.45, adsTime: 0.32, equip: 1, armorPen: 0.9 }),
+  // a six shot revolver: two body shots, a headshot through a helmet, and a big kick
+  marshal: W({ id: 'marshal', name: 'Marshal', cls: 'pistol', price: 1100, dmg: 68, head: 2.6, rpm: 110, mag: 6, reserve: 24, speed: 900, reload: 2.8, base: 0.18, move: 2.4, air: 7, bloom: 2.2, bloomMax: 4.5, falloff: [30, 70, 0.82], kick: { up: 4.2, grow: 0, max: 4.2, side: 0.6, rate: 1, from: 1 }, weight: 1.04, equip: 0.6, zoom: 1.2, armorPen: 0.85 }),
+  // a fast little SMG: shreds up close, falls off quickly with range
+  wasp: W({ id: 'wasp', name: 'Wasp', cls: 'smg', price: 1300, dmg: 19, head: 2.4, rpm: 1100, auto: true, mag: 35, reserve: 105, speed: 950, reload: 1.8, base: 0.85, move: 0.7, air: 5, ads: 0.72, bloom: 0.2, bloomMax: 3.2, falloff: [10, 35, 0.65], kick: { up: 0.3, grow: 0.025, max: 0.62, side: 0.55, rate: 1.3, from: 3 }, weight: 1.06, zoom: 1.15, equip: 0.5 }),
+  // an auto shotgun off a box magazine: lighter pellets than the Mauler, but as fast as you pull
+  thresher: W({ id: 'thresher', name: 'Thresher', cls: 'shotgun', price: 2600, dmg: 11, head: 2, pellets: 8, rpm: 220, auto: true, mag: 8, reserve: 24, speed: 700, reload: 3, base: 0.5, move: 1.2, air: 3, ads: 0.85, bloom: 0.6, bloomMax: 1.6, pelletSpread: 4.2, falloff: [6, 18, 0.25], kick: { up: 3.2, grow: 0, max: 3.2, side: 0.9, rate: 1, from: 1 }, weight: 0.97, zoom: 1.1 }),
+  // a crossbow: one slow, heavy bolt that arcs well over range, no falloff, punches through armor; reloads after each shot
+  arbalest: W({ id: 'arbalest', name: 'Arbalest', cls: 'crossbow', price: 2200, dmg: 105, head: 2.5, leg: 0.8, rpm: 200, mag: 1, reserve: 12, speed: 95, reload: 1.9, base: 0.12, move: 3, air: 8, ads: 0.4, bloom: 0, bloomMax: 0, falloff: [999, 1000, 1], kick: { up: 2, grow: 0, max: 2, side: 0.3, rate: 1, from: 1 }, weight: 0.97, zoom: 2.2, adsTime: 0.25, equip: 0.7, armorPen: 0.6 }),
 };
 
 export const WEAPON_IDS = Object.keys(WEAPONS) as WeaponId[];
 export const PRIMARIES = WEAPON_IDS.filter((id) => WEAPONS[id].slot === 'primary');
 
 export const ARMOR = { light: { amount: 25, price: 400 }, heavy: { amount: 50, price: 1000 } } as const;
-export const NADES = { frag: { price: 300, max: 1 }, smoke: { price: 200, max: 2 }, flash: { price: 250, max: 2 } } as const;
+export const NADES = { frag: { price: 300, max: 1 }, smoke: { price: 200, max: 2 }, flash: { price: 250, max: 2 }, fire: { price: 500, max: 1 }, impact: { price: 350, max: 1 }, decoy: { price: 150, max: 1 } } as const;
+
+/** The ballistic shield (the Pavise): what it takes before it breaks, its price, and while raised how fast you move,
+ * how much wider the sidearm in your other hand shoots, and its size (meters: the face's half width, its height, how
+ * far in front of you it is held, and how high its bottom edge is standing and crouched). */
+export const PAVISE = { hp: 450, price: 1100, slow: 0.74, spread: 0.8, half: 0.31, tall: 1.4, ahead: 0.42, low: [0.32, 0.08] } as const;
 
 /** Share of each hit armor takes while it lasts. */
 export const ARMOR_SHARE = 0.66;

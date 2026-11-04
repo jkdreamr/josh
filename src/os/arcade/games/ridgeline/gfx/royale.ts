@@ -1,15 +1,18 @@
 // What a royale adds to the scene: the transport flying its line, a canopy over everyone gliding in, the zone's wall of
-// haze, and the loot lying around (drawn only near you, rebuilt when it changes or you move on).
+// haze, supply crates coming down under their parachutes, a red wall around a bombardment, and the loot lying around
+// (guns, ammo, armor, backpacks, heals, boosts and attachments, each with a look of its own: drawn only near you,
+// rebuilt when it changes or you move on).
 import type { Assets } from '../assets.ts';
 import type { Match } from '../match.ts';
-import { planeAt, type AmmoKind, type Item } from '../royale.ts';
-import type { WeaponId } from '../weapons.ts';
+import { SUPPLY_MAX, planeAt, type AmmoKind, type Item } from '../royale.ts';
+import { floorAt } from '../terrain.ts';
+import { WEAPON_IDS } from '../weapons.ts';
 import { DOUBLE, canvas, lin, patch, roundBox, type Shared, type T, type Three } from './common.ts';
 import { gunLiteGeometry, gunModel } from './guns.ts';
 import { modelOf, worldMaterial, type Part } from './models.ts';
 
 /** Merges geometries (all non indexed) into one with vertex colors. */
-function merged(THREE: Three, parts: [T.BufferGeometry, number][]) {
+export function merged(THREE: Three, parts: [T.BufferGeometry, number][]) {
   const flat = parts.map(([g, c]) => {
     const f = g.index ? g.toNonIndexed() : g;
     if (!f.attributes.normal) f.computeVertexNormals();
@@ -96,7 +99,153 @@ function canopyGeometry(THREE: Three) {
   return merged(THREE, parts);
 }
 
-const CANOPY_COLORS = [0x4f5a3a, 0xc8b28a, 0xd06a2c, 0xe8e6de, 0x3d6a8f, 0x7a2a2a, 0x2f3a2f];
+/** A supply crate, about 1.3 m square and a meter tall, its bottom at the origin: blue panels in a dark steel frame
+ * with a yellow band round it. */
+function crateGeometry(THREE: Three) {
+  const parts: [T.BufferGeometry, number][] = [];
+  const add = (g: T.BufferGeometry, c: number, x: number, y: number, z: number) => {
+    g.translate(x, y, z);
+    parts.push([g, c]);
+  };
+  const frame = 0x262c31;
+  add(roundBox(THREE, 1.24, 0.9, 1.24, 0.06, 2), 0x2b6ca3, 0, 0.47, 0);
+  add(new THREE.BoxGeometry(1.28, 0.12, 1.28), 0xd9a92c, 0, 0.5, 0);
+  for (const sx of [-1, 1])
+    for (const sz of [-1, 1]) add(new THREE.BoxGeometry(0.1, 0.98, 0.1), frame, sx * 0.62, 0.49, sz * 0.62);
+  for (const y of [0.04, 0.94]) {
+    for (const s of [-1, 1]) {
+      add(new THREE.BoxGeometry(1.32, 0.08, 0.08), frame, 0, y, s * 0.62);
+      add(new THREE.BoxGeometry(0.08, 0.08, 1.32), frame, s * 0.62, y, 0);
+    }
+  }
+  return merged(THREE, parts);
+}
+
+/** A round cargo parachute in orange and white gores, about 7 m across, with lines down to the corners of the crate
+ * hanging under it (whose top is 1 m above the origin). */
+function chuteGeometry(THREE: Three) {
+  const parts: [T.BufferGeometry, number][] = [];
+  const R = 3.5;
+  const theta = Math.PI / 2.5;
+  const lift = 8;
+  const squash = 0.55;
+  const gores = 12;
+  for (let k = 0; k < gores; k++) {
+    const g = new THREE.SphereGeometry(R, 3, 7, (k / gores) * Math.PI * 2, (Math.PI * 2) / gores, 0, theta);
+    g.scale(1, squash, 1);
+    g.translate(0, lift, 0);
+    parts.push([g, k % 2 ? 0xeeeae0 : 0xe0582a]);
+  }
+  const rimR = R * Math.sin(theta);
+  const rimY = lift + R * Math.cos(theta) * squash;
+  for (let k = 0; k < 8; k++) {
+    const a = (k / 8) * Math.PI * 2 + Math.PI / 8;
+    const top = new THREE.Vector3(Math.cos(a) * rimR, rimY, Math.sin(a) * rimR);
+    const bottom = new THREE.Vector3(Math.sign(Math.cos(a)) * 0.6, 1, Math.sign(Math.sin(a)) * 0.6);
+    const len = top.distanceTo(bottom);
+    const line = new THREE.BoxGeometry(0.03, 0.03, len);
+    line.translate(0, 0, len / 2);
+    line.lookAt(new THREE.Vector3().subVectors(top, bottom));
+    line.translate(bottom.x, bottom.y, bottom.z);
+    parts.push([line, 0x2a2a28]);
+  }
+  return merged(THREE, parts);
+}
+
+/** Builds a small loot model from parts: [geometry, color, x, y, z, rotation x, y, z]. */
+function lootGeometry(THREE: Three, list: [T.BufferGeometry, number, number, number, number, number?, number?, number?][]) {
+  const parts: [T.BufferGeometry, number][] = [];
+  for (const [g, c, x, y, z, rx = 0, ry = 0, rz = 0] of list) {
+    if (rx) g.rotateX(rx);
+    if (ry) g.rotateY(ry);
+    if (rz) g.rotateZ(rz);
+    g.translate(x, y, z);
+    parts.push([g, c]);
+  }
+  return merged(THREE, parts);
+}
+
+/** A backpack lying on its back, its bottom at the origin: a rounded pack with a top flap, a front pocket and two
+ * dark straps across it. The body is white so each level's color tints it. */
+function packGeometry(THREE: Three) {
+  const strap = 0x3a3a36;
+  return lootGeometry(THREE, [
+    [roundBox(THREE, 0.38, 0.2, 0.52, 0.35, 2), 0xffffff, 0, 0.1, 0],
+    [roundBox(THREE, 0.4, 0.07, 0.16, 0.4, 2), 0xd8d8d8, 0, 0.19, -0.2],
+    [roundBox(THREE, 0.26, 0.08, 0.2, 0.35, 2), 0xe6e6e6, 0, 0.22, 0.09],
+    [new THREE.BoxGeometry(0.035, 0.012, 0.5), strap, -0.09, 0.205, 0],
+    [new THREE.BoxGeometry(0.035, 0.012, 0.5), strap, 0.09, 0.205, 0],
+    [new THREE.TorusGeometry(0.05, 0.012, 5, 10, Math.PI), strap, 0, 0.12, -0.27, 0, Math.PI / 2],
+  ]);
+}
+
+/** An energy drink can standing up: a bright green body, a dark band and a silver top. */
+function drinkGeometry(THREE: Three) {
+  return lootGeometry(THREE, [
+    [new THREE.CylinderGeometry(0.04, 0.04, 0.15, 14), 0x7ddc2e, 0, 0.075, 0],
+    [new THREE.CylinderGeometry(0.0405, 0.0405, 0.04, 14), 0x1d2a18, 0, 0.08, 0],
+    [new THREE.CylinderGeometry(0.034, 0.04, 0.012, 14), 0xc9cccf, 0, 0.156, 0],
+  ]);
+}
+
+/** A bottle of painkillers standing up: amber with a white cap and label. */
+function pillsGeometry(THREE: Three) {
+  return lootGeometry(THREE, [
+    [new THREE.CylinderGeometry(0.038, 0.038, 0.1, 14), 0xc8741e, 0, 0.05, 0],
+    [new THREE.CylinderGeometry(0.0385, 0.0385, 0.05, 14), 0xf0ede4, 0, 0.05, 0],
+    [new THREE.CylinderGeometry(0.042, 0.042, 0.035, 14), 0xf6f6f2, 0, 0.117, 0],
+  ]);
+}
+
+/** A red dot sight on its mount: a squat dark housing round a lens with a red glint, about twice true size so it can
+ * be seen on the ground. */
+function dotGeometry(THREE: Three) {
+  const body = 0x2a2d30;
+  return lootGeometry(THREE, [
+    [new THREE.BoxGeometry(0.1, 0.03, 0.16), body, 0, 0.015, 0],
+    [new THREE.CylinderGeometry(0.05, 0.05, 0.13, 14, 1, true), body, 0, 0.08, 0, Math.PI / 2],
+    [new THREE.CircleGeometry(0.046, 14), 0xd8302a, 0, 0.08, 0.06],
+    [new THREE.CircleGeometry(0.046, 14), 0x6a1a18, 0, 0.08, -0.06, 0, Math.PI],
+    [new THREE.BoxGeometry(0.03, 0.035, 0.03), body, 0.06, 0.09, 0],
+  ]);
+}
+
+/** A 4x scope: a long black tube with bells at both ends and a turret on top, on two rings. */
+function scopeGeometry(THREE: Three) {
+  const black = 0x1b1d1f;
+  return lootGeometry(THREE, [
+    [new THREE.CylinderGeometry(0.03, 0.03, 0.3, 12), black, 0, 0.075, 0, Math.PI / 2],
+    [new THREE.CylinderGeometry(0.048, 0.03, 0.09, 12), black, 0, 0.075, 0.18, Math.PI / 2],
+    [new THREE.CylinderGeometry(0.03, 0.04, 0.06, 12), black, 0, 0.075, -0.17, Math.PI / 2],
+    [new THREE.CircleGeometry(0.044, 12), 0x3c6e8a, 0, 0.075, 0.226],
+    [new THREE.CylinderGeometry(0.02, 0.02, 0.05, 10), black, 0, 0.115, 0],
+    [new THREE.BoxGeometry(0.05, 0.045, 0.03), 0x3a3d40, 0, 0.022, 0.08],
+    [new THREE.BoxGeometry(0.05, 0.045, 0.03), 0x3a3d40, 0, 0.022, -0.08],
+  ]);
+}
+
+/** An extended magazine lying on its side: long and curved (three segments), with a yellow witness band. */
+function extGeometry(THREE: Three) {
+  const steel = 0x2e3236;
+  return lootGeometry(THREE, [
+    [new THREE.BoxGeometry(0.11, 0.04, 0.12), steel, 0, 0.02, -0.11],
+    [new THREE.BoxGeometry(0.11, 0.04, 0.12), steel, 0.012, 0.02, 0.0, 0, -0.12],
+    [new THREE.BoxGeometry(0.11, 0.04, 0.12), steel, 0.035, 0.02, 0.11, 0, -0.24],
+    [new THREE.BoxGeometry(0.115, 0.042, 0.025), 0xe2b43a, 0.012, 0.021, 0.0, 0, -0.12],
+    [new THREE.BoxGeometry(0.13, 0.05, 0.03), 0x1a1c1e, 0.05, 0.025, 0.18, 0, -0.24],
+  ]);
+}
+
+/** A compensator lying down: a short ported muzzle device, its slots cut dark across the top. */
+function compGeometry(THREE: Three) {
+  const steel = 0x5a5f63;
+  const list: [T.BufferGeometry, number, number, number, number, number?, number?, number?][] = [[new THREE.CylinderGeometry(0.035, 0.035, 0.16, 12), steel, 0, 0.035, 0, Math.PI / 2]];
+  for (const z of [-0.04, 0, 0.04]) list.push([new THREE.BoxGeometry(0.05, 0.012, 0.016), 0x111213, 0, 0.068, z]);
+  list.push([new THREE.CylinderGeometry(0.04, 0.04, 0.03, 12), 0x3a3e41, 0, 0.035, -0.08, Math.PI / 2]);
+  return lootGeometry(THREE, list);
+}
+
+const CANOPY_COLORS =[0x4f5a3a, 0xc8b28a, 0xd06a2c, 0xe8e6de, 0x3d6a8f, 0x7a2a2a, 0x2f3a2f];
 
 const ZONE_VERT = /* glsl */ `
 varying vec3 vWp;
@@ -110,6 +259,7 @@ void main() {
 const ZONE_FRAG = /* glsl */ `
 uniform float uTime;
 uniform vec3 uColor;
+uniform float uFade;
 varying vec3 vWp;
 varying float vY;
 void main() {
@@ -119,7 +269,7 @@ void main() {
   float a = low * low * 0.55 * bands + low * 0.12 + 0.06;
   float d = distance(cameraPosition.xz, vWp.xz);
   a *= 0.6 + 0.4 * smoothstep(3.0, 50.0, d);
-  gl_FragColor = vec4(uColor, min(a, 0.8));
+  gl_FragColor = vec4(uColor, min(a, 0.8) * uFade);
 }`;
 
 export type Royale = { group: T.Group; update(m: Match, camera: T.Camera, time: number): void; dispose(): void };
@@ -161,7 +311,7 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
     new THREE.ShaderMaterial({
       vertexShader: ZONE_VERT,
       fragmentShader: ZONE_FRAG,
-      uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(...lin(0xd86a3a, 1.4)) } },
+      uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(...lin(0xd86a3a, 1.4)) }, uFade: { value: 1 } },
       transparent: true,
       depthWrite: false,
       side: DOUBLE,
@@ -173,6 +323,42 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
   zone.frustumCulled = false;
   zone.renderOrder = 3;
   group.add(zone);
+
+  // a bombardment: a lower wall of red haze round its circle, faint while it is only marked
+  const redMat = keep(
+    new THREE.ShaderMaterial({
+      vertexShader: ZONE_VERT,
+      fragmentShader: ZONE_FRAG,
+      uniforms: { uTime: { value: 0 }, uColor: { value: new THREE.Color(...lin(0xe0281e, 1.6)) }, uFade: { value: 0.5 } },
+      transparent: true,
+      depthWrite: false,
+      side: DOUBLE,
+    }),
+  );
+  const redWall = new THREE.Mesh(zoneGeo, redMat);
+  redWall.frustumCulled = false;
+  redWall.renderOrder = 3;
+  redWall.visible = false;
+  group.add(redWall);
+
+  // supply crates, each under its parachute while it comes down (the canopy folds away once it lands)
+  const crateMat = keep(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.35 }));
+  patch(crateMat, shared, { key: 'dz-crate' });
+  const chuteMat = keep(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.85, side: DOUBLE }));
+  patch(chuteMat, shared, { key: 'dz-chute', noBaked: true });
+  const crateGeo = keep(crateGeometry(THREE));
+  const chuteGeo = keep(chuteGeometry(THREE));
+  const crates = Array.from({ length: SUPPLY_MAX }, () => {
+    const crate = new THREE.Mesh(crateGeo, crateMat);
+    crate.castShadow = shadows;
+    crate.receiveShadow = true;
+    crate.visible = false;
+    const chute = new THREE.Mesh(chuteGeo, chuteMat);
+    chute.castShadow = shadows;
+    chute.visible = false;
+    group.add(crate, chute);
+    return { crate, chute };
+  });
 
   // loot: a few instanced meshes, filled with what lies within reach of the camera
   const R = 60;
@@ -195,7 +381,7 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
   const kitMat = keep(new THREE.MeshStandardMaterial({ map: kitTex, roughness: 0.6 }));
   patch(kitMat, shared, { key: 'dz-loot-kit' });
   const dummy = new THREE.Object3D();
-  type Bucket = { mesh: T.InstancedMesh; match: (it: Item) => boolean; place: (it: Item, o: T.Object3D) => void; color?: (it: Item) => number };
+  type Bucket = { mesh: T.InstancedMesh; match: (it: Item) => boolean; place: (it: Item, o: T.Object3D) => void; color?: (it: Item) => number | T.Color };
   const buckets: Bucket[] = [];
   const bucket = (geo: T.BufferGeometry, mat: T.Material, max: number, match: Bucket['match'], place: Bucket['place'], color?: Bucket['color']) => {
     const mesh = new THREE.InstancedMesh(geo, mat, max);
@@ -217,34 +403,105 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
     o.position.set(it.x, it.y + 0.04, it.z);
     o.rotation.set(0, yawOf(it), Math.PI / 2, 'YXZ');
   };
-  for (const id of ['wren', 'bulwark', 'hornet', 'mauler', 'kestrel', 'lancer', 'longbow'] as WeaponId[]) {
+  for (const id of WEAPON_IDS) {
     const model = gunModel(THREE, id, 0);
     const full = model.real?.fp ?? [];
     bucket(gunLiteGeometry(THREE, model), lootMat, 60, (it) => it.kind === 'gun' && it.what === id && (!full.length || !near(it)), lay);
     for (const part of full) bucket(part.geo, keep(worldMaterial(THREE, part.mat, shared)), 8, (it) => it.kind === 'gun' && it.what === id && near(it), lay);
   }
-  const AMMO_COLOR: Record<AmmoKind, number> = { light: 0xc9a43e, rifle: 0x5e7d34, shells: 0x9c3227, magnum: 0x6b5b8c, sniper: 0x34527a };
-  bucket(keep(roundBox(THREE, 0.32, 0.17, 0.2, 0.15, 2)), plainMat, 120, (it) => it.kind === 'ammo', (it, o) => {
-    o.position.set(it.x, it.y + 0.085, it.z);
-    o.rotation.set(0, yawOf(it), 0);
-  }, (it) => AMMO_COLOR[it.what as AmmoKind]);
+  const AMMO_COLOR: Record<AmmoKind, number> = { light: 0xc9a43e, rifle: 0x5e7d34, shells: 0x9c3227, magnum: 0x6b5b8c, sniper: 0x34527a, bolts: 0x7a5a32 };
+  // ammo: a steel ammo can when it loaded (washed with its kind's color), a colored box otherwise
+  const can = modelOf(THREE, assets, 'ammo-can');
+  if (can) {
+    const white = new THREE.Color(1, 1, 1);
+    const wash = Object.fromEntries(Object.entries(AMMO_COLOR).map(([k, c]) => [k, new THREE.Color(c).lerp(white, 0.45).multiplyScalar(1.5)])) as Record<AmmoKind, T.Color>;
+    for (const part of can.parts) {
+      disposables.push(part.geo);
+      bucket(part.geo, keep(worldMaterial(THREE, part.mat, shared)), 120, (it) => it.kind === 'ammo', (it, o) => {
+        o.position.set(it.x, it.y, it.z);
+        o.rotation.set(0, yawOf(it), 0);
+      }, (it) => wash[it.what as AmmoKind]);
+    }
+  } else
+    bucket(keep(roundBox(THREE, 0.32, 0.17, 0.2, 0.15, 2)), plainMat, 120, (it) => it.kind === 'ammo', (it, o) => {
+      o.position.set(it.x, it.y + 0.085, it.z);
+      o.rotation.set(0, yawOf(it), 0);
+    }, (it) => AMMO_COLOR[it.what as AmmoKind]);
   const LEVEL_COLOR = [0, 0x8b8a78, 0x5f6b45, 0x2b332a];
   bucket(keep(roundBox(THREE, 0.46, 0.1, 0.58, 0.3, 2)), plainMat, 40, (it) => it.kind === 'vest', (it, o) => {
     o.position.set(it.x, it.y + 0.05, it.z);
     o.rotation.set(0, yawOf(it), 0);
   }, (it) => LEVEL_COLOR[Number(it.what)]);
-  bucket(keep(roundBox(THREE, 0.34, 0.13, 0.24, 0.2, 2)), kitMat, 40, (it) => it.kind === 'heal' && it.what === 'kit', (it, o) => {
-    o.position.set(it.x, it.y + 0.065, it.z);
-    o.rotation.set(0, yawOf(it), 0);
-  });
-  bucket(keep(new THREE.CylinderGeometry(0.05, 0.05, 0.11, 10)), plainMat, 60, (it) => it.kind === 'heal' && it.what === 'bandage', (it, o) => {
-    o.position.set(it.x, it.y + 0.05, it.z);
-    o.rotation.set(0, 0, Math.PI / 2);
-  }, () => 0xe2d9c4);
+  // the med kit: a real medical case when it loaded
+  const medkit = modelOf(THREE, assets, 'medkit');
+  if (medkit)
+    for (const part of medkit.parts) {
+      disposables.push(part.geo);
+      bucket(part.geo, keep(worldMaterial(THREE, part.mat, shared)), 40, (it) => it.kind === 'heal' && it.what === 'kit', (it, o) => {
+        o.position.set(it.x, it.y, it.z);
+        o.rotation.set(0, yawOf(it), 0);
+      });
+    }
+  else
+    bucket(keep(roundBox(THREE, 0.34, 0.13, 0.24, 0.2, 2)), kitMat, 40, (it) => it.kind === 'heal' && it.what === 'kit', (it, o) => {
+      o.position.set(it.x, it.y + 0.065, it.z);
+      o.rotation.set(0, yawOf(it), 0);
+    });
+  // bandages: a real roll of medical tape when it loaded (a little over life size, so it reads on the ground)
+  const tape = modelOf(THREE, assets, 'tape', new THREE.Matrix4().makeScale(2.2, 2.2, 2.2));
+  if (tape)
+    for (const part of tape.parts) {
+      disposables.push(part.geo);
+      bucket(part.geo, keep(worldMaterial(THREE, part.mat, shared)), 60, (it) => it.kind === 'heal' && it.what === 'bandage', (it, o) => {
+        o.position.set(it.x, it.y, it.z);
+        o.rotation.set(0, yawOf(it), 0);
+      });
+    }
+  else
+    bucket(keep(new THREE.CylinderGeometry(0.05, 0.05, 0.11, 10)), plainMat, 60, (it) => it.kind === 'heal' && it.what === 'bandage', (it, o) => {
+      o.position.set(it.x, it.y + 0.05, it.z);
+      o.rotation.set(0, 0, Math.PI / 2);
+    }, () => 0xe2d9c4);
   bucket(keep(new THREE.CylinderGeometry(0.035, 0.035, 0.14, 10)), plainMat, 40, (it) => it.kind === 'nade' && it.what === 'smoke', (it, o) => {
     o.position.set(it.x, it.y + 0.035, it.z);
     o.rotation.set(0, yawOf(it), Math.PI / 2);
   }, () => 0x6d7276);
+  // the other grenades: an incendiary's red can, an impact grenade's yellow puck, a decoy's grey green can
+  const NADE_COLOR: Record<string, number> = { fire: 0x8c2a1c, impact: 0xb8962c, decoy: 0x55665a };
+  bucket(keep(new THREE.CylinderGeometry(0.035, 0.035, 0.14, 10)), plainMat, 40, (it) => it.kind === 'nade' && (it.what === 'fire' || it.what === 'decoy'), (it, o) => {
+    o.position.set(it.x, it.y + 0.035, it.z);
+    o.rotation.set(0, yawOf(it), Math.PI / 2);
+  }, (it) => NADE_COLOR[it.what]);
+  bucket(keep(new THREE.CylinderGeometry(0.045, 0.045, 0.07, 12)), plainMat, 30, (it) => it.kind === 'nade' && it.what === 'impact', (it, o) => {
+    o.position.set(it.x, it.y + 0.035, it.z);
+    o.rotation.set(0, yawOf(it), 0);
+  }, (it) => NADE_COLOR[it.what]);
+  // ballistic shields lie flat on their backs: the real model, else a plain slab
+  const shield = modelOf(THREE, assets, 'shield');
+  for (const p of shield?.parts ?? []) disposables.push(p.geo);
+  const flat = (it: Item, o: T.Object3D) => {
+    o.position.set(it.x, it.y + 0.06, it.z);
+    o.rotation.set(Math.PI / 2, yawOf(it), 0, 'YXZ');
+  };
+  if (shield?.parts.length) for (const part of shield.parts) bucket(part.geo, keep(worldMaterial(THREE, part.mat, shared)), 12, (it) => it.kind === 'shield', flat);
+  else bucket(keep(roundBox(THREE, 0.6, 1.4, 0.06, 0.2, 2).translate(0, 0.7, 0)), plainMat, 12, (it) => it.kind === 'shield', flat, () => 0x2c3034);
+
+  // backpacks in their level's color, boosts standing up, attachments lying down
+  const PACK_COLOR = [0, 0xa8946a, 0x66734a, 0x34393a];
+  bucket(keep(packGeometry(THREE)), lootMat, 40, (it) => it.kind === 'pack', (it, o) => {
+    o.position.set(it.x, it.y, it.z);
+    o.rotation.set(0, yawOf(it), 0);
+  }, (it) => PACK_COLOR[Number(it.what)]);
+  const stand = (it: Item, o: T.Object3D) => {
+    o.position.set(it.x, it.y, it.z);
+    o.rotation.set(0, yawOf(it), 0);
+  };
+  bucket(keep(drinkGeometry(THREE)), lootMat, 40, (it) => it.kind === 'boost' && it.what === 'drink', stand);
+  bucket(keep(pillsGeometry(THREE)), lootMat, 40, (it) => it.kind === 'boost' && it.what === 'pills', stand);
+  bucket(keep(dotGeometry(THREE)), lootMat, 30, (it) => it.kind === 'att' && it.what === 'dot', stand);
+  bucket(keep(scopeGeometry(THREE)), lootMat, 30, (it) => it.kind === 'att' && it.what === 'x4', stand);
+  bucket(keep(extGeometry(THREE)), lootMat, 30, (it) => it.kind === 'att' && it.what === 'ext', stand);
+  bucket(keep(compGeometry(THREE)), lootMat, 30, (it) => it.kind === 'att' && it.what === 'comp', stand);
   // real models where they loaded: the M67 for frags, the helmet for helmets
   const realBucket = (part: Part | undefined, max: number, match: Bucket['match'], place: Bucket['place'], fallback: () => T.BufferGeometry) => {
     if (part) bucket(part.geo, keep(worldMaterial(THREE, part.mat, shared)), max, match, place);
@@ -340,6 +597,35 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
         zone.scale.set(Math.max(0.5, z.r), 640, Math.max(0.5, z.r));
         zoneMat.uniforms.uTime.value = time;
       }
+      // the bombardment
+      const red = m.red;
+      redWall.visible = !!red;
+      if (red) {
+        redWall.position.set(red.x, floorAt(m.world.terrain, red.x, red.z) - 15, red.z);
+        redWall.scale.set(red.r, 50, red.r);
+        redMat.uniforms.uTime.value = time;
+        redMat.uniforms.uFade.value = red.warn > 0 ? 0.45 + 0.15 * Math.sin(time * 5) : 0.85 + 0.15 * Math.sin(time * 9);
+      }
+      // supply crates: swaying a little under the canopy on the way down, the canopy collapsing to one side once down
+      crates.forEach(({ crate, chute }, i) => {
+        const s = m.supplies[i];
+        crate.visible = !!s;
+        if (!s) {
+          chute.visible = false;
+          return;
+        }
+        const age = s.landed < 0 ? -1 : m.time - s.landed;
+        const sway = age < 0 ? Math.sin(time * 1.3 + i) * 0.06 : 0;
+        crate.position.set(s.x, s.y, s.z);
+        crate.rotation.set(sway, s.id * 0.7, sway * 0.6, 'YXZ');
+        const fold = age < 0 ? 0 : Math.min(1, age / 1.8);
+        chute.visible = fold < 1;
+        if (chute.visible) {
+          chute.position.set(s.x + fold * 2.5, s.y - fold * 0.6, s.z);
+          chute.rotation.set(sway, s.id * 0.7, sway * 0.6 - fold * 1.1, 'YXZ');
+          chute.scale.set(1 + fold * 0.3, Math.max(0.05, 1 - fold), 1 + fold * 0.3);
+        }
+      });
       // loot near the camera
       const cx = camera.position.x;
       const cz = camera.position.z;

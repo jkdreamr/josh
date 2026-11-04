@@ -302,6 +302,24 @@
 .g-ridgeline .g-ridgeline-hpBar i.is-low {
   background: #ff5a4a;
 }
+/* royale: the boost meter, a thin bar under the health bar, brighter while it is high enough to run faster */
+.g-ridgeline .g-ridgeline-boostBar {
+  width: 150px;
+  height: 3px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.g-ridgeline .g-ridgeline-boostBar i {
+  display: block;
+  height: 100%;
+  background: #e0b13c;
+  transition: width 0.3s linear;
+}
+.g-ridgeline .g-ridgeline-boostBar[data-fast='1'] i {
+  background: #ffd25a;
+  box-shadow: 0 0 6px rgba(255, 210, 90, 0.7);
+}
 .g-ridgeline .g-ridgeline-armor {
   display: flex;
   align-items: center;
@@ -384,9 +402,23 @@
 }
 .g-ridgeline .g-ridgeline-slots {
   display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: 460px;
   gap: 6px;
   margin-top: 4px;
   font-size: 11px;
+}
+.g-ridgeline .g-ridgeline-nadeHint {
+  font-size: 10px;
+  opacity: 0.55;
+}
+.g-ridgeline .g-ridgeline-nadeHint kbd {
+  font: inherit;
+  font-weight: 700;
+}
+.g-ridgeline .g-ridgeline-hud[data-touch='1'] .g-ridgeline-nadeHint {
+  display: none;
 }
 .g-ridgeline .g-ridgeline-slots span {
   padding: 2px 6px;
@@ -475,15 +507,17 @@
   height: 0;
   opacity: 0;
   transition: opacity 0.12s;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.85));
 }
 .g-ridgeline .g-ridgeline-hit i {
   position: absolute;
-  left: -1px;
-  top: 6px;
-  width: 2px;
-  height: 7px;
+  left: -1.5px;
+  top: 7px;
+  width: 3px;
+  height: 11px;
+  border-radius: 1px;
   background: #fff;
-  transform-origin: 1px -6px;
+  transform-origin: 1.5px -7px;
 }
 .g-ridgeline .g-ridgeline-hit i:nth-child(1) {
   transform: rotate(45deg);
@@ -502,7 +536,66 @@
 }
 .g-ridgeline .g-ridgeline-hit[data-kind='kill'] i {
   background: #ff4a3a;
-  height: 10px;
+  height: 15px;
+}
+
+/* damage numbers and the health bar over whoever you hit */
+.g-ridgeline .g-ridgeline-hitinfo {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+}
+.g-ridgeline .g-ridgeline-hitinfo b {
+  position: absolute;
+  left: 0;
+  top: 0;
+  font: 800 19px/1 system-ui, sans-serif;
+  color: #fff;
+  text-shadow: 0 0 3px #000, 0 1px 2px #000;
+  letter-spacing: 0.02em;
+  will-change: transform, opacity;
+  animation: g-ridgeline-pop 0.18s ease-out;
+}
+.g-ridgeline .g-ridgeline-hitinfo b[data-kind='head'] {
+  color: var(--g-ridgeline-gold);
+  font-size: 23px;
+}
+.g-ridgeline .g-ridgeline-hitinfo b[data-kind='kill'] {
+  color: #ff5a46;
+  font-size: 25px;
+}
+@keyframes g-ridgeline-pop {
+  from {
+    font-size: 30px;
+  }
+}
+.g-ridgeline .g-ridgeline-hpbar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 64px;
+  height: 7px;
+  margin-top: -8px;
+  border-radius: 2px;
+  background: rgba(0, 0, 0, 0.6);
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.5);
+  overflow: hidden;
+}
+.g-ridgeline .g-ridgeline-hpbar i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+}
+.g-ridgeline .g-ridgeline-hpbar i:first-child {
+  background: #fff;
+}
+.g-ridgeline .g-ridgeline-hpbar i:last-child {
+  background: #ff5a46;
+}
+.g-ridgeline .g-ridgeline-hpbar[data-dead='1'] {
+  background: rgba(255, 90, 70, 0.5);
 }
 .g-ridgeline .g-ridgeline-arcs {
   position: absolute;
@@ -565,6 +658,19 @@
   font-weight: 800;
   text-shadow: none;
   background: #d8432c;
+}
+.g-ridgeline .g-ridgeline-mark.is-supply b {
+  display: grid;
+  place-items: center;
+  min-width: 26px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 3px;
+  color: #04121c;
+  font-size: 11px;
+  font-weight: 800;
+  text-shadow: none;
+  background: #3fb6ff;
 }
 .g-ridgeline .g-ridgeline-mark.is-mate b {
   font-size: 11px;
@@ -731,6 +837,13 @@
 .g-ridgeline .g-ridgeline-scope {
   position: absolute;
   inset: 0;
+  /* (sized to the game's own frame, not the browser window, so the lens fits a windowed game too) */
+  container-type: size;
+  pointer-events: none;
+}
+.g-ridgeline .g-ridgeline-scopeMask {
+  position: absolute;
+  inset: 0;
   background: radial-gradient(circle at 50% 50%, transparent 0, transparent min(42cqh, 42cqw), #000 calc(min(42cqh, 42cqw) + 1px));
 }
 .g-ridgeline .g-ridgeline-scopeLens {
@@ -748,16 +861,62 @@
   background: rgba(0, 0, 0, 0.85);
 }
 .g-ridgeline .g-ridgeline-scopeLens .is-h {
-  left: 0;
-  right: 0;
+  left: 6%;
+  right: 6%;
   top: 50%;
   height: 1px;
 }
 .g-ridgeline .g-ridgeline-scopeLens .is-v {
-  top: 0;
-  bottom: 0;
+  top: 6%;
+  bottom: 50%;
   left: 50%;
   width: 1px;
+}
+/* thick posts from the rim in to near the middle, as on a real sniper reticle */
+.g-ridgeline .g-ridgeline-scopeLens .is-l,
+.g-ridgeline .g-ridgeline-scopeLens .is-r {
+  top: calc(50% - 2px);
+  height: 4px;
+  width: 34%;
+}
+.g-ridgeline .g-ridgeline-scopeLens .is-l {
+  left: 0;
+}
+.g-ridgeline .g-ridgeline-scopeLens .is-r {
+  right: 0;
+}
+.g-ridgeline .g-ridgeline-scopeLens .is-b {
+  left: calc(50% - 2px);
+  width: 4px;
+  top: 66%;
+  bottom: 0;
+}
+/* the thin line below the middle, with the aim point dot (red, easy to see on any ground) */
+.g-ridgeline .g-ridgeline-scopeLens::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 1px;
+  height: 16%;
+  background: rgba(0, 0, 0, 0.85);
+}
+.g-ridgeline .g-ridgeline-scopeLens b {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: #ff3b2f;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+}
+.g-ridgeline .g-ridgeline-scopeHint {
+  margin-top: 2px;
+  font-size: 11px;
+  opacity: 0.75;
+  text-align: right;
 }
 
 /* buy menu */
@@ -991,6 +1150,20 @@
   right: 132px;
   bottom: 196px;
 }
+.g-ridgeline .g-ridgeline-btn.is-util {
+  right: 196px;
+  bottom: 200px;
+}
+.g-ridgeline .g-ridgeline-btn.is-next {
+  right: 252px;
+  bottom: 207px;
+  width: 36px;
+  height: 36px;
+}
+.g-ridgeline .g-ridgeline-btn.is-shield {
+  right: 232px;
+  bottom: 140px;
+}
 .g-ridgeline .g-ridgeline-btn.is-buy {
   right: 170px;
   bottom: 140px;
@@ -1119,6 +1292,63 @@
 .g-ridgeline .g-ridgeline-prompt.is-charge kbd {
   background: #ffd56a;
 }
+/* royale vehicles: the prompt to get in, and the speed and health plate while in one */
+.g-ridgeline .g-ridgeline-prompt.is-car kbd {
+  background: #e8d36a;
+}
+.g-ridgeline .g-ridgeline-car {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  min-width: 190px;
+  padding: 6px 14px 7px;
+  border-radius: 4px;
+  color: #fff;
+  background: var(--g-ridgeline-plate);
+  pointer-events: none;
+}
+.g-ridgeline .g-ridgeline-car b {
+  font-size: 26px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.g-ridgeline .g-ridgeline-car b small {
+  margin-left: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  opacity: 0.7;
+}
+.g-ridgeline .g-ridgeline-carHp {
+  display: block;
+  width: 160px;
+  height: 5px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.18);
+}
+.g-ridgeline .g-ridgeline-carHp i {
+  display: block;
+  height: 100%;
+  background: #7be38a;
+}
+.g-ridgeline .g-ridgeline-car[data-low='1'] .g-ridgeline-carHp i {
+  background: #ff6a4a;
+}
+.g-ridgeline .g-ridgeline-car em {
+  font-size: 11px;
+  font-style: normal;
+  opacity: 0.75;
+  white-space: nowrap;
+}
+.g-ridgeline .g-ridgeline-hud[data-touch='1'] .g-ridgeline-car {
+  top: 130px;
+  bottom: auto;
+}
 .g-ridgeline .g-ridgeline-outside {
   position: absolute;
   left: 50%;
@@ -1130,6 +1360,10 @@
   color: #fff;
   background: rgba(190, 70, 30, 0.82);
   white-space: nowrap;
+}
+.g-ridgeline .g-ridgeline-outside.is-red {
+  top: 124px;
+  background: rgba(196, 28, 22, 0.86);
 }
 .g-ridgeline .g-ridgeline-btn.is-use {
   right: 220px;
@@ -1145,6 +1379,17 @@
 .g-ridgeline .g-ridgeline-btn.is-map {
   right: 0;
   bottom: 214px;
+}
+.g-ridgeline .g-ridgeline-btn.is-prone {
+  right: 282px;
+  bottom: 0;
+}
+.g-ridgeline .g-ridgeline-btn.is-view {
+  right: 288px;
+  bottom: 64px;
+  width: 38px;
+  height: 38px;
+  font-size: 10px;
 }
 
 /* small windows and phones */
@@ -1176,10 +1421,12 @@
   .g-ridgeline .g-ridgeline-mag b {
     font-size: 32px;
   }
-  .g-ridgeline .g-ridgeline-hpBar {
+  .g-ridgeline .g-ridgeline-hpBar,
+  .g-ridgeline .g-ridgeline-boostBar {
     width: 100px;
   }
-  .g-ridgeline .g-ridgeline-slots {
+  .g-ridgeline .g-ridgeline-slots,
+  .g-ridgeline .g-ridgeline-nadeHint {
     display: none;
   }
   .g-ridgeline .g-ridgeline-banner b {
@@ -1224,4 +1471,199 @@
   left: auto;
   right: 12px;
   transform: none;
+}
+
+/* royale: the item bar (heals and boosts, keys 6 to 9), bottom middle */
+.g-ridgeline .g-ridgeline-items {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  display: flex;
+  gap: 6px;
+  transform: translateX(-50%);
+  pointer-events: auto;
+}
+.g-ridgeline .g-ridgeline-items button {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 46px;
+  height: 46px;
+  padding: 0;
+  border: 1px solid var(--g-ridgeline-line);
+  border-radius: 6px;
+  background: var(--g-ridgeline-plate);
+  color: #f2f2f2;
+  cursor: pointer;
+  overflow: hidden;
+}
+.g-ridgeline .g-ridgeline-items svg {
+  width: 24px;
+  height: 24px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 1.6;
+  stroke-linejoin: round;
+}
+.g-ridgeline .g-ridgeline-items b {
+  position: absolute;
+  right: 4px;
+  bottom: 2px;
+  font-size: 12px;
+}
+.g-ridgeline .g-ridgeline-items kbd {
+  position: absolute;
+  left: 3px;
+  top: 2px;
+  font-size: 9px;
+  opacity: 0.75;
+}
+.g-ridgeline .g-ridgeline-items button[data-empty='1'] {
+  opacity: 0.35;
+}
+.g-ridgeline .g-ridgeline-items button[data-empty='0'][data-helps='1'] {
+  border-color: rgba(120, 220, 140, 0.7);
+}
+.g-ridgeline .g-ridgeline-items button.is-on {
+  border-color: var(--g-ridgeline-gold);
+}
+/* the ring that fills while it is being used */
+.g-ridgeline .g-ridgeline-items button i {
+  position: absolute;
+  inset: 0;
+  background: conic-gradient(rgba(255, 213, 106, 0.38) var(--p), transparent 0);
+}
+
+/* royale: the kit panel (I) */
+.g-ridgeline .g-ridgeline-kitpanel {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: min(440px, calc(100% - 24px));
+  max-height: calc(100% - 140px);
+  overflow: auto;
+  padding: 12px 14px;
+  border: 1px solid var(--g-ridgeline-line);
+  border-radius: 8px;
+  background: rgba(12, 16, 22, 0.9);
+  color: #eef1f4;
+  font-size: 13px;
+  transform: translate(-50%, -50%);
+  pointer-events: auto;
+}
+.g-ridgeline .g-ridgeline-kitpanel header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+  font-size: 15px;
+}
+.g-ridgeline .g-ridgeline-kitpanel h4 {
+  margin: 10px 0 4px;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  opacity: 0.65;
+}
+.g-ridgeline .g-ridgeline-kitpanel p {
+  margin: 2px 0;
+}
+.g-ridgeline .g-ridgeline-kitpanel ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.g-ridgeline .g-ridgeline-kitpanel li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 3px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+.g-ridgeline .g-ridgeline-kitpanel small {
+  opacity: 0.7;
+}
+.g-ridgeline .g-ridgeline-kitpanel button {
+  padding: 3px 9px;
+  border: 1px solid var(--g-ridgeline-line);
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+.g-ridgeline .g-ridgeline-kitpanel button:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+/* every knockout of yours: the big confirmation above the crosshair */
+.g-ridgeline .g-ridgeline-killpop {
+  position: absolute;
+  left: 50%;
+  top: calc(50% - 128px);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  transform: translateX(-50%);
+  pointer-events: none;
+  white-space: nowrap;
+  animation: g-ridgeline-killpop 1.9s ease forwards;
+}
+.g-ridgeline .g-ridgeline-killpop svg {
+  width: 38px;
+  height: 38px;
+  fill: none;
+  stroke: #ff4a3a;
+  stroke-width: 5;
+  stroke-linecap: round;
+  filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.8));
+}
+.g-ridgeline .g-ridgeline-killpop div {
+  display: grid;
+  line-height: 1.05;
+  text-shadow: 0 0 4px #000, 0 1px 2px #000;
+}
+.g-ridgeline .g-ridgeline-killpop b {
+  color: #ff5a46;
+  font-size: 24px;
+  font-weight: 900;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.g-ridgeline .g-ridgeline-killpop span {
+  color: #fff;
+  font-size: 15px;
+  font-weight: 700;
+}
+.g-ridgeline .g-ridgeline-killpop em {
+  margin-left: 8px;
+  color: var(--g-ridgeline-gold);
+  font-style: normal;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+.g-ridgeline .g-ridgeline-killpop small {
+  color: var(--g-ridgeline-gold);
+  font-size: 16px;
+  font-weight: 800;
+}
+@keyframes g-ridgeline-killpop {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) scale(1.35);
+  }
+  10% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+.g-ridgeline .g-ridgeline-prompt.is-crate {
+  border-color: rgba(63, 182, 255, 0.7);
 }

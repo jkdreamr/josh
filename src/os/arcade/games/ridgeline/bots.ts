@@ -2,13 +2,16 @@
 // with its credits, plays its side in a breach (the attack pushes a site together, plants and guards the charge; the
 // defense holds both sites, rotates on a call and retakes to defuse), and aims like a person: a reaction delay, an error that settles, a
 // limited turn speed that has to fight the recoil, and (on harder levels) stopping before it shoots. In a royale they
-// pick a landing spot, jump when the transport passes it, loot what they need, heal up, and keep ahead of the zone.
+// pick a landing spot, jump when the transport passes it, loot what they need, heal up, and keep ahead of the zone
+// (when it is far, in a vehicle if one is parked near: they drive it toward the circle and get out to fight);
+// the bolder ones go for a supply drop that comes down near them, and everyone gets out from under a bombardment.
 import {
   DEFUSE_TIME,
   DEG,
   HALF,
   PLANT_TIME,
   ROUND_TIME,
+  boostPick,
   buy,
   canDefuse,
   canShop,
@@ -16,14 +19,18 @@ import {
   eyeY,
   healPick,
   idleInput,
+  inFire,
   isEnemy,
   owns,
+  partsOf,
   plantSite,
   priceOf,
   smokeBlocks,
   spareOf,
   spawnOf,
   spreadOf,
+  supplyLeft,
+  underRoof,
   viewDir,
   wants,
   type Actor,
@@ -31,13 +38,15 @@ import {
   type Match,
   type ShopItem,
 } from './match.ts';
+import { CARS, carNear, type Car } from './cars.ts';
 import { clamp, mulberry32, type Rng } from './noise.ts';
 import { canWalk, fieldDist, fieldStep, fieldTo, findPath } from './nav.ts';
 import { blockedAt, clearLine } from './physics.ts';
 import { floorAt, heightAt } from './terrain.ts';
-import { planeAt } from './royale.ts';
+import { RED_WARN, magOf, planeAt, scopeOf } from './royale.ts';
 import { WEAPONS, type WeaponId } from './weapons.ts';
 import { SITE_R, type World } from './world.ts';
+import { MAPS } from './maps.ts';
 
 export type BotLevel = 'easy' | 'normal' | 'hard';
 type Role = 'entry' | 'support' | 'flank';
@@ -84,6 +93,8 @@ export type Brain = {
   strafe: number;
   strafeT: number;
   crouchT: number;
+  /** Royale: how much longer to lie still (sniping from far off, or hidden in the grass). */
+  proneT: number;
   burst: number;
   restT: number;
   posX: number;
@@ -125,19 +136,38 @@ export type Brain = {
   listenA: number;
   waitT: number;
   heardT: number;
-  /** Royale: where it means to land, the loot it is going for, when to look for more, and a wish to heal. */
+  /** Royale: where it means to land, the loot it is going for, when to look for more, and a wish to heal or to take a
+   * boost. */
   dropX: number;
   dropZ: number;
   loot: number;
   lootT: number;
   healNow: boolean;
+  boostNow: boolean;
+  /** Royale: the supply crate it is going for (-1 none), and a bit per crate it has already made up its mind on. */
+  supply: number;
+  supplySeen: number;
+  /** Royale: the vehicle it is walking to or driving (-1 none), since when, and not another before `carCd` (match
+   * time). Driving: the heading it steers for, backing up for `revT` more seconds (and how many times so far), time
+   * spent barely moving, and slowing down to get out. */
+  car: number;
+  carT: number;
+  carCd: number;
+  driveYaw: number;
+  revT: number;
+  revs: number;
+  carStuck: number;
+  leaving: number;
+  /** Carrying a shield: whether it wants it raised, and when it next thinks about that. */
+  shieldUp: boolean;
+  shieldT: number;
 };
 
 const LEVELS: Record<BotLevel, { skill: number; react: number; turn: number }> = {
   // (a person should win most fair fights at Normal: slower to react, slower to turn, and their first shots go wide)
-  easy: { skill: 0.14, react: 0.85, turn: 2.6 },
-  normal: { skill: 0.4, react: 0.52, turn: 4.8 },
-  hard: { skill: 0.74, react: 0.3, turn: 8.5 },
+  easy: { skill: 0.08, react: 1, turn: 2.2 },
+  normal: { skill: 0.28, react: 0.66, turn: 4 },
+  hard: { skill: 0.6, react: 0.38, turn: 7 },
 };
 
 export function newBrain(level: BotLevel, seed: number): Brain {
@@ -183,6 +213,7 @@ export function newBrain(level: BotLevel, seed: number): Brain {
     strafe: 1,
     strafeT: 0,
     crouchT: 0,
+    proneT: 0,
     burst: 0,
     restT: 0,
     posX: 0,
@@ -218,6 +249,19 @@ export function newBrain(level: BotLevel, seed: number): Brain {
     loot: -1,
     lootT: 0,
     healNow: false,
+    boostNow: false,
+    supply: -1,
+    supplySeen: 0,
+    car: -1,
+    carT: 0,
+    carCd: 0,
+    driveYaw: 0,
+    revT: 0,
+    revs: 0,
+    carStuck: 0,
+    leaving: -1,
+    shieldUp: false,
+    shieldT: 0,
   };
 }
 
@@ -232,8 +276,28 @@ const angDiff = (a: number, b: number) => {
 const yawOf = (a: number) => Math.atan2(-Math.sin(a), -Math.cos(a));
 
 /** Preferred fighting distance for a gun, and the farthest it is worth shooting. */
-const PREF: Record<WeaponId, number> = { wren: 14, bulwark: 18, hornet: 14, mauler: 6, kestrel: 30, lancer: 45, longbow: 60 };
-const REACH: Record<WeaponId, number> = { wren: 45, bulwark: 60, hornet: 55, mauler: 22, kestrel: 150, lancer: 210, longbow: 260 };
+const PREF: Record<WeaponId, number> = { wren: 14, bulwark: 18, hornet: 14, mauler: 6, kestrel: 30, lancer: 45, longbow: 60, talon: 32, rampart: 28, marshal: 16, wasp: 10, thresher: 7, arbalest: 38 };
+const REACH: Record<WeaponId, number> = { wren: 45, bulwark: 60, hornet: 55, mauler: 22, kestrel: 150, lancer: 210, longbow: 260, talon: 160, rampart: 140, marshal: 60, wasp: 40, thresher: 22, arbalest: 110 };
+
+/** A pick from a table of [thing, weight]. */
+function roll<T>(r: Rng, table: [T, number][]): T {
+  let v = r() * table.reduce((s, [, p]) => s + p, 0);
+  for (const [t, p] of table) {
+    v -= p;
+    if (v <= 0) return t;
+  }
+  return table[0][0];
+}
+
+/** What else a bot buys once it has its guns and armor: the usual grenades, now and then one of the others (an
+ * incendiary is the attack's, to burn a held corner or the defuse; the defense takes an impact grenade instead). */
+function utility(r: Rng, attack: boolean): ShopItem[] {
+  const out: ShopItem[] = ['flash', 'frag', 'smoke'];
+  if (attack && r() < 0.3) out.push('decoy');
+  if (!attack && r() < 0.3) out.push('impact');
+  if (attack && r() < 0.35) out.unshift('fire');
+  return out;
+}
 
 function shop(m: Match, a: Actor, br: Brain) {
   br.bought = true;
@@ -241,6 +305,7 @@ function shop(m: Match, a: Actor, br: Brain) {
   const r = br.rng;
   const team = m.actors.filter((o) => o.team === a.team);
   const avg = team.reduce((s, o) => s + o.credits, 0) / team.length;
+  const attack = a.team === m.attack;
   const want: ShopItem[] = [];
   if (m.round === 1 || m.round === HALF + 1) {
     if (r() < 0.45) want.push('bulwark');
@@ -248,19 +313,24 @@ function shop(m: Match, a: Actor, br: Brain) {
   } else if (!a.guns[0]) {
     const eco = avg < 2500 && a.credits < 3900;
     if (eco) {
-      if (a.credits >= 1200 && r() < 0.4) want.push('bulwark');
-      else if (a.credits >= 2000 && r() < 0.5) want.push(r() < 0.6 ? 'hornet' : 'mauler', 'light');
+      if (a.credits >= 2300 && attack && br.role === 'entry' && r() < 0.25) want.push('pavise', 'marshal');
+      else if (a.credits >= 1200 && r() < 0.4) want.push(r() < 0.6 ? 'bulwark' : 'marshal');
+      else if (a.credits >= 2000 && r() < 0.5) want.push(roll<WeaponId>(r, [['hornet', 4], ['wasp', 3], ['mauler', 3]]), 'light');
     } else {
       let gun: WeaponId;
-      const roll = r();
-      if (a.credits >= 5600 && roll < (br.level === 'hard' ? 0.2 : 0.1)) gun = 'longbow';
-      else if (a.credits >= 3900) gun = roll < 0.72 ? 'kestrel' : 'lancer';
-      else if (a.credits >= 2400) gun = roll < 0.4 ? 'lancer' : roll < 0.75 ? 'hornet' : 'mauler';
-      else gun = roll < 0.6 ? 'hornet' : 'mauler';
-      want.push(gun, 'heavy', 'light', 'flash', 'frag', 'smoke');
+      if (a.credits >= 5600 && r() < (br.level === 'hard' ? 0.2 : 0.1)) gun = 'longbow';
+      else if (a.credits >= 4800 && r() < 0.15) gun = 'rampart';
+      else if (a.credits >= 3900) gun = roll<WeaponId>(r, [['kestrel', 56], ['talon', 18], ['lancer', 16], ['arbalest', 10]]);
+      else if (a.credits >= 2400) gun = roll<WeaponId>(r, [['lancer', 25], ['talon', 20], ['hornet', 20], ['thresher', 13], ['mauler', 11], ['wasp', 11]]);
+      else gun = roll<WeaponId>(r, [['hornet', 4], ['wasp', 3], ['mauler', 3]]);
+      want.push(gun, 'heavy', 'light');
+      // a shield for the first one in, now and then, with the money to spare
+      if (attack && br.role === 'entry' && a.credits >= WEAPONS[gun].price + 2600 && r() < 0.3) want.push('pavise');
+      want.push(...utility(r, attack));
     }
-  } else want.push('heavy', 'light', 'flash', 'frag', 'smoke');
+  } else want.push('heavy', 'light', ...utility(r, attack));
   for (const item of want) {
+
     if (owns(a, item)) continue;
     if (item === 'light' && owns(a, 'heavy')) continue;
     if (a.credits >= priceOf(item)) buy(m, a, item);
@@ -395,6 +465,15 @@ function setGoal(m: Match, br: Brain, x: number, z: number, fieldKey = '') {
 /** Deathmatch roaming points that have distance fields. */
 export const DM_HUBS = 8;
 
+// (PARTS spheres of four numbers: written out, since match.ts and this file import each other and either may load first)
+const seen = new Float64Array(5 * 4);
+
+/** Out on open ground on a map with long grass (where lying down hides you). */
+function grassy(m: Match, a: Actor) {
+  const b = a.body;
+  return MAPS[m.world.id].grass.density >= 0.5 && b.y < floorAt(m.world.terrain, b.x, b.z) + 0.15 && b.y > m.world.terrain.water;
+}
+
 /** Looks for the best enemy in view. */
 function perceive(m: Match, a: Actor, br: Brain) {
   const w = m.world;
@@ -419,10 +498,24 @@ function perceive(m: Match, a: Actor, br: Brain) {
         callout(m, a.team, s.x, s.z);
         break;
       }
+  // a decoy's gunfire with nobody in sight: taken for an enemy there (looked at, gone after, a frag thrown at it)
+  if (br.target < 0)
+    for (const s of m.sounds) {
+      if (!s.fake || s.team === a.team || m.time - s.t > 0.3) continue;
+      const d = Math.hypot(s.x - ex, s.z - ez);
+      if (d > s.range * 0.8 || d < 3 || br.rng() > 0.4) continue;
+      br.lastX = s.x;
+      br.lastY = a.body.y;
+      br.lastZ = s.z;
+      br.hasLast = true;
+      br.lostAt = m.time - 0.9;
+      if (m.mode === 'breach') callout(m, a.team, s.x, s.z);
+      break;
+    }
   // a royale bot still gearing up picks its fights: only close ones, or whoever shoots it
   const geared = m.mode !== 'royale' || ((!!a.guns[0] || !!a.guns[2]) && (a.vest > 0 || a.helmet > 0));
   // breach: a stranger further off than this is a few pixels across a field; nobody picks that out (a scope helps)
-  const scoped = !!currentGun(a) && WEAPONS[currentGun(a)!.id].scope;
+  const scoped = !!currentGun(a) && scopeOf(currentGun(a)!);
   const range = m.mode === 'breach' ? (scoped ? 95 : 55) : m.mode !== 'royale' ? 230 : geared ? 130 : a.guns[0] || a.guns[2] ? 45 : 28;
   for (const o of m.actors) {
     if (!o.alive || !isEnemy(a, o) || o.drop === 1) continue;
@@ -441,14 +534,20 @@ function perceive(m: Match, a: Actor, br: Brain) {
       const still = Math.hypot(o.body.vx, o.body.vz) < 1;
       // (in a breach, past 30 m it falls off faster still: the fights are meant to be won on angles, not by spotting)
       const far = m.mode === 'breach' && d > 30 ? (30 / d) ** 2 : 1;
-      const rate = 7 * (40 / Math.max(d, 14)) ** 2 * far * (still ? 0.5 : 1) * (o.crouch > 0.5 ? 0.7 : 1) * (0.6 + br.skill * 0.6) * (m.mode === 'royale' ? 0.55 : 1);
+      // (lying down is harder to pick out still, and in long grass a good deal harder)
+      const low = o.prone > 0.5 ? (grassy(m, o) ? 0.25 : 0.45) : o.crouch > 0.5 ? 0.7 : 1;
+      const rate = 7 * (40 / Math.max(d, 14)) ** 2 * far * (still ? 0.5 : 1) * low * (0.6 + br.skill * 0.6) * (m.mode === 'royale' ? 0.55 : 1);
       if (br.rng() > 1 - Math.exp(-rate * Math.max(0.1, br.think))) continue;
     } else if (!known && m.mode === 'royale' && d > 6 && br.rng() > 0.3 + br.skill * 0.3) continue; // busy looting: takes a moment to notice
-    const chest = o.body.y + o.body.height * 0.68;
-    const head = o.body.y + o.body.height - 0.13;
-    if (smokeBlocks(m, ex, ey, ez, o.body.x, chest, o.body.z)) continue;
-    const seeChest = clearLine(w, ex, ey, ez, o.body.x, chest, o.body.z);
-    if (!seeChest && !clearLine(w, ex, ey, ez, o.body.x, head, o.body.z)) continue;
+    // the chest and the head where they are (lying down, or a head leant out past a corner)
+    partsOf(o, seen);
+    const low = o.prone > 0.5;
+    const cx = low ? seen[4] : o.body.x;
+    const chest = low ? seen[5] : o.body.y + o.body.height * 0.68;
+    const cz = low ? seen[6] : o.body.z;
+    if (smokeBlocks(m, ex, ey, ez, cx, chest, cz)) continue;
+    const seeChest = clearLine(w, ex, ey, ez, cx, chest, cz);
+    if (!seeChest && !clearLine(w, ex, ey, ez, seen[0], seen[1], seen[2])) continue;
     let score = d * (o.id === br.target ? 0.55 : 1) * (o.bot ? 1 : 0.9);
     if (!seeChest) score *= 1.4;
     if (score < bestScore) {
@@ -464,7 +563,7 @@ function perceive(m: Match, a: Actor, br: Brain) {
       // holding an angle (standing still, already looking where they appear) gives a quicker, truer first shot
       const off = Math.abs(angDiff(a.yaw, Math.atan2(-(o.body.x - ex), -(o.body.z - ez))));
       const holding = Math.hypot(a.body.vx, a.body.vz) < 0.8 && off < 0.35;
-      const e = ((1 - br.skill) * 0.12 + 0.016 + d * 0.00026) * (m.mode === 'royale' ? 1.5 : 1) * (holding ? 0.5 : 1);
+      const e = ((1 - br.skill) * 0.15 + 0.02 + d * 0.0003) * (m.mode === 'royale' ? 1.5 : 1) * (holding ? 0.5 : 1);
       br.errY = (br.rng() - 0.5) * 2 * e;
       br.errP = (br.rng() - 0.5) * e;
       br.seenFor = br.target >= 0 && m.time - br.lostAt < 0.8 ? br.react : holding ? br.react * 0.45 : 0;
@@ -578,8 +677,56 @@ function siteSpot(m: Match, k: number, fromX: number, fromZ: number, spread: num
   return { x: s.x + Math.sin(ang) * out, z: s.z + Math.cos(ang) * out };
 }
 
-/** Where the bot wants to go when nobody is in sight. */
+/** Royale: inside (or at the edge of) a bombardment? */
+const inRed = (m: Match, a: Actor) => !!m.red && Math.hypot(a.body.x - m.red.x, a.body.z - m.red.z) < m.red.r + 4;
+
+/** Where the bot wants to go when nobody is in sight (or, in a royale, when it has to get out from under shells). */
 function plan(m: Match, a: Actor, br: Brain) {
+  if (m.mode !== 'royale') {
+    planAny(m, a, br);
+    return;
+  }
+  br.rush = false;
+  if (fleeRed(m, a, br)) return;
+  planAny(m, a, br);
+  // whatever it planned, not into a bombardment (one already inside it gets out once it reacts, above)
+  const red = m.red;
+  if (red && !inRed(m, a)) {
+    const dx = br.goalX - red.x;
+    const dz = br.goalZ - red.z;
+    const d = Math.hypot(dx, dz);
+    if (d < red.r + 6) {
+      const k = (red.r + 8) / (d || 1);
+      setGoal(m, br, red.x + (d ? dx : 1) * k, red.z + dz * k);
+      br.loot = -1;
+    }
+  }
+}
+
+/** A bombardment marked over it: stay put under a roof, else run for the nearest edge (shooting on the way if it
+ * must). The sharper ones react sooner after the warning. */
+function fleeRed(m: Match, a: Actor, br: Brain) {
+  const red = m.red;
+  if (!red || !inRed(m, a) || red.warn > RED_WARN - 0.6 - (1 - br.skill) * 2.5) return false;
+  const b = a.body;
+  if (underRoof(m.world, b.x, eyeY(a), b.z)) {
+    setGoal(m, br, b.x, b.z);
+    br.loot = -1;
+    return true;
+  }
+  const dx = b.x - red.x;
+  const dz = b.z - red.z;
+  const d = Math.hypot(dx, dz) || 1;
+  const k = (red.r + 10) / d;
+  setGoal(m, br, red.x + (d > 0.5 ? dx : 1) * k, red.z + (d > 0.5 ? dz : 0) * k);
+  br.loot = -1;
+  br.supply = -1;
+  br.rush = true;
+  return true;
+}
+
+/** Where the bot wants to go when nobody is in sight, in any mode. */
+function planAny(m: Match, a: Actor, br: Brain) {
   const r = br.rng;
   if (m.mode === 'breach') {
     planBreach(m, a, br);
@@ -976,7 +1123,10 @@ function planDefense(m: Match, a: Actor, br: Brain) {
     const k = siteFor(m, a, br);
     const e = entryOf(m, k);
     const side = (br.holdA < 0.5 ? -1 : 1) * (0.55 + Math.abs(br.holdA - 0.5) * 1.6);
-    const spot = siteSpot(m, k, e.x, e.z, side, 4 + br.holdA * 6);
+    // (some hold from the far side of the site instead, back toward their own spawn, so a push onto it has open
+    // ground to cross under their guns)
+    const deep = Math.abs(br.holdA - 0.5) < 0.3;
+    const spot = deep ? siteSpot(m, k, e.x, e.z, Math.PI + side * 0.6, 7 + br.holdA * 6) : siteSpot(m, k, e.x, e.z, side, 4 + br.holdA * 6);
     setGoal(m, br, spot.x, spot.z, `site${k}`);
     br.faceX = e.x;
     br.faceZ = e.z;
@@ -995,6 +1145,10 @@ function planRoyale(m: Match, a: Actor, br: Brain) {
   const dn = Math.hypot(b.x - z.nx, b.z - z.nz);
   const late = z.shrinking || z.t < 22;
   br.healNow = a.hp < 72 && !!healPick(a) && dz < z.r - 4;
+  // a boost once hurt and out of the fight for a moment (or to top the meter up after a heal)
+  br.boostNow = !br.healNow && a.hp < 95 && a.boost < 30 && m.time - a.hurtT > 3 && !!boostPick(a) && dz < z.r - 4;
+  // a long way from where the zone is going: a vehicle parked near gets there sooner
+  if (seekCar(m, a, br)) return;
   // out of the zone (or soon to be): head in
   if (dz > z.r - 6 || (late && dn > z.nr - 8 && z.nr > 0)) {
     const tx = z.nr > 0 ? z.nx : z.x;
@@ -1008,9 +1162,29 @@ function planRoyale(m: Match, a: Actor, br: Brain) {
     br.loot = -1;
     return;
   }
-  if (br.healNow) {
+  if (br.healNow || br.boostNow) {
     setGoal(m, br, b.x, b.z);
     return;
+  }
+  // a supply crate coming down near it: the bolder ones with a gun go for it (and the fight that comes with it)
+  for (const s of m.supplies) {
+    const bit = 1 << s.id;
+    if (br.supplySeen & bit) continue;
+    br.supplySeen |= bit;
+    const d = Math.hypot(s.x - b.x, s.z - b.z);
+    if (br.supply < 0 && d < 170 && (a.guns[0] || a.guns[2]) && r() < (0.2 + br.skill * 0.5) * (1 - d / 220)) br.supply = s.id;
+  }
+  if (br.supply >= 0) {
+    const s = m.supplies[br.supply];
+    const d = Math.hypot(s.x - b.x, s.z - b.z);
+    // there (the loot below takes it from here), emptied, or the zone has left it outside
+    if ((d < 3 && s.landed >= 0) || !supplyLeft(m, s) || Math.hypot(s.x - z.x, s.z - z.z) > z.r - 4) br.supply = -1;
+    else {
+      // still coming down: wait near where it will land
+      if (s.landed < 0 && d < 7) setGoal(m, br, b.x, b.z);
+      else setGoal(m, br, s.x, s.z);
+      return;
+    }
   }
   // the loot it is after still there and still wanted?
   const cur = br.loot >= 0 ? m.loot[br.loot] : null;
@@ -1029,6 +1203,7 @@ function planRoyale(m: Match, a: Actor, br: Brain) {
       const dd = d * (it.kind === 'gun' ? need : 1);
       if (dd >= bestD) continue;
       if (Math.hypot(it.x - z.x, it.z - z.z) > z.r - 4 || !wants(a, it)) continue;
+      if (m.red && Math.hypot(it.x - m.red.x, it.z - m.red.z) < m.red.r + 4) continue;
       bestD = dd;
       best = it.id;
     }
@@ -1053,6 +1228,157 @@ function planRoyale(m: Match, a: Actor, br: Brain) {
     const step = Math.min(l, 50 + r() * 30);
     setGoal(m, br, b.x + ((gx - b.x) / l) * step, b.z + ((gz - b.z) / l) * step);
   }
+}
+
+/** Royale: whether to walk to a vehicle (and on the way to one, keeps the goal on it). */
+function seekCar(m: Match, a: Actor, br: Brain) {
+  if (!m.cars.length || a.car >= 0) return false;
+  const b = a.body;
+  if (br.car >= 0) {
+    const c = m.cars[br.car];
+    // gone, taken, or too long getting to it: forget it for a while
+    if (!c.alive || c.seats[0] >= 0 || claimedBy(m, c, a) || m.time - br.carT > 20) {
+      if (c.claim === a.id) c.claim = -1;
+      br.car = -1;
+      br.carCd = m.time + 25;
+      return false;
+    }
+    setGoal(m, br, c.x, c.z);
+    return true;
+  }
+  if (br.carCd > m.time || br.healNow || !currentGun(a)) return false;
+  const z = m.zone!;
+  const tx = z.nr > 0 ? z.nx : z.x;
+  const tz = z.nr > 0 ? z.nz : z.z;
+  const R = z.nr > 0 ? z.nr : z.r;
+  if (Math.hypot(b.x - tx, b.z - tz) - R * 0.5 < 120) return false;
+  let best: Car | null = null;
+  let bestD = 50;
+  for (const c of m.cars) {
+    if (!c.alive || c.seats[0] >= 0 || c.flooded || c.hp < CARS[c.kind].hp * 0.4 || claimedBy(m, c, a)) continue;
+    const d = Math.hypot(c.x - b.x, c.z - b.z);
+    if (d < bestD) {
+      bestD = d;
+      best = c;
+    }
+  }
+  if (!best) {
+    br.carCd = m.time + 6;
+    return false;
+  }
+  best.claim = a.id;
+  br.car = best.id;
+  br.carT = m.time;
+  setGoal(m, br, best.x, best.z);
+  return true;
+}
+
+/** Is a car spoken for by another bot still on its way to it? */
+function claimedBy(m: Match, c: Car, a: Actor) {
+  if (c.claim < 0 || c.claim === a.id) return false;
+  const o = m.actors[c.claim];
+  return !!o && o.alive && o.car < 0 && o.brain?.car === c.id;
+}
+
+/** Could a car drive this way for `dist` meters: nothing in the way, no cliff, no deep water? */
+function roadClear(m: Match, c: Car, yaw: number, dist: number) {
+  const w = m.world;
+  const t = w.terrain;
+  const S = CARS[c.kind];
+  const fx = -Math.sin(yaw);
+  const fz = -Math.cos(yaw);
+  let y = c.y;
+  for (let d = S.hl + 1.5; d <= dist; d += 2.5) {
+    const x = c.x + fx * d;
+    const z = c.z + fz * d;
+    if (Math.abs(x) > w.arena - 4 || Math.abs(z) > w.arena - 4) return false;
+    const g = floorAt(t, x, z);
+    if (Math.abs(g - y) > 1.6) return false;
+    if (t.hasWater && !t.ice && heightAt(t, x, z) < t.water - S.wade * 0.6) return false;
+    if (blockedAt(w, x, z, g, S.hw + 0.25)) return false;
+    for (const o of m.cars) if (o !== c && Math.abs(o.x - x) < 3.5 && Math.abs(o.z - z) < 3.5) return false;
+    y = g;
+  }
+  return true;
+}
+
+/** Royale, at the wheel: drive toward the circle, round what is in the way, back up when stuck, and get out once
+ * there, when someone is near enough to fight, when the car is nearly done for, or after a while regardless. */
+function driveInput(m: Match, a: Actor, br: Brain, inp: Input, dt: number) {
+  const c = m.cars[a.car];
+  const leave = () => {
+    inp.ride = true;
+    br.car = -1;
+    br.carCd = m.time + 30;
+    br.leaving = -1;
+    br.revs = 0;
+    br.path = null;
+    br.repath = true;
+    br.posX = br.longX = a.body.x;
+    br.posZ = br.longZ = a.body.z;
+    br.stuckT = br.longT = 0;
+    return inp;
+  };
+  // (a passenger seat is no place for a bot)
+  if (a.carSeat !== 0 || !c) return leave();
+  const S = CARS[c.kind];
+  const b = a.body;
+  br.think -= dt;
+  br.revT -= dt;
+  if (br.think <= 0) {
+    br.think = 0.25;
+    perceive(m, a, br);
+    const z = m.zone!;
+    const tx = z.nr > 0 ? z.nx : z.x;
+    const tz = z.nr > 0 ? z.nz : z.z;
+    const R = z.nr > 0 ? z.nr : z.r;
+    // where to: the near side of the circle, well inside it
+    const dc = Math.hypot(b.x - tx, b.z - tz) || 1;
+    const gx = tx + ((b.x - tx) / dc) * Math.min(dc, R * 0.45);
+    const gz = tz + ((b.z - tz) / dc) * Math.min(dc, R * 0.45);
+    const d = Math.hypot(gx - b.x, gz - b.z);
+    // barely moving while trying to: back up a little, off to one side
+    if (Math.abs(c.speed) < 1.2 && br.revT <= 0 && br.leaving < 0) br.carStuck += 0.25;
+    else br.carStuck = Math.max(0, br.carStuck - 0.1);
+    if (br.carStuck > 1.25) {
+      br.carStuck = 0;
+      br.revT = 1.2 + br.rng() * 0.6;
+      br.revs++;
+    }
+    const tgt = br.target >= 0 ? m.actors[br.target] : null;
+    const done = d < 22 || dc < R * 0.55 || (!!tgt && Math.hypot(tgt.body.x - b.x, tgt.body.z - b.z) < 75) || c.hp < S.hp * 0.3 || c.flooded || br.revs >= 4 || m.time - br.carT > 60;
+    if (done && br.leaving < 0) br.leaving = m.time;
+    // the heading: straight there unless something is in the way within a few seconds' drive
+    const want = Math.atan2(-(gx - b.x), -(gz - b.z));
+    const look = 9 + Math.abs(c.speed) * 1.1;
+    br.driveYaw = want;
+    for (const off of [0, 0.3, -0.3, 0.6, -0.6, 1, -1, 1.5, -1.5]) {
+      const yaw = want + off * (br.strafe > 0 ? 1 : -1);
+      if (roadClear(m, c, yaw, look)) {
+        br.driveYaw = yaw;
+        break;
+      }
+    }
+  }
+  // getting out: slow down first (but never wait on it long)
+  if (br.leaving >= 0) {
+    if (Math.abs(c.speed) < 5 || m.time - br.leaving > 3) return leave();
+    inp.mz = c.speed > 0 ? -1 : 1;
+    inp.jump = true;
+  } else {
+    const diff = angDiff(c.yaw, br.driveYaw);
+    if (br.revT > 0) {
+      inp.mz = -1;
+      inp.mx = diff > 0 ? 1 : -1;
+    } else {
+      inp.mx = clamp(-diff * 2.2, -1, 1);
+      inp.mz = Math.abs(diff) > 1.2 && c.speed > 7 ? -0.4 : Math.abs(diff) > 0.7 ? 0.45 : 1;
+    }
+  }
+  // looking where it goes
+  inp.yaw = a.yaw + clamp(angDiff(a.yaw, c.yaw), -dt * 4, dt * 4);
+  inp.pitch = a.pitch * (1 - Math.min(1, dt * 3));
+  return inp;
 }
 
 /** Landing spots already picked in a match, counted per grid cell. */
@@ -1194,6 +1520,7 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
   }
   if (m.mode === 'royale' && a.drop) return dropInput(m, a, br, inp, dt);
   if (br.reset) roundReset(m, a, br);
+  if (a.car >= 0) return driveInput(m, a, br, inp, dt);
   const r = br.rng;
   if (m.mode === 'breach' && m.phase === 'buy') {
     if (!br.bought && m.phaseT < 13) shop(m, a, br);
@@ -1220,8 +1547,8 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     // far from you in a royale nobody sees the difference: think half as often
     if (m.mode === 'royale' && br.target < 0 && Math.hypot(a.body.x - m.actors[0].body.x, a.body.z - m.actors[0].body.z) > 160) br.think *= 2;
     perceive(m, a, br);
-    // empty handed in a royale: keep looking for a gun even with someone in sight
-    if (br.target < 0 || (m.mode === 'royale' && !currentGun(a))) plan(m, a, br);
+    // empty handed in a royale: keep looking for a gun even with someone in sight; under a bombardment, get out
+    if (br.target < 0 || (m.mode === 'royale' && (!currentGun(a) || inRed(m, a) || br.rush))) plan(m, a, br);
     route(m, a, br);
     if (br.detourT <= 0) steer(m, a, br);
     // stuck: walked under a second's worth less than half a meter while trying to move
@@ -1271,10 +1598,29 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
   }
   // a long gun with rounds beats the sidearm; a gun with nothing left gets swapped for one that has some
   const loaded = (k: number) => !!a.guns[k] && (a.guns[k]!.mag > 0 || spareOf(m, a, a.guns[k]!) > 0);
-  if (a.slot === 1 || !loaded(a.slot)) {
-    const k = loaded(0) ? 0 : loaded(2) ? 2 : loaded(1) ? 1 : -1;
-    if (k >= 0 && k !== a.slot) inp.slot = k;
+  // with a shield: up, the sidearm out, going in and in a fight up close (or with no long gun left to fight with);
+  // down for a fight at range with a long gun (it thinks about it now and then, not every frame)
+  br.shieldT -= dt;
+  if (a.pavise > 0 && loaded(1) && br.shieldT <= 0) {
+    br.shieldT = 1.2 + r() * 0.8;
+    const t = br.target >= 0 ? m.actors[br.target] : null;
+    const long = loaded(0) || loaded(2);
+    const d = t ? Math.hypot(t.body.x - a.body.x, t.body.z - a.body.z) : 0;
+    const pushing = m.mode === 'breach' && a.team === m.attack && m.charge.state !== 'planted';
+    br.shieldUp = !long || (t ? d < 12 : pushing || br.holdA < 0.5);
   }
+  if (a.pavise <= 0 || !loaded(1)) br.shieldUp = false;
+  if (br.shieldUp) {
+    if (!a.paviseUp) inp.shield = true;
+  } else {
+    if (a.paviseUp) inp.shield = true;
+    if (a.slot === 1 || !loaded(a.slot)) {
+      const k = loaded(0) ? 0 : loaded(2) ? 2 : loaded(1) ? 1 : -1;
+      if (k >= 0 && k !== a.slot) inp.slot = k;
+    }
+  }
+  // standing in fire: out of it first
+  const burning = m.fires.length ? inFire(m, a.body.x, a.body.y, a.body.z, 0.6) : null;
   const g = currentGun(a);
   const w = g ? WEAPONS[g.id] : WEAPONS.wren;
 
@@ -1290,6 +1636,9 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
           break;
         }
     if (!tgt && br.healNow && a.healT <= 0) inp.heal = true;
+    else if (!tgt && br.boostNow && a.healT <= 0) inp.boost = true;
+    // at the door of the vehicle it came for: in
+    if (br.car >= 0 && carNear(m, a)?.id === br.car) inp.ride = true;
   }
   // breach: plant once on the spot with nobody in sight (or the clock about to run out); defuse when clear, or
   // regardless once the fuse is too short to wait
@@ -1299,6 +1648,8 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     const gd = Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z);
     if (plantSite(m, a) >= 0 && (c.plantBy === a.id || ((!tgt || m.phaseT < PLANT_TIME + 2) && (gd < 2.6 || m.phaseT < PLANT_TIME + 6)))) busy = true;
     else if (canDefuse(m, a) && (c.defuseBy === a.id || !tgt || c.fuse < DEFUSE_TIME - c.defuseKept + 2)) busy = true;
+    // (on fire it gets out first, unless the fuse can't wait)
+    if (busy && burning && !(canDefuse(m, a) && c.fuse < DEFUSE_TIME - c.defuseKept + 1.5)) busy = false;
     if (busy) {
       inp.use = true;
       br.moving = false;
@@ -1326,9 +1677,18 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     const lead = br.skill * tof;
     const tx = tgt.body.x + tgt.body.vx * lead;
     const tz = tgt.body.z + tgt.body.vz * lead;
-    const ty = (br.head ? tgt.body.y + tgt.body.height - 0.13 : tgt.body.y + tgt.body.height * 0.66) + br.skill * 4.9 * tof * tof;
-    const ax = tx - a.body.x;
-    const az = tz - a.body.z;
+    // a raised shield facing it: shoot under it at the feet (crouched behind it there's nothing to hit: flank)
+    const tf = viewDir(tgt.yaw, 0);
+    const shielded = tgt.paviseUp && (-dx * tf.x - dz * tf.z) / (d || 1) > 0.3;
+    // (a crossbow bolt's arc, from where it was zeroed)
+    const drop = w.cls === 'crossbow' ? 4.9 * tof * Math.max(0, tof - 30 / w.speed) * (0.5 + br.skill * 0.5) : br.skill * 4.9 * tof * tof;
+    // (lying down: the head, or the back just behind it; a head leant out: where it is)
+    partsOf(tgt, seen);
+    const low = tgt.prone > 0.5;
+    const part = br.head ? 0 : low ? 1 : -1;
+    const ty = (shielded ? tgt.body.y + 0.16 : part >= 0 ? seen[part * 4 + 1] : tgt.body.y + tgt.body.height * 0.66) + drop;
+    const ax = tx + (part >= 0 && !shielded ? seen[part * 4] - tgt.body.x : 0) - a.body.x;
+    const az = tz + (part >= 0 && !shielded ? seen[part * 4 + 2] - tgt.body.z : 0) - a.body.z;
     const ay = ty - eyeY(a);
     wantYaw = Math.atan2(-ax, -az);
     wantPitch = Math.atan2(ay, Math.hypot(ax, az));
@@ -1352,6 +1712,8 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
       br.strafeT = 0.35 + r() * 0.9;
       br.strafe = r() < 0.5 ? -1 : 1;
       br.crouchT = r() < br.skill * 0.35 ? 0.6 + r() * 1.2 : 0;
+      // royale, a long shot through a scope or with a marksman's gun: some get down for it
+      if (m.mode === 'royale' && br.proneT <= 0 && d > 55 && g && (scopeOf(g) || w.cls === 'sniper' || w.cls === 'dmr') && r() < 0.15 + br.skill * 0.25) br.proneT = 4 + r() * 6;
     }
     const toward = Math.atan2(dx, dz);
     const reach = REACH[g?.id ?? 'wren'];
@@ -1359,6 +1721,8 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     if (!g) moveAng = toward + Math.PI + 0.5 * br.strafe;
     else if (d > pref + 12) moveAng = toward + (d > reach ? 0.15 : 0.5) * br.strafe;
     else if (d < pref * 0.5) moveAng = toward + Math.PI - 0.6 * br.strafe;
+    // round the side of a shield
+    if (shielded) moveAng = toward + (Math.PI / 2 - 0.25) * br.strafe;
     if (!free(m, a, moveAng, 1.6)) moveAng = toward - (Math.PI / 2) * br.strafe;
     // breach, a spot to hold: no closing in, only a step to either side, and back onto it if off it
     if (m.mode === 'breach' && br.hold && g) {
@@ -1374,10 +1738,11 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     const ready = br.seenFor >= br.react;
     const errNow = Math.hypot(angDiff(a.yaw, wantYaw - br.errY), (a.pitch - (wantPitch - br.errP)) * 1.2);
     const tol = Math.atan2(0.32, Math.max(1, d)) + spreadOf(a) * DEG * 0.35 + (1 - br.skill) * 0.03;
-    const scoped = w.scope || w.cls === 'rifle';
+    const sc = !!g && scopeOf(g);
+    const scoped = sc || w.cls === 'rifle' || w.cls === 'lmg' || w.cls === 'crossbow';
     inp.ads = scoped && d > 22 && br.skill > 0.3;
     if (w.cls === 'sniper') inp.ads = d > 8;
-    const aligned = errNow < tol && (!w.scope || a.ads > 0.9 || !inp.ads);
+    const aligned = errNow < tol && (!sc || a.ads > 0.9 || !inp.ads);
     // only in range, and (unless panicking up close) only once the cone is tight enough to land at this distance
     const cone = spreadOf(a) * DEG * d;
     const patience = d > 12 && br.skill > 0.3 && cone > 0.42 + (1 - br.skill) * 0.9;
@@ -1404,17 +1769,18 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
       inp.crouch = d > 6;
     }
     if (g && g.mag === 0) inp.reload = true;
-    // a frag at a target behind cover
-    if (m.mode !== 'dm' && a.frags > 0 && br.nadeT <= 0 && br.seenFor > 1 && d > 10 && d < 32 && br.skill > 0.3 && r() < 0.02) {
-      wantPitch += 0.25 + d * 0.004;
-      inp.throw = 'frag';
+    // a frag at a target behind cover (sooner at one behind a shield), or an impact grenade right at them
+    if (m.mode !== 'dm' && (a.frags > 0 || a.impacts > 0) && br.nadeT <= 0 && br.seenFor > 1 && d > 10 && d < 32 && br.skill > 0.3 && r() < (shielded ? 0.08 : 0.02)) {
+      const impact = a.impacts > 0 && (a.frags <= 0 || d < 22);
+      wantPitch += impact ? 0.12 + d * 0.006 : 0.25 + d * 0.004;
+      inp.throw = impact ? 'impact' : 'frag';
       br.nadeT = 8;
     }
   } else {
     br.seenFor = 0;
     br.burst = 0;
     // reload in a quiet moment
-    if (g && g.mag < WEAPONS[g.id].mag * 0.5 && spareOf(m, a, g) > 0) inp.reload = true;
+    if (g && g.mag < magOf(g) * 0.5 && spareOf(m, a, g) > 0) inp.reload = true;
     // (empty handed there's nothing to hunt them with: keep running to the loot)
     const lostRecently = br.hasLast && m.time - br.lostAt < 4 && !!g;
     if (lostRecently) {
@@ -1425,9 +1791,10 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
       walk = br.skill > 0.5;
       // flush them out of cover
       const d = Math.hypot(ax, az);
-      if (a.frags > 0 && br.nadeT <= 0 && d > 9 && d < 30 && m.time - br.lostAt > 0.8 && br.skill > 0.3) {
+      // (an incendiary does it best: it keeps them out of there for a while)
+      if ((a.frags > 0 || a.fires > 0) && br.nadeT <= 0 && d > 9 && d < 30 && m.time - br.lostAt > 0.8 && br.skill > 0.3) {
         wantPitch += 0.3 + d * 0.004;
-        inp.throw = 'frag';
+        inp.throw = a.fires > 0 ? 'fire' : 'frag';
         br.nadeT = 9;
       }
     } else if (br.waitT > 0) {
@@ -1471,6 +1838,29 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
           }
         }
       }
+      // the charge planted and a defender on it: an incendiary on the charge (the attack)
+      const c = m.charge;
+      if (m.mode === 'breach' && a.team === m.attack && a.fires > 0 && br.nadeT <= 0 && c.state === 'planted' && (c.defuseBy >= 0 || (br.hasLast && Math.hypot(br.lastX - c.x, br.lastZ - c.z) < 6 && m.time - br.lostAt < 3))) {
+        const d = Math.hypot(c.x - a.body.x, c.z - a.body.z);
+        if (d > 8 && d < 26) {
+          const yaw = Math.atan2(-(c.x - a.body.x), -(c.z - a.body.z));
+          wantYaw = yaw;
+          wantPitch = Math.acos(clamp(d / 25, 0.3, 1)) - 0.1;
+          moveAng = NaN;
+          if (Math.abs(angDiff(a.yaw, yaw)) < 0.15 && Math.abs(a.pitch - wantPitch) < 0.1) {
+            inp.throw = 'fire';
+            br.nadeT = 6;
+          }
+        }
+      }
+      // gathering to go in: a decoy thrown out ahead, to pull the defense's eyes (and ears) that way
+      if (m.mode === 'breach' && a.team === m.attack && a.decoys > 0 && br.nadeT <= 0 && c.state === 'carried' && !stageOf(m).go && br.role !== 'entry') {
+        wantPitch = 0.5;
+        if (Math.abs(a.pitch - 0.5) < 0.1) {
+          inp.throw = 'decoy';
+          br.nadeT = 5;
+        }
+      }
       // a flashbang over the site before going in (the attack), or onto the charge before a retake (the defense)
       if (m.mode === 'breach' && m.phase === 'live' && a.flashes > 0 && br.nadeT <= 0 && br.skill > 0.25) {
         const c = m.charge;
@@ -1496,7 +1886,29 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
       }
     }
   }
+  // royale: lying still for a long shot (until it runs out, they come close or it gets hurt), or down in long grass
+  // while patching up, well inside the zone
+  if (m.mode === 'royale' && !burning) {
+    if (br.proneT > 0) {
+      br.proneT -= dt;
+      const near = !!tgt && Math.hypot(tgt.body.x - a.body.x, tgt.body.z - a.body.z) < 25;
+      if (near || (m.time - a.hurtT < 0.25 && a.hp < 70)) br.proneT = 0;
+    }
+    const z = m.zone;
+    const hide = !tgt && a.healT > 0 && !!z && Math.hypot(a.body.x - z.x, a.body.z - z.z) < z.r - 15 && grassy(m, a);
+    if (br.proneT > 0 || hide) {
+      inp.prone = true;
+      moveAng = NaN;
+    }
+  }
+  // on fire: straight out of it, the way away from its middle
+  if (burning) {
+    moveAng = Math.atan2(a.body.x - burning.x, a.body.z - burning.z);
+    walk = false;
+    br.moving = true;
+  }
   // a flashbang of its own in the air: look the other way
+
   if (br.flashAway > 0) {
     br.flashAway -= dt;
     if (!tgt) {
@@ -1516,7 +1928,7 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     br.moving = false;
   } else {
     const gd = Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z);
-    if (!tgt && gd < (m.mode === 'royale' ? 0.9 : Math.min(1.6, br.arrive)) && br.detourT <= 0) br.moving = false;
+    if (!tgt && !burning && gd < (m.mode === 'royale' ? 0.9 : Math.min(1.6, br.arrive)) && br.detourT <= 0) br.moving = false;
     else {
       const wx = Math.sin(moveAng);
       const wz = Math.cos(moveAng);

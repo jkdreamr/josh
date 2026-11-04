@@ -1,24 +1,33 @@
 // The soldiers on the field: one skinned body per actor (geometry shared by everyone in the same kit), holding the gun
-// they actually carry, posed every frame. The body is the real soldier model when it has loaded (tinted per kit: your
-// team in warm tan, the other team in charcoal), else the lofted one. In deathmatch everyone draws a kit of their own.
+// they actually carry, posed every frame. The body is the project owner's soldier outfit when it has loaded (the kit
+// recolors its cloth and gear, and some kits wear its helmet: your team in coyote with helmets, the other team in the
+// outfit's own black with bare balaclavas), else the old real soldier (tinted per kit), else the lofted one. In
+// deathmatch everyone draws a kit of their own.
+import type { Assets } from '../assets.ts';
 import type { Actor, Match } from '../match.ts';
-import { RUN, currentGun } from '../match.ts';
-import { WEAPONS, type WeaponId } from '../weapons.ts';
-import { BONE, LOFT_BUILD, SOLDIER_BUILD, makePoser, skeleton, soldierGeometry } from './body.ts';
-import { patch, type Shared, type T, type Three } from './common.ts';
+import { PRONE_SPEED, RUN, currentGun } from '../match.ts';
+import { PAVISE, WEAPONS, type WeaponId } from '../weapons.ts';
+import { BONE, LOFT_BUILD, OUTFIT_BUILD, SOLDIER_BUILD, makePoser, skeleton, soldierGeometry, type Build } from './body.ts';
+import { patch, roundBox, type Shared, type T, type Three } from './common.ts';
 import { OUTFITS, outfitMaterials } from './gear.ts';
 import { gunLiteGeometry, gunModel } from './guns.ts';
-import { worldMaterial, type Part } from './models.ts';
+import { bakeModel, modelOf, worldMaterial, type Part } from './models.ts';
 
-/** How each kit tints the real soldier's texture. */
-const TINT: Record<string, [number, number, number]> = {
-  multicam: [1.12, 1.0, 0.84],
-  black: [0.33, 0.35, 0.39],
-  ranger: [0.78, 0.92, 0.7],
-  coyote: [1.22, 1.02, 0.76],
-  woodland: [0.7, 0.86, 0.6],
-  urban: [0.95, 0.98, 1.06],
+/**
+ * Each kit: the tint on the old soldier's texture, and on the outfit the color its cloth and gear take (sRGB, for a
+ * texel of the outfit's mean brightness), how much of it they take, and whether the helmet goes on.
+ */
+const KITS: Record<string, { tint: [number, number, number]; color: number; recolor: number; helmet: boolean }> = {
+  multicam: { tint: [1.12, 1.0, 0.84], color: 0x6c6150, recolor: 0.8, helmet: true },
+  black: { tint: [0.33, 0.35, 0.39], color: 0x2c2e32, recolor: 0, helmet: false },
+  ranger: { tint: [0.78, 0.92, 0.7], color: 0x525e42, recolor: 0.8, helmet: true },
+  coyote: { tint: [1.22, 1.02, 0.76], color: 0x856a4a, recolor: 0.85, helmet: false },
+  woodland: { tint: [0.7, 0.86, 0.6], color: 0x4c5537, recolor: 0.8, helmet: false },
+  urban: { tint: [0.95, 0.98, 1.06], color: 0x63686e, recolor: 0.75, helmet: true },
 };
+
+/** The outfit texture's mean linear brightness where a kit recolors it (measured by the bake). */
+const OUTFIT_LUMA = 0.0196;
 
 /** Name colors for the HUD (kill feed, deathmatch). */
 const DM_COLORS = [0x7cc6ff, 0xff7a5c, 0xffd23c, 0x7cff6a, 0xff6ad5, 0x6af0ff, 0xb08cff, 0xffffff];
@@ -49,24 +58,130 @@ export type Soldiers = {
   dispose(): void;
 };
 
-type Rig = { mesh: T.SkinnedMesh; bones: T.Bone[]; guns: Map<number, T.Mesh>; kit: string; muzzle: T.Vector3; frame: number; posedAt: number; lod: boolean };
+type Rig = { mesh: T.SkinnedMesh; bones: T.Bone[]; guns: Map<number, T.Mesh>; kit: string; muzzle: T.Vector3; frame: number; posedAt: number; lod: boolean; shield: T.Group | null };
+
+/** The ballistic shield on a soldier (model space: its bottom edge, a little left of the middle): raised, square in
+ * front at the height the rules use (lower crouched); carried, slung on the back. The model stands 1.57 m tall. */
+const SHIELD_K = PAVISE.tall / 1.566;
+/** Turns the model's face to the front. */
+export const SHIELD_FACE = 0;
+
 
 const GUN_IDS = Object.keys(WEAPONS) as WeaponId[];
 /** One number per gun and side, so the per frame lookups build no strings. */
 const gunKey = (id: WeaponId, side: number) => GUN_IDS.indexOf(id) * 2 + side;
 
-/** How far soldiers are drawn at all, at full detail, and with a shadow. */
+/** Lying down, the model (1.57 m, its feet at the origin) tips forward onto its front around a point this far back
+ * from the head, and rests this high on its chest; a full lean rolls it this far over (the spine bends the rest). */
+const LIE_BACK = 1.5;
+const LIE_UP = 0.13;
+const LEAN_ROLL = 0.13;
+
+const smooth = (a: number, b: number, x: number) => {
+  const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
+
+/** How far soldiers are drawn at all, at full detail, and with a shadow (the outfit's near copy is the heavier, so it
+ * hands over to the far one sooner: at 32 m a soldier stands under a tenth of the screen). */
 const FAR = 330;
 const NEAR = 45;
+const NEAR_OUTFIT = 32;
 const SHADOW = 50;
 
-export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: Part | null, lod: Part | null): Soldiers {
+/**
+ * The real soldier models: the outfit's body and helmet, near and far (all on one textured material), or the old
+ * soldier when the outfit didn't load, with the joints each was skinned to.
+ */
+export type Look = { build: Build; mat: T.MeshStandardMaterial; body: T.BufferGeometry; lod: T.BufferGeometry | null; helmet: T.BufferGeometry | null; helmetLod: T.BufferGeometry | null; outfit: boolean };
+
+export function soldierLook(THREE: Three, assets: Assets): Look | null {
+  const part = (root: T.Object3D | undefined, name: string): Part | null => {
+    const node = root?.getObjectByName(name);
+    return node ? (bakeModel(THREE, node).parts[0] ?? null) : null;
+  };
+  const body = part(assets.outfit, 'outfit');
+  if (body) {
+    // the far copies carry no textures of their own: they draw with the near one's material
+    const far = (name: string) => part(assets['outfit-lod'], name)?.geo ?? null;
+    return { build: OUTFIT_BUILD, mat: body.mat, body: body.geo, lod: far('outfit'), helmet: part(assets.outfit, 'helmet')?.geo ?? null, helmetLod: far('helmet'), outfit: true };
+  }
+  const old = modelOf(THREE, assets, 'soldier')?.parts[0];
+  if (!old) return null;
+  return { build: SOLDIER_BUILD, mat: old.mat, body: old.geo, lod: modelOf(THREE, assets, 'soldier-lod')?.parts[0]?.geo ?? null, helmet: null, helmetLod: null, outfit: false };
+}
+
+/** One geometry of several (position, normal, uv and skinning; the uv and weights dequantized to floats). */
+function mergeGeometries(THREE: Three, geos: T.BufferGeometry[]) {
+  const out = new THREE.BufferGeometry();
+  for (const name of ['position', 'normal', 'uv', 'skinIndex', 'skinWeight']) {
+    const src = geos.map((g) => g.getAttribute(name));
+    const k = src[0].itemSize;
+    const n = src.reduce((sum, a) => sum + a.count, 0) * k;
+    const arr = name === 'skinIndex' ? new Uint16Array(n) : new Float32Array(n);
+    let o = 0;
+    for (const a of src) for (let i = 0; i < a.count; i++, o++) for (let c = 0; c < k; c++) arr[o * k + c] = a.getComponent(i, c);
+    out.setAttribute(name, new THREE.BufferAttribute(arr, k));
+  }
+  const index = new Uint32Array(geos.reduce((sum, g) => sum + g.index!.count, 0));
+  let o = 0;
+  let base = 0;
+  for (const g of geos) {
+    for (let i = 0; i < g.index!.count; i++) index[o++] = g.index!.getX(i) + base;
+    base += g.getAttribute('position').count;
+  }
+  out.setIndex(new THREE.BufferAttribute(index, 1));
+  out.computeBoundingSphere();
+  return out;
+}
+
+/** The outfit's material for a kit: lit like the world, its cloth and gear recolored where the texture's alpha lets it. */
+function outfitMaterial(THREE: Three, src: T.MeshStandardMaterial, shared: Shared, kit: (typeof KITS)[string]) {
+  const m = src.clone();
+  m.side = THREE.FrontSide;
+  patch(m, shared, {
+    key: 'dz-outfit',
+    uniforms: { dzKit: { value: new THREE.Color(kit.color) }, dzRecolor: { value: kit.recolor } },
+    fragDecl: 'uniform vec3 dzKit;\nuniform float dzRecolor;',
+    // the kit's color, shaded by the texture's own light and dark (its contrast softened)
+    albedo: `
+#ifdef USE_MAP
+  vec4 sampledDiffuseColor = texture2D(map, vMapUv);
+  float dzL = max(1e-4, dot(sampledDiffuseColor.rgb, vec3(0.2126, 0.7152, 0.0722)));
+  vec3 dzRe = dzKit * pow(dzL / ${OUTFIT_LUMA.toFixed(4)}, 0.7);
+  diffuseColor.rgb *= mix(sampledDiffuseColor.rgb, dzRe, dzRecolor * sampledDiffuseColor.a);
+#endif`,
+  });
+  return m;
+}
+
+export function soldiers(THREE: Three, shared: Shared, shadows: boolean, look: Look | null, shieldParts: Part[] = []): Soldiers {
   const group = new THREE.Group();
-  const build = real ? SOLDIER_BUILD : LOFT_BUILD;
+  const build = look?.build ?? LOFT_BUILD;
+  /** The outfit with its helmet on, near and far, made when a kit first wears it. */
+  let helmeted: [T.BufferGeometry, T.BufferGeometry | null] | null = null;
   const kits = new Map<string, { geo: T.BufferGeometry; lod: T.BufferGeometry | null; mats: T.Material[]; camo: T.Texture | null }>();
   const gunMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.55, metalness: 0.3 });
   patch(gunMat, shared, { key: 'dz-gun-lite' });
   const rigs = new Map<number, Rig>();
+  // the shield's parts lit like the world, shared by everyone carrying one (a plain slab if the model didn't load)
+  const shieldLook: { geo: T.BufferGeometry; mat: T.Material }[] = shieldParts.length
+    ? shieldParts.map((p) => ({ geo: p.geo, mat: worldMaterial(THREE, p.mat, shared) }))
+    : [{ geo: roundBox(THREE, 0.62, 1.56, 0.05, 0.2, 2).translate(0, 0.78, 0), mat: new THREE.MeshStandardMaterial({ color: 0x2b2f33, roughness: 0.6, metalness: 0.4 }) }];
+  if (!shieldParts.length) patch(shieldLook[0].mat as T.MeshStandardMaterial, shared, { key: 'dz-shield' });
+  const shieldFor = (r: Rig) => {
+    if (!r.shield) {
+      r.shield = new THREE.Group();
+      for (const p of shieldLook) {
+        const mesh = new THREE.Mesh(p.geo, p.mat);
+        mesh.castShadow = shadows;
+        r.shield.add(mesh);
+      }
+      r.shield.scale.setScalar(SHIELD_K);
+      r.mesh.add(r.shield);
+    }
+    return r.shield;
+  };
   const pose = makePoser(THREE, build);
   const tmp = new THREE.Vector3();
   const frustum = new THREE.Frustum();
@@ -79,8 +194,13 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: P
 
   const kitFor = (key: string) => {
     let k = kits.get(key);
-    if (!k && real) {
-      k = { geo: real.geo, lod: lod?.geo ?? null, mats: [worldMaterial(THREE, real.mat, shared, TINT[key] ?? TINT.multicam)], camo: null };
+    if (!k && look) {
+      const kit = KITS[key] ?? KITS.multicam;
+      const mats = [look.outfit ? outfitMaterial(THREE, look.mat, shared, kit) : worldMaterial(THREE, look.mat, shared, kit.tint)];
+      if (look.outfit && kit.helmet && look.helmet) {
+        helmeted ??= [mergeGeometries(THREE, [look.body, look.helmet]), look.lod ? mergeGeometries(THREE, [look.lod, look.helmetLod ?? look.helmet]) : null];
+        k = { geo: helmeted[0], lod: helmeted[1], mats, camo: null };
+      } else k = { geo: look.body, lod: look.lod, mats, camo: null };
       kits.set(key, k);
     }
     if (!k) {
@@ -110,7 +230,7 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: P
     mesh.receiveShadow = true;
     mesh.frustumCulled = false;
     group.add(mesh);
-    r = { mesh, bones, guns: new Map(), kit: key, muzzle: new THREE.Vector3(0, -1000, 0), frame: 0, posedAt: -1, lod: false };
+    r = { mesh, bones, guns: new Map(), kit: key, muzzle: new THREE.Vector3(0, -1000, 0), frame: 0, posedAt: -1, lod: false, shield: null };
     rigs.set(a.id, r);
     return r;
   };
@@ -135,7 +255,7 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: P
     },
     prewarm(camera) {
       camera.getWorldDirection(tmp);
-      Object.keys(TINT).forEach((key, i) => {
+      Object.keys(KITS).forEach((key, i) => {
         const k = kitFor(key);
         for (const geo of k.lod ? [k.geo, k.lod] : [k.geo]) {
           const { bones, skeleton: sk } = skeleton(THREE, build.joints);
@@ -191,7 +311,7 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: P
         r.mesh.visible = true;
         // far away: the light mesh, no shadow, and a pose every other (or fourth) frame
         const k = kitFor(r.kit);
-        const useLod = !!k.lod && dist > NEAR;
+        const useLod = !!k.lod && dist > (look?.outfit ? NEAR_OUTFIT : NEAR);
         if (useLod !== r.lod) {
           r.mesh.geometry = useLod ? k.lod! : k.geo;
           r.lod = useLod;
@@ -204,24 +324,51 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: P
         r.posedAt = time;
         const fallE = fall * fall * (3 - 2 * fall);
         const sky = a.drop === 2 ? 1 : a.drop === 3 ? 2 : 0;
-        r.mesh.position.set(b.x, b.y - (b.swim ? 0.25 : 0) - fallE * 0.08, b.z);
-        r.mesh.rotation.set(dead ? fallE * 1.45 : sky === 1 ? -1.25 : 0, a.yaw, 0, 'YXZ');
-        const g = sky ? null : currentGun(a);
+        // in a vehicle: seated, tilted with it (the driver faces the way it goes, a passenger where they look)
+        const car = !dead && a.car >= 0 ? m.cars[a.car] : null;
+        const seat = car ? (a.carSeat === 0 ? 1 : 2) : 0;
+        // lying down: down on the knees first, then forward onto the front, the head where the body's eyes are
+        const pr = car || sky ? 0 : a.prone;
+        const lie = smooth(0.35, 1, pr);
+        const kneel = Math.min(1, pr * 2.5) * (1 - lie);
+        const tilt = -lie * Math.PI * 0.5;
+        const back = Math.sin(-tilt) * LIE_BACK;
+        r.mesh.position.set(b.x + Math.sin(a.yaw) * back, b.y - (b.swim ? 0.25 : 0) - fallE * 0.08 * (1 - lie) + lie * LIE_UP, b.z + Math.cos(a.yaw) * back);
+        if (car) r.mesh.rotation.set(car.pitch, seat === 1 ? car.yaw : a.yaw, car.roll, 'YXZ');
+        else r.mesh.rotation.set(dead ? (lie > 0.5 ? tilt : fallE * 1.45) : sky === 1 ? -1.25 : tilt, a.yaw, dead ? 0 : -a.lean * LEAN_ROLL, 'YXZ');
+        // a shield carried: up in front, or on the back
+        if (a.pavise > 0 && !dead && !sky && !car) {
+          const sh = shieldFor(r);
+          sh.visible = true;
+          if (a.paviseUp) {
+            sh.position.set(-0.04, PAVISE.low[0] + (PAVISE.low[1] - PAVISE.low[0]) * a.crouch, -PAVISE.ahead);
+            sh.rotation.set(0, SHIELD_FACE, 0);
+          } else {
+            sh.position.set(0, 0.42 - a.crouch * 0.4, 0.2);
+            sh.rotation.set(0.08, SHIELD_FACE + Math.PI, 0);
+          }
+        } else if (r.shield) r.shield.visible = false;
+        const g = sky || seat === 1 ? null : currentGun(a);
         const id = g?.id ?? null;
         const side = sideOf(m, a);
         const want = id && !dead && dist < 160 ? gunKey(id, side) : -1;
         for (const [gid, gg] of r.guns) gg.visible = gid === want;
         const gg = want >= 0 && id ? gunFor(r, id, side) : null;
         pose(r.bones, gg, {
-          pitch: a.pitch,
-          crouch: a.crouch,
-          speed: Math.min(1, Math.hypot(b.vx, b.vz) / RUN),
+          pitch: seat === 1 ? 0 : a.pitch,
+          crouch: seat ? 0 : Math.max(a.crouch, kneel),
+          lie,
+          tilt,
+          crawl: lie > 0.9 ? Math.min(1, Math.hypot(b.vx, b.vz) / PRONE_SPEED) : 0,
+          lean: dead || seat ? 0 : a.lean,
+          speed: seat ? 0 : Math.min(1, Math.hypot(b.vx, b.vz) / RUN),
           phase: a.phase,
-          air: !b.onGround && !b.swim,
+          air: !seat && !b.onGround && !b.swim,
           dead,
           gun: gg && id ? gunModel(THREE, id, side) : null,
           pistol: !!id && WEAPONS[id].cls === 'pistol',
           sky,
+          seat,
         });
         r.mesh.updateMatrixWorld(true);
         if (gg && id) {
@@ -234,13 +381,16 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, real: P
     dispose() {
       for (const r of rigs.values()) r.mesh.skeleton.dispose();
       for (const k of kits.values()) {
-        if (k.geo !== real?.geo) k.geo.dispose();
+        if (!look) k.geo.dispose();
         for (const mat of k.mats) mat.dispose();
         k.camo?.dispose();
       }
-      real?.geo.dispose();
-      lod?.geo.dispose();
+      for (const g of [look?.body, look?.lod, look?.helmet, look?.helmetLod, ...(helmeted ?? [])]) g?.dispose();
       gunMat.dispose();
+      for (const p of shieldLook) {
+        p.mat.dispose();
+        p.geo.dispose();
+      }
     },
   };
 }

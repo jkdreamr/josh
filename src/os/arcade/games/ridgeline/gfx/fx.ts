@@ -1,8 +1,11 @@
 // Effects: billboard particles (dust, sparks, splashes, smoke, fire), bullet tracers, bullet holes, grenades in the
-// air, smoke clouds and the weather. Each kind is one instanced draw whose buffers are refilled each frame.
+// air, smoke clouds, a royale supply crate's column of colored smoke and the weather. Each kind is one instanced draw
+// whose buffers are refilled each frame.
 import type { Match } from '../match.ts';
+import { WEAPONS } from '../weapons.ts';
 import type { Surface, World } from '../world.ts';
 import { mulberry32 } from '../noise.ts';
+import { SUPPLY_SMOKE } from '../royale.ts';
 import { ADDITIVE, COMMON, DOUBLE, NORMAL_BLEND, lin, type Shared, type T, type Three } from './common.ts';
 import { worldMaterial, type Part } from './models.ts';
 
@@ -175,21 +178,31 @@ attribute vec4 iC;
 attribute float iW;
 varying vec2 vUv;
 varying vec4 vC;
+varying float vFade;
 void main() {
   vec3 p = mix(iA, iB, position.x);
-  vec3 side = normalize(cross(iB - iA, p - cameraPosition));
-  p += side * position.y * iW * (0.6 + length(p - cameraPosition) * 0.004);
+  vec3 toCam = p - cameraPosition;
+  // (a line seen end on, or of no length, has no side: it collapses to nothing rather than to NaN, which some GPUs
+  // draw as black streaks that the bloom then smears)
+  vec3 c = cross(iB - iA, toCam);
+  float l = length(c);
+  vec3 side = l > 1e-6 ? c / l : vec3(0.0);
+  float d = length(toCam);
+  p += side * position.y * iW * (0.6 + d * 0.004);
   vUv = position.xy;
   vC = iC;
+  // never right in front of the eye
+  vFade = smoothstep(2.0, 6.0, d);
   gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
 }
 `;
 const TFRAG = /* glsl */ `
 varying vec2 vUv;
 varying vec4 vC;
+varying float vFade;
 void main() {
-  float a = (1.0 - abs(vUv.y)) * smoothstep(0.0, 0.6, vUv.x);
-  gl_FragColor = vec4(vC.rgb * a * vC.a, 1.0);
+  float a = clamp((1.0 - abs(vUv.y)) * smoothstep(0.0, 0.6, vUv.x) * vFade, 0.0, 1.0);
+  gl_FragColor = vec4(max(vC.rgb * a * vC.a, vec3(0.0)), 1.0);
 }
 `;
 
@@ -337,12 +350,28 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
   // a flashbang: the same can, pale with a dark band
   const flashGeo = new THREE.CylinderGeometry(0.032, 0.032, 0.13, 10);
   const flashMat = new THREE.MeshStandardMaterial({ color: 0xc9cdc4, roughness: 0.45, metalness: 0.5 });
+  // an incendiary: a red can; an impact grenade: a squat yellow banded ball; a decoy: a grey green can
+  const fireMat = new THREE.MeshStandardMaterial({ color: 0x8c2a1c, roughness: 0.5, metalness: 0.4 });
+  const impactGeo = new THREE.CylinderGeometry(0.045, 0.045, 0.07, 12);
+  const impactMat = new THREE.MeshStandardMaterial({ color: 0xb8962c, roughness: 0.45, metalness: 0.5 });
+  const decoyMat = new THREE.MeshStandardMaterial({ color: 0x55665a, roughness: 0.55, metalness: 0.4 });
+  const LOOKS = { smoke: { geo: smokeGeo, mat: smokeMat }, flash: { geo: flashGeo, mat: flashMat }, fire: { geo: smokeGeo, mat: fireMat }, impact: { geo: impactGeo, mat: impactMat }, decoy: { geo: flashGeo, mat: decoyMat } } as const;
   // each starts in one of the looks a grenade can take, so the shader warm up compiles every one of them
-  const nades = Array.from({ length: 9 }, (_, i) => {
-    const look = i < 3 ? fragLook[0] : i < 6 ? fragLook[1] : i < 8 ? { geo: smokeGeo, mat: smokeMat } : { geo: flashGeo, mat: flashMat };
+  const nades = Array.from({ length: 12 }, (_, i) => {
+    const look = i < 3 ? fragLook[0] : i < 6 ? fragLook[1] : i < 7 ? LOOKS.smoke : i < 8 ? LOOKS.flash : i < 9 ? LOOKS.fire : i < 10 ? LOOKS.impact : LOOKS.decoy;
     const mesh: T.Mesh<T.BufferGeometry, T.Material> = new THREE.Mesh(look.geo, look.mat);
     mesh.visible = false;
     mesh.castShadow = true;
+    group.add(mesh);
+    return mesh;
+  });
+
+  // crossbow bolts in flight (yours too: a slow bolt is worth watching)
+  const boltGeo = new THREE.CylinderGeometry(0.006, 0.006, 0.5, 6).rotateX(Math.PI / 2);
+  const boltMat = new THREE.MeshStandardMaterial({ color: 0x6b5a3a, roughness: 0.6, metalness: 0.2 });
+  const bolts = Array.from({ length: 6 }, () => {
+    const mesh = new THREE.Mesh(boltGeo, boltMat);
+    mesh.visible = false;
     group.add(mesh);
     return mesh;
   });
@@ -376,7 +405,10 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
     group.add(weather);
   }
 
+  let fireT = 0;
   const smokeIds = new WeakSet<object>();
+
+  let columnT = 0;
   const v = new THREE.Vector3();
   const rnd = (a: number) => (Math.random() - 0.5) * a;
 
@@ -436,17 +468,59 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
             litRGB(0xb0b0b0, v.x, v.z, rgb);
             alpha.spawn(v.x, v.y, v.z, e.dx * 1.5, 0.4, e.dz * 1.5, 0.6, 0.08, 0.5, rgb[0], rgb[1], rgb[2], 0.25, -0.3, 2);
           }
+        } else if (e.t === 'decoy') {
+          // a decoy's fake shot: a little flash and a wisp, to sell it
+          add.spawn(e.x, e.y + 0.05, e.z, 0, 0.5, 0, 0.05, 0.15, 0.25, 9, 6, 2.6, 1);
+        } else if (e.t === 'fire') {
+          // an incendiary catching: a burst of flame
+          for (let i = 0; i < 18; i++) add.spawn(e.x + rnd(1.2), e.y + 0.2, e.z + rnd(1.2), rnd(3), 1.5 + Math.random() * 3, rnd(3), 0.35 + Math.random() * 0.3, 0.5, 1.4, 10, 4.2, 1, 1, -1, 2);
+        } else if (e.t === 'block' && e.broke) {
+          // a shield breaking: a shower of sparks and bits
+          for (let i = 0; i < 14; i++) add.spawn(e.x, e.y, e.z, rnd(6), Math.random() * 4, rnd(6), 0.2 + Math.random() * 0.2, 0.04, 0.01, 6, 4, 2, 1, 9.8, 0.5);
+          litRGB(0x3a3f44, e.x, e.z, rgb);
+          for (let i = 0; i < 10; i++) alpha.spawn(e.x, e.y, e.z, rnd(4), Math.random() * 4, rnd(4), 0.8 + Math.random() * 0.5, 0.04, 0.03, rgb[0], rgb[1], rgb[2], 1, 9.8, 0.3);
         } else if (e.t === 'flash') {
           // a flashbang: a hot white burst and a few sparks, gone in a blink
           for (let i = 0; i < 6; i++) add.spawn(e.x + rnd(0.2), e.y + 0.2 + rnd(0.2), e.z + rnd(0.2), rnd(1), rnd(1), rnd(1), 0.12 + Math.random() * 0.06, 1.2, 4.2, 14, 14, 13, 1, 0, 5);
           for (let i = 0; i < 12; i++) add.spawn(e.x, e.y + 0.2, e.z, rnd(10), Math.random() * 6, rnd(10), 0.25 + Math.random() * 0.2, 0.05, 0.02, 9, 8, 6, 1, 9.8, 0.5);
-        } else if (e.t === 'boom') {
+        } else if (e.t === 'boom' || (e.t === 'shell' && Math.hypot(cam.x - e.x, cam.z - e.z) < 450)) {
           for (let i = 0; i < 10; i++) add.spawn(e.x + rnd(0.6), e.y + 0.4 + rnd(0.6), e.z + rnd(0.6), rnd(6), rnd(5) + 3, rnd(6), 0.28 + Math.random() * 0.2, 0.8, 3.4, 12, 6.5, 2, 1, -1, 4);
           litRGB(0x3a3632, e.x, e.z, rgb);
           for (let i = 0; i < 16; i++) alpha.spawn(e.x + rnd(1.5), e.y + 0.5 + Math.random(), e.z + rnd(1.5), rnd(4), Math.random() * 3 + 1.5, rnd(4), 2.2 + Math.random() * 1.8, 1, 4.5, rgb[0], rgb[1], rgb[2], 0.75, -0.4, 1.4);
           litRGB(0x2a241e, e.x, e.z, rgb);
           for (let i = 0; i < 24; i++) alpha.spawn(e.x, e.y + 0.2, e.z, rnd(16), Math.random() * 10 + 2, rnd(16), 0.9 + Math.random() * 0.6, 0.05, 0.04, rgb[0], rgb[1], rgb[2], 1, 12, 0.3);
           for (let i = 0; i < 16; i++) add.spawn(e.x, e.y + 0.3, e.z, rnd(18), Math.random() * 12, rnd(18), 0.4 + Math.random() * 0.3, 0.05, 0.02, 9, 5, 1.5, 1, 9.8, 0.5);
+        }
+      }
+      // a landed supply crate's smoke: a tall blue column, thick at first and thinning out toward its end, so it can be
+      // seen (and found) from across the map
+      columnT += dt * 14;
+      const puffs = Math.floor(columnT);
+      columnT -= puffs;
+      for (let p = 0; p < puffs; p++)
+        for (const s of m.supplies) {
+          const age = s.landed < 0 ? -1 : m.time - s.landed;
+          if (age < 0 || age > SUPPLY_SMOKE || Math.random() > 1 - (age / SUPPLY_SMOKE) * 0.6) continue;
+          litRGB(0x2a7cf0, s.x, s.z, rgb);
+          alpha.spawn(s.x + rnd(0.5), s.y + 0.9, s.z + rnd(0.5), rnd(0.8) + 0.5, 4.5 + Math.random() * 2.5, rnd(0.8), 8 + Math.random() * 4, 0.7, 5.5 + Math.random() * 2, rgb[0] * 1.15, rgb[1] * 1.15 + 0.01, rgb[2] * 1.15 + 0.04, 0.85, -0.05, 0.12);
+        }
+      // burning ground: flames licking up all over the patch, and dark smoke off it, while it burns
+      fireT += dt;
+      const lick = Math.floor(fireT * 60);
+      if (lick > 0) {
+        fireT -= lick / 60;
+        for (const f of m.fires) {
+          if (Math.hypot(cam.x - f.x, cam.z - f.z) > 220) continue;
+          const fade = 1 - Math.max(0, f.age - (f.life - 1));
+          for (let i = 0; i < lick * 2; i++) {
+            const a = Math.random() * 6.28;
+            const rr = Math.sqrt(Math.random()) * f.r;
+            add.spawn(f.x + Math.cos(a) * rr, f.y + 0.05, f.z + Math.sin(a) * rr, rnd(0.4), 1 + Math.random() * 1.6, rnd(0.4), 0.35 + Math.random() * 0.35, 0.28 + Math.random() * 0.2, 0.06, 7 * fade, 2.8 * fade, 0.6 * fade, 1, -0.5, 1);
+          }
+          if (Math.random() < lick * 0.25) {
+            litRGB(0x2a2522, f.x, f.z, rgb);
+            alpha.spawn(f.x + rnd(f.r), f.y + 0.6, f.z + rnd(f.r), rnd(0.4), 1.2 + Math.random(), rnd(0.4), 2.5 + Math.random() * 1.5, 0.5, 2.6, rgb[0], rgb[1], rgb[2], 0.5, -0.1, 0.6);
+          }
         }
       }
       // smoke clouds: puffs are added while a cloud grows, then live as long as it does
@@ -466,8 +540,22 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
       const Bv = tB.array as Float32Array;
       const C = tC.array as Float32Array;
       const W = tW.array as Float32Array;
+      let nb = 0;
       for (const b of m.bullets) {
         if (n >= TMAX) break;
+        // a crossbow bolt is drawn as itself, no tracer
+        if (WEAPONS[b.w].cls === 'crossbow') {
+          if (b.live && nb < bolts.length) {
+            const mesh = bolts[nb++];
+            mesh.visible = true;
+            mesh.position.set(b.x, b.y, b.z);
+            v.set(b.x + b.vx, b.y + b.vy, b.z + b.vz);
+            mesh.lookAt(v);
+          }
+          continue;
+        }
+        // your own shots draw no line (the flash and where they land say enough); others' show where fire comes from
+        if (b.owner === you) continue;
         const len = Math.hypot(b.vx, b.vy, b.vz) || 1;
         let o = origins.get(b);
         if (!o) {
@@ -480,22 +568,22 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
           o = v.y > -500 && Math.hypot(v.x - sx, v.y - sy, v.z - sz) < 3 ? [v.x, v.y, v.z] : [sx, sy, sz];
           origins.set(b, o);
         }
-        const tail = Math.min(b.dist + 0.001, 26);
+        const tail = Math.min(b.dist + 0.001, 12);
         let ax = b.x - (b.vx / len) * tail;
         let ay = b.y - (b.vy / len) * tail;
         let az = b.z - (b.vz / len) * tail;
-        if (b.dist < 26) {
+        if (b.dist < 12) {
           ax = o[0];
           ay = o[1];
           az = o[2];
         }
         A.set([ax, ay, az], n * 3);
         Bv.set([b.x, b.y, b.z], n * 3);
-        const mine = b.owner === you;
-        C.set(mine ? [6, 4.6, 2.4, 0.5] : [7, 5, 2.6, 0.75], n * 4);
-        W[n] = 0.012;
+        C.set([4.2, 3.2, 1.8, 0.45], n * 4);
+        W[n] = 0.008;
         n++;
       }
+      for (let i = nb; i < bolts.length; i++) bolts[i].visible = false;
       tg.instanceCount = n;
       for (const a of [tA, tB, tC, tW]) a.needsUpdate = true;
       // grenades
@@ -504,8 +592,9 @@ export function effects(THREE: Three, w: World, shared: Shared, sunVisAt: (x: nu
         mesh.visible = !!g;
         if (!g) return;
         const look = fragLook[m.mode === 'breach' ? (m.actors[g.owner]?.team ?? 0) : g.owner % 2];
-        mesh.geometry = g.kind === 'frag' ? look.geo : g.kind === 'flash' ? flashGeo : smokeGeo;
-        mesh.material = g.kind === 'frag' ? look.mat : g.kind === 'flash' ? flashMat : smokeMat;
+        const lk = g.kind === 'frag' ? look : LOOKS[g.kind];
+        mesh.geometry = lk.geo;
+        mesh.material = lk.mat;
         mesh.position.set(g.x, g.y, g.z);
         mesh.rotation.set(g.spin, g.spin * 0.7, 0);
       });

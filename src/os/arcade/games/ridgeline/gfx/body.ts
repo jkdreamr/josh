@@ -458,6 +458,52 @@ export const SOLDIER_BUILD: Build = {
   cup: turn([0, -0.9, -0.4], [1, 0, 0], [0.35, -0.45, -0.82], [1, 0.2, 0]),
 };
 
+/**
+ * The outfit soldier (models/outfit.glb), its joints where the outfit's own skeleton has them (the bake sums each of
+ * its bones' weights onto the one of these it moves with: pelvis, spine_03, spine_05, neck_01, head, clavicles, upper
+ * and lower arms, hands, thighs, calves and feet): a looser A pose than the old soldier, hands out ahead of the hips,
+ * fingers out, down and forward, palms in and down.
+ */
+const FINGERS_R: V3 = [0.53, -0.54, -0.65];
+const PALM_R: V3 = [-0.81, -0.56, -0.18];
+const FINGERS_L: V3 = [-0.53, -0.55, -0.65];
+const PALM_L: V3 = [0.82, -0.53, -0.21];
+export const OUTFIT_BUILD: Build = {
+  joints: [
+    [0, 0, 0],
+    [0, 0.892, -0.023],
+    [0, 1.091, -0.049],
+    [0, 1.303, -0.015],
+    [0, 1.481, 0.012],
+    [0, 1.588, -0.01],
+    [0.016, 1.41, 0.018],
+    [0.172, 1.388, 0.022],
+    [0.343, 1.164, 0.014],
+    [0.478, 1.002, -0.151],
+    [-0.015, 1.41, 0.018],
+    [-0.171, 1.388, 0.022],
+    [-0.343, 1.163, 0.014],
+    [-0.476, 1.004, -0.149],
+    [0.099, 0.898, -0.028],
+    [0.119, 0.468, -0.019],
+    [0.136, 0.082, -0.004],
+    [-0.098, 0.898, -0.028],
+    [-0.118, 0.467, -0.019],
+    [-0.135, 0.081, -0.004],
+  ],
+  butt: [0.15, 0.08, -0.17],
+  pistol: [0.03, 0.13, -0.5],
+  twist: 0.5,
+  splay: 0,
+  armRest: -0.42,
+  gripAt: [0.03, 0.035, 0.065],
+  foreAt: [-0.045, -0.035, 0.06],
+  cupAt: [-0.035, 0, 0.07],
+  grip: turn(FINGERS_R, PALM_R, [0, -0.35, -0.94], [-1, 0, 0]),
+  fore: turn(FINGERS_L, PALM_L, [0.55, 0.1, -0.83], [0, 1, 0]),
+  cup: turn(FINGERS_L, PALM_L, [0.35, -0.45, -0.82], [1, 0.2, 0]),
+};
+
 /** A skeleton in the bind pose. */
 export function skeleton(THREE: Three, joints: V3[] = JOINT) {
   const bones = joints.map(() => new THREE.Bone());
@@ -484,6 +530,15 @@ export type Pose = {
   pistol: boolean;
   /** Dropping in: 1 in freefall (spread out, the body tipped face down by the caller), 2 hanging under a canopy. */
   sky?: number;
+  /** In a vehicle: 1 at the wheel (both hands on it), 2 riding along (seated, the gun up as usual). */
+  seat?: number;
+  /** Lying down, 0 to 1 (the caller tips the whole body forward by `tilt`, radians, face down negative), and how fast
+   * it crawls (0 still, 1 a full crawl). */
+  lie?: number;
+  tilt?: number;
+  crawl?: number;
+  /** Leaning, -1 left to 1 right (the caller rolls the body a little; here the spine bends into it). */
+  lean?: number;
 };
 
 /** Poses one soldier's bones (the gun group, a child of the chest bone, is placed too). */
@@ -594,30 +649,53 @@ export function makePoser(THREE: Three, build: Build = LOFT_BUILD) {
     const sp = p.speed;
     const ph = p.phase * 2.2;
     const air = p.air ? 1 : 0;
+    const lie = p.lie ?? 0;
+    const lean = p.lean ?? 0;
     const bob = Math.abs(Math.sin(ph)) * 0.04 * sp * (1 - p.crouch * 0.5);
-    hipsB.position.y += -p.crouch * 0.33 - air * 0.06 + bob;
-    const hipLean = -0.08 * sp - p.crouch * 0.32;
+    hipsB.position.y += (-p.crouch * 0.33 - air * 0.06 + bob) * (1 - lie);
+    const hipLean = (-0.08 * sp - p.crouch * 0.32) * (1 - lie);
     hipsB.rotation.x = hipLean;
     bones[BONE.hips].rotation.y = Math.sin(ph) * 0.06 * sp;
-    const spineX = p.pitch * 0.25 + p.crouch * 0.2;
-    const chestX = p.pitch * 0.15;
+    // lying down: up on the elbows, the back arched so the chest and the head come up off the ground
+    const spineX = (p.pitch * 0.25 + p.crouch * 0.2) * (1 - lie) + lie * (0.3 + p.pitch * 0.15);
+    const chestX = p.pitch * 0.15 * (1 - lie) + lie * (0.38 + p.pitch * 0.15);
     // behind a long gun the shoulders blade (left one forward), the head turns back to the aim
     const twist = p.gun && !p.pistol ? build.twist : 0;
     bones[BONE.spine].rotation.x = spineX;
     bones[BONE.spine].rotation.y = -Math.sin(ph) * 0.05 * sp - twist * 0.5;
+    // a lean bends the spine over to the side (the caller rolls the body the rest of the way)
+    bones[BONE.spine].rotation.z = -lean * 0.12;
     bones[BONE.chest].rotation.x = chestX;
     bones[BONE.chest].rotation.y = -twist * 0.5;
-    const bodyPitch = hipLean + spineX + chestX;
+    bones[BONE.chest].rotation.z = -lean * 0.1;
+    const bodyPitch = (p.tilt ?? 0) + hipLean + spineX + chestX;
     bones[BONE.neck].rotation.set((p.pitch - bodyPitch) * 0.45, twist * 0.45, 0);
     bones[BONE.head].rotation.set((p.pitch - bodyPitch) * 0.55, twist * 0.55, 0);
-    // legs: a walk cycle, bent for a crouch, tucked in the air
-    for (const side of [1, -1]) {
+    // legs: seated, or a walk cycle, bent for a crouch, tucked in the air
+    if (p.seat)
+      for (const side of [1, -1]) {
+        bones[side > 0 ? BONE.thighR : BONE.thighL].rotation.set(1.42, 0, side * (build.splay + 0.12));
+        bones[side > 0 ? BONE.shinR : BONE.shinL].rotation.x = -1.35;
+        bones[side > 0 ? BONE.footR : BONE.footL].rotation.x = -0.05;
+      }
+    else for (const side of [1, -1]) {
       const s = Math.sin(ph + (side > 0 ? 0 : Math.PI));
       const swing = s * 0.55 * sp + p.crouch * 1.05 + air * 0.4 - hipLean;
       const knee = Math.max(0, -Math.cos(ph + (side > 0 ? 0 : Math.PI))) * 0.95 * sp + p.crouch * 1.85 + air * 0.75;
-      bones[side > 0 ? BONE.thighR : BONE.thighL].rotation.set(swing, 0, side * build.splay);
-      bones[side > 0 ? BONE.shinR : BONE.shinL].rotation.x = -knee;
-      bones[side > 0 ? BONE.footR : BONE.footL].rotation.x = knee - swing - hipLean * 0.5;
+      // lying down: legs out straight behind, a little apart, one knee drawn up and out at a time in the crawl
+      const draw = Math.max(0, s) * (p.crawl ?? 0);
+      const lyingSwing = -0.08 + draw * 0.5;
+      const lyingKnee = 0.12 + draw * 0.9;
+      bones[side > 0 ? BONE.thighR : BONE.thighL].rotation.set(swing + (lyingSwing - swing) * lie, 0, side * (build.splay + lie * (0.12 + draw * 0.35)));
+      bones[side > 0 ? BONE.shinR : BONE.shinL].rotation.x = -(knee + (lyingKnee - knee) * lie);
+      bones[side > 0 ? BONE.footR : BONE.footL].rotation.x = (knee - swing - hipLean * 0.5) * (1 - lie) + lie * 0.6;
+    }
+    if (p.seat === 1) {
+      // both hands on the wheel, out in front of the chest
+      if (gunGroup) gunGroup.visible = false;
+      reach(bones, 1, target.set(0.19, -0.16, -0.42), poleR, handQ.identity());
+      reach(bones, -1, target.set(-0.19, -0.16, -0.42), poleL, handQ.identity());
+      return;
     }
     if (!gunGroup || !p.gun) {
       bones[BONE.armR].rotation.set(0.15, 0, build.armRest);

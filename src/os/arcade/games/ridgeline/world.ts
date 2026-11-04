@@ -1,14 +1,18 @@
 // Everything on a map besides the ground: the attacker and defender spawns, the two sites (three spread far apart in a
-// royale world, where they only seed towns), towns of walk-in buildings, cover,
-// trees, rocks and dirt roads. Also bakes the light the renderer reads (terrain shadows, ambient occlusion and the
-// shadows of far trees and buildings) and paints the minimap. Pure data, so it runs in a worker and under node.
+// royale world, where they only seed towns), towns of walk-in buildings, cover, trees, rocks and dirt roads. A breach
+// arena is built from its map's plan (breach.ts): lanes, places and the land sculpted round them. Also bakes the light
+// the renderer reads (terrain shadows, ambient occlusion and the shadows of far trees and buildings) and paints the
+// minimap. Pure data, so it runs in a worker and under node.
 import { MAPS, type MapDef, type MapId, type Style, type TreeKind } from './maps.ts';
 import { Noise2, clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
 import { CELL, T_HALF, T_RES, T_SIZE, flattenRect, floorAt, generateTerrain, heightAt, meanHeight, normalAt, type Terrain } from './terrain.ts';
+import { PLACE_DRESS, PLANS, STRUCT_SIZE, draftPlaces, openAt, restoreBanks, sculpt, toPlan, toWorld, type Item, type P as BP, type Plan, type Sculpt } from './breach.ts';
 
-/** Half the side of the square everyone plays in (breach and deathmatch): tight, so a 5v5 meets within seconds. */
-export const ARENA = 100;
-const ARENA_CLASSIC = ARENA;
+/** Half the side of the square everyone plays in (breach and deathmatch). The ground you can walk on is less: the
+ * lanes and places of the map's plan, bounded by banks, hills and the sea well inside this. */
+export const ARENA = 125;
+/** The middle of a royale's land, where its spawns and first sites are laid out. */
+const CORE = 100;
 /** The same for a royale: nearly all of the shaped land. */
 export const ROYALE_ARENA = 330;
 /** Breach: how far from a site's center the charge can be planted. */
@@ -17,10 +21,11 @@ export const SITE_R = 9;
 export const SPAWN_R = 15;
 
 export type Surface = 'stone' | 'wood' | 'metal' | 'dirt' | 'sand' | 'snow' | 'leaf' | 'water';
-export type Part = 'wall' | 'trim' | 'roof' | 'floor' | 'wood' | 'metal' | 'sandbag' | 'concrete' | 'hesco';
+export type Part = 'wall' | 'trim' | 'roof' | 'floor' | 'wood' | 'metal' | 'sandbag' | 'concrete' | 'hesco' | 'glass' | 'canvas' | 'rust';
 
-/** A drawn box (and a collider unless solid is false). */
-export type Piece = { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; part: Part; color: number; solid: boolean };
+/** A drawn box (and a collider unless solid is false). `skin` marks a box something else draws in detail (a shipping
+ * container, say): the renderer leaves it out, its collider stays. */
+export type Piece = { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; part: Part; color: number; solid: boolean; skin?: 1 };
 /** A pitched roof over a rectangle: a triangular prism, ridge along x or z. Drawn only. */
 export type Gable = { x0: number; z0: number; x1: number; z1: number; y: number; h: number; alongX: boolean; color: number; wall: number };
 export type Rect3 = { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number };
@@ -32,9 +37,47 @@ export type Rock = { x: number; y: number; z: number; s: number; rot: number; v:
 export type Site = { id: number; name: string; town: string; x: number; y: number; z: number };
 export type Slot = { x: number; z: number; yaw: number };
 export type Vehicle = { x: number; y: number; z: number; rot: number; kind: number };
-/** A placed model; cover also carries its box (across, up, along) for a plain stand-in if the model is missing. */
-export type Placed = { key: ModelKey; x: number; y: number; z: number; yaw: number; size?: [number, number, number] };
-export type ModelKey = 'barricade' | 'pile' | 'wire' | 'dumpsters' | 'fence-base' | 'fence-half' | 'fence-wood' | 'fence-wheel' | 'jerry' | 'gas' | 'propane' | 'helmet' | 'shield' | 'cup' | 'pan';
+/** A placed model; cover also carries its box (across, up, along) for a plain stand-in if the model is missing. A model
+ * may be tinted (a painted fuel drum) or lie on its side (`lie`, turned about its own across axis after the yaw). */
+export type Placed = { key: ModelKey; x: number; y: number; z: number; yaw: number; size?: [number, number, number]; tint?: number; lie?: 1 };
+/** An opening in a wall: its middle along the wall, width, and bottom and top heights (world y). */
+export type Opening = { c: number; w: number; b: number; t: number };
+/** One wall of a building and its openings, in the building's own frame: along local x (between z t0 and t1) or along
+ * local z (between x t0 and t1); `inner` for a wall between two rooms. */
+export type BWall = { alongX: boolean; t0: number; t1: number; holes: Opening[]; inner: boolean };
+/** A building as built, for the renderer's finer detail (frames, glass, doors, gutters, chimneys, furniture): its frame
+ * (middle and quarter turns, as for a Frame), size, floor level, wall height, colors and walls. */
+export type Bld = { kind: 'house' | 'barn' | 'shed' | 'ruin'; x: number; z: number; rot: number; w: number; d: number; y: number; H: number; style: Style; part: Part; wall: number; trim: number; roof: number; flat: boolean; walls: BWall[] };
+/** Props drawn in detail by the renderer, whose colliders (if any) the world holds already. */
+export type DressKind = 'container' | 'bagarc' | 'pallets' | 'tower' | 'carwreck' | 'razor' | 'tent' | 'net';
+/** A dressed prop: its kind, the middle of its footprint at its base height, quarter turns, a size (meters, or a count),
+ * a variant (0 to 1, for its look) and a color. */
+export type Dress = { k: DressKind; x: number; y: number; z: number; rot: number; s: number; v: number; c: number };
+export type ModelKey =
+  | 'barricade'
+  | 'jersey'
+  | 'pile'
+  | 'wire'
+  | 'dumpsters'
+  | 'fence-base'
+  | 'fence-half'
+  | 'fence-wood'
+  | 'fence-wheel'
+  | 'jerry'
+  | 'gas'
+  | 'propane'
+  | 'helmet'
+  | 'shield'
+  | 'cup'
+  | 'pan'
+  | 'ammo-crate'
+  | 'tyre'
+  | 'barrel'
+  | 'generator'
+  | 'toolbox'
+  | 'stump'
+  | 'stump2'
+  | 'log';
 /** A team's start: spawns[0] is where the attackers start, spawns[1] the defenders. */
 export type Spawn = { x: number; y: number; z: number; yaw: number; slots: Slot[] };
 export type Town = { name: string; x: number; z: number; site: number };
@@ -78,6 +121,9 @@ export type World = {
   loot: Float32Array;
   /** Doorways: center x, z and the wall's normal x, z per door, so the bots' paths can go through them. */
   doors: Float32Array;
+  /** The buildings as built and the props drawn in detail (see Bld and Dress), for the renderer. */
+  bld: Bld[];
+  dress: Dress[];
 };
 
 export const KIND = 1 << 22;
@@ -119,6 +165,12 @@ type Ctx = {
   /** Loot spots, x, y, z each. */
   loot: number[];
   doors: number[];
+  /** Rocks a place puts down (rubble, a heap of gravel), added to the rest. */
+  extraRocks: Rock[];
+  bld: Bld[];
+  dress: Dress[];
+  /** Small rocks the dressing drops (never colliders), added after the rest. */
+  lateRocks: Rock[];
 };
 
 const STYLE_WALLS: Record<Style, number[]> = {
@@ -210,8 +262,6 @@ class Frame {
   }
 }
 
-type Opening = { c: number; w: number; b: number; t: number };
-
 /** A wall along local x (from xa to xb, between z0 and z1) from y0 to y1 with door and window holes. */
 /** Frames round a wall's openings, standing a little proud of both faces: jambs and a lintel, and a sill under a window. */
 function trims(f: Frame, alongX: boolean, holes: Opening[], t0: number, t1: number, y0: number, color: number) {
@@ -230,7 +280,8 @@ function trims(f: Frame, alongX: boolean, holes: Opening[], t0: number, t1: numb
   }
 }
 
-function wallX(f: Frame, xa: number, xb: number, z0: number, z1: number, y0: number, y1: number, holes: Opening[], part: Part, color: number, trim = -1) {
+function wallX(f: Frame, xa: number, xb: number, z0: number, z1: number, y0: number, y1: number, holes: Opening[], part: Part, color: number, trim = -1, rec?: BWall[], inner = false) {
+  rec?.push({ alongX: true, t0: z0, t1: z1, holes, inner });
   trims(f, true, holes, z0, z1, y0, trim);
   let cur = xa;
   for (const o of [...holes].sort((a, b) => a.c - b.c)) {
@@ -246,7 +297,8 @@ function wallX(f: Frame, xa: number, xb: number, z0: number, z1: number, y0: num
 }
 
 /** The same along local z, between x0 and x1. */
-function wallZ(f: Frame, za: number, zb: number, x0: number, x1: number, y0: number, y1: number, holes: Opening[], part: Part, color: number, trim = -1) {
+function wallZ(f: Frame, za: number, zb: number, x0: number, x1: number, y0: number, y1: number, holes: Opening[], part: Part, color: number, trim = -1, rec?: BWall[], inner = false) {
+  rec?.push({ alongX: false, t0: x0, t1: x1, holes, inner });
   trims(f, false, holes, x0, x1, y0, trim);
   let cur = za;
   for (const o of [...holes].sort((a, b) => a.c - b.c)) {
@@ -287,6 +339,10 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
   const barnColor = style === 'farm' ? 0x8e2f24 : style === 'cabin' ? 0x5a4130 : style === 'tropic' ? 0x8a6a4a : 0x9a8f80;
   const wc = kind === 'barn' ? barnColor : wallColor;
   const trim = style === 'cabin' ? 0x3a2a1e : style === 'adobe' ? 0x6b4a2e : 0xd8d2c4;
+  // (what the renderer needs for the finer detail; the roof's look is filled in below)
+  const walls: BWall[] = [];
+  const bld: Bld = { kind, x: cx, z: cz, rot, w, d, y, H, style, part: wallPart, wall: wc, trim, roof: roofColor, flat: false, walls };
+  c.bld.push(bld);
 
   f.box(-hw, base, -hd, hw, floorTop, hd, 'floor', style === 'adobe' ? 0xa08466 : 0x8a6a4a);
   // a plinth round the foot of the walls, a hand proud of them, so the house sits on the ground instead of in it
@@ -307,11 +363,11 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
 
   if (kind === 'barn') {
     const bd: Opening = { c: 0, w: 3.8, b: base, t: y + 4 };
-    wallX(f, -hw, hw, -hd, -hd + T, base, top, [bd], wallPart, wc, trim);
-    wallX(f, -hw, hw, hd - T, hd, base, top, [{ ...bd }], wallPart, wc, trim);
+    wallX(f, -hw, hw, -hd, -hd + T, base, top, [bd], wallPart, wc, trim, walls);
+    wallX(f, -hw, hw, hd - T, hd, base, top, [{ ...bd }], wallPart, wc, trim, walls);
     const hi: Opening[] = [-hd * 0.5, 0, hd * 0.5].map((z) => ({ c: z, w: 1.6, b: y + 2.6, t: y + 3.6 }));
-    wallZ(f, -hd + T, hd - T, -hw, -hw + T, base, top, [...hi, door(hd * 0.25, 1.4)], wallPart, wc);
-    wallZ(f, -hd + T, hd - T, hw - T, hw, base, top, hi, wallPart, wc);
+    wallZ(f, -hd + T, hd - T, -hw, -hw + T, base, top, [...hi, door(hd * 0.25, 1.4)], wallPart, wc, -1, walls);
+    wallZ(f, -hd + T, hd - T, hw - T, hw, base, top, hi, wallPart, wc, -1, walls);
   } else {
     const w0 = r() < 0.5;
     const frontHoles = kind === 'shed' ? [door(0, 1.2, 2.1)] : [door(w0 ? -hw * 0.35 : hw * 0.35), win(w0 ? hw * 0.4 : -hw * 0.4)];
@@ -334,22 +390,23 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
       zp.forEach(([a, b], i) => r() > 0.25 && f.box(-hw, base, a, -hw + T, wallTop(i + 2), b, 'wall', wc));
       zp.forEach(([a, b], i) => r() > 0.3 && f.box(hw - T, base, a, hw, wallTop(i), b, 'wall', wc));
     } else {
-      wallX(f, -hw, hw, -hd, -hd + T, base, top, frontHoles, wallPart, wc, ruin ? -1 : trim);
-      wallX(f, -hw, hw, hd - T, hd, base, top, backHoles, wallPart, wc, ruin ? -1 : trim);
-      wallZ(f, -hd + T, hd - T, -hw, -hw + T, base, top, sideA, wallPart, wc, ruin ? -1 : trim);
-      wallZ(f, -hd + T, hd - T, hw - T, hw, base, top, sideB, wallPart, wc, ruin ? -1 : trim);
+      wallX(f, -hw, hw, -hd, -hd + T, base, top, frontHoles, wallPart, wc, ruin ? -1 : trim, walls);
+      wallX(f, -hw, hw, hd - T, hd, base, top, backHoles, wallPart, wc, ruin ? -1 : trim, walls);
+      wallZ(f, -hd + T, hd - T, -hw, -hw + T, base, top, sideA, wallPart, wc, ruin ? -1 : trim, walls);
+      wallZ(f, -hd + T, hd - T, hw - T, hw, base, top, sideB, wallPart, wc, ruin ? -1 : trim, walls);
       // sills under the windows
       for (const o of frontHoles) if (o.b > y) f.box(o.c - o.w / 2 - 0.05, o.b - 0.08, -hd - 0.08, o.c + o.w / 2 + 0.05, o.b, -hd + 0.05, 'trim', trim, false);
       for (const o of backHoles) if (o.b > y) f.box(o.c - o.w / 2 - 0.05, o.b - 0.08, hd - 0.05, o.c + o.w / 2 + 0.05, o.b, hd + 0.08, 'trim', trim, false);
       if (kind === 'house' && w >= 9) {
         const px = hw * 0.1;
         const dz = (r() - 0.5) * d * 0.4;
-        wallZ(f, -hd + T, hd - T, px - 0.08, px + 0.08, base, top, [door(dz, 1.1)], wallPart === 'wood' ? 'wood' : 'wall', style === 'cabin' ? wc : 0xe2dccd);
+        wallZ(f, -hd + T, hd - T, px - 0.08, px + 0.08, base, top, [door(dz, 1.1)], wallPart === 'wood' ? 'wood' : 'wall', style === 'cabin' ? wc : 0xe2dccd, -1, walls, true);
       }
     }
   }
   if (!ruin) {
     const flat = style === 'adobe' || (style === 'tropic' && r() < 0.3);
+    bld.flat = flat;
     const ov = flat ? 0.15 : 0.35;
     f.box(-hw - ov, top, -hd - ov, hw + ov, top + 0.22, hd + ov, flat ? 'wall' : 'trim', flat ? wc : trim);
     if (flat) {
@@ -389,10 +446,14 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
   }
 }
 
+/** The crates' boxes: their side and color (the renderer draws a stack of real crates in each box of this kind). */
+export const CRATE_SIZE = 1.1;
+export const CRATE_COLOR = 0x9a7a4e;
+
 function crates(c: Ctx, f: Frame, lx: number, lz: number, y: number) {
   const r = c.rng;
-  const s = 1.1;
-  const col = 0x9a7a4e;
+  const s = CRATE_SIZE;
+  const col = CRATE_COLOR;
   f.box(lx - s / 2, y, lz - s / 2, lx + s / 2, y + s, lz + s / 2, 'wood', col);
   if (r() < 0.7) f.box(lx + s / 2 + 0.05, y, lz - s / 2, lx + s * 1.5 + 0.05, y + s, lz + s / 2, 'wood', col);
   if (r() < 0.5) f.box(lx - s / 2 + 0.2, y + s, lz - s / 2 + 0.1, lx + s / 2 + 0.2, y + s * 2, lz + s / 2 + 0.1, 'wood', col);
@@ -435,7 +496,27 @@ function tryBuilding(c: Ctx, kind: Kind, x: number, z: number, bound: number) {
   return true;
 }
 
-type PropKind = 'container' | 'crates' | 'sandbags' | 'barrier' | 'truck' | 'hesco' | 'pile' | 'wire' | 'dumpsters' | 'fence';
+export type PropKind =
+  | 'container'
+  | 'crates'
+  | 'sandbags'
+  | 'barrier'
+  | 'truck'
+  | 'hesco'
+  | 'pile'
+  | 'wire'
+  | 'dumpsters'
+  | 'fence'
+  // the military dressing (see dressBreach and dressRoyale)
+  | 'bagarc'
+  | 'pallets'
+  | 'drums'
+  | 'carwreck'
+  | 'razor'
+  | 'tent'
+  | 'net'
+  | 'tower'
+  | 'brokenwall';
 
 /** Footprint (across, along) of each kind of cover. */
 const PROP_SIZE: Record<Exclude<PropKind, 'hesco'>, [number, number]> = {
@@ -448,7 +529,18 @@ const PROP_SIZE: Record<Exclude<PropKind, 'hesco'>, [number, number]> = {
   wire: [5.16, 1.4],
   dumpsters: [5.55, 2.6],
   fence: [3, 0.54],
+  bagarc: [4.9, 3.1],
+  pallets: [2.6, 1.3],
+  drums: [2.2, 1.6],
+  carwreck: [2.0, 4.6],
+  razor: [5.2, 1.0],
+  tent: [4.6, 6.4],
+  net: [6.4, 6.4],
+  tower: [3.4, 8.2],
+  brokenwall: [5, 0.5],
 };
+/** How far the ground under each kind of the dressing may rise and fall across it. */
+const DRESS_SLOPE: Partial<Record<PropKind, number>> = { bagarc: 0.8, pallets: 0.45, drums: 0.4, carwreck: 0.8, razor: 1.1, tent: 0.6, net: 1, tower: 0.9, brokenwall: 1.1 };
 /** Cover drawn by a real model: its collider height and surface. */
 const MODEL_COVER: Partial<Record<PropKind, { h: number; s: Surface }>> = {
   barrier: { h: 1.05, s: 'stone' },
@@ -457,31 +549,41 @@ const MODEL_COVER: Partial<Record<PropKind, { h: number; s: Surface }>> = {
   dumpsters: { h: 1.35, s: 'metal' },
   fence: { h: 2.3, s: 'stone' },
 };
-const CLUTTER: ModelKey[] = ['jerry', 'gas', 'propane', 'helmet', 'shield', 'jerry', 'propane', 'cup', 'pan'];
+const CLUTTER: ModelKey[] = ['jerry', 'gas', 'propane', 'helmet', 'shield', 'jerry', 'propane', 'cup', 'pan', 'tyre', 'ammo-crate', 'barrel', 'toolbox', 'generator', 'ammo-crate'];
+/** Clutter big enough to stop you and a bullet: half the side of its collider (square, inside its turned outline) and its height. */
+const CLUTTER_SOLID: Partial<Record<ModelKey, [number, number]>> = { barrel: [0.3, 0.92], generator: [0.27, 0.56] };
 const FENCES: ModelKey[] = ['fence-base', 'fence-half', 'fence-wood', 'fence-wheel'];
 
 /** A piece of clutter on the ground at local (lx, lz) of a frame, facing a random way. */
 function clutter(c: Ctx, f: Frame, lx: number, lz: number, key?: ModelKey, y?: number) {
   const [x, z] = f.xz(lx, lz);
-  c.models.push({ key: key ?? CLUTTER[Math.floor(c.deco() * CLUTTER.length)], x, y: y ?? heightAt(c.t, x, z), z, yaw: c.deco() * Math.PI * 2 });
+  const k = key ?? CLUTTER[Math.floor(c.deco() * CLUTTER.length)];
+  const at = y ?? heightAt(c.t, x, z);
+  c.models.push({ key: k, x, y: at, z, yaw: c.deco() * Math.PI * 2 });
+  const solid = CLUTTER_SOLID[k];
+  if (solid) c.colliders.push({ x0: x - solid[0], y0: at, z0: z - solid[0], x1: x + solid[0], y1: at + solid[1], z1: z + solid[0], s: 'metal' });
 }
 
 /** A screen across a road: quarter turns, baskets long, and two high (over head height). */
 type Screen = { turn: number; units: number };
+/** Placing cover by hand: its quarter turns, which model (a fence's), baskets long (HESCO), and whether to skip the
+ * checks for room round it and for the roads (cover in a line along a wall stands close by design). */
+type PropOpt = { rot?: number; key?: ModelKey; units?: number; force?: boolean; bare?: boolean; room?: number };
 
 /** Places a piece of cover if it fits; a screen stands on a road, and `roadside` cover may stand at a road's edge. */
-function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number, screen?: Screen, roadside = false) {
+function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number, screen?: Screen, roadside = false, opt?: PropOpt) {
   const r = c.rng;
   const roll = Math.floor(r() * 4);
-  const rot = screen ? screen.turn : roll;
+  const rot = screen ? screen.turn : (opt?.rot ?? roll);
   const roll2 = kind === 'hesco' ? 3 + Math.floor(r() * 3) : 1;
-  const units = screen ? screen.units : roll2;
+  const units = screen ? screen.units : kind === 'hesco' && opt?.units ? opt.units : roll2;
   const [w, d] = kind === 'hesco' ? [units * 1.06, 1.06] : PROP_SIZE[kind];
   const hx = (rot & 1 ? d : w) / 2;
   const hz = (rot & 1 ? w : d) / 2;
   if (Math.abs(x) + hx > bound || Math.abs(z) + hz > bound) return false;
-  if (overlaps(c, x - hx - 1.5, z - hz - 1.5, x + hx + 1.5, z + hz + 1.5)) return false;
-  if (!screen && roadDist(c, x, z) < (roadside ? 3.4 + Math.max(hx, hz) * 0.3 : 2.5 + Math.max(hx, hz))) return false;
+  const room = opt?.room ?? 1.5;
+  if (!opt?.force && overlaps(c, x - hx - room, z - hz - room, x + hx + room, z + hz + room)) return false;
+  if (!screen && !opt?.force && roadDist(c, x, z) < (roadside ? 3.4 + Math.max(hx, hz) * 0.3 : 2.5 + Math.max(hx, hz))) return false;
   let lo = Infinity;
   let hi = -Infinity;
   // (on ice the frozen surface is the ground: cover may stand out on a frozen lake, but not in open water)
@@ -497,8 +599,8 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number, sc
     lo = Math.min(lo, h);
     hi = Math.max(hi, h);
   }
-  if (hi - lo > (kind === 'container' ? 2.2 : kind === 'truck' ? 1.4 : MODEL_COVER[kind] ? 0.7 : screen ? 2.4 : 1.2) || (!c.t.ice && lo < c.t.water + 0.3)) return false;
-  if (iced && (kind === 'truck' || hi - lo > 0.3)) return false;
+  if (hi - lo > (kind === 'container' ? 2.2 : kind === 'truck' ? 1.4 : MODEL_COVER[kind] ? 0.7 : (DRESS_SLOPE[kind] ?? (screen ? 2.4 : 1.2))) || (!c.t.ice && lo < c.t.water + 0.3)) return false;
+  if (iced && (kind === 'truck' || kind === 'tower' || kind === 'tent' || hi - lo > 0.3)) return false;
   const f = new Frame(c, x, z, rot);
   let y = lo - 0.15;
   if (kind === 'container' && iced) y = lo;
@@ -506,8 +608,17 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number, sc
     y = meanHeight(c.t, x, z, hx, hz);
     flattenRect(c.t, x, z, hx + 0.4, hz + 0.4, y, 3);
     c.pads.push({ x, z, hx: hx + 0.4, hz: hz + 0.4, y });
-    f.box(-w / 2, y - 0.2, -d / 2, w / 2, y + 2.59, d / 2, 'metal', pick(r, CONTAINER_COLORS));
-    if (r() < 0.25) f.box(-w / 2, y + 2.59, -d / 2, w / 2, y + 2.59 + 2.79, d / 2, 'metal', pick(r, CONTAINER_COLORS));
+    // (drawn in detail by the renderer: corrugated walls, corner posts, doors; the box is its collider)
+    const col = pick(r, CONTAINER_COLORS);
+    f.box(-w / 2, y - 0.2, -d / 2, w / 2, y + 2.59, d / 2, 'metal', col);
+    c.pieces[c.pieces.length - 1].skin = 1;
+    c.dress.push({ k: 'container', x, y, z, rot, s: 2.59, v: hash01(x, z), c: col });
+    if (r() < 0.25) {
+      const top = pick(r, CONTAINER_COLORS);
+      f.box(-w / 2, y + 2.59, -d / 2, w / 2, y + 2.59 + 2.79, d / 2, 'metal', top);
+      c.pieces[c.pieces.length - 1].skin = 1;
+      c.dress.push({ k: 'container', x, y: y + 2.59, z, rot, s: 2.79, v: hash01(z, x), c: top });
+    }
     c.blocks.push({ x0: x - hx, y0: y, z0: z - hz, x1: x + hx, y1: y + 2.6, z1: z + hz });
   } else if (kind === 'truck') {
     // parked on a leveled pad; the body is drawn by the renderer, the hull collides as one box
@@ -539,14 +650,18 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number, sc
     const rr = f.rect(-w / 2, -d / 2, w / 2, d / 2);
     c.colliders.push({ x0: rr.x0, y0: y, z0: rr.z0, x1: rr.x1, y1: y + mc.h, z1: rr.z1, s: mc.s });
     c.blocks.push({ x0: rr.x0, y0: y, z0: rr.z0, x1: rr.x1, y1: y + mc.h, z1: rr.z1 });
-    const key: ModelKey = kind === 'fence' ? FENCES[Math.floor(c.deco() * FENCES.length)] : kind === 'barrier' ? 'barricade' : (kind as 'pile' | 'wire' | 'dumpsters');
+    const key: ModelKey = opt?.key ?? (kind === 'fence' ? FENCES[Math.floor(c.deco() * FENCES.length)] : kind === 'barrier' ? (c.deco() < 0.5 ? 'jersey' : 'barricade') : (kind as 'pile' | 'wire' | 'dumpsters'));
     c.models.push({ key, x, y, z, yaw: (-rot * Math.PI) / 2, size: [w, mc.h, d] });
   } else if (kind === 'sandbags') {
     const col = c.def.style === 'cabin' ? 0xcfcfc6 : 0xb3a07a;
     f.box(-w / 2, y, -d / 2, w / 2, hi + 0.95, d / 2, 'sandbag', col);
     if (r() < 0.5) f.box(w / 2 - 0.8, y, d / 2, w / 2, hi + 0.95, d / 2 + 1.8, 'sandbag', col);
-  }
+  } else if (DRESS_SLOPE[kind] !== undefined) dressProp(c, f, kind, x, z, rot, lo, hi);
   // loot by the cover, on the side away from its middle
+  if (opt?.bare) {
+    c.taken.push({ x0: x - hx - 0.5, z0: z - hz - 0.5, x1: x + hx + 0.5, z1: z + hz + 0.5 });
+    return true;
+  }
   if (kind !== 'truck' && c.deco() < 0.5) {
     const [lx, lz] = f.xz((c.deco() - 0.5) * (w - 0.8), (c.deco() < 0.5 ? -1 : 1) * (d / 2 + 0.7));
     c.loot.push(lx, heightAt(c.t, lx, lz) + 0.02, lz);
@@ -560,15 +675,211 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number, sc
   return true;
 }
 
+/** A stable hash of a point, 0 to 1: a look for something placed there that draws on no random stream. */
+const hash01 = (x: number, z: number) => {
+  const s = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453;
+  return s - Math.floor(s);
+};
+
+/** A collider for a box in a frame's local space (nothing drawn: the renderer draws the prop it belongs to). */
+function solidBox(c: Ctx, f: Frame, lx0: number, y0: number, lz0: number, lx1: number, y1: number, lz1: number, s: Surface) {
+  const r = f.rect(lx0, lz0, lx1, lz1);
+  c.colliders.push({ x0: r.x0, y0, z0: r.z0, x1: r.x1, y1, z1: r.z1, s });
+}
+
+/** The watchtower's platform height over its base, its side, and its stair's steps (rise, run, how many). */
+export const TOWER = { h: 4.2, side: 3, rise: 0.3, run: 0.38, steps: 13 };
+/** The horseshoe of sandbags: radius to the middle of the bags, half its thickness, height, how far round either way
+ * from its front (radians), and its middle's offset back along the footprint. */
+export const BAGARC = { r: 2.1, t: 0.31, h: 1.05, a: 1.75, cz: 0.9 };
+
+/**
+ * The colliders (and the record the renderer draws from) of one piece of the military dressing, in its frame at its
+ * spot; lo and hi are the lowest and highest ground under it. Draws from c.rng and c.deco, which the dressing passes
+ * set to streams of their own.
+ */
+function dressProp(c: Ctx, f: Frame, kind: PropKind, x: number, z: number, rot: number, lo: number, hi: number) {
+  const r = c.deco;
+  const [w, d] = PROP_SIZE[kind as Exclude<PropKind, 'hesco'>];
+  const base = (lo + hi) / 2;
+  const y0 = lo - 0.15;
+  const add = (k: DressKind, size: number, color = 0, y = base) => c.dress.push({ k, x, y, z, rot, s: size, v: r(), c: color });
+  const block = (h: number, hw = w / 2, hd = d / 2) => c.blocks.push({ ...f.rect(-hw, -hd, hw, hd), y0: lo, y1: base + h });
+  const style = c.def.style;
+  switch (kind) {
+    case 'bagarc': {
+      // a horseshoe of sandbags round a fighting position, open at the back: drawn bag by bag, colliding as a chain of
+      // boxes along the arc
+      const { r: R, t: T, h: H, a: A, cz } = BAGARC;
+      const n = 7;
+      for (let k = 0; k < n; k++) {
+        const a0 = lerp(-A, A, k / n);
+        const a1 = lerp(-A, A, (k + 1) / n);
+        const ax = Math.sin(a0) * R;
+        const az = cz - Math.cos(a0) * R;
+        const bx = Math.sin(a1) * R;
+        const bz = cz - Math.cos(a1) * R;
+        const am = (a0 + a1) / 2;
+        const ex = Math.abs(Math.sin(am)) * T + 0.04;
+        const ez = Math.abs(Math.cos(am)) * T + 0.04;
+        solidBox(c, f, Math.min(ax, bx) - ex, y0, Math.min(az, bz) - ez, Math.max(ax, bx) + ex, base + H, Math.max(az, bz) + ez, 'dirt');
+      }
+      add('bagarc', H, style === 'cabin' ? 0xcfcfc6 : 0xb3a07a);
+      block(H);
+      break;
+    }
+    case 'pallets': {
+      // one or two stacks of wooden pallets, 1.2 by 0.8 m, 14.4 cm a pallet
+      const a = 1 + Math.floor(r() * 8);
+      const b = r() < 0.7 ? 1 + Math.floor(r() * 6) : 0;
+      solidBox(c, f, -1.25, y0, -0.4, -0.05, base + a * 0.144, 0.4, 'wood');
+      if (b) solidBox(c, f, 0.05, y0, -0.4, 1.25, base + b * 0.144, 0.4, 'wood');
+      add('pallets', a + b * 16);
+      block(Math.max(a, b) * 0.144);
+      break;
+    }
+    case 'drums': {
+      // fuel drums standing together, painted one color mostly, and one lying in front now and then
+      const paint = [0x2f4f78, 0x7a2a22, 0x4f5a36, 0x8a8a84, 0x2f4f78];
+      const main = paint[Math.floor(r() * paint.length)];
+      const slots: [number, number][] = [
+        [-0.66, 0.36],
+        [0, 0.36],
+        [0.66, 0.36],
+        [-0.33, -0.22],
+        [0.33, -0.22],
+      ];
+      const n = 3 + Math.floor(r() * 3);
+      for (let k = 0; k < n; k++) {
+        const [lx, lz] = slots[k];
+        const [px, pz] = f.xz(lx + (r() - 0.5) * 0.06, lz + (r() - 0.5) * 0.06);
+        const py = floorAt(c.t, px, pz);
+        c.models.push({ key: 'barrel', x: px, y: py - 0.02, z: pz, yaw: r() * Math.PI * 2, tint: r() < 0.8 ? main : paint[Math.floor(r() * paint.length)] });
+        c.colliders.push({ x0: px - 0.3, y0: py, z0: pz - 0.3, x1: px + 0.3, y1: py + 0.92, z1: pz + 0.3, s: 'metal' });
+      }
+      if (n < 5 && r() < 0.6) {
+        const [px, pz] = f.xz(0.3, -0.5);
+        const py = floorAt(c.t, px, pz);
+        c.models.push({ key: 'barrel', x: px, y: py, z: pz, yaw: (-rot * Math.PI) / 2, tint: main, lie: 1 });
+        solidBox(c, f, -0.18, py, -0.8, 0.78, py + 0.6, -0.2, 'metal');
+      }
+      break;
+    }
+    case 'carwreck': {
+      // a burnt out or rusted car shell, on its rims: the body and the cabin collide
+      solidBox(c, f, -0.9, y0, -2.25, 0.9, base + 0.92, 2.25, 'metal');
+      solidBox(c, f, -0.78, base + 0.92, -0.8, 0.78, base + 1.36, 0.95, 'metal');
+      const paint = [0x6a6e70, 0x5a2e24, 0x2e3e52, 0x7a6a4a, 0x4a5240, 0xb8b4a8];
+      add('carwreck', 0, paint[Math.floor(r() * paint.length)]);
+      block(1.36);
+      break;
+    }
+    case 'razor': {
+      // a coil of razor wire on steel pickets
+      solidBox(c, f, -2.5, y0, -0.42, 2.5, base + 0.92, 0.42, 'metal');
+      add('razor', 5);
+      break;
+    }
+    case 'tent': {
+      // a ridge tent: canvas walls and roof over a frame of poles (closed: it stands as one block)
+      solidBox(c, f, -2.1, y0, -3, 2.1, base + 2.05, 3, 'dirt');
+      add('tent', 0, style === 'adobe' ? 0x9a8a68 : style === 'cabin' ? 0x6e7258 : 0x5e6244);
+      block(3, 2.1, 3);
+      break;
+    }
+    case 'net': {
+      // a camouflage net on four poles over a stack of crates and a generator
+      for (const [a, b] of [
+        [-1, -1],
+        [1, -1],
+        [-1, 1],
+        [1, 1],
+      ])
+        solidBox(c, f, a * 2.9 - 0.07, y0, b * 2.9 - 0.07, a * 2.9 + 0.07, base + 2.7, b * 2.9 + 0.07, 'wood');
+      crates(c, f, -0.9, 0.2, lo);
+      const [gx, gz] = f.xz(1.3, -0.4);
+      clutter(c, f, 1.3, -0.4, r() < 0.5 ? 'generator' : 'ammo-crate', floorAt(c.t, gx, gz));
+      add('net', 2.7, style === 'adobe' ? 0xa08a60 : style === 'cabin' ? 0xd8dcd8 : 0x56603e);
+      break;
+    }
+    case 'tower': {
+      // a watchtower: four legs, a platform with a parapet of planks open where the stair comes up, a roof on posts,
+      // and a straight stair down the back (each step a solid block from the ground, so you walk up it)
+      const { h: PH, side: S, rise, run, steps } = TOWER;
+      const pz0 = -d / 2;
+      const pz1 = pz0 + S;
+      const hs = S / 2;
+      const top = base + PH;
+      const s: Surface = style === 'adobe' ? 'metal' : 'wood';
+      for (const lx of [-hs, hs - 0.22]) for (const lz of [pz0, pz1 - 0.22]) solidBox(c, f, lx, y0, lz, lx + 0.22, top - 0.2, lz + 0.22, s);
+      solidBox(c, f, -hs, top - 0.2, pz0, hs, top, pz1, s);
+      // the parapet: front and sides whole, the back open over the stair
+      const ph = top + 1.05;
+      solidBox(c, f, -hs, top, pz0, hs, ph, pz0 + 0.08, s);
+      solidBox(c, f, -hs, top, pz0 + 0.08, -hs + 0.08, ph, pz1, s);
+      solidBox(c, f, hs - 0.08, top, pz0 + 0.08, hs, ph, pz1, s);
+      solidBox(c, f, -hs + 0.08, top, pz1 - 0.08, -0.5, ph, pz1, s);
+      solidBox(c, f, 0.5, top, pz1 - 0.08, hs - 0.08, ph, pz1, s);
+      // the roof, high enough to stand under, low enough that a jump stops at it
+      solidBox(c, f, -hs - 0.25, top + 2.35, pz0 - 0.25, hs + 0.25, top + 2.47, pz1 + 0.25, s);
+      for (let k = 0; k < steps; k++) {
+        const z0 = pz1 + k * run;
+        solidBox(c, f, -0.45, y0, z0, 0.45, top - (k + 1) * rise, z0 + run, s);
+      }
+      add('tower', PH, style === 'adobe' ? 1 : 0);
+      c.blocks.push({ ...f.rect(-hs, pz0, hs, pz1), y0: top - 0.2, y1: top + 2.5 });
+      break;
+    }
+    case 'brokenwall': {
+      // what is left of a wall: a run of columns broken off at uneven heights, a breach knocked through it and
+      // sometimes a window, with rubble at its foot
+      const part: Part = style === 'cabin' || style === 'adobe' ? 'concrete' : 'wall';
+      const col = style === 'adobe' ? 0xc4a07a : style === 'cabin' ? 0x9a978f : style === 'tropic' ? 0xe2d8c4 : 0xcfc5b2;
+      const H0 = 2.3 + r() * 0.7;
+      const gap = 2 + Math.floor(r() * 6);
+      const win = r() < 0.5 ? (gap < 5 ? 7 : 1) : -1;
+      let h = H0;
+      const fromLeft = r() < 0.5;
+      for (let i = 0; i < 10; i++) {
+        const k = fromLeft ? i : 9 - i;
+        const lx = -2.5 + k * 0.5;
+        // stepping down toward the broken end, with a jag now and then
+        h = Math.max(0.35, Math.min(H0, h - r() * 0.32 + (r() < 0.25 ? 0.35 : 0)));
+        if (k === gap || k === gap + 1) {
+          f.box(lx, y0, -0.25, lx + 0.5, base + 0.35, 0.25, part, col);
+          continue;
+        }
+        if (k === win && h > 2) {
+          f.box(lx, y0, -0.25, lx + 0.5, base + 0.95, 0.25, part, col);
+          f.box(lx, base + 1.95, -0.25, lx + 0.5, base + h, 0.25, part, col);
+          continue;
+        }
+        f.box(lx, y0, -0.25, lx + 0.5, base + h, 0.25, part, col);
+      }
+      for (let k = 0; k < 4; k++) {
+        const [px, pz] = f.xz((r() - 0.5) * 4.6, (r() < 0.5 ? -1 : 1) * (0.55 + r() * 0.6));
+        const sz = 0.22 + r() * 0.26;
+        c.lateRocks.push({ x: px, y: heightAt(c.t, px, pz) - sz * 0.35, z: pz, s: sz, rot: r() * 6, v: Math.floor(r() * 3), flat: 0.45 + r() * 0.3 });
+      }
+      block(H0 * 0.8);
+      break;
+    }
+  }
+}
+
 /**
  * The walkable ground inside the arena that hangs together: 1 on vertices of the biggest region you can walk across
- * without climbing a cliff or swimming deep water, 0 elsewhere. Spawns, sites and respawns only go on it.
+ * without climbing a cliff or swimming deep water (or of the one round `from`, when given, which also keeps off ground
+ * too steep to stand on), 0 elsewhere. Spawns, sites and respawns only go on it.
  */
-export function walkRegion(t: Terrain, arena = ARENA): Uint8Array {
+export function walkRegion(t: Terrain, arena = ARENA, from?: { x: number; z: number }): Uint8Array {
   const lab = new Int32Array(T_RES * T_RES).fill(-1);
   const lo = Math.floor((T_HALF - arena) / CELL);
   const hi = Math.ceil((T_HALF + arena) / CELL);
   const ok = (k: number) => t.ice || t.h[k] > t.water - 1.1;
+  // (round a breach's lanes, also no ground steeper than a body can stand on, so no bank taken slantwise joins in)
+  const nrm = { x: 0, y: 1, z: 0 };
+  const standable = (k: number) => normalAt(t, (k % T_RES) * CELL - T_HALF, Math.floor(k / T_RES) * CELL - T_HALF, nrm).y >= 0.62;
   const sizes: number[] = [];
   const queue = new Int32Array(T_RES * T_RES);
   for (let j = lo; j <= hi; j++)
@@ -594,7 +905,7 @@ export function walkRegion(t: Terrain, arena = ARENA): Uint8Array {
           const nj = cj + dj;
           if (ni < lo || nj < lo || ni > hi || nj > hi) continue;
           const nk = nj * T_RES + ni;
-          if (lab[nk] >= 0 || !ok(nk) || Math.abs(t.h[nk] - t.h[k]) > 1.5) continue;
+          if (lab[nk] >= 0 || !ok(nk) || Math.abs(t.h[nk] - t.h[k]) > 1.5 || (from && !standable(nk))) continue;
           lab[nk] = id;
           queue[tail++] = nk;
         }
@@ -603,68 +914,13 @@ export function walkRegion(t: Terrain, arena = ARENA): Uint8Array {
     }
   let main = 0;
   sizes.forEach((n, i) => n > sizes[main] && (main = i));
+  if (from) {
+    const k = Math.round((from.z + T_HALF) / CELL) * T_RES + Math.round((from.x + T_HALF) / CELL);
+    if (lab[k] >= 0) main = lab[k];
+  }
   const out = new Uint8Array(T_RES * T_RES);
   for (let k = 0; k < out.length; k++) out[k] = lab[k] === main && sizes.length > 0 ? 1 : 0;
   return out;
-}
-
-/** Walking distances over the bare land (2 m steps, no climbing more than 1.5 m a step), from one point to the rest. */
-function landDist(t: Terrain, arena: number, from: { x: number; z: number }, to: { x: number; z: number }[]) {
-  const lo = Math.ceil((T_HALF - arena + 6) / CELL);
-  const hi = Math.floor((T_HALF + arena - 6) / CELL);
-  const n = hi - lo + 1;
-  const dist = new Float32Array(n * n).fill(Infinity);
-  const done = new Uint8Array(n * n);
-  const idx = (x: number, z: number) => {
-    const i = clamp(Math.round((x + T_HALF) / CELL) - lo, 0, n - 1);
-    const j = clamp(Math.round((z + T_HALF) / CELL) - lo, 0, n - 1);
-    return j * n + i;
-  };
-  const hAt = (c: number) => t.h[(lo + Math.floor(c / n)) * T_RES + lo + (c % n)];
-  const wet = (c: number) => t.hasWater && !t.ice && hAt(c) < t.water - 1.1;
-  // a plain bucket queue: costs are small whole numbers of half steps
-  const buckets: number[][] = [];
-  const start = idx(from.x, from.z);
-  dist[start] = 0;
-  buckets[0] = [start];
-  for (let b = 0; b < buckets.length; b++) {
-    const list = buckets[b];
-    if (!list) continue;
-    for (const c of list) {
-      if (done[c]) continue;
-      done[c] = 1;
-      const ci = c % n;
-      const cj = (c - ci) / n;
-      for (let dj = -1; dj <= 1; dj++)
-        for (let di = -1; di <= 1; di++) {
-          if (!di && !dj) continue;
-          const ni = ci + di;
-          const nj = cj + dj;
-          if (ni < 0 || nj < 0 || ni >= n || nj >= n) continue;
-          const nc = nj * n + ni;
-          if (done[nc] || wet(nc) || Math.abs(hAt(nc) - hAt(c)) > 1.4) continue;
-          const nb = b + (di && dj ? 3 : 2);
-          if (nb * CELL * 0.5 < dist[nc]) {
-            dist[nc] = nb * CELL * 0.5;
-            (buckets[nb] ??= []).push(nc);
-          }
-        }
-    }
-  }
-  return to.map((p) => dist[idx(p.x, p.z)]);
-}
-
-/** How much ground stands above a straight grade from a to b: the depth a lane between them would have to cut. */
-function cutDepth(t: Terrain, ax: number, az: number, bx: number, bz: number) {
-  const ha = heightAt(t, ax, az);
-  const hb = heightAt(t, bx, bz);
-  const n = Math.ceil(Math.hypot(bx - ax, bz - az) / CELL);
-  let most = 0;
-  for (let i = 1; i < n; i++) {
-    const k = i / n;
-    most = Math.max(most, heightAt(t, lerp(ax, bx, k), lerp(az, bz, k)) - lerp(ha, hb, k));
-  }
-  return most;
 }
 
 /** Grades a road (a flat x, z polyline) so it can be walked end to end: wherever the land climbs or falls more than
@@ -827,63 +1083,10 @@ function spawnYard(c: Ctx, x: number, z: number, half = 17, seg = 2) {
   }
 }
 
-type Spot = { x: number; z: number; score: number };
-
-/**
- * How far a breach layout is from the plan: the attack about 110 m of walking from either site, the defense about 55,
- * both sites about as far, and the sites a short rotation apart. A pair the land doesn't join sensibly (no way at all,
- * or a long detour) counts as joined by its road, graded through, which costs by how deep it must cut.
- */
-function layoutCost(t: Terrain, arena: number, spawnAt: Spot[], siteAt: Spot[]) {
-  const [atk, def] = spawnAt;
-  const [A, B] = siteAt;
-  const fromAtk = landDist(t, arena, atk, [A, B]);
-  const fromA = landDist(t, arena, A, [def, B]);
-  const fromB = landDist(t, arena, B, [def]);
-  let carve = 0;
-  const way = (p: Spot, q: Spot, d: number) => {
-    const straight = Math.hypot(q.x - p.x, q.z - p.z);
-    if (Number.isFinite(d) && d < straight * 1.6) return d;
-    // the road there will be graded through, if the climb between the pads is gentle enough to walk (the less it
-    // has to cut the better); if not, the long way round it is, or no way at all
-    const climb = Math.abs(heightAt(t, p.x, p.z) - heightAt(t, q.x, q.z)) / Math.max(1, straight - 24);
-    if (climb < 0.55) {
-      carve += 0.5 + cutDepth(t, p.x, p.z, q.x, q.z) / 8;
-      return straight * 1.1;
-    }
-    return Number.isFinite(d) ? d : 1e4;
-  };
-  const atkA = way(atk, A, fromAtk[0]);
-  const atkB = way(atk, B, fromAtk[1]);
-  const defA = way(A, def, fromA[0]);
-  const ab = way(A, B, fromA[1]);
-  const defB = way(B, def, fromB[0]);
-  const off = (d: number, want: number) => Math.abs(d - want) / want;
-  let cost = off(atkA, 110) + off(atkB, 110) + off(defA, 55) + off(defB, 55) + off(ab, 90) * 0.5 + carve;
-  cost += (Math.abs(atkA - atkB) / 110) * 2 + (Math.abs(defA - defB) / 55) * 2;
-  // the defense must get there well first
-  cost += Math.max(0, Math.max(defA, defB) - Math.min(atkA, atkB) * 0.65) / 20;
-  for (const p of [...spawnAt, ...siteAt]) cost += p.score * 0.02;
-  // open water or ice has no cover at all: keep the spawns, the sites and the lanes between them off it
-  const wet = (x: number, z: number) => t.hasWater && heightAt(t, x, z) < t.water + 0.8;
-  for (const p of [...spawnAt, ...siteAt]) for (const [ox, oz] of [[0, 0], [14, 0], [-14, 0], [0, 14], [0, -14]]) if (wet(p.x + ox, p.z + oz)) cost += 2;
-  for (const [p, q] of [
-    [atk, A],
-    [atk, B],
-    [def, A],
-    [def, B],
-  ]) {
-    let n = 0;
-    for (let k = 1; k < 20; k++) if (wet(lerp(p.x, q.x, k / 20), lerp(p.z, q.z, k / 20))) n++;
-    cost += (n / 19) * 6;
-  }
-  return cost;
-}
-
 const onRegion = (region: Uint8Array, x: number, z: number) => region[Math.round((z + T_HALF) / CELL) * T_RES + Math.round((x + T_HALF) / CELL)] === 1;
 
 /** Best spot near (x, z) for a pad: dry, flat, reachable and inside the arena. `along` limits the search to one axis. */
-function findSpot(t: Terrain, region: Uint8Array, x: number, z: number, radius: number, along?: [number, number], arena = ARENA, strict = true) {
+function findSpot(t: Terrain, region: Uint8Array, x: number, z: number, radius: number, along?: [number, number], arena = CORE) {
   let best = { x, z, score: Infinity };
   for (let a = -radius; a <= radius; a += 4)
     for (let b = -radius; b <= radius; b += 4) {
@@ -891,9 +1094,8 @@ function findSpot(t: Terrain, region: Uint8Array, x: number, z: number, radius: 
       const px = x + a;
       const pz = z + b;
       if (Math.abs(px) > arena - 20 || Math.abs(pz) > arena - 20) continue;
-      // off the main walkable land: out, unless a lane will be cut to it (then only a little worse)
-      const off = !onRegion(region, px, pz);
-      if (off && strict) continue;
+      // off the main walkable land: out
+      if (!onRegion(region, px, pz)) continue;
       let lo = Infinity;
       let hi = -Infinity;
       for (let u = -10; u <= 10; u += 5)
@@ -903,7 +1105,7 @@ function findSpot(t: Terrain, region: Uint8Array, x: number, z: number, radius: 
           hi = Math.max(hi, h);
         }
       const wet = Math.max(0, t.water + 1.2 - lo) * 8;
-      const score = hi - lo + wet + Math.hypot(a, b) * 0.04 + (off ? 6 : 0);
+      const score = hi - lo + wet + Math.hypot(a, b) * 0.04;
       if (score < best.score) best = { x: px, z: pz, score };
     }
   return best;
@@ -974,7 +1176,7 @@ function buildGrid(boxes: Box[], trunks: Trunk[], rocks: RockCol[]): Grid {
   return { n, size, start, items };
 }
 
-const SURFACE: Record<Part, Surface> = { wall: 'stone', trim: 'stone', roof: 'stone', floor: 'wood', wood: 'wood', metal: 'metal', sandbag: 'dirt', concrete: 'stone', hesco: 'dirt' };
+const SURFACE: Record<Part, Surface> = { wall: 'stone', trim: 'stone', roof: 'stone', floor: 'wood', wood: 'wood', metal: 'metal', sandbag: 'dirt', concrete: 'stone', hesco: 'dirt', glass: 'stone', canvas: 'dirt', rust: 'metal' };
 
 /** Loot spots minus any that ended up inside something solid (a crate in a barn, a truck, a tree trunk). */
 function clearSpots(spots: number[], boxes: Box[], trunks: Trunk[]) {
@@ -990,93 +1192,13 @@ function clearSpots(spots: number[], boxes: Box[], trunks: Trunk[]) {
   return out;
 }
 
-/** Breach: across each spawn's road into each site, a wall or two short of the site, standing out from either
- * side by turns, so the way in bends round them and nobody holding the site sees all the way down the road. Drawn
- * from its own random stream. */
-function screens(c: Ctx, sites: Site[], marks: number[], open = false) {
-  const keep = [c.rng, c.deco];
-  c.rng = mulberry32(c.def.seed * 23 + 5 + marks[0]);
-  c.deco = mulberry32(c.def.seed * 29 + 3 + marks[0]);
-  for (let i = 0; i < 4; i++) {
-    const pts = c.roads[i];
-    const site = sites[i % 2];
-    marks.forEach((mark, n) => {
-      // a little nearer or further along if the first spot is taken
-      for (const d of [mark, mark + 4, mark - 3, mark + 8]) {
-        const p = alongRoad(pts, d);
-        if (!p || Math.hypot(p.x - site.x, p.z - site.z) < 15) continue;
-        // (further out, only where the road runs through open ground)
-        if (open && solidNear(c, p.x, p.z, 8)) continue;
-        // square across the road, pushed out to one side
-        const out = (n + i) % 2 ? 2.4 : -2.4;
-        if (tryProp(c, 'hesco', p.x - p.dz * out, p.z + p.dx * out, ARENA_CLASSIC - 3, { turn: Math.abs(p.dx) > Math.abs(p.dz) ? 1 : 0, units: 5 })) break;
-      }
-    });
-  }
-  [c.rng, c.deco] = keep;
-}
-
-/** The point `d` meters back along a road from its far end, and the road's heading there (a unit x, z). */
-function alongRoad(pts: number[], d: number) {
-  let along = 0;
-  for (let k = pts.length - 2; k >= 2; k -= 2) {
-    const ax = pts[k];
-    const az = pts[k + 1];
-    const seg = Math.hypot(pts[k - 2] - ax, pts[k - 1] - az);
-    if (along + seg >= d && seg > 0) {
-      const f = (d - along) / seg;
-      return { x: lerp(ax, pts[k - 2], f), z: lerp(az, pts[k - 1], f), dx: (pts[k - 2] - ax) / seg, dz: (pts[k - 1] - az) / seg };
-    }
-    along += seg;
-  }
-  return null;
-}
-
-/** Builds a map: the breach arena, or with `royale` the whole land, with many more towns, cover and loot. */
-export function buildWorld(id: MapId, royale = false): World {
-  const def = MAPS[id];
-  const t = generateTerrain(def);
-  const ARENA = royale ? ROYALE_ARENA : ARENA_CLASSIC;
-  const c: Ctx = { def, t, rng: mulberry32(def.seed * 7 + 3), n: new Noise2(def.seed + 99), pieces: [], gables: [], interiors: [], taken: [], pads: [], roadSegs: [], roads: [], blocks: [], vehicles: [], models: [], colliders: [], deco: mulberry32(def.seed * 13 + 5), arena: ARENA, loot: [], doors: [] };
-  const r = c.rng;
-
-  // the axis between the spawns
-  let region = walkRegion(t, ARENA);
-  const th0 = r() * Math.PI * 2;
-  // breach: the attackers start far back, the defenders close behind the two sites, so the defense sets up first and
-  // the attack has a run of about twenty seconds to either site. The land decides which way round fits best (a cliff
-  // or a lake between a spawn and a site would make a lopsided map). A royale world keeps its old spread of three.
-  const layout = (th: number) => {
-    const ux = Math.cos(th);
-    const uz = Math.sin(th);
-    const vx = -uz;
-    const vz = ux;
-    const spawnAt = royale
-      ? [-1, 1].map((sgn) => findSpot(t, region, sgn * 120 * ux, sgn * 120 * uz, 24))
-      : [findSpot(t, region, -68 * ux, -68 * uz, 16, undefined, ARENA, false), findSpot(t, region, 58 * ux, 58 * uz, 16, undefined, ARENA, false)];
-    const siteAt = royale
-      ? [-1, 0, 1].map((k) => findSpot(t, region, k * 82 * vx, k * 82 * vz, 24, [ux, uz]))
-      : [-1, 1].map((k) => findSpot(t, region, 24 * ux + k * 40 * vx, 24 * uz + k * 40 * vz, 14, [ux, uz], ARENA, false));
-    return { ux, uz, vx, vz, spawnAt, siteAt };
-  };
-  let best = layout(th0);
-  if (!royale) {
-    let bestScore = Infinity;
-    for (let k = 0; k < 16; k++) {
-      const L = k === 0 ? best : layout(th0 + (k * Math.PI) / 8);
-      const cost = layoutCost(t, ARENA, L.spawnAt, L.siteAt);
-      if (cost < bestScore) {
-        bestScore = cost;
-        best = L;
-      }
-    }
-  }
-  const { ux, uz, vx, vz, spawnAt, siteAt } = best;
-
-  const spawns = spawnAt.map((p, team) => {
+/** The spawn pads, each team's five slots across it, facing along u (the attack) or back (the defense). */
+function makeSpawns(c: Ctx, at: { x: number; z: number }[], ux: number, uz: number, vx: number, vz: number, pad = 12) {
+  const t = c.t;
+  return at.map((p, team) => {
     const y = meanHeight(t, p.x, p.z, 12, 12);
-    flattenRect(t, p.x, p.z, 12, 12, y, 9);
-    c.pads.push({ x: p.x, z: p.z, hx: 12, hz: 12, y });
+    flattenRect(t, p.x, p.z, pad, pad, y, pad === 12 ? 9 : 5);
+    c.pads.push({ x: p.x, z: p.z, hx: pad, hz: pad, y });
     c.taken.push({ x0: p.x - 15, z0: p.z - 15, x1: p.x + 15, z1: p.z + 15 });
     const fx = team === 0 ? ux : -ux;
     const fz = team === 0 ? uz : -uz;
@@ -1084,40 +1206,21 @@ export function buildWorld(id: MapId, royale = false): World {
     const slots: Slot[] = [-6, -3, 0, 3, 6].map((o, k) => ({ x: p.x + vx * o - fx * (k % 2) * 2.5, z: p.z + vz * o - fz * (k % 2) * 2.5, yaw }));
     return { x: p.x, y, z: p.z, yaw, slots };
   }) as [Spawn, Spawn];
+}
 
-  const sites: Site[] = siteAt.map((p, k) => {
+function makeSites(c: Ctx, at: { x: number; z: number }[], names: string[]) {
+  const t = c.t;
+  return at.map((p, k): Site => {
     const y = meanHeight(t, p.x, p.z, 8, 8);
     flattenRect(t, p.x, p.z, 9, 9, y, 8);
     c.pads.push({ x: p.x, z: p.z, hx: 9, hz: 9, y });
     c.taken.push({ x0: p.x - 13, z0: p.z - 13, x1: p.x + 13, z1: p.z + 13 });
-    return { id: k, name: 'ABC'[k], town: def.pois[k], x: p.x, y, z: p.z };
+    return { id: k, name: 'ABC'[k], town: names[k], x: p.x, y, z: p.z };
   });
-  // breach: a middle between the sites, its own little town, where the lanes cross
-  const mid = royale ? null : findSpot(t, region, -6 * ux, -6 * uz, 14);
+}
 
-  // roads: each spawn to each site, and the sites to each other (through the middle in breach)
-  for (const s of spawns) for (const site of sites) roadLine(c, s.x, s.z, site.x, site.z);
-  if (mid) {
-    for (const site of sites) roadLine(c, mid.x, mid.z, site.x, site.z);
-    roadLine(c, spawns[0].x, spawns[0].z, mid.x, mid.z);
-  } else {
-    roadLine(c, sites[0].x, sites[0].z, sites[1].x, sites[1].z);
-    roadLine(c, sites[1].x, sites[1].z, sites[2].x, sites[2].z);
-  }
-  // breach: every lane is walkable end to end. Where a road meets a slope too steep to climb (a mesa's cliff, a
-  // ridge), a ramp is cut into it; buildings, cover and trees all keep off roads, so the lanes stay open.
-  if (!royale) {
-    const graded = new Uint8Array(T_RES * T_RES);
-    for (const pts of c.roads) gradeRoad(t, pts, c.pads, graded);
-    roundRidges(t, graded);
-    region = walkRegion(t, ARENA);
-    // and each spawn is a walled yard you leave by its roads, so nobody sees across from spawn to spawn or into a
-    // site the moment a round starts
-    for (const sp of spawns) spawnYard(c, sp.x, sp.z);
-    screens(c, sites, [21, 34]);
-  }
-
-  // the site masts: a waist high concrete block to hide behind and an antenna
+/** The site masts: a waist high concrete block to hide behind and an antenna. */
+function siteMasts(c: Ctx, sites: Site[]) {
   for (const s of sites) {
     const f = new Frame(c, s.x, s.z, 0);
     f.box(-0.9, s.y - 0.3, -0.9, 0.9, s.y + 1.15, 0.9, 'concrete', 0x8f8d88);
@@ -1125,43 +1228,17 @@ export function buildWorld(id: MapId, royale = false): World {
     f.box(-0.7, s.y + 5.2, -0.06, 0.7, s.y + 5.32, 0.06, 'metal', 0x6a6e72, false);
     f.box(-0.06, s.y + 4.4, -0.6, 0.06, s.y + 4.52, 0.6, 'metal', 0x6a6e72, false);
   }
+}
 
-  // towns: one around each site, the middle (breach) or two out on the flanks (royale), and a few beyond for the view
-  const towns: Town[] = sites.map((s) => ({ name: s.town, x: s.x, z: s.z, site: s.id }));
-  if (mid) towns.push({ name: def.pois[2], x: mid.x, z: mid.z, site: -1 });
-  else
-    for (const sgn of [-1, 1]) {
-      const p = findSpot(t, region, sgn * 135 * vx, sgn * 135 * vz, 18, [ux, uz]);
-      towns.push({ name: def.pois[sgn < 0 ? 3 : 4], x: p.x, z: p.z, site: -1 });
-    }
-  if (royale) {
-    // a royale spreads towns over the whole land, each joined by a road to the nearest one already there
-    const names = ['Brook', 'Mill', 'Quarry', 'Pines', 'Harbor', 'Crossing', 'Depot', 'Farm', 'Outlook', 'Station'];
-    for (let k = 0, made = 0; k < 160 && made < 9; k++) {
-      const a = r() * Math.PI * 2;
-      const d = 130 + r() * 170;
-      const p = findSpot(t, region, Math.cos(a) * d, Math.sin(a) * d, 26, undefined, ARENA);
-      if (!Number.isFinite(p.score) || towns.some((q) => Math.hypot(q.x - p.x, q.z - p.z) < 85)) continue;
-      let near = towns[0];
-      for (const q of towns) if (Math.hypot(q.x - p.x, q.z - p.z) < Math.hypot(near.x - p.x, near.z - p.z)) near = q;
-      roadLine(c, near.x, near.z, p.x, p.z);
-      towns.push({ name: `${def.pois[k % def.pois.length]} ${names[made % names.length]}`, x: p.x, z: p.z, site: -2 });
-      made++;
-    }
-  }
-  const kinds: Kind[] = ['house', 'house', 'house', 'shed', 'ruin', 'barn'];
-  for (const town of towns) {
-    const want = town.site >= 0 ? 6 : town.site === -2 ? 7 : 4;
-    let placed = 0;
-    for (let tries = 0; tries < 120 && placed < want; tries++) {
-      const a = r() * Math.PI * 2;
-      const d = (town.site >= 0 ? 17 : 6) + r() * 32;
-      if (tryBuilding(c, kinds[Math.floor(r() * kinds.length)], town.x + Math.cos(a) * d, town.z + Math.sin(a) * d, ARENA - 4)) placed++;
-    }
-  }
+const KINDS: Kind[] = ['house', 'house', 'house', 'shed', 'ruin', 'barn'];
+
+/** A few towns out past the playing ground, only for the view. */
+function vistaTowns(c: Ctx, towns: Town[], from: number) {
+  const { t, def } = c;
+  const r = c.rng;
   for (let k = 0; k < 3; k++) {
     const a = r() * Math.PI * 2;
-    const d = ARENA_CLASSIC + 50 + r() * 120;
+    const d = from + 50 + r() * 120;
     const x = Math.cos(a) * d;
     const z = Math.sin(a) * d;
     if (heightAt(t, x, z) < t.water + 2) continue;
@@ -1170,16 +1247,70 @@ export function buildWorld(id: MapId, royale = false): World {
     for (let tries = 0; tries < 60 && placed < 5; tries++) {
       const b = r() * Math.PI * 2;
       const e = 6 + r() * 30;
-      if (tryBuilding(c, kinds[Math.floor(r() * kinds.length)], x + Math.cos(b) * e, z + Math.sin(b) * e, T_HALF - 40)) placed++;
+      if (tryBuilding(c, KINDS[Math.floor(r() * KINDS.length)], x + Math.cos(b) * e, z + Math.sin(b) * e, T_HALF - 40)) placed++;
     }
   }
+}
+
+/** A royale's layout over the whole land: two spawns and three sites spread far apart (in a royale they only seed
+ * towns), towns all over joined by roads, and cover strewn everywhere. */
+function royaleLayout(c: Ctx) {
+  const { t, def } = c;
+  const r = c.rng;
+  const ARENA = c.arena;
+  const region = walkRegion(t, ARENA);
+  const th0 = r() * Math.PI * 2;
+  const ux = Math.cos(th0);
+  const uz = Math.sin(th0);
+  const vx = -uz;
+  const vz = ux;
+  const spawnAt = [-1, 1].map((sgn) => findSpot(t, region, sgn * 120 * ux, sgn * 120 * uz, 24));
+  const siteAt = [-1, 0, 1].map((k) => findSpot(t, region, k * 82 * vx, k * 82 * vz, 24, [ux, uz]));
+  const spawns = makeSpawns(c, spawnAt, ux, uz, vx, vz);
+  const sites = makeSites(c, siteAt, def.pois);
+
+  // roads: each spawn to each site, and the sites to each other
+  for (const s of spawns) for (const site of sites) roadLine(c, s.x, s.z, site.x, site.z);
+  roadLine(c, sites[0].x, sites[0].z, sites[1].x, sites[1].z);
+  roadLine(c, sites[1].x, sites[1].z, sites[2].x, sites[2].z);
+  siteMasts(c, sites);
+
+  // towns: one around each site, two out on the flanks, and towns over the whole land, each joined by a road to the
+  // nearest one already there
+  const towns: Town[] = sites.map((s) => ({ name: s.town, x: s.x, z: s.z, site: s.id }));
+  for (const sgn of [-1, 1]) {
+    const p = findSpot(t, region, sgn * 135 * vx, sgn * 135 * vz, 18, [ux, uz]);
+    towns.push({ name: def.pois[sgn < 0 ? 3 : 4], x: p.x, z: p.z, site: -1 });
+  }
+  const names = ['Brook', 'Mill', 'Quarry', 'Pines', 'Harbor', 'Crossing', 'Depot', 'Farm', 'Outlook', 'Station'];
+  for (let k = 0, made = 0; k < 160 && made < 9; k++) {
+    const a = r() * Math.PI * 2;
+    const d = 130 + r() * 170;
+    const p = findSpot(t, region, Math.cos(a) * d, Math.sin(a) * d, 26, undefined, ARENA);
+    if (!Number.isFinite(p.score) || towns.some((q) => Math.hypot(q.x - p.x, q.z - p.z) < 85)) continue;
+    let near = towns[0];
+    for (const q of towns) if (Math.hypot(q.x - p.x, q.z - p.z) < Math.hypot(near.x - p.x, near.z - p.z)) near = q;
+    roadLine(c, near.x, near.z, p.x, p.z);
+    towns.push({ name: `${def.pois[k % def.pois.length]} ${names[made % names.length]}`, x: p.x, z: p.z, site: -2 });
+    made++;
+  }
+  for (const town of towns) {
+    const want = town.site >= 0 ? 6 : town.site === -2 ? 7 : 4;
+    let placed = 0;
+    for (let tries = 0; tries < 120 && placed < want; tries++) {
+      const a = r() * Math.PI * 2;
+      const d = (town.site >= 0 ? 17 : 6) + r() * 32;
+      if (tryBuilding(c, KINDS[Math.floor(r() * KINDS.length)], town.x + Math.cos(a) * d, town.z + Math.sin(a) * d, ARENA - 4)) placed++;
+    }
+  }
+  vistaTowns(c, towns, CORE);
   // lone buildings out in the open
-  for (let k = 0, placed = 0; k < (royale ? 400 : 120) && placed < (royale ? 30 : 11); k++)
+  for (let k = 0, placed = 0; k < 400 && placed < 30; k++)
     if (tryBuilding(c, r() < 0.5 ? 'ruin' : 'shed', (r() * 2 - 1) * (ARENA - 15), (r() * 2 - 1) * (ARENA - 15), ARENA - 4)) placed++;
 
-  // cover: around the sites, at the spawns and across the lanes
+  // cover: an armored truck by each spawn and one by the middle site, HESCO walls and more round every site, containers
+  // at the spawns, trucks and cover all over
   const propKinds: PropKind[] = ['container', 'crates', 'sandbags', 'hesco', 'barrier', 'pile', 'hesco', 'wire', 'dumpsters', 'fence', 'barrier', 'pile'];
-  // an armored truck by each spawn and one in the middle, then HESCO walls round every site
   for (const s of spawns)
     for (let k = 0, placed = 0; k < 60 && placed < 1; k++) {
       const a = r() * Math.PI * 2;
@@ -1187,8 +1318,7 @@ export function buildWorld(id: MapId, royale = false): World {
     }
   for (let k = 0, placed = 0; k < 60 && placed < 1; k++) {
     const a = r() * Math.PI * 2;
-    const at = mid ?? sites[1];
-    if (tryProp(c, 'truck', at.x + Math.cos(a) * (mid ? 9 : 16), at.z + Math.sin(a) * (mid ? 9 : 16), ARENA - 4)) placed++;
+    if (tryProp(c, 'truck', sites[1].x + Math.cos(a) * 16, sites[1].z + Math.sin(a) * 16, ARENA - 4)) placed++;
   }
   for (const s of sites)
     for (let k = 0, placed = 0; k < 40 && placed < 2; k++) {
@@ -1206,60 +1336,608 @@ export function buildWorld(id: MapId, royale = false): World {
       const a = r() * Math.PI * 2;
       if (tryProp(c, 'container', s.x + Math.cos(a) * 19, s.z + Math.sin(a) * 19, ARENA - 3)) placed++;
     }
-  if (royale)
-    for (let k = 0, placed = 0; k < 400 && placed < 6; k++) {
-      const a = r() * Math.PI * 2;
-      const d = 60 + r() * 250;
-      if (tryProp(c, 'truck', Math.cos(a) * d, Math.sin(a) * d, ARENA - 4)) placed++;
-    }
-  for (let k = 0, placed = 0; k < (royale ? 1600 : 700) && placed < (royale ? 120 : 62); k++)
-    if (tryProp(c, propKinds[Math.floor(r() * propKinds.length)], (r() * 2 - 1) * (ARENA - 8), (r() * 2 - 1) * (ARENA - 8), ARENA - 3)) placed++;
-  // breach: wherever the ground still lies open (nothing standing within 9 m), a piece of cover, so a fight turns on
-  // angles and not on who spots whom first across an empty field
-  if (!royale) {
-    const fill: PropKind[] = ['container', 'crates', 'sandbags', 'hesco', 'hesco', 'barrier', 'sandbags', 'container', 'pile'];
-    for (let gx = -ARENA + 10; gx <= ARENA - 10; gx += 13)
-      for (let gz = -ARENA + 10; gz <= ARENA - 10; gz += 13) {
-        const x = gx + (r() - 0.5) * 7;
-        const z = gz + (r() - 0.5) * 7;
-        if (solidNear(c, x, z, 9)) continue;
-        for (let k = 0; k < 5; k++) if (tryProp(c, fill[Math.floor(r() * fill.length)], x + (r() - 0.5) * 5, z + (r() - 0.5) * 5, ARENA - 3)) break;
-      }
-    // further out along the ways in, more of the same where they cross open ground (a frozen lake, a bare field)
-    screens(c, sites, [48, 62, 76], true);
-    // and round each site, where the roads in all meet and leave the ground bare, cover at the roads' edges to hold
-    // the site from and to fight over it (from its own random stream, which leaves everything else as it was)
-    const keep = [c.rng, c.deco];
-    c.rng = mulberry32(def.seed * 31 + 17);
-    c.deco = mulberry32(def.seed * 37 + 1);
-    const q = c.rng;
-    // (a few on the site itself too, clear of the mast, so the site has its own corners to play)
-    const near: PropKind[] = ['crates', 'sandbags', 'hesco', 'barrier', 'pile', 'crates', 'hesco'];
-    const pads = c.taken.filter((p) => sites.some((s) => p.x0 === s.x - 13 && p.z0 === s.z - 13));
-    c.taken = c.taken.filter((p) => !pads.includes(p));
-    for (const s of sites)
-      for (const [lo, span, want] of [
-        [5, 6, 3],
-        [14, 10, 3],
-      ])
-        for (let k = 0, placed = 0; k < 40 && placed < want; k++) {
-          const a = q() * Math.PI * 2;
-          const d = lo + q() * span;
-          const x = s.x + Math.cos(a) * d;
-          const z = s.z + Math.sin(a) * d;
-          if (!solidNear(c, x, z, 4.5) && tryProp(c, near[Math.floor(q() * near.length)], x, z, ARENA - 3, undefined, true)) placed++;
-        }
-    c.taken.push(...pads);
-    [c.rng, c.deco] = keep;
+  for (let k = 0, placed = 0; k < 400 && placed < 6; k++) {
+    const a = r() * Math.PI * 2;
+    const d = 60 + r() * 250;
+    if (tryProp(c, 'truck', Math.cos(a) * d, Math.sin(a) * d, ARENA - 4)) placed++;
   }
+  for (let k = 0, placed = 0; k < 1600 && placed < 120; k++)
+    if (tryProp(c, propKinds[Math.floor(r() * propKinds.length)], (r() * 2 - 1) * (ARENA - 8), (r() * 2 - 1) * (ARENA - 8), ARENA - 3)) placed++;
 
   // later pads blend into earlier ones at their edges: put every pad back exactly
   for (const p of c.pads) flattenRect(t, p.x, p.z, p.hx, p.hz, p.y, 0.01);
   for (const s of spawns) s.y = heightAt(t, s.x, s.z);
   for (const s of sites) s.y = heightAt(t, s.x, s.z);
+  return { region, spawns, sites, towns, shape: null };
+}
 
-  const boxes: Box[] = c.pieces.filter((p) => p.solid).map((p) => ({ x0: p.x0, y0: p.y0, z0: p.z0, x1: p.x1, y1: p.y1, z1: p.z1, s: p.part === 'wall' && def.style === 'cabin' ? 'wood' : SURFACE[p.part] }));
-  boxes.push(...c.colliders);
+/** A plan's quarter turn for something whose front looks along a world direction. */
+const rotFacing = (fx: number, fz: number) => (Math.abs(fz) >= Math.abs(fx) ? (fz < 0 ? 0 : 2) : fx > 0 ? 1 : 3);
+
+/**
+ * A breach arena, built from its map's plan (see breach.ts): the places drafted, the land sculpted round them, the
+ * spawns and sites on their pads, the lanes laid as roads and graded, then the places built, cover along the lanes and
+ * round the sites, and the banks put back wherever building wore them down.
+ */
+function breachLayout(c: Ctx) {
+  const { t, def } = c;
+  const ARENA = c.arena;
+  const plan = PLANS[def.id];
+  const W = (p: BP) => toWorld(plan, p[0], p[1]);
+  const xz = (p: BP) => {
+    const [x, z] = W(p);
+    return { x, z };
+  };
+  const items = draftPlaces(plan, def);
+  const shape = sculpt(t, def, plan, items, ARENA);
+  const [ux, uz] = W([1, 0]);
+  const [vx, vz] = W([0, 1]);
+  // (the yard and the screens at its gates on level ground: on a slope they leave pockets to get caught in)
+  const spawns = makeSpawns(c, [xz(plan.atk), xz(plan.def)], ux, uz, vx, vz, 22);
+  const siteName = (k: number) => plan.places.find((p) => p.site === k)?.name ?? def.pois[k];
+  const sites = makeSites(c, plan.sites.map(xz), [siteName(0), siteName(1)]);
+
+  // the lanes, as roads a meter or so apart, graded so each can be walked end to end
+  for (const l of plan.lanes) {
+    const pts: number[] = [];
+    for (let i = 0; i + 1 < l.pts.length; i++) {
+      const [ax, az] = W(l.pts[i]);
+      const [bx, bz] = W(l.pts[i + 1]);
+      const n = Math.max(1, Math.ceil(Math.hypot(bx - ax, bz - az) / 6));
+      for (let k = 0; k < n; k++) pts.push(lerp(ax, bx, k / n), lerp(az, bz, k / n));
+    }
+    const [ex, ez] = W(l.pts[l.pts.length - 1]);
+    pts.push(ex, ez);
+    for (let i = 0; i + 3 < pts.length; i += 2) c.roadSegs.push(pts[i], pts[i + 1], pts[i + 2], pts[i + 3]);
+    c.roads.push(pts);
+  }
+  const graded = new Uint8Array(T_RES * T_RES);
+  for (const pts of c.roads) gradeRoad(t, pts, c.pads, graded);
+  roundRidges(t, graded);
+  // each spawn is a walled yard you leave by its lanes, so nobody sees into it from across the map
+  for (const sp of spawns) spawnYard(c, sp.x, sp.z);
+  siteMasts(c, sites);
+
+  // the places
+  for (const it of items) placeItem(c, plan, it);
+
+  // cover along the lanes, a piece every so often at alternate edges, away from the places (which have their own)
+  const q = mulberry32(def.seed * 53 + 7);
+  const inPlace = (x: number, z: number) => {
+    const [u, v] = toPlan(plan, x, z);
+    if (Math.hypot(u - plan.atk[0], v - plan.atk[1]) < 30 || Math.hypot(u - plan.def[0], v - plan.def[1]) < 30) return true;
+    return plan.plazas.some((p) => (p.round ? Math.hypot(u - p.at[0], v - p.at[1]) : Math.max(Math.abs(u - p.at[0]), Math.abs(v - p.at[1]))) < p.r + 3);
+  };
+  plan.lanes.forEach((l, li) => {
+    const pts = c.roads[li];
+    let side = li % 2 ? 1 : -1;
+    let next = 8 + q() * 8;
+    let along = 0;
+    for (let i = 0; i + 3 < pts.length; i += 2) {
+      const sx = pts[i + 2] - pts[i];
+      const sz = pts[i + 3] - pts[i + 1];
+      const len = Math.hypot(sx, sz);
+      while (len > 0 && next < along + len) {
+        const k = (next - along) / len;
+        const x = pts[i] + sx * k;
+        const z = pts[i + 1] + sz * k;
+        next += 10 + q() * 6;
+        if (inPlace(x, z)) continue;
+        const nx = -sz / len;
+        const nz = sx / len;
+        // (well in from the banks: a gap too narrow to walk between a crate and a bank only traps people; on a
+        // narrow lane that leaves no room, and the lane goes without)
+        const off = Math.max(1.8, l.w - 3.8) * side;
+        side = -side;
+        const kind = pick(q, plan.cover);
+        const px = x + nx * off;
+        const pz = z + nz * off;
+        const [fu, fv] = toPlan(plan, sx / len, sz / len);
+        if (kind === 'logs') placeItem(c, plan, { t: 'struct', what: 'logs', at: toPlan(plan, px, pz), face: Math.abs(fu) > Math.abs(fv) ? [0, 1] : [1, 0], s: 1 });
+        else tryProp(c, kind, px, pz, ARENA - 3, undefined, true, { rot: Math.abs(sx) > Math.abs(sz) ? 0 : 1, units: 3 });
+      }
+      along += len;
+    }
+  });
+
+  // round each site, cover to hold it from and to fight over it: a few on the site itself, clear of the mast, and a
+  // few further out (from its own random stream)
+  const keep = [c.rng, c.deco];
+  c.rng = mulberry32(def.seed * 31 + 17);
+  c.deco = mulberry32(def.seed * 37 + 1);
+  const qr = c.rng;
+  const near: PropKind[] = ['crates', 'sandbags', 'hesco', 'barrier', 'pile', 'crates', 'hesco'];
+  const pads = c.taken.filter((p) => sites.some((s) => p.x0 === s.x - 13 && p.z0 === s.z - 13));
+  c.taken = c.taken.filter((p) => !pads.includes(p));
+  for (const s of sites)
+    for (const [lo, span, want] of [
+      [5, 6, 3],
+      [13, 7, 3],
+    ])
+      for (let k = 0, placed = 0; k < 40 && placed < want; k++) {
+        const a = qr() * Math.PI * 2;
+        const d = lo + qr() * span;
+        const x = s.x + Math.cos(a) * d;
+        const z = s.z + Math.sin(a) * d;
+        if (!solidNear(c, x, z, 4.5) && tryProp(c, near[Math.floor(qr() * near.length)], x, z, ARENA - 3, undefined, true)) placed++;
+      }
+  c.taken.push(...pads);
+  // and wherever the open ground still lies bare (nothing standing within 8 m), a piece of cover, so a fight turns on
+  // angles and not on who spots whom first across an open yard
+  const fill: PropKind[] = ['crates', 'sandbags', 'hesco', 'barrier', 'pile', 'crates', 'sandbags', 'container'];
+  for (let gx = -ARENA + 8; gx <= ARENA - 8; gx += 11)
+    for (let gz = -ARENA + 8; gz <= ARENA - 8; gz += 11) {
+      const x = gx + (qr() - 0.5) * 6;
+      const z = gz + (qr() - 0.5) * 6;
+      if (openAt(shape, x, z) > 0 || solidNear(c, x, z, 8)) continue;
+      // (and not hard by a bank, where it would leave a gap too narrow to walk)
+      if ([[4, 0], [-4, 0], [0, 4], [0, -4]].some(([a, b]) => normalAt(t, x + a, z + b).y < 0.85)) continue;
+      if (spawns.some((sp) => Math.hypot(sp.x - x, sp.z - z) < 24) || sites.some((st) => Math.hypot(st.x - x, st.z - z) < 4)) continue;
+      for (let k = 0; k < 4; k++) if (tryProp(c, fill[Math.floor(qr() * fill.length)], x + (qr() - 0.5) * 4, z + (qr() - 0.5) * 4, ARENA - 3, undefined, true)) break;
+    }
+  // an armored truck and two containers by each spawn
+  for (const s of spawns) {
+    for (let k = 0, placed = 0; k < 60 && placed < 1; k++) {
+      const a = qr() * Math.PI * 2;
+      if (tryProp(c, 'truck', s.x + Math.cos(a) * 20, s.z + Math.sin(a) * 20, ARENA - 4)) placed++;
+    }
+    for (let k = 0, placed = 0; k < 40 && placed < 2; k++) {
+      const a = qr() * Math.PI * 2;
+      if (tryProp(c, 'container', s.x + Math.cos(a) * 19, s.z + Math.sin(a) * 19, ARENA - 3)) placed++;
+    }
+  }
+  [c.rng, c.deco] = keep;
+
+  // towns past the arena for the view
+  const towns: Town[] = sites.map((s) => ({ name: s.town, x: s.x, z: s.z, site: s.id }));
+  for (const p of plan.places) if (p.site < 0) towns.push({ name: p.name, ...xz(plan.plazas[p.plaza].at), site: -1 });
+  vistaTowns(c, towns, ARENA);
+
+  // later pads blend into earlier ones at their edges: put every pad back exactly, and the banks round the lanes
+  for (const p of c.pads) flattenRect(t, p.x, p.z, p.hx, p.hz, p.y, 0.01);
+  restoreBanks(t, shape);
+  for (const s of spawns) s.y = heightAt(t, s.x, s.z);
+  for (const s of sites) s.y = heightAt(t, s.x, s.z);
+  return { region: walkRegion(t, ARENA, sites[0]), spawns, sites, towns, shape };
+}
+
+/** The nearest line of cell centers of the bots' 2 m path grid (see nav.ts) to a coordinate. */
+const onNavLine = (c: Ctx, v: number) => Math.round((v + c.arena - 1) / 2) * 2 - (c.arena - 1);
+
+/** Builds one drafted thing of a breach plan in the world. */
+function placeItem(c: Ctx, plan: Plan, it: Item) {
+  const t = c.t;
+  if (it.t === 'wall') {
+    // in stretches of six meters or less, each from its own lowest ground to `h` over its highest
+    let [ax, az] = toWorld(plan, it.a[0], it.a[1]);
+    let [bx, bz] = toWorld(plan, it.b[0], it.b[1]);
+    // (on a line of the bots' path grid, which a thin wall lying between two of its points would slip through)
+    if (Math.abs(ax - bx) < Math.abs(az - bz)) ax = bx = onNavLine(c, ax);
+    else az = bz = onNavLine(c, az);
+    const len = Math.hypot(bx - ax, bz - az);
+    const n = Math.max(1, Math.ceil(len / 6));
+    for (let k = 0; k < n; k++) {
+      const x0 = lerp(ax, bx, k / n);
+      const z0 = lerp(az, bz, k / n);
+      const x1 = lerp(ax, bx, (k + 1) / n);
+      const z1 = lerp(az, bz, (k + 1) / n);
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let s = 0; s <= 1; s += 0.25) {
+        const g = floorAt(t, lerp(x0, x1, s), lerp(z0, z1, s));
+        lo = Math.min(lo, g);
+        hi = Math.max(hi, g);
+      }
+      const p = { x0: Math.min(x0, x1) - 0.25, z0: Math.min(z0, z1) - 0.25, x1: Math.max(x0, x1) + 0.25, z1: Math.max(z0, z1) + 0.25 };
+      c.pieces.push({ ...p, y0: lo - 0.6, y1: hi + it.h, part: it.part, color: it.color, solid: true });
+      // a coping along the top
+      if (it.h > 2) c.pieces.push({ x0: p.x0 - 0.08, z0: p.z0 - 0.08, x1: p.x1 + 0.08, z1: p.z1 + 0.08, y0: hi + it.h, y1: hi + it.h + 0.14, part: 'trim', color: 0x8a7458, solid: false });
+      c.blocks.push({ ...p, y0: lo, y1: hi + it.h });
+      c.taken.push({ x0: p.x0 - 1.5, z0: p.z0 - 1.5, x1: p.x1 + 1.5, z1: p.z1 + 1.5 });
+    }
+    return;
+  }
+  const [x, z] = toWorld(plan, it.at[0], it.at[1]);
+  if (it.t === 'deco') {
+    // (where nothing else stands: clutter that stops you must not close a gap)
+    if (solidNear(c, x, z, 1.4)) return;
+    const y = floorAt(t, x, z);
+    c.models.push({ key: it.key, x, y, z, yaw: c.deco() * Math.PI * 2 });
+    const solid = CLUTTER_SOLID[it.key];
+    if (solid) c.colliders.push({ x0: x - solid[0], y0: y, z0: z - solid[0], x1: x + solid[0], y1: y + solid[1], z1: z + solid[0], s: 'metal' });
+    return;
+  }
+  const [fx, fz] = toWorld(plan, it.face[0], it.face[1]);
+  if (it.t === 'prop') {
+    // (cover along a line stands with its long side along the line, given by its face)
+    const rot = Math.abs(fx) > Math.abs(fz) ? 0 : 1;
+    const line = it.kind === 'fence';
+    tryProp(c, it.kind, line && rot ? onNavLine(c, x) : x, line && !rot ? onNavLine(c, z) : z, c.arena - 3, undefined, true, { rot, key: it.key, force: line || it.kind === 'hesco', units: it.units ?? 4 });
+    return;
+  }
+  const rot = rotFacing(fx, fz);
+  if (it.t === 'bld') {
+    // whole meters, its outer walls on lines of the bots' path grid (so no thin wall slips between its points), and
+    // in through the doors
+    const bw = Math.max(4, Math.round(it.w / 2) * 2);
+    const bd = Math.max(4, Math.round(it.d / 2) * 2);
+    const hx = (rot & 1 ? bd : bw) / 2;
+    const hz = (rot & 1 ? bw : bd) / 2;
+    const bx = onNavLine(c, x - hx) + hx;
+    const bz = onNavLine(c, z - hz) + hz;
+    let y = meanHeight(t, bx, bz, hx, hz);
+    if (t.ice) y = Math.max(y, t.water);
+    flattenRect(t, bx, bz, hx + 0.6, hz + 0.6, y, 6);
+    c.pads.push({ x: bx, z: bz, hx: hx + 0.6, hz: hz + 0.6, y });
+    c.taken.push({ x0: bx - hx - 2, z0: bz - hz - 2, x1: bx + hx + 2, z1: bz + hz + 2 });
+    addBuilding(c, it.kind, bx, bz, bw, bd, rot, y);
+    return;
+  }
+  structure(c, it, x, z, rot);
+}
+
+/** A structure of a breach place (see STRUCT_SIZE for their footprints): local x across, the front toward -z. */
+function structure(c: Ctx, it: Extract<Item, { t: 'struct' }>, x: number, z: number, rot: number) {
+  const t = c.t;
+  const r = c.deco;
+  const f = new Frame(c, x, z, rot);
+  const [w, d] = STRUCT_SIZE[it.what];
+  const style = c.def.style;
+  const pad = (hw: number, hd: number, margin = 3) => {
+    const rr = f.rect(-hw, -hd, hw, hd);
+    const cx = (rr.x0 + rr.x1) / 2;
+    const cz = (rr.z0 + rr.z1) / 2;
+    const ex = (rr.x1 - rr.x0) / 2;
+    const ez = (rr.z1 - rr.z0) / 2;
+    const y = Math.max(meanHeight(t, cx, cz, ex, ez), t.ice ? t.water : -Infinity);
+    flattenRect(t, cx, cz, ex + 0.4, ez + 0.4, y, margin);
+    c.pads.push({ x: cx, z: cz, hx: ex + 0.4, hz: ez + 0.4, y });
+    return y;
+  };
+  const block = (hw: number, hd: number, y0: number, y1: number) => {
+    const rr = f.rect(-hw, -hd, hw, hd);
+    c.blocks.push({ ...rr, y0, y1 });
+    c.taken.push({ x0: rr.x0 - 1, z0: rr.z0 - 1, x1: rr.x1 + 1, z1: rr.z1 + 1 });
+  };
+  const steel = style === 'adobe' ? 0xc9c2b4 : style === 'tropic' ? 0xd7d2c4 : 0xb5babf;
+  switch (it.what) {
+    case 'silo': {
+      const H = it.tall ?? 11;
+      const y = pad(2, 2);
+      f.box(-1.8, y - 0.4, -1.8, 1.8, y + H, 1.8, 'metal', 0xb9bdc0);
+      for (let h = 2.4; h < H; h += 2.6) f.box(-1.86, y + h, -1.86, 1.86, y + h + 0.16, 1.86, 'metal', 0x8d9296, false);
+      f.box(-1.4, y + H, -1.4, 1.4, y + H + 0.7, 1.4, 'metal', 0x9aa0a4);
+      f.box(-0.7, y + H + 0.7, -0.7, 0.7, y + H + 1.2, 0.7, 'metal', 0x9aa0a4);
+      // a ladder up the front
+      f.box(-0.3, y, -1.95, -0.24, y + H, -1.85, 'metal', 0x6a6e72, false);
+      f.box(0.24, y, -1.95, 0.3, y + H, -1.85, 'metal', 0x6a6e72, false);
+      block(1.8, 1.8, y, y + H + 1);
+      break;
+    }
+    case 'tank': {
+      const H = it.tall ?? 6;
+      const y = pad(3.2, 3.2);
+      f.box(-3.2, y - 0.3, -3.2, 3.2, y + 0.3, 3.2, 'concrete', 0x9a978f);
+      f.box(-2.9, y + 0.3, -2.9, 2.9, y + H, 2.9, 'metal', steel);
+      f.box(-2.96, y + H * 0.5, -2.96, 2.96, y + H * 0.5 + 0.14, 2.96, 'metal', 0x8d9296, false);
+      f.box(-2.3, y + H, -2.3, 2.3, y + H + 0.5, 2.3, 'metal', steel);
+      f.box(-0.3, y + 0.3, -3.05, 0.3, y + H, -2.9, 'metal', 0x6a6e72, false);
+      block(3, 3, y, y + H + 0.5);
+      break;
+    }
+    case 'mast': {
+      const H = it.tall ?? 20;
+      const y = pad(1.1, 1.1, 2);
+      f.box(-0.9, y - 0.4, -0.9, 0.9, y + 0.9, 0.9, 'concrete', 0x8f8d88);
+      // a lattice tower: four legs closing in as it rises, a brace every few meters, a dish and a light on top
+      for (let h = 0.9; h < H; h += 3) {
+        const s0 = 0.75 - (h / H) * 0.5;
+        const top = Math.min(H, h + 3);
+        for (const [a, b] of [
+          [-1, -1],
+          [1, -1],
+          [-1, 1],
+          [1, 1],
+        ])
+          f.box(a * s0 - 0.06, y + h, b * s0 - 0.06, a * s0 + 0.06, y + top, b * s0 + 0.06, 'metal', 0xb04030, false);
+        f.box(-s0, y + top - 0.12, -s0, s0, y + top, s0, 'metal', 0xd8d4cc, false);
+      }
+      f.box(-0.5, y + H - 3, -0.75, 0.5, y + H - 2, -0.35, 'metal', 0xe8e8e4, false);
+      f.box(-0.08, y + H, -0.08, 0.08, y + H + 1.6, 0.08, 'metal', 0x6a6e72, false);
+      block(0.9, 0.9, y, y + H);
+      break;
+    }
+    case 'crane': {
+      const y = pad(5.5, 1.5, 2);
+      const yc = 0xd8a428;
+      for (const s of [-4.5, 4.5]) f.box(s - 0.5, y - 0.3, -0.5, s + 0.5, y + 13, 0.5, 'metal', yc);
+      f.box(-5.5, y + 13, -0.7, 5.5, y + 14.2, 0.7, 'metal', yc);
+      // the jib out over the water, a cab, the cable and the hook
+      f.box(-0.5, y + 13.3, -16, 0.5, y + 14, -0.7, 'metal', yc, false);
+      f.box(-0.5, y + 13.3, 0.7, 0.5, y + 14, 5, 'metal', yc, false);
+      f.box(-1, y + 10.6, 0.6, 1, y + 13, 2.6, 'metal', 0x4a4e52, false);
+      f.box(-0.4, y + 9.8, 3.2, 0.4, y + 13.3, 4.6, 'concrete', 0x8a8780, false);
+      f.box(-0.03, y + 5, -12.05, 0.03, y + 13.3, -11.95, 'metal', 0x3a3a3a, false);
+      f.box(-0.3, y + 4.4, -12.3, 0.3, y + 5, -11.7, 'metal', 0x6a6e72, false);
+      block(5.5, 0.7, y, y + 14);
+      break;
+    }
+    case 'pier': {
+      // a deck out over the water on posts, from its foot at the quay
+      const y = Math.max(t.water, 0) + 1.25;
+      const L = it.s;
+      f.box(-2, y - 0.3, -L, 2, y, 0, 'floor', 0x8a6a4a);
+      for (let s = 3; s < L; s += 4)
+        for (const a of [-1.8, 1.8]) {
+          const g = heightAt(t, ...f.xz(a, -s)) - 0.5;
+          f.box(a - 0.18, Math.min(g, y - 2), -s - 0.18, a + 0.18, y + (s % 8 < 4 ? 0.5 : -0.3), -s + 0.18, 'wood', 0x5f4a36);
+        }
+      c.blocks.push({ ...f.rect(-2, -L, 2, 0), y0: y - 0.3, y1: y });
+      break;
+    }
+    case 'boat': {
+      const y = Math.max(t.water, 0);
+      const hull = pick(r, [0x2f5d8a, 0x9b3b2b, 0xe0dccc, 0x3d7a4a]);
+      f.box(-1.4, y - 0.7, -3.6, 1.4, y + 0.9, 4, 'wood', hull);
+      f.box(-0.9, y - 0.5, -4.8, 0.9, y + 1, -3.6, 'wood', hull);
+      f.box(-0.4, y - 0.3, -5.4, 0.4, y + 1.05, -4.8, 'wood', hull);
+      f.box(-1.45, y + 0.9, -3.6, 1.45, y + 1.05, 4, 'trim', 0xd8d2c4, false);
+      f.box(-1, y + 0.9, 0.6, 1, y + 2.4, 3.2, 'wall', 0xf2eee2);
+      f.box(-1.1, y + 2.4, 0.5, 1.1, y + 2.55, 3.3, 'trim', 0x7a5638, false);
+      f.box(-0.06, y + 2.55, 1.8, 0.06, y + 6, 1.92, 'metal', 0xb5babf, false);
+      block(1.4, 4, y, y + 2.5);
+      break;
+    }
+    case 'logs': {
+      const y = floorAt(t, x, z) - 0.15;
+      const bark = 0x6e4e34;
+      const cut = 0xc9a878;
+      f.box(-3, y, -1.15, 3, y + 1.05, -0.05, 'wood', bark);
+      f.box(-3, y, 0.05, 3, y + 1.05, 1.15, 'wood', bark);
+      f.box(-2.7, y + 1.05, -0.55, 2.7, y + 2, 0.55, 'wood', bark);
+      for (const s of [-1, 1]) {
+        f.box(s * 3 - 0.02, y + 0.05, -1.1, s * 3 + 0.02, y + 1, -0.1, 'trim', cut, false);
+        f.box(s * 3 - 0.02, y + 0.05, 0.1, s * 3 + 0.02, y + 1, 1.1, 'trim', cut, false);
+        f.box(s * 2.7 - 0.02, y + 1.1, -0.5, s * 2.7 + 0.02, y + 1.95, 0.5, 'trim', cut, false);
+      }
+      block(3, 1.15, y, y + 2);
+      break;
+    }
+    case 'well': {
+      const y = floorAt(t, x, z);
+      const stone = style === 'adobe' ? 0xb0875e : 0x9a948a;
+      f.box(-1, y - 0.4, -1, 1, y + 0.85, -0.7, 'wall', stone);
+      f.box(-1, y - 0.4, 0.7, 1, y + 0.85, 1, 'wall', stone);
+      f.box(-1, y - 0.4, -0.7, -0.7, y + 0.85, 0.7, 'wall', stone);
+      f.box(0.7, y - 0.4, -0.7, 1, y + 0.85, 0.7, 'wall', stone);
+      f.box(-0.7, y - 0.4, -0.7, 0.7, y + 0.3, 0.7, 'concrete', 0x3a4448, false);
+      for (const s of [-0.85, 0.85]) f.box(s - 0.08, y + 0.85, -0.08, s + 0.08, y + 2.3, 0.08, 'wood', 0x5f4a36, false);
+      f.box(-1.2, y + 2.3, -0.7, 1.2, y + 2.45, 0.7, 'wood', 0x7a5638, false);
+      block(1, 1, y, y + 0.85);
+      break;
+    }
+    case 'stall': {
+      const y = floorAt(t, x, z);
+      const cloth = pick(r, [0xb5532e, 0x2f6d8a, 0xd8b04a, 0x6d8a3d, 0xe9a39c]);
+      f.box(-1.6, y - 0.1, -1, 1.6, y + 1, -0.4, 'wood', 0x8a6a4a);
+      for (const [a, b] of [
+        [-1.6, -1],
+        [1.6, -1],
+        [-1.6, 1],
+        [1.6, 1],
+      ])
+        f.box(a - 0.05, y, b - 0.05, a + 0.05, y + 2.35, b + 0.05, 'wood', 0x5f4a36, false);
+      f.box(-1.75, y + 2.3, -1.15, 1.75, y + 2.42, 1.15, 'wall', cloth, false);
+      for (let k = 0; k < 3; k++) f.box(-1.3 + k * 0.9, y + 1, -0.9, -0.8 + k * 0.9, y + 1.25 + r() * 0.15, -0.5, 'wall', pick(r, [0xc04a2a, 0xd8b04a, 0x6d8a3d]), false);
+      if (r() < 0.6) crates(c, f, 0.6, 0.6, y);
+      block(1.6, 1, y, y + 1);
+      break;
+    }
+    case 'gate': {
+      // two towers and an arch over the way through, and walls out from them into the banks either side
+      const y = floorAt(t, x, z);
+      const col = 0xc8996a;
+      const trim = 0x6b4a2e;
+      for (const s of [-1, 1]) {
+        f.box(s * 2.5, y - 0.6, -2, s * 6.5, y + 7.5, 2, 'wall', col);
+        for (const a of [2.7, 4.1, 5.5]) f.box(s * a, y + 7.5, -2, s * (a + 0.8), y + 8.2, -1.5, 'wall', col, false);
+        f.box(s * 4.2 - 0.5, y + 4.6, -2.05, s * 4.2 + 0.5, y + 5.6, -1.98, 'trim', 0x2a2420, false);
+        let gx = s * 6.5;
+        while (Math.abs(gx) < it.s / 2) {
+          const nx = gx + s * Math.min(4, it.s / 2 - Math.abs(gx));
+          const [px, pz] = f.xz((gx + nx) / 2, 0);
+          const g = heightAt(t, px, pz);
+          f.box(Math.min(gx, nx), Math.min(g, y) - 1, -0.45, Math.max(gx, nx), Math.max(g, y) + 4.2, 0.45, 'wall', col);
+          gx = nx;
+        }
+      }
+      f.box(-2.5, y + 4.6, -1.7, 2.5, y + 6.2, 1.7, 'wall', col);
+      f.box(-2.6, y + 6.2, -1.8, 2.6, y + 6.4, 1.8, 'trim', trim, false);
+      for (let a = -2.3; a < 2.3; a += 0.9) f.box(a, y + 4.4, -1.75, a + 0.18, y + 4.6, 1.75, 'trim', trim, false);
+      block(6.5, 2, y, y + 7.5);
+      break;
+    }
+    case 'crusher': {
+      const y = pad(3.3, 3.3);
+      f.box(-3.2, y - 0.4, -3.2, 3.2, y + 1.2, 3.2, 'concrete', 0x8f8d88);
+      f.box(-2.2, y + 1.2, -2.2, 2.2, y + 5.6, 2.2, 'metal', 0x8a5a3a);
+      f.box(-3, y + 5.6, -3, 3, y + 6.8, 3, 'metal', 0x7a4a2e, false);
+      // a chute down one side onto a heap of gravel
+      f.box(2.2, y + 2.6, -0.6, 3.4, y + 3, 0.6, 'metal', 0x6a6e72, false);
+      for (const s of [-2.6, 2.6]) for (const u of [-2.6, 2.6]) f.box(s - 0.12, y + 1.2, u - 0.12, s + 0.12, y + 5.6, u + 0.12, 'metal', 0x5a5e62, false);
+      c.extraRocks.push({ x: f.xz(4.6, 0)[0], y: y - 0.6, z: f.xz(4.6, 0)[1], s: 1.6, rot: r() * 6, v: 0, flat: 0.5 });
+      block(3.2, 3.2, y, y + 6.8);
+      break;
+    }
+    case 'wreck': {
+      // an old hull run aground along local z, bow toward -z, broken open on one side, part of its deck still on
+      const y = heightAt(t, x, z) - 0.4;
+      const hull = 0x5d4c3c;
+      const H = 3.2;
+      f.box(-3, y, -8, -2.6, y + H, -1.5, 'wood', hull);
+      f.box(-3, y, 3, -2.6, y + H * 0.8, 8, 'wood', hull);
+      f.box(-3, y, -1.5, -2.6, y + 1.1, 3, 'wood', hull);
+      f.box(2.6, y, -8, 3, y + H, 8, 'wood', hull);
+      f.box(-2.3, y, -9.2, -1.9, y + H + 0.3, -8, 'wood', hull);
+      f.box(1.9, y, -9.2, 2.3, y + H + 0.3, -8, 'wood', hull);
+      f.box(-1.9, y, -9.8, 1.9, y + H + 0.4, -9.2, 'wood', hull);
+      f.box(-3, y, 8, 3, y + H, 8.4, 'wood', hull);
+      f.box(-3, y + 2.7, 3.5, 3, y + 3, 8, 'floor', 0x6b5a48);
+      f.box(-2, y + 3, 5, 2, y + 5.2, 8, 'wood', 0x7a6a58, false);
+      for (let s = -6; s < 3; s += 2.2) f.box(-2.9, y + H - 0.2, s, 2.9, y + H, s + 0.25, 'wood', hull, false);
+      f.box(-0.12, y + 3, -3.12, 0.12, y + 10, -2.88, 'wood', 0x4a3c30, false);
+      f.box(-2.4, y + 8, -3.08, 2.4, y + 8.15, -2.92, 'wood', 0x4a3c30, false);
+      block(3, 9.8, y, y + H);
+      break;
+    }
+    case 'hut': {
+      const y = floorAt(t, x, z);
+      const col = pick(r, [0x9b3b2b, 0x2f5d8a, 0x3d7a4a, 0xc07a2a]);
+      f.box(-1.2, y - 0.2, -1.2, 1.2, y + 2.1, 1.2, 'wood', col);
+      f.box(-0.45, y, -1.24, 0.45, y + 1.8, -1.2, 'trim', 0x3a2a1e, false);
+      f.gable(-1.45, -1.45, 1.45, 1.45, y + 2.1, 0.9, true, 0xe6edf3, col);
+      block(1.2, 1.2, y, y + 2.9);
+      break;
+    }
+    case 'pipes': {
+      const L = it.s / 2;
+      let lo = Infinity;
+      for (let s = -L; s <= L; s += 1.5) lo = Math.min(lo, floorAt(t, ...f.xz(s, 0)));
+      const y = lo;
+      f.box(-L, y + 0.35, -0.35, L, y + 1.05, 0.35, 'metal', 0x8a8f94);
+      for (let s = -L + 1; s < L; s += 3) f.box(s - 0.2, y - 0.3, -0.5, s + 0.2, y + 0.35, 0.5, 'concrete', 0x8f8d88);
+      f.box(L - 0.6, y + 1.05, -0.08, L - 0.5, y + 1.6, 0.08, 'metal', 0x6a6e72, false);
+      f.box(L - 0.9, y + 1.55, -0.3, L - 0.2, y + 1.65, 0.3, 'metal', 0xb04030, false);
+      block(L, 0.35, y, y + 1.05);
+      break;
+    }
+    case 'rubble': {
+      for (let k = 0; k < 5; k++) {
+        const [px, pz] = f.xz((r() - 0.5) * w * 0.8, (r() - 0.5) * d * 0.8);
+        const s = 0.6 + r() * 1.1;
+        c.extraRocks.push({ x: px, y: heightAt(t, px, pz) - s * 0.3, z: pz, s, rot: r() * 6, v: Math.floor(r() * 3), flat: 0.5 + r() * 0.3 });
+      }
+      for (let k = 0; k < 3; k++) {
+        const lx = (r() - 0.5) * w * 0.7;
+        const lz = (r() - 0.5) * d * 0.7;
+        const g = heightAt(t, ...f.xz(lx, lz));
+        f.box(lx - 0.6, g - 0.3, lz - 0.4, lx + 0.6, g + 0.5 + r() * 0.5, lz + 0.4, 'concrete', 0x9a978f);
+      }
+      c.taken.push(f.rect(-w / 2, -d / 2, w / 2, d / 2));
+      break;
+    }
+  }
+}
+
+/** What the dressing must keep clear of besides everything in c.taken: tree trunks, rocks, loot spots, and round
+ * points (spawns, the middle of a site) by a distance; and in a breach, any ground off the lanes and places. */
+type Keep = { trunks: Trunk[]; rocks: RockCol[]; away: { x: number; z: number; r: number }[]; shape: Sculpt | null; region: Uint8Array };
+
+/** Tries one piece of the dressing at random spots round (x, z), r0 to r1 out (or along a road, with `roadside`),
+ * until one fits. A broken wall stands on a line of the bots' path grid, like every thin wall. */
+function dressAt(c: Ctx, keep: Keep, kind: PropKind, x: number, z: number, r0: number, r1: number, roadside = false, tries = 48, key?: ModelKey) {
+  const q = c.rng;
+  const [w, d] = PROP_SIZE[kind as Exclude<PropKind, 'hesco'>];
+  for (let k = 0; k < tries; k++) {
+    const a = q() * Math.PI * 2;
+    const dd = lerp(r0, r1, q());
+    let px = x + Math.cos(a) * dd;
+    let pz = z + Math.sin(a) * dd;
+    const rot = Math.floor(q() * 4);
+    if (kind === 'brokenwall') {
+      if (rot & 1) px = onNavLine(c, px);
+      else pz = onNavLine(c, pz);
+    }
+    const hx = (rot & 1 ? d : w) / 2 + 1;
+    const hz = (rot & 1 ? w : d) / 2 + 1;
+    if (Math.abs(px) > c.arena - 8 || Math.abs(pz) > c.arena - 8) continue;
+    // (all of it on the open ground of a breach: none up a bank)
+    const sh = keep.shape;
+    if (!onRegion(keep.region, px, pz) || (sh && [0, -1, 1].some((a) => [-1, 1].some((b) => openAt(sh, px + a * (hx - 1), pz + b * (hz - 1)) > 0)))) continue;
+    if (keep.away.some((p) => Math.hypot(p.x - px, p.z - pz) < p.r + Math.max(hx, hz))) continue;
+    const inside = (x0: number, z0: number) => Math.abs(x0 - px) < hx && Math.abs(z0 - pz) < hz;
+    if (keep.trunks.some((t) => inside(t.x, t.z)) || keep.rocks.some((rk) => Math.abs(rk.x - px) < hx + rk.r && Math.abs(rk.z - pz) < hz + rk.r)) continue;
+    // nowhere near a doorway, and never on a loot spot
+    let near = false;
+    for (let i = 0; i < c.doors.length && !near; i += 4) near = Math.abs(c.doors[i] - px) < hx + 2.2 && Math.abs(c.doors[i + 1] - pz) < hz + 2.2;
+    for (let i = 0; i < c.loot.length && !near; i += 3) near = inside(c.loot[i], c.loot[i + 2]);
+    if (near) continue;
+    if (tryProp(c, kind, px, pz, c.arena - 4, undefined, roadside, { rot, bare: true, room: 0.8, key })) return true;
+  }
+  return false;
+}
+
+/** Breach: each place gets the dressing its kind calls for (see PLACE_DRESS), out toward the edge of its open ground,
+ * clear of the spawns and the middle of the sites. */
+function dressBreach(c: Ctx, keep: Keep) {
+  const plan = PLANS[c.def.id];
+  plan.places.forEach((pl) => {
+    const pz = plan.plazas[pl.plaza];
+    const [x, z] = toWorld(plan, pz.at[0], pz.at[1]);
+    for (const [kind, n] of PLACE_DRESS[pl.kind]) for (let k = 0; k < n; k++) dressAt(c, keep, kind, x, z, pz.r * (kind === 'tower' ? 0.3 : 0.2), pz.r * (kind === 'tower' || kind === 'tent' ? 1.5 : 1.05), false, 160);
+  });
+}
+
+/** Royale: a camp by each spawn, each site and a few towns (tents, a camo net, a watchtower, sandbagged positions,
+ * razor wire, fuel drums, pallets), wrecks and pallets in every town, checkpoints of barriers on the roads out of the
+ * towns, and wrecked cars along the roads. */
+function dressRoyale(c: Ctx, keep: Keep, spawns: Spawn[], sites: Site[], towns: Town[]) {
+  const q = c.rng;
+  const camps: { x: number; z: number }[] = [...spawns, ...sites];
+  for (const t of towns) if (t.site === -2 && camps.length < 9 && q() < 0.5) camps.push(t);
+  const camp: [PropKind, number][] = [
+    ['tower', 1],
+    ['tent', 2],
+    ['net', 1],
+    ['bagarc', 2],
+    ['razor', 2],
+    ['drums', 2],
+    ['pallets', 2],
+    ['carwreck', 1],
+  ];
+  for (const p of camps) for (const [kind, n] of camp) for (let k = 0; k < n; k++) dressAt(c, keep, kind, p.x, p.z, 16, 38);
+  const town: [PropKind, number][] = [
+    ['carwreck', 2],
+    ['pallets', 1],
+    ['brokenwall', 1],
+  ];
+  for (const t of towns) for (const [kind, n] of town) for (let k = 0; k < n; k++) dressAt(c, keep, kind, t.x, t.z, 8, 40, kind === 'carwreck');
+  // checkpoints: where a road leaves a town, barriers either side of it and a sandbagged position by them
+  for (const t of towns) {
+    if (q() < 0.4) continue;
+    let best = -1;
+    let bd = Infinity;
+    const s = c.roadSegs;
+    for (let i = 0; i < s.length; i += 4) {
+      const dd = Math.abs(Math.hypot(s[i] - t.x, s[i + 1] - t.z) - 42);
+      if (dd < bd) {
+        bd = dd;
+        best = i;
+      }
+    }
+    if (best < 0 || bd > 8) continue;
+    const x = s[best];
+    const z = s[best + 1];
+    for (let k = 0; k < 3; k++) dressAt(c, keep, 'barrier', x, z, 3.5, 7, true, 12, 'jersey');
+    dressAt(c, keep, 'bagarc', x, z, 6, 12);
+    dressAt(c, keep, 'razor', x, z, 5, 12);
+  }
+  // and wrecks by the roads out in the country
+  for (let k = 0, placed = 0; k < 120 && placed < 14; k++) {
+    const s = c.roadSegs;
+    const i = Math.floor(q() * (s.length / 4)) * 4;
+    if (dressAt(c, keep, 'carwreck', s[i], s[i + 1], 4, 9, true, 4)) placed++;
+  }
+}
+
+/** Builds a map: the breach arena, or with `royale` the whole land, with many more towns, cover and loot. */
+export function buildWorld(id: MapId, royale = false): World {
+  const def = MAPS[id];
+  const t = generateTerrain(def);
+  const arena = royale ? ROYALE_ARENA : ARENA;
+  const c: Ctx = { def, t, rng: mulberry32(def.seed * 7 + 3), n: new Noise2(def.seed + 99), pieces: [], gables: [], interiors: [], taken: [], pads: [], roadSegs: [], roads: [], blocks: [], vehicles: [], models: [], colliders: [], deco: mulberry32(def.seed * 13 + 5), arena, loot: [], doors: [], extraRocks: [], bld: [], dress: [], lateRocks: [] };
+  const r = c.rng;
+  const { region, spawns, sites, towns, shape } = royale ? royaleLayout(c) : breachLayout(c);
 
   // trees and rocks, kept off roads, pads and buildings
   const trees: Tree[] = [];
@@ -1275,9 +1953,11 @@ export function buildWorld(id: MapId, royale = false): World {
       const f = nf.fbm(x / 170, z / 170, 3) * 0.5 + 0.5;
       const th0 = 1 - def.forest;
       const dens = smoothstep(th0 - 0.08, th0 + 0.16, f);
-      const inArena = Math.abs(x) < ARENA + 10 && Math.abs(z) < ARENA + 10;
+      const inArena = Math.abs(x) < arena + 10 && Math.abs(z) < arena + 10;
       let p = 0.03 + dens * 0.62;
       if (inArena) p *= 0.65;
+      // breach: woods on the hills between the lanes, only now and then a tree on the open ground
+      if (shape && inArena) p = openAt(shape, x, z) > 2.5 ? (0.12 + 0.6 * f) * PLANS[id].woods : 0.025;
       if (r() > p) continue;
       const y = heightAt(t, x, z);
       const up = y - water;
@@ -1300,6 +1980,22 @@ export function buildWorld(id: MapId, royale = false): World {
       const col = TREE_COLLIDE[kind];
       if (col) trunks.push({ x, z, r: col[0] * s, y0: y - 0.5, y1: y + col[1] * s });
     }
+
+  // stumps and fallen logs among the trees round the fight, on their own random stream so nothing else moves
+  const lr = mulberry32(def.seed * 41 + 7);
+  const reach = c.arena + 20;
+  for (const tr of trees) {
+    if (tr.kind === 'shrub' || tr.kind === 'palm' || tr.kind === 'cactus' || Math.abs(tr.x) > reach || Math.abs(tr.z) > reach || lr() > 0.06) continue;
+    const a = lr() * Math.PI * 2;
+    const d = 2.6 + lr() * 1.6;
+    const x = tr.x + Math.sin(a) * d;
+    const z = tr.z + Math.cos(a) * d;
+    const key: ModelKey = lr() < 0.45 ? 'log' : lr() < 0.5 ? 'stump' : 'stump2';
+    const pad = key === 'log' ? 2.1 : 1;
+    const y = heightAt(t, x, z);
+    if (y < water + 0.3 || normalAt(t, x, z).y < 0.9 || !free(x, z, pad) || trunks.some((k) => Math.abs(k.x - x) < pad && Math.abs(k.z - z) < pad)) continue;
+    c.models.push({ key, x, y: y - 0.04, z, yaw: lr() * Math.PI * 2 });
+  }
 
   const rockList: Rock[] = [];
   const rocks: RockCol[] = [];
@@ -1324,19 +2020,52 @@ export function buildWorld(id: MapId, royale = false): World {
       if (s > 0.55) rocks.push({ x, y: y + s * flat - s * 0.95 * 0.92, z, r: s * 0.95 });
     }
 
+  // breach: boulders along the foot of the banks
+  if (shape) {
+    const q = mulberry32(def.seed * 61 + 9);
+    for (let gz = -arena; gz < arena; gz += 5)
+      for (let gx = -arena; gx < arena; gx += 5) {
+        const x = gx + (q() - 0.5) * 4;
+        const z = gz + (q() - 0.5) * 4;
+        const o = openAt(shape, x, z);
+        if (o < 0.8 || o > 4 || q() > 0.12 + def.rocks * 0.18) continue;
+        const s = 0.6 + q() * 1.2;
+        if (!free(x, z, s * 0.6)) continue;
+        c.extraRocks.push({ x, y: heightAt(t, x, z) - s * 0.25, z, s, rot: q() * Math.PI * 2, v: Math.floor(q() * 3), flat: 0.55 + q() * 0.35 });
+      }
+  }
+  for (const rk of c.extraRocks) {
+    rockList.push(rk);
+    if (rk.s > 0.55) rocks.push({ x: rk.x, y: rk.y + rk.s * rk.flat - rk.s * 0.95 * 0.92, z: rk.z, r: rk.s * 0.95 });
+  }
+
+  // the military dressing, over everything else and from streams of its own, so nothing laid out above moves
+  {
+    const keep = [c.rng, c.deco];
+    c.rng = mulberry32(def.seed * 89 + 23);
+    c.deco = mulberry32(def.seed * 97 + 31);
+    const away = royale ? [...spawns.map((p) => ({ x: p.x, z: p.z, r: 10 })), ...sites.map((p) => ({ x: p.x, z: p.z, r: 10 }))] : [...spawns.map((p) => ({ x: p.x, z: p.z, r: 30 })), ...sites.map((p) => ({ x: p.x, z: p.z, r: 8 }))];
+    const k: Keep = { trunks, rocks, away, shape, region };
+    if (royale) dressRoyale(c, k, spawns, sites, towns);
+    else dressBreach(c, k);
+    [c.rng, c.deco] = keep;
+    for (const rk of c.lateRocks) rockList.push(rk);
+  }
+  const boxes: Box[] = c.pieces.filter((p) => p.solid).map((p) => ({ x0: p.x0, y0: p.y0, z0: p.z0, x1: p.x1, y1: p.y1, z1: p.z1, s: p.part === 'wall' && def.style === 'cabin' ? 'wood' : SURFACE[p.part] }));
+  boxes.push(...c.colliders);
   const grid = buildGrid(boxes, trunks, rocks);
 
   // deathmatch spawns: dry, flat, outdoors and spread out
   const dmSpawns: Slot[] = [];
-  for (let k = 0; k < 900 && dmSpawns.length < 28; k++) {
-    const x = (r() * 2 - 1) * (ARENA - 14);
-    const z = (r() * 2 - 1) * (ARENA - 14);
-    if (heightAt(t, x, z) < water + 0.6 || normalAt(t, x, z).y < 0.9 || !onRegion(region, x, z)) continue;
+  for (let k = 0; k < (royale ? 900 : 3000) && dmSpawns.length < 28; k++) {
+    const x = (r() * 2 - 1) * (arena - 14);
+    const z = (r() * 2 - 1) * (arena - 14);
+    if (heightAt(t, x, z) < water + (royale || t.ice ? 0.6 : 1.6) || normalAt(t, x, z).y < 0.9 || !onRegion(region, x, z)) continue;
     if (c.interiors.some((q) => x > q.x0 - 2 && x < q.x1 + 2 && z > q.z0 - 2 && z < q.z1 + 2)) continue;
     if (boxes.some((b) => x > b.x0 - 1.5 && x < b.x1 + 1.5 && z > b.z0 - 1.5 && z < b.z1 + 1.5)) continue;
     if (trunks.some((q) => Math.hypot(q.x - x, q.z - z) < q.r + 1.5)) continue;
     if (rocks.some((q) => Math.hypot(q.x - x, q.z - z) < q.r + 1.5)) continue;
-    if (dmSpawns.some((q) => Math.hypot(q.x - x, q.z - z) < 30)) continue;
+    if (dmSpawns.some((q) => Math.hypot(q.x - x, q.z - z) < (royale ? 30 : 25))) continue;
     dmSpawns.push({ x, z, yaw: yawTo(-x, -z) });
   }
 
@@ -1364,10 +2093,12 @@ export function buildWorld(id: MapId, royale = false): World {
     models: c.models,
     light: new Uint8Array(0),
     minimap: { size: 0, span: 0, data: new Uint8ClampedArray(0) },
-    arena: ARENA,
+    arena: arena,
     region,
     loot: new Float32Array(clearSpots(c.loot, boxes, trunks)),
     doors: new Float32Array(c.doors),
+    bld: c.bld,
+    dress: c.dress,
   };
   world.light = bakeLight(world, c.blocks);
   world.minimap = paintMinimap(world);
@@ -1569,6 +2300,7 @@ const mix3 = (a: [number, number, number], b: [number, number, number], k: numbe
 /** A top-down picture of the arena: ground colors with hill shading, water, roads, trees and roofs. */
 function paintMinimap(w: World): Minimap {
   const ARENA = w.arena;
+  const breach = w.arena < ROYALE_ARENA;
   const size = 256;
   const span = ARENA + 24;
   const data = new Uint8ClampedArray(size * size * 4);
@@ -1596,6 +2328,8 @@ function paintMinimap(w: World): Minimap {
       col = mix3(col, rgb(g.dirt), bare * 0.7);
       let shade = 0.45 + 0.75 * clamp((nrm.x * L[0] + nrm.y * L[1] + nrm.z * L[2]) / ll, 0, 1);
       shade *= 0.75 + 0.25 * (w.light[k] / 255);
+      // breach: the hills and banks off the walkable ground a shade darker, so the lanes read at a glance
+      if (breach && !w.region[k / 4]) shade *= 0.68;
       col = [col[0] * shade, col[1] * shade, col[2] * shade];
       if (t.hasWater && h < t.water) {
         const depth = t.water - h;
