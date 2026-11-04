@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
+import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useKeys, useOnline, useRankedRun, useSetting, useShell, type RankedRun } from '../../kit';
 import type { GameProps } from '../../types';
 import { IDLE_GRACE, createState, laneAt, step, type Biome, type Death, type Direction } from './logic';
 import { burst, createView, draw, follow } from './draw';
@@ -42,7 +42,41 @@ function Play() {
   const keys = useKeys((code, event) => {
     if (!event?.repeat && directionFor[code]) pending.current = directionFor[code];
   });
-  const [s] = useState(() => ({ world: createState(Math.floor(Math.random() * 0xffffffff)), view: createView(), over: false, bell: 0, ring: 0, trains: new Set<number>() }));
+  const online = useOnline();
+  const [s] = useState(() => ({
+    world: createState(Math.floor(Math.random() * 0xffffffff)), view: createView(), over: false, bell: 0, ring: 0, trains: new Set<number>(),
+    /** The course comes from the ranked run's seed. */
+    seeded: false,
+    /** Play has begun (ranked or not), and how long it waited for the run to come in. */
+    begun: false,
+    wait: 0,
+    /** The ranked run being recorded (see verify.ts), once it has begun, and the key it last recorded held down. */
+    run: null as RankedRun | null,
+    held: null as Direction | null,
+  }));
+  // The global board takes a score only from a run the Worker replays (see verify.ts), on the course its seed lays
+  // out. The run is asked for as the round comes up, so its course is usually in place before play begins (rather
+  // than changing under the chicken); a round that starts without it still plays, unranked.
+  const rankedRun = useRankedRun(meta.id, !online && !shell.compact);
+  const seedCourse = () => {
+    const seed = rankedRun()?.seed;
+    if (s.seeded || s.begun || seed === null || seed === undefined) return;
+    s.world = createState(seed);
+    s.seeded = true;
+    shell.invalidate();
+  };
+  useEffect(() => {
+    const ranked = rankedRun();
+    if (!ranked) return;
+    const id = window.setInterval(() => {
+      if (ranked.pending) return;
+      window.clearInterval(id);
+      seedCourse();
+    }, 100);
+    return () => window.clearInterval(id);
+    // (once, as the round comes up: the run belongs to this round)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [readout, setReadout] = useState({ distance: 0, coins: 0 });
   const [toast, setToast] = useState<{ text: string; key: number } | null>(null);
   const [hurry, setHurry] = useState(false);
@@ -58,8 +92,11 @@ function Play() {
   useEffect(() => {
     pending.current = null;
     swipe.current = null;
-    s.world.queued = null;
-    s.world.repeat = 0;
+    const w = s.world;
+    // (a ranked run's replay drops them at the same step)
+    if (s.run && !w.dead && (w.queued !== null || w.repeat > 0)) s.run.record([w.ticks, 'r']);
+    w.queued = null;
+    w.repeat = 0;
   }, [shell.status, s]);
   // The hawk would take an unattended chicken, so leaving the window for another app pauses the round.
   useEffect(() => {
@@ -81,14 +118,29 @@ function Play() {
   const end = () => {
     const w = s.world;
     const [title, tip] = endings[w.death ?? 'car'];
+    // the end of the run goes off to be checked now; a score submitted from the card waits for the answer
+    const id = s.run?.end(w.score);
     shell.gameOver(w.score, {
       title,
       detail: `${w.maxRow} ${w.maxRow === 1 ? 'row' : 'rows'}, ${w.coins} ${w.coins === 1 ? 'coin' : 'coins'}. ${tip}`,
+      ...(id ? { run: id } : {}),
     });
   };
 
   useGameLoop(
     (dt) => {
+      if (!s.begun) {
+        // (a moment's wait for the run, if it is still on its way, so the round can count globally)
+        const ranked = rankedRun();
+        if (ranked?.pending && s.wait < 1.5) {
+          s.wait += dt;
+          return;
+        }
+        seedCourse();
+        s.begun = true;
+        // (nothing has moved on the seeded course yet: it starts as the replay does)
+        if (ranked && s.seeded && ranked.begin({})) s.run = ranked;
+      }
       const w = s.world;
       const v = s.view;
       v.time += dt;
@@ -102,7 +154,14 @@ function Play() {
         return;
       }
       const held = directions.find((d) => keys.down(d)) ?? null;
+      const run = s.run;
+      if (run && dt > 0 && !w.dead) {
+        if (held !== s.held) run.record([w.ticks, 'h', held]);
+        s.held = held;
+        if (pending.current) run.record([w.ticks, 'p', pending.current]);
+      }
       const ev = step(w, dt, { held, press: pending.current });
+      if (run) run.clock(w.ticks);
       if (dt > 0) pending.current = null;
       if (ev.hopped) {
         sfx.play('blip', 1.2 + Math.random() * 0.2);

@@ -37,6 +37,8 @@ export type State = {
   idle: number;
   landedAt: number;
   lanes: Lane[]; nextRow: number; group: number;
+  /** Fixed steps taken (STEP each): a ranked run's hops are stamped with it, so the leaderboard can replay the run. */
+  ticks: number;
 };
 export type Input = { held: Direction | null; press: Direction | null };
 export type Events = { hopped: boolean; landed: boolean; scored: number; collected: boolean; crashed: boolean; milestone: boolean; bell: boolean; splash: boolean; biome: boolean; blocked: boolean };
@@ -236,7 +238,7 @@ export function createState(seed = 1): State {
   const s: State = {
     seed, x: 4, y: 0, facing: 'up', hop: null, queued: null, repeat: 0, time: 0, acc: 0,
     maxRow: 0, coins: 0, score: 0, dead: false, death: null, ride: null, scroll: -2,
-    started: false, idle: 0, landedAt: -1, lanes: [], nextRow: 3, group: 0,
+    started: false, idle: 0, landedAt: -1, lanes: [], nextRow: 3, group: 0, ticks: 0,
   };
   s.lanes.push(makeGrass(s, 0, false, true), makeGrass(s, 1, false, true), makeGrass(s, 2, false, true));
   s.lanes.push(makeLane(s, 3, 'road', undefined));
@@ -279,16 +281,25 @@ export function startHop(s: State, direction: Direction): boolean {
 
 /** A moving chicken against a moving vehicle, in relative coordinates. */
 export function sweptHit(ax: number, ay: number, bx: number, by: number, halfX: number, halfY: number): boolean {
+  // (across, then along: written out rather than looped over little arrays, as it runs for every car on every step)
   let enter = 0;
   let exit = 1;
-  for (const [a, b, half] of [[ax, bx, halfX], [ay, by, halfY]]) {
-    const delta = b - a;
-    if (Math.abs(delta) < 1e-10) {
-      if (Math.abs(a) >= half) return false;
-      continue;
-    }
-    const t1 = (-half - a) / delta;
-    const t2 = (half - a) / delta;
+  let delta = bx - ax;
+  if (Math.abs(delta) < 1e-10) {
+    if (Math.abs(ax) >= halfX) return false;
+  } else {
+    const t1 = (-halfX - ax) / delta;
+    const t2 = (halfX - ax) / delta;
+    enter = Math.max(enter, Math.min(t1, t2));
+    exit = Math.min(exit, Math.max(t1, t2));
+    if (enter >= exit) return false;
+  }
+  delta = by - ay;
+  if (Math.abs(delta) < 1e-10) {
+    if (Math.abs(ay) >= halfY) return false;
+  } else {
+    const t1 = (-halfY - ay) / delta;
+    const t2 = (halfY - ay) / delta;
     enter = Math.max(enter, Math.min(t1, t2));
     exit = Math.min(exit, Math.max(t1, t2));
     if (enter >= exit) return false;
@@ -296,40 +307,89 @@ export function sweptHit(ax: number, ay: number, bx: number, by: number, halfX: 
   return enter < exit;
 }
 
-function wrapX(x: number): number {
-  return ((x + 4) % TRAFFIC_SPAN + TRAFFIC_SPAN) % TRAFFIC_SPAN - 4;
+/**
+ * v % TRAFFIC_SPAN, the same bits, without the remainder's slow division for the values traffic gives (within a span
+ * either side of 0, which is v itself; or up to two spans, which is v less one span, exactly).
+ */
+function modSpan(v: number): number {
+  if (v > -TRAFFIC_SPAN && v < TRAFFIC_SPAN) return v;
+  if (v >= TRAFFIC_SPAN && v < 2 * TRAFFIC_SPAN) return v - TRAFFIC_SPAN;
+  return v % TRAFFIC_SPAN;
 }
 
-function carVelocities(lane: Lane, dt: number): Map<Car, number> {
-  const count = lane.cars.length;
-  if (!count) return new Map();
+function wrapX(x: number): number {
+  return modSpan(modSpan(x + 4) + TRAFFIC_SPAN) - 4;
+}
+
+// Scratch space for one lane's cars at a time (a lane has a handful), so a step allocates nothing for its traffic.
+const ORDER: number[] = [];
+const SPEEDS: number[] = [];
+const GAPS: number[] = [];
+const VELOCITY: number[] = [];
+const BEFORE: number[] = [];
+
+/** How fast a car would drive on its own: trucks slower, racers faster (up to a cap). */
+function carMotion(lane: Lane, car: Car) {
+  return lane.speed * (car.kind === 'truck' ? 0.65 : car.kind === 'racer' ? Math.min(1.5, 5.5 / lane.speed) : 1);
+}
+
+/**
+ * Each car's velocity this step, into `out` by its place in lane.cars: its own speed, held back so it never closes on
+ * the car ahead to less than a hop's gap.
+ */
+function carVelocities(lane: Lane, dt: number, out: number[]): void {
+  const cars = lane.cars;
+  const count = cars.length;
+  if (!count) return;
   const direction = lane.direction;
-  const ordered = [...lane.cars].sort((a, b) => direction === 1 ? a.x - b.x : b.x - a.x);
-  const motion = (car: Car) => lane.speed * (car.kind === 'truck' ? 0.65 : car.kind === 'racer' ? Math.min(1.5, 5.5 / lane.speed) : 1);
-  if (count === 1) return new Map([[ordered[0], direction * motion(ordered[0])]]);
-  const speeds = ordered.map(motion);
-  const minGap = Math.max(lane.speed, ...speeds) * HOP_TIME + 2 * CHICKEN_HALF + 0.5 + 0.12;
-  const gaps = ordered.map((car, i) => {
-    const next = ordered[(i + 1) % count];
+  // the cars in the order they drive, back to front (an insertion sort: stable, as Array.prototype.sort is)
+  for (let i = 0; i < count; i++) {
+    let j = i;
+    while (j > 0 && (direction === 1 ? cars[ORDER[j - 1]].x - cars[i].x : cars[i].x - cars[ORDER[j - 1]].x) > 0) {
+      ORDER[j] = ORDER[j - 1];
+      j--;
+    }
+    ORDER[j] = i;
+  }
+  if (count === 1) {
+    out[0] = direction * carMotion(lane, cars[0]);
+    return;
+  }
+  let fastest = lane.speed;
+  for (let k = 0; k < count; k++) {
+    SPEEDS[k] = carMotion(lane, cars[ORDER[k]]);
+    fastest = Math.max(fastest, SPEEDS[k]);
+  }
+  const minGap = fastest * HOP_TIME + 2 * CHICKEN_HALF + 0.5 + 0.12;
+  for (let k = 0; k < count; k++) {
+    const car = cars[ORDER[k]];
+    const next = cars[ORDER[(k + 1) % count]];
     const centerGap = direction === 1
-      ? (next.x - car.x + TRAFFIC_SPAN) % TRAFFIC_SPAN
-      : (car.x - next.x + TRAFFIC_SPAN) % TRAFFIC_SPAN;
-    return centerGap - (car.width + next.width) / 2;
-  });
+      ? modSpan(next.x - car.x + TRAFFIC_SPAN)
+      : modSpan(car.x - next.x + TRAFFIC_SPAN);
+    GAPS[k] = centerGap - (car.width + next.width) / 2;
+  }
   for (let pass = 0; pass < count; pass++) {
     let changed = false;
     for (let i = count - 1; i >= 0; i--) {
       const next = (i + 1) % count;
-      const maximum = speeds[next] + (gaps[i] - minGap) / dt;
-      if (speeds[i] > maximum) {
-        speeds[i] = Math.max(0, maximum);
+      const maximum = SPEEDS[next] + (GAPS[i] - minGap) / dt;
+      if (SPEEDS[i] > maximum) {
+        SPEEDS[i] = Math.max(0, maximum);
         changed = true;
       }
     }
     if (!changed) break;
   }
-  return new Map(ordered.map((car, i) => [car, direction * speeds[i]]));
+  for (let k = 0; k < count; k++) out[ORDER[k]] = direction * SPEEDS[k];
 }
+
+/**
+ * Whether a chicken that went from `a` to `b` (rows from a lane's middle) stayed more than `half` from it the whole
+ * time, on one side, by a margin no rounding can close: then nothing in the lane can have touched it (sweptHit's
+ * answer along the lane is no, whatever happened across it).
+ */
+const clearOf = (a: number, b: number, half: number) => (a > half + 1e-6 && b > half + 1e-6) || (a < -half - 1e-6 && b < -half - 1e-6);
 
 function trainHit(
   lane: Lane,
@@ -398,17 +458,20 @@ function substep(s: State, dt: number, ev: Events): void {
 
   for (const lane of s.lanes) {
     if (lane.kind === 'road') {
-      const oldCars: { car: Car; x: number }[] = [];
-      const velocities = carVelocities(lane, dt);
-      for (const car of lane.cars) {
-        oldCars.push({ car, x: car.x });
-        car.x = wrapX(car.x + velocities.get(car)! * dt);
+      const cars = lane.cars;
+      carVelocities(lane, dt, VELOCITY);
+      for (let i = 0; i < cars.length; i++) {
+        BEFORE[i] = cars[i].x;
+        cars[i].x = wrapX(cars[i].x + VELOCITY[i] * dt);
       }
-      for (const { car, x: oldCar } of oldCars) {
-        const delta = ((car.x - oldCar + TRAFFIC_SPAN / 2) % TRAFFIC_SPAN + TRAFFIC_SPAN) % TRAFFIC_SPAN - TRAFFIC_SPAN / 2;
+      const hitY = CAR_HALF_Y + CHICKEN_HALF;
+      if (clearOf(oldY - lane.row, s.y - lane.row, hitY)) continue;
+      for (let i = 0; i < cars.length; i++) {
+        const car = cars[i];
+        const oldCar = BEFORE[i];
+        const delta = modSpan(modSpan(car.x - oldCar + TRAFFIC_SPAN / 2) + TRAFFIC_SPAN) - TRAFFIC_SPAN / 2;
         const nextCar = oldCar + delta;
         const hitX = car.width / 2 - 0.08 + CHICKEN_HALF;
-        const hitY = CAR_HALF_Y + CHICKEN_HALF;
         if (sweptHit(oldX - oldCar, oldY - lane.row, s.x - nextCar, s.y - lane.row, hitX, hitY)) {
           s.dead = true;
           s.death = 'car';
@@ -495,37 +558,47 @@ function substep(s: State, dt: number, ev: Events): void {
   }
 }
 
+export function noEvents(): Events {
+  return { hopped: false, landed: false, scored: 0, collected: false, crashed: false, milestone: false, bell: false, splash: false, biome: false, blocked: false };
+}
+
+/** One fixed step of the rules, as step() takes them (`held` the direction held down): what a run's replay walks through. */
+export function tick(s: State, held: Direction | null, ev: Events): void {
+  s.ticks++;
+  if (!s.hop) {
+    const direction = s.queued ?? (s.repeat <= 0 ? held : null);
+    s.queued = null;
+    if (direction) {
+      const fromX = s.x;
+      const fromY = s.y;
+      const fromLane = laneAt(s, Math.round(s.y));
+      const riding = s.ride !== null && fromLane?.kind === 'river';
+      const targetX = fromX + (direction === 'left' ? -1 : direction === 'right' ? 1 : 0);
+      const targetY = fromY + (direction === 'up' ? 1 : direction === 'down' ? -1 : 0);
+      const targetLane = laneAt(s, targetY);
+      const edgeBlocked = (direction === 'left' || direction === 'right') &&
+        (riding ? targetX < -0.4 || targetX > COLUMNS - 0.6 : targetX < 0 || targetX >= COLUMNS);
+      const treeBlocked = targetLane?.kind === 'grass' && targetLane.trees.includes(Math.round(riding && direction !== 'left' && direction !== 'right' ? fromX : targetX));
+      if (startHop(s, direction)) {
+        ev.hopped = true;
+        s.repeat = REPEAT_TIME;
+      } else if (edgeBlocked || treeBlocked) {
+        s.facing = direction;
+        ev.blocked = true;
+      }
+    }
+  }
+  substep(s, STEP, ev);
+}
+
 export function step(s: State, dt: number, input: Input = { held: null, press: null }): Events {
-  const ev: Events = { hopped: false, landed: false, scored: 0, collected: false, crashed: false, milestone: false, bell: false, splash: false, biome: false, blocked: false };
+  const ev = noEvents();
   if (s.dead || dt <= 0) return ev;
   if (input.press) s.queued = input.press;
   s.acc += Math.min(dt, 0.1);
   while (s.acc >= STEP && !s.dead) {
     s.acc -= STEP;
-    if (!s.hop) {
-      const direction = s.queued ?? (s.repeat <= 0 ? input.held : null);
-      s.queued = null;
-      if (direction) {
-        const fromX = s.x;
-        const fromY = s.y;
-        const fromLane = laneAt(s, Math.round(s.y));
-        const riding = s.ride !== null && fromLane?.kind === 'river';
-        const targetX = fromX + (direction === 'left' ? -1 : direction === 'right' ? 1 : 0);
-        const targetY = fromY + (direction === 'up' ? 1 : direction === 'down' ? -1 : 0);
-        const targetLane = laneAt(s, targetY);
-        const edgeBlocked = (direction === 'left' || direction === 'right') &&
-          (riding ? targetX < -0.4 || targetX > COLUMNS - 0.6 : targetX < 0 || targetX >= COLUMNS);
-        const treeBlocked = targetLane?.kind === 'grass' && targetLane.trees.includes(Math.round(riding && direction !== 'left' && direction !== 'right' ? fromX : targetX));
-        if (startHop(s, direction)) {
-          ev.hopped = true;
-          s.repeat = REPEAT_TIME;
-        } else if (edgeBlocked || treeBlocked) {
-          s.facing = direction;
-          ev.blocked = true;
-        }
-      }
-    }
-    substep(s, STEP, ev);
+    tick(s, input.held, ev);
   }
   return ev;
 }

@@ -4,6 +4,7 @@ import type { Verifier } from './protocol.ts';
 import { verifier as blocks } from '../games/blocks/verify.ts';
 import { verifier as breakout } from '../games/breakout/verify.ts';
 import { verifier as bubbleShooter } from '../games/bubble-shooter/verify.ts';
+import { verifier as chickenCrossing } from '../games/chicken-crossing/verify.ts';
 import { verifier as dino } from '../games/dino/verify.ts';
 import { verifier as flappy } from '../games/flappy/verify.ts';
 import { verifier as game2048 } from '../games/2048/verify.ts';
@@ -15,6 +16,7 @@ export const VERIFIERS: Record<string, Verifier<any>> = {
   blocks,
   breakout,
   'bubble-shooter': bubbleShooter,
+  'chicken-crossing': chickenCrossing,
   dino,
   flappy,
   '2048': game2048,
