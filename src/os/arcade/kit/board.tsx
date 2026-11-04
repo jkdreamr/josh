@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { LeaderboardSpec } from '../types';
 import { NAME_MAX, cleanName, getBoard, nameLength, qualifies, saveName, submitScore, type Board, type BoardEntry, type BoardScope } from './leaderboard';
+import { ARCADE_API } from './leaderboard';
+import type { FlappyProof } from '../games/flappy/replay.ts';
 
 export const scopeLabel = (scope: BoardScope) => (scope === 'global' ? 'Global' : 'This Device');
 
@@ -40,7 +42,7 @@ export function BoardScopeNote({ board }: { board: Board | null }) {
 }
 
 /** Board for a finished round: loads it, says whether the score qualifies and submits a name. */
-export function useRoundBoard(game: string, spec: LeaderboardSpec | undefined, score: number | undefined, round: unknown) {
+export function useRoundBoard(game: string, spec: LeaderboardSpec | undefined, score: number | undefined, round: unknown, proof?: FlappyProof) {
   const [board, setBoard] = useState<Board | null>(null);
   const [mine, setMine] = useState<BoardEntry | null>(null);
   const [busy, setBusy] = useState(false);
@@ -65,12 +67,12 @@ export function useRoundBoard(game: string, spec: LeaderboardSpec | undefined, s
       setBusy(true);
       const clean = cleanName(name);
       saveName(clean);
-      const res = await submitScore(game, spec, clean, score);
+      const res = await submitScore(game, spec, clean, score, ARCADE_API, proof);
       setBoard(res);
       setMine(res.entry);
       setBusy(false);
     },
-    [game, spec, score],
+    [game, spec, score, proof],
   );
   return { enabled, board, mine, busy, canSubmit, submit };
 }

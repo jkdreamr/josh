@@ -1,9 +1,11 @@
 import { createContext, type RefObject } from 'react';
 import type { GameMeta } from '../types';
 import type { KeyState } from './keys';
+import type { FlappyProof } from '../games/flappy/replay.ts';
 
 export type GameStatus = 'ready' | 'playing' | 'paused' | 'over';
 export type GameOverInfo = {
+  proof?: FlappyProof;
   title?: string;
   detail?: string;
   /** Which of meta.leaderboard.variants this round counts for (a level or pace). */

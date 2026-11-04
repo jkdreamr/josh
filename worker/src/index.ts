@@ -13,6 +13,7 @@ import { Telemetry, type TelemetryEnv } from './telemetry';
 import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
 import { agreedWinners, beginRound, benchSeat, botSeats, canJoinRoom, canResume, keepFor, canStartRoom, canWatchRoom, endRound, GATHER_MS, gatherFull, gathering, handOffRound, HOLD_MS, holdsDue, holdUntil, isPool, isRelayMessage, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextAlarm, nextHost, orphanSeats, parseRoomMessage, relayTargets, RESUME_VERSION, roomListing, roundPlayable, roundSeats, seatsFor, type Hold, type RecordedRounds, type RelayRoomMessage, type RoomPlayer, type RoomState, type RoundReports, type SeatKey } from './room-core';
 import { MAX_BODY_BYTES } from '../../src/os/arcade/games/soccer/telemetry-core.ts';
+import { FlappyRuns, readScoreBody } from './flappy.ts';
 
 export { Chat, Lobby, Lounge, Telemetry };
 
@@ -50,21 +51,25 @@ function boardEntries(sql: SqlStorage, game: string, spec: LeaderboardSpec, limi
 }
 
 function winEntries(sql: SqlStorage, game: string, limit = TOP): BoardEntry[] {
+  if (game === 'flappy') return [];
   return sql.exec<BoardEntry>('SELECT name, wins AS score, date FROM wins WHERE game = ? ORDER BY wins DESC, date ASC LIMIT ?', game, limit).toArray();
 }
 
 export class Boards extends DurableObject<Env> {
   private readonly submissions = new Map<string, number[]>();
+  private readonly flappy: FlappyRuns;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS scores (game TEXT NOT NULL, name TEXT NOT NULL, score REAL NOT NULL, date TEXT NOT NULL)');
     this.ctx.storage.sql.exec('CREATE INDEX IF NOT EXISTS scores_game ON scores (game, score)');
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS wins (game TEXT NOT NULL, name TEXT NOT NULL, wins INTEGER NOT NULL, date TEXT NOT NULL, PRIMARY KEY (game, name))');
+    this.flappy = new FlappyRuns(this.ctx.storage.sql);
   }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/flappy/')) return this.flappy.fetch(request);
     if (url.pathname === '/wins' && request.method === 'GET') {
       const game = url.searchParams.get('game') ?? '';
       if (!Object.hasOwn(ONLINE_SPECS, game)) return json({ error: 'unknown game' }, 404);
@@ -81,7 +86,7 @@ export class Boards extends DurableObject<Env> {
       const sql = this.ctx.storage.sql;
       try {
         const tops: BoardTops = {
-          boards: Object.fromEntries(Object.entries(LEADERBOARD_SPECS).map(([game, spec]) => [game, boardEntries(sql, game, spec, n)])),
+          boards: Object.fromEntries(Object.entries(LEADERBOARD_SPECS).map(([game, spec]) => [game, game === 'flappy' ? this.flappy.entries(n) : boardEntries(sql, game, spec, n)])),
           wins: Object.fromEntries(Object.keys(ONLINE_SPECS).map((game) => [game, winEntries(sql, game, n)])),
         };
         return json(tops);
@@ -97,7 +102,7 @@ export class Boards extends DurableObject<Env> {
       const spec = Object.hasOwn(LEADERBOARD_SPECS, game) ? LEADERBOARD_SPECS[game] : undefined;
       if (!spec) return json({ error: 'unknown game' }, 404);
       try {
-        return json({ entries: boardEntries(this.ctx.storage.sql, game, spec) });
+        return json({ entries: game === 'flappy' ? this.flappy.entries() : boardEntries(this.ctx.storage.sql, game, spec) });
       } catch {
         return json({ error: 'unavailable' }, 503);
       }
@@ -107,13 +112,14 @@ export class Boards extends DurableObject<Env> {
 
     let body: unknown;
     try {
-      body = await request.json();
+      body = await readScoreBody(request);
     } catch {
       return json({ error: 'invalid body' }, 400);
     }
 
     const parsed = validateSubmission(body, LEADERBOARD_SPECS);
     if (!parsed.value) return json({ error: parsed.error }, 400);
+    if (parsed.value.game === 'flappy') return json({ error: 'verified run required; use /flappy/submit' }, 400);
 
     const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
     const now = Date.now();
@@ -143,6 +149,7 @@ export class Boards extends DurableObject<Env> {
   }
 
   recordWin(game: string, rawName: string): void {
+    if (game === 'flappy') return;
     if (!Object.hasOwn(ONLINE_SPECS, game) || typeof rawName !== 'string') return;
     const name = cleanName(rawName);
     if (nameLength(name) < 1 || nameLength(name) > 16) return;
@@ -939,7 +946,8 @@ export default {
         return json({ error: 'unavailable' }, 503);
       }
     }
-    if (url.pathname === '/leaderboard' && (request.method === 'GET' || request.method === 'POST')) {
+    if ((url.pathname === '/leaderboard' && (request.method === 'GET' || request.method === 'POST')) ||
+        (['/flappy/run', '/flappy/submit'].includes(url.pathname) && request.method === 'POST')) {
       const id = env.BOARDS.idFromName('global');
       return withCors(await env.BOARDS.get(id).fetch(request));
     }
