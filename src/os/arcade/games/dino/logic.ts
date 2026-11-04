@@ -34,7 +34,15 @@ export const FLYER_W = 46;
 export const FLYER_H = 30;
 /** Flyer bottoms: low must be jumped, mid must be ducked (or jumped), high clears a standing dino. */
 export const FLYER_Y = [3, 21, 43] as const;
-const STEP = 1 / 120;
+/** The rules' fixed step: the page plays in whole steps (see advance), and a ranked run's events are stamped with them. */
+export const STEP = 1 / 120;
+/**
+ * The view's width in world units, as far as the rules go: obstacles come in at its right edge. A view narrower than
+ * any real window would bring them in on top of the dino (or behind it), so it is held to this range.
+ */
+export const VIEW_MIN = 200;
+export const VIEW_MAX = 16_000;
+export const clampView = (w: number) => (Number.isFinite(w) ? Math.min(VIEW_MAX, Math.max(VIEW_MIN, w)) : VIEW_MIN);
 
 /** Hit boxes relative to the dino's bottom-left, slightly smaller than the drawing to feel fair. */
 export const dinoBoxes = (ducking: boolean): Box[] =>
@@ -80,6 +88,10 @@ export type State = {
   lastKinds: Kind[];
   dead: boolean;
   viewW: number;
+  /** Fixed steps taken: a ranked run's events are stamped with them, so the leaderboard can replay the run. */
+  ticks: number;
+  /** Time banked toward the next step (see advance). */
+  acc: number;
 };
 
 export function createState(viewW: number): State {
@@ -99,7 +111,17 @@ export function createState(viewW: number): State {
     lastKinds: [],
     dead: false,
     viewW,
+    ticks: 0,
+    acc: 0,
   };
+}
+
+/** The little hop every run starts with. */
+export function hop(s: State) {
+  s.vy = 520;
+  s.ground = false;
+  s.holding = true;
+  s.air = 0;
 }
 
 export const isNight = (score: number) => Math.floor(score / NIGHT_EVERY) % 2 === 1;
@@ -131,6 +153,9 @@ export function pickObstacle(s: State, rng: () => number): Obstacle {
 export const overlaps = (a: Box, b: Box) => a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
 
 export function collides(s: State, o: Obstacle) {
+  // (no hit box reaches past the dino's widest, ducking, or before its tail: an obstacle wholly ahead or behind can't
+  // touch it, and a ranked run's replay checks every obstacle on screen every step)
+  if (o.x >= DINO_X + DUCK_W || o.x + o.w <= DINO_X) return false;
   for (const d of dinoBoxes(s.ducking)) {
     const a = { x: DINO_X + d.x, y: s.y + d.y, w: d.w, h: d.h };
     for (const b of obstacleBoxes(o)) if (overlaps(a, { x: o.x + b.x, y: o.y + b.y, w: b.w, h: b.h })) return true;
@@ -142,6 +167,7 @@ export function collides(s: State, o: Obstacle) {
 const flyerBoost = (o: Obstacle) => (o.kind === 'flyer' ? 0.06 : 0);
 
 function substep(s: State, h: number, input: Input, rng: () => number, ev: Events) {
+  s.ticks += 1;
   if (s.ground) {
     s.ducking = input.duck && !input.jump;
     if (input.jump) {
@@ -180,7 +206,13 @@ function substep(s: State, h: number, input: Input, rng: () => number, ev: Event
   if (Math.floor(s.score / NIGHT_EVERY) !== Math.floor(before / NIGHT_EVERY)) ev.night = isNight(s.score);
 
   for (const o of s.obstacles) o.x -= dx * (1 + flyerBoost(o));
-  s.obstacles = s.obstacles.filter((o) => o.x + o.w > -40);
+  // (the list is made again only when one has gone)
+  for (const o of s.obstacles) {
+    if (!(o.x + o.w > -40)) {
+      s.obstacles = s.obstacles.filter((k) => k.x + k.w > -40);
+      break;
+    }
+  }
 
   s.next -= dx;
   if (s.next <= 0) {
@@ -207,6 +239,26 @@ export function step(s: State, dt: number, input: Input, rng: () => number): Eve
     const h = Math.min(STEP, left);
     substep(s, h, input, rng, ev);
     left -= h;
+  }
+  return ev;
+}
+
+/** One fixed step of the rules, exactly as advance() takes them: what a ranked run's replay walks through. */
+export function tick(s: State, input: Input, rng: () => number, ev: Events) {
+  if (!s.dead) substep(s, STEP, input, rng, ev);
+}
+
+/**
+ * Advances the world by dt seconds in whole fixed steps, the rest banked for the next frame: how the page plays, so a
+ * run comes out the same at any frame rate (its events are stamped with the steps taken).
+ */
+export function advance(s: State, dt: number, input: Input, rng: () => number): Events {
+  const ev: Events = { jumped: false, landed: false, crashed: false, milestone: 0, night: null };
+  if (s.dead) return ev;
+  s.acc += Math.min(dt, 0.25);
+  while (s.acc >= STEP && !s.dead) {
+    s.acc -= STEP;
+    substep(s, STEP, input, rng, ev);
   }
   return ev;
 }

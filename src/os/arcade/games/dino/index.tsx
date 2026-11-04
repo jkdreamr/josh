@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useShell } from '../../kit';
+import { GameShell, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useRankedRun, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { cactus, cloud, dino, dunes, flyer, hash, mesas, mix, moon, sun, tuft, type Pose } from './draw';
-import { DINO_X, courseSeed, createState, isNight, rng32, step, type Obstacle } from './logic';
+import { DINO_X, advance, clampView, courseSeed, createState, hop, isNight, rng32, type Obstacle } from './logic';
 import { meta } from './meta';
 import './dino.css';
 
@@ -72,9 +72,20 @@ function Play() {
     course: null as (() => number) | null,
     topped: false,
     toast: 0,
+    /** This run is ranked: the Worker replays it (see verify.ts), so the keys held and the view's width are recorded. */
+    ranked: false,
+    /** The keys last recorded (1 jump, 2 duck). */
+    held: 0,
   }).current;
   const { compact, status, touch } = shell;
   const online = useOnline();
+  // The global board takes a score only from a run the Worker replays (see verify.ts): the run is asked for as the
+  // round opens, and its seed lays out the course. A run that starts without it (offline, or it was slow) still plays.
+  const rankedRun = useRankedRun(meta.id, !online && !compact);
+  useEffect(() => {
+    rankedRun();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [night, setNight] = useState(false);
 
   // Strip only: space starts the run when the New Tab page itself has focus (never while typing in the search box).
@@ -155,7 +166,12 @@ function Play() {
     (dt) => {
       const { viewW } = layout();
       const w = s.world;
-      w.viewW = viewW;
+      // (the view's width decides where obstacles come in, so a ranked run records it as it changes)
+      const view = clampView(viewW);
+      if (view !== w.viewW) {
+        if (s.ranked && !w.dead) rankedRun()?.record([w.ticks, 'w', view]);
+        w.viewW = view;
+      }
       s.t += dt;
       const skyTop = cloudTop();
       if (s.clouds.length === 0)
@@ -163,12 +179,17 @@ function Play() {
       // Online, everyone in the room races the same course: obstacles come from a seed the round and roster share.
       if (!s.course) s.course = online ? rng32(courseSeed(online.round, online.players.map((p) => p.name))) : Math.random;
 
-      if (!s.hopped) {
+      // (a moment's wait for the run, if it is still on its way, so the run can count globally: the dino stands till then)
+      const waiting = !s.hopped && !!rankedRun()?.pending && s.t < 1.5;
+      if (!s.hopped && !waiting) {
+        const ranked = rankedRun();
+        const seed = ranked?.seed;
+        if (ranked && seed !== null && seed !== undefined && ranked.begin({ w: w.viewW })) {
+          s.course = rng32(seed);
+          s.ranked = true;
+        }
         s.hopped = true;
-        w.vy = 520;
-        w.ground = false;
-        w.holding = true;
-        w.air = 0;
+        hop(w);
         sfx.play('jump');
       }
 
@@ -177,17 +198,27 @@ function Play() {
         if (s.deadT > 0.55 && !s.over) {
           s.over = true;
           const n = s.clearedN;
+          // the end of the run goes off to be checked now; a score submitted from the card waits for the answer
+          const run = s.ranked ? rankedRun()?.end(Math.floor(w.score)) : undefined;
           shell.gameOver(Math.floor(w.score), {
             detail: isNight(w.score) ? `You made it into the night and cleared ${n} obstacles.` : `You cleared ${n} ${n === 1 ? 'obstacle' : 'obstacles'}.`,
+            ...(run ? { run } : {}),
           });
         }
-      } else {
+      } else if (!waiting) {
         const input = {
           jump: keys.down('action', 'up') || s.ptr.jump,
           duck: keys.down('down') || s.ptr.duck || s.duckBtn >= 0,
         };
+        const held = (input.jump ? 1 : 0) | (input.duck ? 2 : 0);
+        if (s.ranked && held !== s.held) {
+          rankedRun()?.record([w.ticks, held]);
+          s.held = held;
+        }
         const wasAir = !w.ground;
-        const ev = step(w, dt, input, s.course);
+        // in whole fixed steps, so a ranked run replays the same at any frame rate
+        const ev = advance(w, dt, input, s.course);
+        if (s.ranked) rankedRun()?.clock(w.ticks);
         if (ev.jumped) {
           sfx.play('jump');
           s.squash = 1.1;
@@ -379,7 +410,7 @@ function Play() {
       // dino
       const dead = s.deadT >= 0;
       const pose: Pose = {
-        kind: dead ? 'dead' : status === 'ready' ? 'stand' : !w.ground ? 'air' : w.ducking ? 'duck' : 'run',
+        kind: dead ? 'dead' : status === 'ready' || !s.hopped ? 'stand' : !w.ground ? 'air' : w.ducking ? 'duck' : 'run',
         phase: w.distance / 9,
         blink: s.blink && !dead,
         tilt: !w.ground && !dead ? Math.max(-0.12, Math.min(0.12, -w.vy / 5000)) : 0,
@@ -471,6 +502,8 @@ function Play() {
         c.globalAlpha = 1;
       }
     },
+    // (a slow frame is caught up rather than played in slow motion: a slowed-down course is easier to run)
+    { realtime: true },
   );
 
   const onDown = (e: RPointerEvent<HTMLCanvasElement>) => {
