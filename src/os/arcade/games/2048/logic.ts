@@ -1,4 +1,7 @@
+import { semitone } from '../../verify/dmath.ts';
+
 export type Grid = number[][];
+
 export type Direction = 'left' | 'right' | 'up' | 'down';
 export type Position = [number, number];
 export type TileMove = { from: Position; to: Position; value: number; merged: boolean };
@@ -210,10 +213,13 @@ export function layout(w: number, h: number, ctrl: Rect | null, status: Rect | n
 
 /** Merge chime: climbs a pentatonic scale as the tiles grow. */
 export function mergePitch(value: number): number {
-  const n = Math.max(1, Math.round(Math.log2(value)) - 1);
+  // (tiles are powers of two: count the halvings)
+  let k = 0;
+  for (let v = value; v >= 2; v /= 2) k++;
+  const n = Math.max(1, k - 1);
   const steps = [0, 2, 4, 7, 9];
   const semi = 12 * Math.floor((n - 1) / 5) + steps[(n - 1) % 5];
-  return 330 * Math.pow(2, semi / 12);
+  return 330 * semitone(semi);
 }
 
 /** Frame scale fix for the iPad and iPhone frames: the inverse of how much they shrink the game, rounded up. */

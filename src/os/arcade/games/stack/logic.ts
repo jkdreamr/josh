@@ -1,5 +1,5 @@
 // Pure rules for Stack: slabs, slicing, perfect combos and difficulty. No DOM, no three.js.
-import { powi } from '../../verify/dmath.ts';
+import { powi, semitone } from '../../verify/dmath.ts';
 
 export type Axis = 'x' | 'z';
 export type Slab = { x: number; z: number; w: number; d: number };
@@ -141,7 +141,7 @@ const SCALE = [0, 2, 4, 7, 9];
 export function chimeFor(streak: number, root = 523.25) {
   const i = Math.min(10, Math.max(0, streak - 1));
   const semis = SCALE[i % 5] + 12 * Math.floor(i / 5);
-  return root * 2 ** (semis / 12);
+  return root * semitone(semis);
 }
 
 /**

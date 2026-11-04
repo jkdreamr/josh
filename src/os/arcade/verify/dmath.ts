@@ -120,6 +120,16 @@ export function atan2(y: number, x: number): number {
 /** sqrt(x² + y²), with sqrt (which every engine rounds exactly) rather than Math.hypot (which they need not). */
 export const hypot = (x: number, y: number) => Math.sqrt(x * x + y * y);
 
+/** 2 to the power k/12 for k = 0..11: the twelve equal-tempered semitones in an octave. */
+const SEMITONES = [1, 1.0594630943592953, 1.122462048309373, 1.189207115002721, 1.2599210498948732, 1.3348398541700344, 1.4142135623730951, 1.4983070768766815, 1.5874010519681994, 1.681792830507429, 1.7817974362806785, 1.8877486253633868];
+
+/** The frequency ratio of a whole number of semitones, 2^(semis/12). */
+export function semitone(semis: number): number {
+  if (!Number.isInteger(semis)) return Number.NaN;
+  const octave = Math.floor(semis / 12);
+  return powi(2, octave) * SEMITONES[semis - octave * 12];
+}
+
 /** x to a whole power n, by repeated squaring (Math.pow need not be exact). */
 export function powi(x: number, n: number): number {
   if (!Number.isInteger(n)) return Number.NaN;

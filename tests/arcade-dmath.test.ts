@@ -42,3 +42,11 @@ test('the same inputs always give the same bits (no Math.sin, cos, atan2, hypot,
   const src = readFileSync(new URL('../src/os/arcade/verify/dmath.ts', import.meta.url), 'utf8').replace(/\/\/.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '');
   for (const fn of ['sin', 'cos', 'tan', 'atan', 'atan2', 'hypot', 'exp', 'log', 'pow', 'cbrt']) assert.ok(!new RegExp(`Math\\.${fn}\\(`).test(src), `uses Math.${fn}`);
 });
+
+test('semitones are 2^(k/12) for whole k, any octave', async () => {
+  const { semitone } = await import('../src/os/arcade/verify/dmath.ts');
+  for (let k = -36; k <= 36; k++) assert.ok(close(semitone(k), Math.pow(2, k / 12), 2e-16), `k=${k}`);
+  assert.equal(semitone(12), 2);
+  assert.equal(semitone(0), 1);
+  assert.ok(Number.isNaN(semitone(0.5)));
+});
