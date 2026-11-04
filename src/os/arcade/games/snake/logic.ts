@@ -105,11 +105,13 @@ export function queueDirection(state: SnakeState, next: Direction) {
 }
 
 export function spawnFood(state: Pick<SnakeState, 'cols' | 'rows' | 'segments'>, rng: () => number = Math.random): Point | null {
-  const occupied = new Set(state.segments.map((p) => `${p.x},${p.y}`));
+  // (cells off the board can't be taken, so only the board's own are marked)
+  const occupied = new Uint8Array(state.cols * state.rows);
+  for (const p of state.segments) if (p.x >= 0 && p.x < state.cols && p.y >= 0 && p.y < state.rows) occupied[p.y * state.cols + p.x] = 1;
   const free: Point[] = [];
   for (let y = 0; y < state.rows; y++) {
     for (let x = 0; x < state.cols; x++) {
-      if (!occupied.has(`${x},${y}`)) free.push({ x, y });
+      if (!occupied[y * state.cols + x]) free.push({ x, y });
     }
   }
   if (!free.length) return null;
@@ -134,7 +136,9 @@ export function heading(state: SnakeState) {
   return state.queue.at(-1) ?? state.direction;
 }
 
-export function stepSnake(state: SnakeState, rng: () => number = Math.random) {
+export type StepResult = 'inactive' | 'dead' | 'won' | 'ate' | 'moved';
+
+export function stepSnake(state: SnakeState, rng: () => number = Math.random): StepResult {
   if (!state.alive || state.won) return 'inactive' as const;
   if (state.queue.length) state.direction = state.queue.shift()!;
   const vector = vectors[state.direction];
@@ -146,13 +150,19 @@ export function stepSnake(state: SnakeState, rng: () => number = Math.random) {
     return 'dead' as const;
   }
   const ate = state.food?.x === next.x && state.food?.y === next.y;
-  const body = ate ? state.segments : state.segments.slice(0, -1);
-  if (body.some((p) => p.x === next.x && p.y === next.y)) {
-    state.alive = false;
-    state.cause = 'self';
-    return 'dead' as const;
+  // the body it could hit: all of it, or all but the tail that moves on (counted rather than copied, as a ranked run's
+  // replay takes every step again)
+  const body = ate ? state.segments.length : state.segments.length - 1;
+  for (let i = 0; i < body; i++) {
+    const p = state.segments[i];
+    if (p.x === next.x && p.y === next.y) {
+      state.alive = false;
+      state.cause = 'self';
+      return 'dead' as const;
+    }
   }
-  state.previous = state.segments.map((p) => ({ ...p }));
+  // (cells are never changed once made, so the last step's can be the same objects)
+  state.previous = state.segments.slice();
   state.segments.unshift(next);
   if (!ate) state.segments.pop();
   else {
@@ -164,4 +174,54 @@ export function stepSnake(state: SnakeState, rng: () => number = Math.random) {
     }
   }
   return ate ? 'ate' as const : 'moved' as const;
+}
+
+/** Directions as a ranked run's events number them (see verify.ts). */
+export const DIRECTIONS: readonly Direction[] = ['up', 'right', 'down', 'left'];
+/** How much longer the snake waits before a step that would kill it (once a step), so a late turn can still save it. */
+export const GRACE = 1.55;
+
+/** The round's first key: the snake turns round, turns, or just sets off. */
+export function startSnake(state: SnakeState, next: Direction) {
+  if (opposite(next, state.direction)) {
+    state.segments.reverse();
+    state.previous = state.segments.map((p) => ({ ...p }));
+    state.direction = next;
+  } else if (next !== state.direction) state.queue.push(next);
+}
+
+/** The page's clock for the snake: seconds banked toward the next step, the hesitation at the edge, and steps taken. */
+export type Pacer = { accumulator: number; grace: boolean; graceUsed: boolean; steps: number };
+
+/**
+ * What the snake does next with the time banked in `pacer`: 'wait' for more, 'grace' (it hesitates before a step that
+ * would kill it, once a step) or a step and what came of it. The page calls it until it waits; a ranked run's replay
+ * walks the same steps (see verify.ts).
+ */
+export function advance(state: SnakeState, pacer: Pacer, rng: () => number = Math.random): 'wait' | 'grace' | StepResult {
+  const due = (1 / speedForLength(state.segments.length)) * (pacer.grace ? GRACE : 1);
+  if (pacer.accumulator < due) return 'wait';
+  if (!pacer.grace && !pacer.graceUsed && wouldDie(state)) {
+    pacer.grace = true;
+    pacer.graceUsed = true;
+    return 'grace';
+  }
+  pacer.accumulator -= due;
+  pacer.grace = false;
+  pacer.steps++;
+  const result = stepSnake(state, rng);
+  if (result === 'moved' || result === 'ate') pacer.graceUsed = false;
+  return result;
+}
+
+/** Deterministic PRNG (mulberry32), for a ranked round's food from the Worker's seed. */
+export function rng32(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
