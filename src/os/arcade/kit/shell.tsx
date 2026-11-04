@@ -1132,7 +1132,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
                 {glyph}
                 <h2>{meta.title}</h2>
                 {phoneFirstOn && <p>Your iPhone is the controller.</p>}
-                {!phoneFirstOn && <p>{meta.controls}</p>}
+                {!phoneFirstOn && <p className="arcade-controls">{meta.controls}</p>}
                 {setup && !quickOn && !phoneFirstOn && <div className="arcade-setup">{setup}</div>}
                 {quickOn && quickSetup && <div className="arcade-setup">{quickSetup}</div>}
                 <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={phoneFirstOn ? connectPhone : quickOn ? () => play() : start} ref={autoFocus}>
@@ -1175,7 +1175,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
             <div className="arcade-ov">
               <div className="arcade-card">
                 <h2>Paused</h2>
-                <p>{setupChanged ? 'New Settings Need A New Game.' : meta.controls}</p>
+                <p className={setupChanged ? undefined : 'arcade-controls'}>{setupChanged ? 'New Settings Need A New Game.' : meta.controls}</p>
                 {setup && <div className="arcade-setup">{setup}</div>}
                 <button type="button" className="arcade-btn arcade-btn-primary arcade-btn-lg" onClick={setupChanged ? restart : resume} ref={autoFocus}>
                   {setupChanged ? 'New Game' : 'Resume'}

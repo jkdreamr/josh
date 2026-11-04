@@ -117,7 +117,6 @@ function Setup() {
   const mouse = !shell.touch || finePointer();
   return (
     <div className="g-ridgeline-setup">
-      {shell.touch && !mouse && <p className="g-ridgeline-note">on touch: drag the left side to move and the right side to look. hold Fire to shoot (and drag it to aim while you do).</p>}
       <Segmented label="Mode" value={mode} options={modeOptions} onChange={setMode} />
       <Segmented label="Map" value={map} options={mapOptions} onChange={setMap} />
       {map !== 'random' && <p className="g-ridgeline-note">{MAPS[map].tag}</p>}
