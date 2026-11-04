@@ -7,6 +7,7 @@ import { verifier } from '../src/os/arcade/games/2048/verify.ts';
 import { VERIFIERS } from '../src/os/arcade/verify/registry.ts';
 import { BOARD_OWNERS } from '../worker/src/specs.gen.ts';
 import { chunked, rankedWorker, type Chunk } from './ranked-harness.ts';
+import { replayedSource, UNSTABLE_MATH } from './replayed-math.ts';
 
 let w: ReturnType<typeof rankedWorker>;
 beforeEach(() => {
@@ -83,6 +84,16 @@ async function opened() {
   const { run, seed } = await w.open('2048');
   return { run, seed, start: (init: unknown = {}) => w.call('/runs/start', { run, init }) };
 }
+
+test('the rules the replay walks through use only math every browser computes to the same bit', () => {
+  // (the Worker replays in V8, players' pages run in JavaScriptCore and SpiderMonkey too: see verify/dmath.ts)
+  const src = replayedSource(new URL('../src/os/arcade/games/2048/verify.ts', import.meta.url));
+  assert.match(src, /function slide\b|const slide\b/, 'the walk reaches slide');
+  assert.match(src, /function spawn\b|const spawn\b/, 'the walk reaches spawn');
+  assert.match(src, /function createGame\b|const createGame\b/, 'the walk reaches createGame');
+  assert.match(src, /function canMove\b|const canMove\b/, 'the walk reaches canMove');
+  assert.doesNotMatch(src, UNSTABLE_MATH);
+});
 
 test('2048 is checked, on its own board', () => {
   assert.equal(VERIFIERS['2048'], verifier);
