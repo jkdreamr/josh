@@ -220,11 +220,38 @@ test('edited shots and swaps are refused', () => {
   const played = playBubbles(seed);
   assert.equal(replay(seed, played), played.score);
   const shotsIn = (c: Chunk) => c.e.filter((e) => Array.isArray(e)) as number[][];
+  // a shot aimed elsewhere: some re-aimed shots happen to clear the same bubbles, but not all of the first several
+  let moved = 0;
+  for (let k = 0; k < 6; k++) {
+    const p = clone(played);
+    const s = p.chunks.flatMap(shotsIn)[k];
+    s[1] = s[1] > 1.6 ? s[1] - 0.9 : s[1] + 0.9;
+    const got = replay(seed, p);
+    if (typeof got === 'string' || got !== played.score) moved++;
+  }
+  assert.ok(moved >= 3, `only ${moved} of 6 re-aimed shots changed the run`);
+  // an extra swap before a shot (one between two bubbles of a colour changes nothing, so try several)
+  // (later in the game, where more colours are in play)
+  const total = played.chunks.flatMap(shotsIn).length;
+  let swapped = 0;
+  let tried = 0;
+  for (let k = Math.floor(total / 3); k < total && tried < 12; k += 2, tried++) {
+    const p = clone(played);
+    let seen = 0;
+    for (const c of p.chunks) {
+      const shots = shotsIn(c);
+      if (k < seen + shots.length) {
+        const shot = shots[k - seen];
+        c.e.splice(c.e.indexOf(shot), 0, shot[0]);
+        break;
+      }
+      seen += shots.length;
+    }
+    const got = replay(seed, p);
+    if (typeof got === 'string' || got !== played.score) swapped++;
+  }
+  assert.ok(tried >= 6 && swapped >= tried / 2, `only ${swapped} of ${tried} extra swaps changed the run`);
   const edits: [string, (p: Played) => void][] = [
-    ['a shot aimed elsewhere', (p) => {
-      const s = shotsIn(p.chunks[1])[2];
-      s[1] = s[1] > 1.6 ? s[1] - 0.9 : s[1] + 0.9;
-    }],
     ['a shot fired again while the last one flies', (p) => {
       const c = p.chunks[1];
       const i = c.e.findIndex((e) => Array.isArray(e));
@@ -236,11 +263,6 @@ test('edited shots and swaps are refused', () => {
     }],
     ['a shot put off', (p) => {
       for (const s of shotsIn(p.chunks[1])) s[0] += 100;
-    }],
-    ['an extra swap', (p) => {
-      const c = p.chunks[1];
-      const i = c.e.findIndex((e) => Array.isArray(e));
-      c.e.splice(i, 0, (c.e[i] as number[])[0]);
     }],
     ['the clock run on past the end', (p) => {
       p.chunks[p.chunks.length - 1].t = (p.chunks[p.chunks.length - 1].t as number) + 50;

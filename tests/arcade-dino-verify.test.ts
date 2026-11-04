@@ -104,7 +104,7 @@ test('an honest run, played chunk by chunk in real time, goes on the board once'
   assert.equal((await w.call('/runs/start', { run, init: course.init })).status, 200);
   const done = await w.play(run, course.chunks, course.score);
   assert.equal(done.status, 200, JSON.stringify(done));
-  assert.ok(course.chunks.length > 3, 'the run should take several chunks');
+  assert.ok(course.chunks.length > 1, 'the run should take more than one chunk');
   assert.equal((await w.submit('dino', course.score + 1, run)).status, 403, 'a bigger score than run');
   assert.equal((await w.submit('dino', course.score, run)).status, 200);
   assert.deepEqual((await w.board('dino')).map((e) => [e.name, e.score]), [['Tester', course.score]]);
@@ -172,7 +172,7 @@ test('edited or made-up keys and widths are refused', () => {
   longer[longer.length - 1].t = run.ticks + 10;
   assert.equal(replay(seed, run.init, longer), 'clock past the crash');
   // a run cut short is still going
-  assert.equal(replay(seed, run.init, run.chunks.slice(0, 2)), 'still running');
+  assert.equal(replay(seed, run.init, run.chunks.slice(0, -1)), 'still running');
   // keys that are already held, or not keys at all
   const same = copy(run.chunks);
   const first = nth(same, 0);

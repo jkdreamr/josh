@@ -1,7 +1,9 @@
 // A run a game plays for the global leaderboard, recorded for the Worker to check (see verify/protocol.ts).
 import { useEffect, useRef } from 'react';
-import { FEED_MS } from '../verify/protocol.ts';
-import { ARCADE_API, noteFinishing, openRun, post, type RunTicket } from './leaderboard';
+import { FEED_MS, FIRST_FEED_MS } from '../verify/protocol.ts';
+import { ARCADE_API, noteFinishing, openRun, post, type RunTicket } from './leaderboard.ts';
+
+const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
 
 /** Events kept before a chunk goes early, so no chunk grows past the Worker's limit. */
 const CHUNK_EVENTS = 1_000;
@@ -22,8 +24,12 @@ export class RankedRun {
   private events: unknown[] = [];
   private at: unknown = 0;
   private n = 0;
+  /** The clock the last chunk went with: nothing new (a paused game) sends nothing. */
+  private sentAt: unknown = undefined;
+  /** When the last chunk went (performance.now()), so a late timer can't let one grow past what the Worker takes. */
+  private sentWall = 0;
   private chain: Promise<boolean> = Promise.resolve(true);
-  private timer: ReturnType<typeof setInterval> | null = null;
+  private timer: ReturnType<typeof setTimeout> | null = null;
   private readonly api: string;
 
   constructor(game: string, api = ARCADE_API) {
@@ -58,7 +64,14 @@ export class RankedRun {
     if (!this.ticket || this.begun) return false;
     this.begun = true;
     this.send('/runs/start', { run: this.ticket.run, init });
-    this.timer = setInterval(() => this.flush(), FEED_MS);
+    this.sentWall = now();
+    const tick = (wait: number) => {
+      this.timer = setTimeout(() => {
+        this.flush();
+        if (this.timer !== null) tick(FEED_MS);
+      }, wait);
+    };
+    tick(FIRST_FEED_MS);
     return true;
   }
 
@@ -69,9 +82,10 @@ export class RankedRun {
     if (this.events.length >= CHUNK_EVENTS) this.flush();
   }
 
-  /** The run's own clock, stamped on the next chunk. */
+  /** The run's own clock, stamped on the next chunk. (Called each frame, it also sends a chunk the timer is late with.) */
   clock(at: unknown) {
     this.at = at;
+    if (this.timer !== null && now() - this.sentWall > FEED_MS + 2_000) this.flush();
   }
 
   /** Sends the last chunk with the score. The run's id, for the Game Over card, or undefined for an unranked run. */
@@ -87,12 +101,15 @@ export class RankedRun {
 
   /** Stops sending (the game was left mid-run). */
   stop() {
-    if (this.timer !== null) clearInterval(this.timer);
+    if (this.timer !== null) clearTimeout(this.timer);
     this.timer = null;
   }
 
   private flush() {
     if (!this.begun || this.ended || this.broken || !this.ticket) return;
+    if (!this.events.length && this.at === this.sentAt) return;
+    this.sentAt = this.at;
+    this.sentWall = now();
     this.send('/runs/feed', { run: this.ticket.run, n: this.n++, e: this.events.splice(0), t: this.at });
   }
 

@@ -48,7 +48,12 @@ export function paceError(gameMs: number, wallMs: number, pace: Pace | undefined
   return null;
 }
 
-/** How often the game sends a chunk while it plays, and the most a chunk or a run may hold. */
-export const FEED_MS = 8_000;
+/**
+ * How often the game sends a chunk while it plays: the first soon (the Worker's first replay of a run warms it up, so
+ * it gets little to do), then every FEED_MS (each chunk is a request, and the Workers Free plan allows 100,000 a day).
+ * And the most a chunk or a run may hold.
+ */
+export const FIRST_FEED_MS = 4_000;
+export const FEED_MS = 15_000;
 export const MAX_CHUNK_BYTES = 64 * 1024;
 export const MAX_CHUNKS = 2_000;

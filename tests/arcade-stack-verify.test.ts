@@ -95,7 +95,7 @@ test('an honest tower, built chunk by chunk in real time, goes on the board once
   assert.equal((await w.call('/runs/start', { run, init: {} })).status, 200);
   const done = await w.play(run, tower.chunks, tower.score);
   assert.equal(done.status, 200, JSON.stringify(done));
-  assert.ok(tower.chunks.length > 3, 'the tower should take several chunks');
+  assert.ok(tower.chunks.length > 1, 'the tower should take more than one chunk');
   assert.equal((await w.submit('stack', tower.score + 1, run)).status, 403, 'a taller tower than built');
   assert.equal((await w.submit('stack', tower.score, run)).status, 200);
   assert.deepEqual((await w.board('stack')).map((e) => [e.name, e.score]), [['Tester', tower.score]]);

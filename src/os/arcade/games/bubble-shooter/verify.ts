@@ -13,7 +13,7 @@ import { createGame, fire, MIN_ANGLE, STEP, swap, tick, type Game } from './logi
 export const BOARD = 'bubble-shooter';
 /** Four hours of play: more than any run, and a bound on the work a run can ask of the Worker. */
 export const MAX_TICKS = Math.round((4 * 3600) / STEP);
-/** A chunk covers FEED_MS of play (the page sends one every 8 s); one that claims twice that is not from the game. */
+/** A chunk covers FEED_MS of play (the page sends one that often); one that claims twice that is not from the game. */
 export const MAX_CHUNK_TICKS = Math.round((2 * FEED_MS) / 1000 / STEP);
 /** The page sends a chunk early once it holds 1,000 (see kit/run.ts); twice that is not from the game. */
 export const MAX_CHUNK_EVENTS = 2_000;
