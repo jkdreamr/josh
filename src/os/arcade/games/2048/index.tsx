@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
-import { GameShell, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useShell } from '../../kit';
+import { GameShell, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useRankedRun, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import {
   bestTile, canMove, createGame, departed, emptyGrid, frameUnit, isSeedRequest, layout, leftNotice, mergePitch, move, ONLINE_SECONDS, parseSave, parseSeed,
-  randomSeed, seeded, spawn, undo, type Direction, type Grid, type Layout, type Position, type Rect, type TileMove,
+  MOVES, randomSeed, seeded, spawn, undo, UNDO, type Direction, type Grid, type Layout, type Position, type Rect, type TileMove,
 } from './logic';
 import { meta } from './meta';
 import './2048.css';
@@ -12,7 +12,7 @@ const SAVE_KEY = 'arcade:2048:save';
 const SLIDE = 0.1;
 const POP = 0.16;
 
-type Animation = { t: number; moves: TileMove[]; merges: Position[]; spawn: Position | null };
+type Animation = { t: number; moves: TileMove[]; merges: Position[]; spawns: Position[] };
 type Spark = { x: number; y: number; vx: number; vy: number; life: number; color: string; r: number };
 type State = {
   grid: Grid;
@@ -29,16 +29,21 @@ type State = {
   rand: () => number;
   seed: number | null;
   timeLeft: number;
+  /** The board waits a moment for the ranked run's seed before its first two tiles are dealt (see deal). */
+  dealing: boolean;
+  /** This game is ranked: the Worker replays it (see verify.ts), so its slides and undo are recorded. */
+  ranked: boolean;
 };
 
 const fresh = (seed: number | null): State => {
   const rand = seed === null ? Math.random : seeded(seed);
   return {
     grid: createGame(rand), score: 0, previous: null, undoUsed: false, animation: null, won: false,
-    lossDelay: 0, shaking: 0, bump: null, sparks: [], glow: 0, rand, seed, timeLeft: ONLINE_SECONDS,
+    lossDelay: 0, shaking: 0, bump: null, sparks: [], glow: 0, rand, seed, timeLeft: ONLINE_SECONDS, dealing: false, ranked: false,
   };
 };
 const waiting = (): State => ({ ...fresh(null), grid: emptyGrid(), seed: -1 });
+const dealing = (): State => ({ ...fresh(null), grid: emptyGrid(), dealing: true });
 
 const easeOut = (t: number) => 1 - Math.pow(1 - t, 3);
 const easeBack = (t: number) => 1 + 2.70158 * Math.pow(t - 1, 3) + 1.70158 * Math.pow(t - 1, 2);
@@ -73,13 +78,28 @@ function Play() {
   const [, setRevision] = useState(0);
   const refresh = () => setRevision((r) => r + 1);
   const state = useRef<State | null>(null);
+  // The global board takes a score only from a game the Worker replays (see verify.ts): a new game asks for the run
+  // as it opens, and its seed deals the tiles. A saved game picked up again, or one that can't get the run, plays unranked.
+  const canRank = !online && !shell.compact;
+  const rankedRun = useRankedRun(meta.id, canRank);
   if (!state.current) {
     const saved = !online && shell.round === 0 && typeof localStorage !== 'undefined' ? parseSave(localStorage.getItem(SAVE_KEY)) : null;
     if (online && !online.isHost) state.current = waiting();
     else if (online) state.current = fresh(randomSeed());
     else if (saved) state.current = { ...fresh(null), ...saved };
+    else if (canRank) state.current = dealing();
     else state.current = fresh(null);
   }
+  /** The ranked run's clock: ms since it began, never going back. */
+  const runClock = useRef({ t0: 0, ms: 0 });
+  const runMs = () => {
+    const c = runClock.current;
+    c.ms = Math.max(c.ms, Math.round(performance.now() - c.t0));
+    rankedRun()?.clock(c.ms);
+    return c.ms;
+  };
+  const statusNow = useRef(shell.status);
+  statusNow.current = shell.status;
   const { ref, size, ctx } = useCanvas();
   const swipe = useRef<{ id: number; x: number; y: number; done: boolean } | null>(null);
   const [unit, setUnit] = useState(1);
@@ -106,6 +126,39 @@ function Play() {
       localStorage.setItem(SAVE_KEY, JSON.stringify({ grid: s.grid, score: s.score, won: s.won, undoUsed: s.undoUsed, previous: s.previous }));
     } catch { /* storage full or blocked */ }
   };
+
+  // A new game's first two tiles wait a moment for the ranked run (it is usually in before the Start card goes): dealt
+  // from its seed, the game is ranked; without it (offline, or it was slow) they come from Math.random, unranked.
+  useEffect(() => {
+    if (!state.current?.dealing) return;
+    const asked = performance.now();
+    const deal = () => {
+      const s = state.current;
+      if (!s?.dealing) return true;
+      const ranked = rankedRun();
+      if (ranked?.pending && performance.now() - asked < 1500) return false;
+      const seed = ranked?.seed ?? null;
+      s.ranked = seed !== null && !!ranked?.begin({});
+      if (s.ranked) runClock.current = { t0: performance.now(), ms: 0 };
+      s.rand = s.ranked ? seeded(seed!) : Math.random;
+      // (as createGame deals them, so the Worker's replay starts on the same two tiles)
+      const first = spawn(emptyGrid(), s.rand);
+      const second = spawn(first.grid, s.rand);
+      s.grid = second.grid;
+      s.dealing = false;
+      // they pop in while the game is under way (behind the Start card they are just there)
+      if (statusNow.current === 'playing') s.animation = { t: SLIDE, moves: [], merges: [], spawns: [first.position!, second.position!] };
+      refresh();
+      shell.invalidate();
+      return true;
+    };
+    if (deal()) return;
+    const timer = window.setInterval(() => {
+      if (deal()) window.clearInterval(timer);
+    }, 50);
+    return () => window.clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Measure the shell's control pill and online badge in layout px, and the frame scale on touch devices.
   const { root } = shell;
@@ -221,7 +274,10 @@ function Play() {
   const finish = (title: string) => {
     const s = state.current!;
     if (!online) localStorage.removeItem(SAVE_KEY);
-    shell.gameOver(s.score, { title, detail: `Best tile ${bestTile(s.grid).toLocaleString('en-US')}.` });
+    // the end of the game goes off to be checked now; a score submitted from the card waits for the answer
+    if (s.ranked) runMs();
+    const run = s.ranked ? rankedRun()?.end(s.score) : undefined;
+    shell.gameOver(s.score, { title, detail: `Best tile ${bestTile(s.grid).toLocaleString('en-US')}.`, ...(run ? { run } : {}) });
     sfx.play('lose');
   };
 
@@ -230,6 +286,7 @@ function Play() {
     if (!s || s.undoUsed || shell.status !== 'playing') return;
     const result = undo({ grid: s.grid, score: s.score, used: s.undoUsed }, s.previous);
     if (!result.restored) return;
+    if (s.ranked) rankedRun()?.record([runMs(), UNDO]);
     Object.assign(s, { grid: result.state.grid, score: result.state.score, undoUsed: true, previous: null, lossDelay: 0, shaking: 0, animation: null, sparks: [] });
     setGain(null);
     save();
@@ -240,7 +297,7 @@ function Play() {
 
   const playMove = (direction: Direction) => {
     const s = state.current;
-    if (!s || s.seed === -1 || shell.status !== 'playing' || s.lossDelay > 0) return;
+    if (!s || s.seed === -1 || s.dealing || shell.status !== 'playing' || s.lossDelay > 0) return;
     const result = move(s.grid, direction);
     if (!result.moved) {
       const d = { left: [-1, 0], right: [1, 0], up: [0, -1], down: [0, 1] }[direction];
@@ -248,12 +305,13 @@ function Play() {
       sfx.tone({ freq: 150, to: 120, dur: 0.05, type: 'triangle', vol: 0.12 });
       return;
     }
+    if (s.ranked) rankedRun()?.record([runMs(), MOVES.indexOf(direction)]);
     if (!s.undoUsed) s.previous = { grid: s.grid.map((row) => [...row]), score: s.score };
     const next = spawn(result.grid, s.rand);
     s.grid = next.grid;
     s.score += result.gained;
     const merges = result.moves.filter((m) => m.merged).map((m) => m.to).filter((p, i, all) => all.findIndex((q) => q[0] === p[0] && q[1] === p[1]) === i);
-    s.animation = { t: 0, moves: result.moves, merges, spawn: next.position };
+    s.animation = { t: 0, moves: result.moves, merges, spawns: next.position ? [next.position] : [] };
     s.bump = null;
     if (result.gained) setGain({ id: performance.now(), n: result.gained });
     const top = merges.reduce((m, [r, c]) => Math.max(m, s.grid[r][c]), 0);
@@ -299,6 +357,7 @@ function Play() {
   useGameLoop((dt) => {
     const s = state.current;
     if (!s) return;
+    if (s.ranked) runMs();
     if (s.animation) {
       s.animation.t += dt;
       if (s.animation.t >= SLIDE + POP) s.animation = null;
@@ -399,7 +458,7 @@ function Play() {
         if (a) {
           const t = clamp01((a.t - SLIDE) / POP);
           if (a.merges.some((q) => q[0] === r && q[1] === col)) scale = 1 + Math.sin(t * Math.PI) * 0.16;
-          if (a.spawn && a.spawn[0] === r && a.spawn[1] === col) scale = Math.max(0.05, easeBack(t));
+          if (a.spawns.some((q) => q[0] === r && q[1] === col)) scale = Math.max(0.05, easeBack(t));
         }
         const z = cell * scale;
         drawTile(c, cx(col) - (z - cell) / 2, cx(r) - (z - cell) / 2, z, value, radius * scale);

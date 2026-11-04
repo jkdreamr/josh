@@ -1,4 +1,6 @@
 // Pure rules for Stack: slabs, slicing, perfect combos and difficulty. No DOM, no three.js.
+import { powi } from '../../verify/dmath.ts';
+
 export type Axis = 'x' | 'z';
 export type Slab = { x: number; z: number; w: number; d: number };
 
@@ -45,12 +47,19 @@ export type State = {
   perfects: number;
   bestStreak: number;
   over: boolean;
+  /** Fixed steps the slab has slid (STEP each): a ranked run's drops are stamped with them, so the Worker can replay it. */
+  ticks: number;
 };
 
 export const MIN_SPEED = 2.4;
 export const MAX_SPEED = 5.4;
-/** Slab speed for a score: quick to pick up early, easing toward MAX_SPEED around 60 slabs so the perfect window never gets unfair. */
-export const speedFor = (score: number) => MIN_SPEED + (MAX_SPEED - MIN_SPEED) * (1 - Math.exp(-Math.max(0, score) / 28));
+/** e^(-1/28), written out: Math.exp need not give the same last bit in every browser (see verify/dmath.ts). */
+const EASE = 0.96491594437237;
+/**
+ * Slab speed for a score: quick to pick up early, easing toward MAX_SPEED around 60 slabs so the perfect window never
+ * gets unfair. (e^(-score / 28) by whole powers, so a ranked tower's replay slides every slab exactly as the page did.)
+ */
+export const speedFor = (score: number) => MIN_SPEED + (MAX_SPEED - MIN_SPEED) * (1 - powi(EASE, Math.max(0, Math.floor(score))));
 
 function spawn(stack: Slab[], axis: Axis, grow: boolean): Slab {
   const top = stack[stack.length - 1];
@@ -66,8 +75,11 @@ function spawn(stack: Slab[], axis: Axis, grow: boolean): Slab {
 
 export function create(): State {
   const stack = [{ x: 0, z: 0, w: BASE, d: BASE }];
-  return { stack, moving: spawn(stack, 'x', false), axis: 'x', dir: 1, pos: -RANGE, speed: speedFor(0), streak: 0, score: 0, perfects: 0, bestStreak: 0, over: false };
+  return { stack, moving: spawn(stack, 'x', false), axis: 'x', dir: 1, pos: -RANGE, speed: speedFor(0), streak: 0, score: 0, perfects: 0, bestStreak: 0, over: false, ticks: 0 };
 }
+
+/** The page slides the slab in fixed steps this long (short enough that no screen shows them). */
+export const STEP = 1 / 480;
 
 /** Advance the moving slab; it bounces between -RANGE and +RANGE, far enough out that even a full width slab can miss. */
 export function step(s: State, dt: number) {
@@ -82,6 +94,13 @@ export function step(s: State, dt: number) {
   }
   if (s.axis === 'x') s.moving.x = s.pos;
   else s.moving.z = s.pos;
+}
+
+/** One fixed step of the slide, as the page takes them: what a ranked run's replay walks through (see verify.ts). */
+export function tick(s: State) {
+  if (s.over) return;
+  step(s, STEP);
+  s.ticks += 1;
 }
 
 export type DropOutcome = { result: PlaceResult; level: number; grew: boolean };

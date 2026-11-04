@@ -1,18 +1,20 @@
 import { useEffect, useRef } from 'react';
-import { GameShell, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useShell } from '../../kit';
+import { GameShell, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useRankedRun, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import {
+  advance,
   createSnake,
+  DIRECTIONS,
   fitBoard,
   gridFor,
   heading,
-  opposite,
   queueDirection,
+  rng32,
   speedForLength,
-  stepSnake,
-  wouldDie,
+  startSnake,
   type Board,
   type Direction,
+  type Pacer,
   type Rect,
   type SnakeState,
 } from './logic';
@@ -21,12 +23,16 @@ import './snake.css';
 
 type Particle = { x: number; y: number; vx: number; vy: number; life: number; max: number; color: string; size: number };
 type Popup = { x: number; y: number; life: number; text: string };
-type Round = {
+type Round = Pacer & {
   state: SnakeState | null;
   started: boolean;
-  accumulator: number;
-  grace: boolean;
-  graceUsed: boolean;
+  /** Where the food comes from: Math.random, or the ranked run's seed once it is in (see deal). */
+  rng: () => number;
+  /** The ranked run's ticket was looked at before the first key; `seeded`: it was in, and the food came from its seed. */
+  dealt: boolean;
+  seeded: boolean;
+  /** This round is ranked: the Worker replays it (see verify.ts), so its turns and hesitations are recorded. */
+  ranked: boolean;
   death: number;
   shake: number;
   foodAge: number;
@@ -80,6 +86,11 @@ function Play() {
     accumulator: 0,
     grace: false,
     graceUsed: false,
+    steps: 0,
+    rng: Math.random,
+    dealt: false,
+    seeded: false,
+    ranked: false,
     death: 0,
     shake: 0,
     foodAge: 1,
@@ -100,6 +111,26 @@ function Play() {
     scored: false,
   }).current;
   const { ref, size, ctx } = useCanvas();
+  // The global board takes a score only from a round the Worker replays (see verify.ts): the run is asked for as the
+  // round opens, and its seed drops the food. A round that starts without it (offline, or it was slow) still plays.
+  const online = useOnline();
+  const rankedRun = useRankedRun(meta.id, !online && !shell.compact);
+  useEffect(() => {
+    rankedRun();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  /** Once the run's ticket is in, before the first key: the food is dropped again from its seed. */
+  const deal = () => {
+    const ranked = rankedRun();
+    if (round.dealt || round.started || !round.state || ranked?.pending) return;
+    round.dealt = true;
+    const seed = ranked?.seed;
+    if (seed === null || seed === undefined) return;
+    round.rng = rng32(seed);
+    round.state = createSnake(round.state.cols, round.state.rows, round.rng);
+    round.foodAge = 0;
+    round.seeded = true;
+  };
 
   // A phone or iPad frame scales the game down; the toolbar and text grow by the same factor so they stay finger sized.
   useEffect(() => {
@@ -129,20 +160,21 @@ function Play() {
   }, [shell.touch, shell.root, shell.invalidate, round]);
 
   const steer = (next: Direction) => {
-    const state = round.state;
-    if (!state || !state.alive || state.won || shell.status !== 'playing') return;
+    if (!round.state || !round.state.alive || round.state.won || shell.status !== 'playing') return;
     if (!round.started) {
-      if (opposite(next, state.direction)) {
-        state.segments.reverse();
-        state.previous = state.segments.map((p) => ({ ...p }));
-        state.direction = next;
-      } else if (next !== state.direction) state.queue.push(next);
+      const ranked = rankedRun();
+      // (a moment's wait for the run, if it is still on its way, so the round can count globally)
+      if (ranked?.pending && round.elapsed < 1.5) return;
+      deal();
+      const state = round.state;
+      startSnake(state, next);
       round.started = true;
       round.accumulator = 1 / speedForLength(state.segments.length);
+      if (round.seeded && ranked?.begin({ cols: state.cols, rows: state.rows, dir: DIRECTIONS.indexOf(next) })) round.ranked = true;
       sfx.play('blip', 1.4);
       return;
     }
-    queueDirection(state, next);
+    if (queueDirection(round.state, next) && round.ranked) rankedRun()?.record([round.steps, DIRECTIONS.indexOf(next)]);
   };
 
   useKeys((code, e) => {
@@ -155,6 +187,7 @@ function Play() {
   useGameLoop(
     (dt) => {
       if (!round.state) ensureState(round, size.w, size.h);
+      if (!round.dealt) deal();
       if (shell.status === 'playing' && !round.scored) {
         round.scored = true;
         shell.setScore(0);
@@ -180,29 +213,27 @@ function Play() {
         if (round.death > 0.95 && !round.ended) {
           round.ended = true;
           const length = state.segments.length;
+          // the end of the round goes off to be checked now; a score submitted from the card waits for the answer
+          const run = round.ranked ? rankedRun()?.end(state.score) : undefined;
           shell.gameOver(state.score, {
             title: state.cause === 'wall' ? 'You Hit the Wall' : 'You Bit Your Tail',
             detail: `Your snake reached a length of ${length}.`,
+            ...(run ? { run } : {}),
           });
         }
         return;
       }
       if (!round.started || state.won) return;
       round.accumulator += dt;
+      const ranked = round.ranked ? rankedRun() : null;
       for (;;) {
-        const interval = 1 / speedForLength(state.segments.length);
-        const due = interval * (round.grace ? 1.55 : 1);
-        if (round.accumulator < due) break;
-        if (!round.grace && !round.graceUsed && wouldDie(state)) {
-          round.grace = true;
-          round.graceUsed = true;
+        const oldFood = state.food;
+        const result = advance(state, round, round.rng);
+        if (result === 'wait') break;
+        if (result === 'grace') {
+          ranked?.record(round.steps);
           continue;
         }
-        round.accumulator -= due;
-        round.grace = false;
-        const oldFood = state.food;
-        const result = stepSnake(state);
-        if (result === 'moved' || result === 'ate') round.graceUsed = false;
         if (result === 'ate' || result === 'won') {
           round.foodAge = 0;
           round.gulps.push(0);
@@ -230,12 +261,17 @@ function Play() {
           round.ended = true;
           const b = round.board;
           if (b) burst(round.particles, b.x + b.width / 2, b.y + b.height / 2, b.cell * 3, ['#86f5a4', '#ffd60a', '#ff6b5e', '#64d2ff'], 40);
-          shell.gameOver(state.score, { title: 'You Win', detail: 'You filled the whole board.' });
+          ranked?.clock(round.steps);
+          const run = ranked?.end(state.score);
+          shell.gameOver(state.score, { title: 'You Win', detail: 'You filled the whole board.', ...(run ? { run } : {}) });
           break;
         }
       }
+      ranked?.clock(round.steps);
     },
     () => draw(ctx(), size.w, size.h, round, shell, best),
+    // (a slow frame is caught up rather than played in slow motion: a slowed-down snake is easier to steer)
+    { realtime: true },
   );
 
   const local = (event: React.PointerEvent<HTMLCanvasElement>) => ({ x: event.nativeEvent.offsetX, y: event.nativeEvent.offsetY });

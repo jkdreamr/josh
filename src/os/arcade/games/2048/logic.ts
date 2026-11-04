@@ -62,6 +62,39 @@ export function move(grid: Grid, direction: Direction): MoveResult {
   return { grid: next, moved, gained, moves };
 }
 
+const rowOf = (direction: Direction, line: number, k: number) => (direction === 'left' || direction === 'right' ? line : direction === 'up' ? k : 3 - k);
+const colOf = (direction: Direction, line: number, k: number) => (direction === 'left' ? k : direction === 'right' ? 3 - k : line);
+
+/**
+ * move() without the tile paths the page animates: the same grid, points and whether anything moved, many times
+ * quicker (the Worker's replay of a ranked game slides it all again; see verify.ts).
+ */
+export function slide(grid: Grid, direction: Direction): { grid: Grid; moved: boolean; gained: number } {
+  const next = emptyGrid();
+  let gained = 0;
+  for (let line = 0; line < 4; line++) {
+    // `filled` cells of the line taken so far, the last of them still open to a merge when `open` is its value
+    let filled = 0;
+    let open = 0;
+    for (let k = 0; k < 4; k++) {
+      const value = grid[rowOf(direction, line, k)][colOf(direction, line, k)];
+      if (!value) continue;
+      if (value === open) {
+        next[rowOf(direction, line, filled - 1)][colOf(direction, line, filled - 1)] = value * 2;
+        gained += value * 2;
+        open = 0;
+      } else {
+        next[rowOf(direction, line, filled)][colOf(direction, line, filled)] = value;
+        open = value;
+        filled++;
+      }
+    }
+  }
+  let moved = false;
+  for (let r = 0; r < 4 && !moved; r++) for (let c = 0; c < 4; c++) if (next[r][c] !== grid[r][c]) moved = true;
+  return { grid: next, moved, gained };
+}
+
 export function canMove(grid: Grid): boolean {
   for (let r = 0; r < 4; r++) for (let c = 0; c < 4; c++) {
     if (!grid[r][c]) return true;
@@ -70,6 +103,10 @@ export function canMove(grid: Grid): boolean {
   }
   return false;
 }
+
+/** A slide's number in a ranked run's events (see verify.ts), and the undo's. */
+export const MOVES: readonly Direction[] = ['left', 'right', 'up', 'down'];
+export const UNDO = 4;
 
 export type UndoState = { grid: Grid; score: number; used: boolean };
 
