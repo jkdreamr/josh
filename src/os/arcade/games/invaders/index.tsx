@@ -1,8 +1,8 @@
 import { useRef, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, sfx, TouchControls, useCanvas, useGameLoop, useHighScore, useKeys, useShell } from '../../kit';
+import { GameShell, sfx, TouchControls, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useRankedRun, useShell, type RankedRun } from '../../kit';
 import type { GameProps } from '../../types';
 import { fitCourt, viewHeight, viewTop, type Fit } from './layout';
-import { alienHeight, alienWidth, createInvaders, firePlayerShot, stepInvaders, type InvadersState } from './logic';
+import { alienHeight, alienWidth, firePlayerShot, newRound, play, rng32, type InvadersState, type Steer } from './logic';
 import { meta } from './meta';
 import './invaders.css';
 
@@ -11,6 +11,15 @@ type Burst = { x: number; y: number; time: number; color: string; big: boolean }
 type Drag = { id: number; startX: number; ship: number };
 type Round = {
   game: InvadersState;
+  /** Where the invaders' shots, the saucers and the shield damage come from: the run's seed once it is ranked. */
+  rng: () => number;
+  /** The ranked run being recorded (see verify.ts), once it has begun. */
+  run: RankedRun | null;
+  /** The cannon input the run last recorded. */
+  steer: Steer;
+  started: boolean;
+  /** How long play has waited for the run to come in. */
+  wait: number;
   particles: Particle[];
   bursts: Burst[];
   ended: boolean;
@@ -46,39 +55,63 @@ export default function Game({ compact, onExit }: GameProps) {
 function Play() {
   const shell = useShell();
   const keys = useKeys();
+  const online = useOnline();
   const { best } = useHighScore(meta.id);
   const { ref, size, ctx } = useCanvas();
   const round = useRef<Round | null>(null);
   if (!round.current) {
-    const game = createInvaders();
-    game.waveBanner = 1;
     round.current = {
-      game, particles: [], bursts: [], ended: false, over: false, endTimer: 0, march: 0, shake: 0, flash: 0, time: 0,
+      game: newRound(), rng: Math.random, run: null, steer: { axis: 0, target: null }, started: false, wait: 0,
+      particles: [], bursts: [], ended: false, over: false, endTimer: 0, march: 0, shake: 0, flash: 0, time: 0,
       fireTimer: 0, fireHeld: false, target: null, drag: null, fit: null,
     };
   }
   const r = round.current;
+  // The global board takes a score only from a run the Worker replays (see verify.ts): the run is asked for as play
+  // begins, and its seed drives the invaders. A round that starts without it still plays.
+  const rankedRun = useRankedRun(meta.id, !online && !shell.compact);
+
+  /** Fires, if the cannon can (a ranked run records the shot). */
+  const fire = () => {
+    if (!firePlayerShot(r.game)) return false;
+    r.run?.record([r.game.ticks, 'f']);
+    r.fireTimer = fireRepeat;
+    return true;
+  };
 
   useGameLoop(
     (dt) => {
+      const ranked = rankedRun();
+      if (!r.started) {
+        // (a moment's wait for the run, if it is still on its way, so the round can count globally)
+        if (ranked?.pending && r.wait < 1.5) {
+          r.wait += dt;
+          return;
+        }
+        r.started = true;
+        const seed = ranked?.seed;
+        if (ranked && seed !== null && seed !== undefined && ranked.begin({})) {
+          // (nothing has moved yet, so the fresh round looks just like the one it replaces)
+          r.rng = rng32(seed);
+          r.game = newRound(r.rng);
+          r.run = ranked;
+        }
+      }
       const game = r.game;
+      const run = r.run;
       r.time += dt;
       r.shake = Math.max(0, r.shake - dt);
       r.flash = Math.max(0, r.flash - dt);
       r.fireTimer = Math.max(0, r.fireTimer - dt);
       const keyAxis = keys.axis('left', 'right');
       if (keyAxis !== 0) r.target = null;
-      let axis: number = keyAxis;
-      if (r.target !== null && !game.ended) {
-        const gap = r.target - game.player.x;
-        axis = Math.abs(gap) < 0.5 ? 0 : Math.max(-1, Math.min(1, gap / Math.max(1e-6, game.player.speed * dt)));
-      }
       const tapped = keys.pressed('action');
-      if (!r.ended && (tapped || ((keys.down('action') || r.fireHeld) && r.fireTimer <= 0))) {
-        if (firePlayerShot(game)) r.fireTimer = fireRepeat;
-      }
-      stepInvaders(game, dt, axis);
-      for (const effect of game.effects) {
+      if (!r.ended && (tapped || ((keys.down('action') || r.fireHeld) && r.fireTimer <= 0))) fire();
+      // (the pointer in eighths of a unit, so a ranked run records it exactly in a few characters)
+      const steer: Steer = { axis: keyAxis, target: r.target === null ? null : Math.round(r.target * 8) / 8 };
+      const effects = play(game, dt, steer, r.rng, run ? () => note(r, run, steer) : undefined);
+      if (run) run.clock(game.ticks);
+      for (const effect of effects) {
         if (effect.type === 'march') {
           r.march++;
           sfx.play('tick', [0.75, 0.86, 0.98, 1.1][r.march % 4]);
@@ -129,7 +162,9 @@ function Play() {
         r.over = true;
         const waves = `${game.wave} ${game.wave === 1 ? 'wave' : 'waves'}`;
         const landed = game.aliens.some((a) => a.y + alienHeight >= game.player.y - 12);
-        shell.gameOver(game.score, { detail: landed ? `They landed on wave ${game.wave}.` : `You held through ${waves}.` });
+        // the end of the run goes off to be checked now; a score submitted from the card waits for the answer
+        const id = run?.end(game.score);
+        shell.gameOver(game.score, { detail: landed ? `They landed on wave ${game.wave}.` : `You held through ${waves}.`, ...(id ? { run: id } : {}) });
       }
     },
     () => {
@@ -154,7 +189,7 @@ function Play() {
       r.drag = { id: e.pointerId, startX: x, ship: r.game.player.x };
     }
     r.fireHeld = true;
-    if (firePlayerShot(r.game)) r.fireTimer = fireRepeat;
+    fire();
   };
   const onPointerMove = (e: RPointerEvent<HTMLCanvasElement>) => {
     if (shell.status !== 'playing' || r.ended) return;
@@ -182,6 +217,16 @@ function Play() {
       onContextMenu={(e) => e.preventDefault()}
     />
   );
+}
+
+/** A ranked run's cannon input for the step about to be taken, recorded when it changes. */
+function note(r: Round, run: RankedRun, steer: Steer) {
+  const was = r.steer;
+  const step = r.game.ticks;
+  if (steer.target !== null) {
+    if (was.target !== steer.target) run.record([step, 'p', steer.target]);
+  } else if (was.target !== null || was.axis !== steer.axis) run.record([step, 'k', steer.axis]);
+  r.steer = steer.target !== null ? { axis: 0, target: steer.target } : { axis: steer.axis, target: null };
 }
 
 /** Where the shell's control pill sits over the canvas, in canvas CSS pixels (the laptop screen is transformed). */

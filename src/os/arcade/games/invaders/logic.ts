@@ -28,8 +28,18 @@ export type InvadersState = {
   pointsFlash: { x: number; y: number; value: number; time: number } | null;
   elapsed: number;
   ended: boolean;
-  effects: { type: 'march' | 'alien' | 'player' | 'ufo' | 'shot' | 'wave' | 'clash' | 'life' | 'shield'; x: number; y: number; points?: number }[];
+  effects: Effect[];
+  /** Steps taken: a ranked run's inputs are stamped with it, so the leaderboard can replay the run (see verify.ts). */
+  ticks: number;
+  /** Time not yet stepped (play takes fixed steps of STEP). */
+  acc: number;
 };
+export type Effect = { type: 'march' | 'alien' | 'player' | 'ufo' | 'shot' | 'wave' | 'clash' | 'life' | 'shield'; x: number; y: number; points?: number };
+/** The cannon's input for a step: the arrow keys' axis, or where the pointer leads it (it wins when set). */
+export type Steer = { axis: number; target: number | null };
+
+/** Play goes in fixed steps of this many seconds, so a run plays the same at any frame rate. */
+export const STEP = 1 / 120;
 
 export const alienWidth = 28;
 export const alienHeight = 21;
@@ -98,7 +108,16 @@ export function createInvaders(wave = 1, lives = 3, score = 0, rng: () => number
     elapsed: 0,
     ended: false,
     effects: [],
+    ticks: 0,
+    acc: 0,
   };
+}
+
+/** A round as the page starts it: wave 1, its banner up for a second. */
+export function newRound(rng: () => number = Math.random) {
+  const game = createInvaders(1, 3, 0, rng);
+  game.waveBanner = 1;
+  return game;
 }
 
 export function stepFormation(state: InvadersState) {
@@ -308,6 +327,7 @@ function awardLives(state: InvadersState) {
 
 export function stepInvaders(state: InvadersState, dt: number, axis = 0, rng: () => number = Math.random) {
   if (state.ended) return;
+  state.ticks++;
   state.effects = [];
   state.elapsed += dt;
   state.player.invulnerable = Math.max(0, state.player.invulnerable - dt);
@@ -363,4 +383,38 @@ export function stepInvaders(state: InvadersState, dt: number, axis = 0, rng: ()
   }
   awardLives(state);
   checkInvasion(state);
+}
+
+/** How hard to steer for the cannon to reach `target` in a step of `dt` without overshooting it. */
+export function steerToward(state: InvadersState, target: number, dt: number) {
+  const gap = target - state.player.x;
+  return Math.abs(gap) < 0.5 ? 0 : Math.max(-1, Math.min(1, gap / Math.max(1e-6, state.player.speed * dt)));
+}
+
+/**
+ * Plays `dt` seconds on in fixed steps of STEP, the cannon taking `steer` (the time left over waits for the next call).
+ * `onStep` hears of each step just before it is taken (a ranked run notes the input there). The steps' effects.
+ */
+export function play(state: InvadersState, dt: number, steer: Steer, rng: () => number = Math.random, onStep?: () => void) {
+  const effects: Effect[] = [];
+  state.acc += Math.min(Math.max(0, dt), 0.1);
+  while (state.acc >= STEP && !state.ended) {
+    state.acc -= STEP;
+    onStep?.();
+    stepInvaders(state, STEP, steer.target === null ? steer.axis : steerToward(state, steer.target, STEP), rng);
+    for (const effect of state.effects) effects.push(effect);
+  }
+  return effects;
+}
+
+/** A small seeded generator: a ranked run's shots, saucers and shield damage come from the seed the leaderboard picked. */
+export function rng32(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
