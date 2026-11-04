@@ -2,12 +2,13 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, mock, test } from 'node:test';
 import { RankedRun } from '../src/os/arcade/kit/run.ts';
-import { FEED_MS, FIRST_FEED_MS } from '../src/os/arcade/verify/protocol.ts';
+import { FEED_MS, FIRST_FEED_MS, isDeviceKey } from '../src/os/arcade/verify/protocol.ts';
 
 type Sent = { path: string; body: any };
 let sent: Sent[];
 let wall: number;
 let status: (path: string) => number;
+let finishScore: unknown;
 const realFetch = globalThis.fetch;
 const realNow = performance.now;
 
@@ -15,13 +16,14 @@ beforeEach(() => {
   sent = [];
   wall = 1_000;
   status = () => 200;
+  finishScore = undefined;
   mock.timers.enable({ apis: ['setTimeout'] });
   performance.now = () => wall;
   globalThis.fetch = (async (url: string, init: { body: string }) => {
     const path = url.replace('http://arcade.test', '');
     sent.push({ path, body: JSON.parse(init.body) });
     const code = status(path);
-    const json = path === '/runs' ? { run: 'run-1', seed: 7 } : { ok: true };
+    const json = path === '/runs' ? { run: 'run-1', seed: 7 } : path === '/runs/finish' && finishScore !== undefined ? { ok: true, score: finishScore } : { ok: true };
     return new Response(JSON.stringify(json), { status: code, headers: { 'content-type': 'application/json' } });
   }) as typeof fetch;
 });
@@ -179,4 +181,47 @@ test('a run left mid-game stops sending', async () => {
   run.clock(10);
   await pass(FEED_MS * 3);
   assert.equal(feeds().length, 1);
+});
+
+test('ready() says whether the ticket came', async () => {
+  const run = new RankedRun('flappy', 'http://arcade.test');
+  assert.equal(await run.ready(), true);
+  status = (path) => (path === '/runs' ? 503 : 200);
+  assert.equal(await new RankedRun('flappy', 'http://arcade.test').ready(), false);
+  assert.equal(await new RankedRun('flappy', '').ready(), false, 'no Worker to ask');
+});
+
+test("verified() is the score the Worker found (a daily board's streak), or null when it turned the run down", async () => {
+  const run = await begun();
+  finishScore = 12;
+  run.record(1);
+  run.clock(2);
+  assert.equal(run.end(1), 'run-1');
+  assert.equal(await run.verified(), 12);
+
+  sent = [];
+  const refused = await begun();
+  status = (path) => (path === '/runs/finish' ? 403 : 200);
+  refused.clock(3);
+  refused.end(1);
+  assert.equal(await refused.verified(), null);
+  assert.equal(await new RankedRun('flappy', 'http://arcade.test').verified(), null, 'not ended');
+});
+
+test("a daily board's run goes with this device's key, the same key every time", async () => {
+  const keys: unknown[] = [];
+  for (let i = 0; i < 2; i++) {
+    const run = new RankedRun('wordguess', 'http://arcade.test');
+    await run.ready();
+    assert.equal(run.begin({ day: 1, rows: [] }, { daily: true }), true);
+    await settle();
+    keys.push(sent.filter((s) => s.path === '/runs/start').at(-1)!.body.device);
+  }
+  assert.ok(isDeviceKey(keys[0]), String(keys[0]));
+  assert.equal(keys[1], keys[0]);
+  // and other games' runs go without it
+  sent = [];
+  const plain = await begun();
+  plain.stop();
+  assert.equal(sent.filter((s) => s.path === '/runs/start').at(-1)!.body.device, undefined);
 });

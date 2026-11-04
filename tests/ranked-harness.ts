@@ -51,13 +51,31 @@ export function rankedWorker(env: Record<string, unknown> = {}) {
     else return realRandom(array as never) as T;
     return array;
   }) as typeof crypto.getRandomValues;
+  const storage = () => ({
+    sql: sqlStorage(db),
+    async setAlarm(at: number) {
+      w.alarm = at;
+    },
+    async getAlarm() {
+      return w.alarm;
+    },
+  });
   const w = {
     clock: 1_800_000_000_000,
     db,
-    boards: new Boards({ storage: { sql: sqlStorage(db) } }, env),
+    boards: new Boards({ storage: storage() }, env),
+    /** When the object's alarm is set for (the Worker's clock), or null. */
+    alarm: null as number | null,
     /** A fresh Boards object on the same storage (the Durable Object restarted), with `env` (secrets). */
     restart(next: Record<string, unknown> = env) {
-      w.boards = new Boards({ storage: { sql: sqlStorage(db) } }, next);
+      w.boards = new Boards({ storage: storage() }, next);
+    },
+    /** Moves the clock to the alarm and lets it go off, as the runtime does. */
+    async ring() {
+      if (w.alarm === null) throw new Error('no alarm set');
+      w.clock = Math.max(w.clock, w.alarm);
+      w.alarm = null;
+      await (w.boards as unknown as { alarm(): Promise<void> }).alarm();
     },
     async call(path: string, body: unknown, headers: Record<string, string> = {}): Promise<Reply> {
       const res = await w.boards.fetch(new Request(`https://arcade.test${path}`, { method: 'POST', headers: { 'content-type': 'application/json', 'CF-Connecting-IP': '203.0.113.9', ...headers }, body: JSON.stringify(body) }));

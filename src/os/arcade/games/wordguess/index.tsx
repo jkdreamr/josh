@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { GameShell, Segmented, defineSetting, getSetting, sfx, useCanvas, useGameLoop, useKeys, useSetting, useShell } from '../../kit';
+import { GameShell, Segmented, defineSetting, getSetting, sfx, useCanvas, useGameLoop, useKeys, useRankedRun, useSetting, useShell, type RankedRun } from '../../kit';
 import type { GameProps } from '../../types';
 import { ANSWERS } from './answers';
 import {
@@ -161,6 +161,10 @@ function Round({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
     clockAt: number;
     wait: string;
     stale: boolean;
+    /** Today's ranked run (see verify.ts), once begun, its clock's start, and its id once it has ended. */
+    run: RankedRun | null;
+    runT0: number;
+    runId: string | undefined;
   } | null>(null);
   if (!s.current) {
     const today = pacificDate();
@@ -197,6 +201,9 @@ function Round({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
       clockAt: 0,
       wait: formatWait(msUntilNextDay()),
       stale: false,
+      run: null,
+      runT0: 0,
+      runId: undefined,
     };
   }
   const st = s.current;
@@ -206,6 +213,23 @@ function Round({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
     setToast({ text, id: st.t + Math.random(), sticky: !Number.isFinite(dur) });
     st.toastUntil = st.t + dur;
   };
+
+  // The Daily Word Streak board takes a streak only from the Worker, which keeps each device's (see verify.ts): today's
+  // word is played as a ranked run, asked for as the round comes up (so it is today's, in California, as the round is).
+  const rankedRun = useRankedRun(meta.id, daily && !shell.compact && !st.alreadyDone);
+  useEffect(() => {
+    const ranked = rankedRun();
+    if (!ranked) return;
+    void ranked.ready().then(() => {
+      if (!st.alive || st.finished) return;
+      if (ranked.begin({ day: st.day, rows: [...st.rows] }, { daily: true })) {
+        st.run = ranked;
+        st.runT0 = performance.now();
+      }
+    });
+    // (once, as the round comes up: the run belongs to this round)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     st.alive = true;
@@ -321,6 +345,13 @@ function Round({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
     const marks = score(word, st.answer);
     st.rows.push(word);
     st.marks.push(marks);
+    if (st.run && !st.runId) {
+      const t = Math.round(performance.now() - st.runT0);
+      st.run.record([t, word]);
+      st.run.clock(t);
+      // the day is decided: off to the Worker now, not after the flip (a tab closed during it still counts)
+      if (word === st.answer || st.rows.length >= TRIES) st.runId = st.run.end(word === st.answer ? st.rows.length : 0) ?? '';
+    }
     st.cur = '';
     st.revealRow = st.rows.length - 1;
     st.revealT0 = st.t;
@@ -363,11 +394,21 @@ function Round({ mode, pick }: { mode: Mode; pick: (m: Mode) => void }) {
       sfx.play('lose');
       say(st.answer.toUpperCase(), Infinity);
     }
+    const run = st.run;
+    const id = st.runId;
+    const title = won ? PRAISE[tries - 1] : 'So Close';
     later(1.7, () => {
       // Today's stats wait under the Game Over card instead of a keyboard nobody can use.
       if (daily) st.alreadyDone = true;
       bump();
-      shell.gameOver(undefined, { title: won ? PRAISE[tries - 1] : 'So Close', detail, rank: streak });
+      if (!run || !id || streak === undefined) return shell.gameOver(undefined, { title, detail, rank: streak });
+      // the global board's streak is the Worker's: it starts from the first day played since it began keeping them
+      void Promise.race([run.verified(), new Promise<null>((r) => setTimeout(() => r(null), 8_000))]).then((kept) => {
+        if (!st.alive) return;
+        if (kept === null || kept < 1) return shell.gameOver(undefined, { title, detail, rank: streak });
+        const shown = kept === streak ? detail : detail.replace(`Streak ${streak}.`, `Streak ${streak} here, ${kept} on the global board.`);
+        shell.gameOver(undefined, { title, detail: shown, rank: kept, run: id });
+      });
     });
   };
 

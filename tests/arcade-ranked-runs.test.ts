@@ -198,6 +198,36 @@ test('a run whose replay was lost (the object restarted) cannot finish', async (
   assert.equal(lost.status, 410);
 });
 
+test('while a run is live an alarm keeps the object in, so a paused run survives; a run left for good is let go', async () => {
+  const { run, seed, start } = await open();
+  const flown = fly(seed);
+  assert.equal(w.alarm, null);
+  await start(flown.init);
+  assert.equal(w.alarm, w.clock + 30_000, 'set as the run starts');
+  // paused for a minute: nothing comes from the page, and the alarm goes off twice
+  await w.ring();
+  await w.ring();
+  assert.notEqual(w.alarm, null, 'set again while the run is live');
+  const played = await play(run, flown);
+  assert.equal(played.status, 200, JSON.stringify(played));
+  // nothing live: the next alarm lets the object go
+  await w.ring();
+  assert.equal(w.alarm, null);
+  assert.equal((await submit(flown.score, run)).status, 200);
+
+  // a run started and then left: three hours on, it is let go, and the alarms stop
+  const left = await open();
+  await left.start(fly(left.seed).init);
+  let rings = 0;
+  while (w.alarm !== null && rings < 1_000) {
+    await w.ring();
+    rings++;
+  }
+  assert.equal(w.alarm, null);
+  assert.ok(rings >= (3 * 3600) / 30 && rings <= (3 * 3600) / 30 + 2, `${rings} alarms`);
+  assert.equal((await call('/runs/feed', { run: left.run, n: 0, e: [], t: 10 })).status, 410);
+});
+
 test('runs replay the same at any frame rate, with the window resized mid-flight', async () => {
   for (const hz of [30, 60, 144]) {
     const { run, seed, start } = await open();

@@ -13,22 +13,38 @@ export type Verifier<S = unknown> = {
    * A run's state from its seed and how it says it starts, with the board it counts for (one of the owner's boards),
    * or why it can't be.
    */
-  start(seed: number, init: unknown): { state: S; board: string } | string;
+  start(seed: number, init: unknown, run: RunInfo): { state: S; board: string } | string;
   /**
    * Plays a chunk of the run on: `events` as the game recorded them since the last chunk, `at` the run's own clock at
    * the end of the chunk (in whatever unit the game stamps events with). The game time (ms) the run has reached, or why
    * the chunk can't be part of a real run.
    */
   feed(state: S, events: unknown, at: unknown): { ms: number } | string;
-  /** The score the run ended on, once its last chunk is in, or why there is none (it hasn't ended, say). */
-  end(state: S): { score: number } | string;
+  /**
+   * The score the run ended on, once its last chunk is in, or why there is none (it hasn't ended, say). A `daily`
+   * verifier also says which day the run played and whether it won it.
+   */
+  end(state: S): { score: number; day?: { day: number; won: boolean } } | string;
   /** How the run's clock may lag the Worker's (see paceError). Games with no clock of their own leave it out. */
   pace?: Pace;
   /**
    * Partial checks only (see the README): what this verifier can't check, for the record. Absent for a full replay.
    */
   partial?: string;
+  /**
+   * A board whose score is a streak of days won, one game a day (Word Guess). A streak is longer than any one run, so
+   * the Worker keeps it, for each device (a random key the page keeps, sent with /runs/start): a run's `end` gives the
+   * day it played and whether it won, the Worker carries the device's streak on (or ends it), and that streak is the
+   * score the run can put on the board. A device plays each day once.
+   */
+  daily?: true;
 };
+
+/** What the Worker knows of a run as it starts: when it was opened (ms, the Worker's clock). */
+export type RunInfo = { issued: number };
+
+/** A device's key for daily boards: random, kept by the page, sent with /runs/start. */
+export const isDeviceKey = (v: unknown): v is string => typeof v === 'string' && /^[A-Za-z0-9_-]{22,64}$/.test(v);
 
 /**
  * slow: how much longer than its game time a run may take on the Worker's clock (0.15 is 15%: a frame here and there).

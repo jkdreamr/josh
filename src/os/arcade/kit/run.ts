@@ -1,9 +1,35 @@
 // A run a game plays for the global leaderboard, recorded for the Worker to check (see verify/protocol.ts).
 import { useEffect, useRef } from 'react';
-import { FEED_MS, FIRST_FEED_MS } from '../verify/protocol.ts';
+import { FEED_MS, FIRST_FEED_MS, isDeviceKey } from '../verify/protocol.ts';
 import { ARCADE_API, noteFinishing, openRun, post, type RunTicket } from './leaderboard.ts';
 
 const now = () => (typeof performance !== 'undefined' ? performance.now() : Date.now());
+
+const DEVICE_KEY = 'arcade-device';
+let sessionDevice: string | null = null;
+
+/**
+ * This device's key for daily boards (see Verifier.daily): made once and kept, so the Worker can carry its streak on
+ * from day to day. A browser that keeps nothing gets one for the session.
+ */
+export function deviceKey(): string {
+  try {
+    const kept = localStorage.getItem(DEVICE_KEY);
+    if (isDeviceKey(kept)) return kept;
+  } catch {
+    /* made below */
+  }
+  if (!sessionDevice) {
+    const bytes = crypto.getRandomValues(new Uint8Array(24));
+    sessionDevice = btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  try {
+    localStorage.setItem(DEVICE_KEY, sessionDevice);
+  } catch {
+    /* this session only */
+  }
+  return sessionDevice;
+}
 
 /** Events kept before a chunk goes early, so no chunk grows past the Worker's limit. */
 const CHUNK_EVENTS = 1_000;
@@ -29,16 +55,22 @@ export class RankedRun {
   /** When the last chunk went (performance.now()), so a late timer can't let one grow past what the Worker takes. */
   private sentWall = 0;
   private chain: Promise<boolean> = Promise.resolve(true);
+  /** What the Worker said the run scored, from its answer to the last chunk. */
+  private scored: number | null = null;
+  private finished: Promise<boolean> | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private readonly api: string;
+
+  private readonly opening: Promise<void>;
 
   constructor(game: string, api = ARCADE_API) {
     this.api = api;
     if (!api) {
       this.waiting = false;
+      this.opening = Promise.resolve();
       return;
     }
-    openRun(game, api).then((t) => {
+    this.opening = openRun(game, api).then((t) => {
       this.ticket = t;
       this.waiting = false;
     });
@@ -47,6 +79,11 @@ export class RankedRun {
   /** The ticket is still on its way. */
   get pending() {
     return this.waiting;
+  }
+
+  /** Once the ticket has come in (true), or won't (false: the run plays unranked). */
+  ready(): Promise<boolean> {
+    return this.opening.then(() => !!this.ticket);
   }
 
   /** The seed the run's randomness must come from, once the ticket is in. */
@@ -59,11 +96,14 @@ export class RankedRun {
     return this.begun && !this.broken && this.ticket ? this.ticket.run : undefined;
   }
 
-  /** Starts the ranked run, saying how it starts. False when there is no ticket: the run plays unranked. */
-  begin(init: unknown): boolean {
+  /**
+   * Starts the ranked run, saying how it starts (and, for a daily board, with this device's key). False when there is
+   * no ticket: the run plays unranked.
+   */
+  begin(init: unknown, opts: { daily?: boolean } = {}): boolean {
     if (!this.ticket || this.begun) return false;
     this.begun = true;
-    this.send('/runs/start', { run: this.ticket.run, init });
+    this.send('/runs/start', opts.daily ? { run: this.ticket.run, init, device: deviceKey() } : { run: this.ticket.run, init });
     this.sentWall = now();
     const tick = (wait: number) => {
       this.timer = setTimeout(() => {
@@ -95,8 +135,18 @@ export class RankedRun {
     this.stop();
     const run = this.ticket.run;
     const done = this.send('/runs/finish', { run, n: this.n++, e: this.events.splice(0), t: this.at, score });
+    this.finished = done;
     noteFinishing(run, done);
     return this.broken ? undefined : run;
+  }
+
+  /**
+   * The score the Worker found the run ended on, once it has answered the last chunk; null if it turned the run down,
+   * or there is none. (For a daily board that is the device's streak, which only the Worker keeps.)
+   */
+  async verified(): Promise<number | null> {
+    if (!this.finished) return null;
+    return (await this.finished) ? this.scored : null;
   }
 
   /** Stops sending (the game was left mid-run). */
@@ -120,7 +170,13 @@ export class RankedRun {
       for (let attempt = 0; attempt < 3; attempt++) {
         try {
           const res = await post(`${this.api}${path}`, body);
-          if (res.ok) return true;
+          if (res.ok) {
+            if (path === '/runs/finish') {
+              const answer = (await res.json().catch(() => null)) as { score?: unknown } | null;
+              this.scored = typeof answer?.score === 'number' && Number.isFinite(answer.score) ? answer.score : null;
+            }
+            return true;
+          }
           if (res.status < 500) break;
         } catch {
           /* tried again below */

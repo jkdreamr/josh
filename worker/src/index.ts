@@ -14,7 +14,7 @@ import { BOARD_OWNERS, LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
 import { agreedWinners, beginRound, benchSeat, botSeats, canJoinRoom, canResume, keepFor, canStartRoom, canWatchRoom, endRound, GATHER_MS, gatherFull, gathering, handOffRound, HOLD_MS, holdsDue, holdUntil, isPool, isRelayMessage, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextAlarm, nextHost, orphanSeats, parseRoomMessage, relayTargets, RESUME_VERSION, roomListing, roundPlayable, roundSeats, seatsFor, type Hold, type RecordedRounds, type RelayRoomMessage, type RoomPlayer, type RoomState, type RoundReports, type SeatKey } from './room-core';
 import { MAX_BODY_BYTES } from '../../src/os/arcade/games/soccer/telemetry-core.ts';
 import { VERIFIERS } from '../../src/os/arcade/verify/registry.ts';
-import { MAX_CHUNK_BYTES, MAX_CHUNKS, paceError, type Verifier } from '../../src/os/arcade/verify/protocol.ts';
+import { isDeviceKey, MAX_CHUNK_BYTES, MAX_CHUNKS, paceError, type Verifier } from '../../src/os/arcade/verify/protocol.ts';
 
 export { Chat, Lobby, Lounge, Telemetry };
 
@@ -43,13 +43,29 @@ const RUN_KEEP_MS = 24 * 60 * 60_000;
 const LIVE_RUNS = 5_000;
 const RUN_PATHS = new Set(['/runs', '/runs/start', '/runs/feed', '/runs/finish']);
 type RunRow = { id: string; game: string; seed: number; issued: number; started: number | null; finished: number | null; board: string | null; score: number | null; used: number };
-/** A run being played: its replay so far, and the chunk it expects next. */
-type LiveRun = { verifier: Verifier<unknown>; state: unknown; next: number; started: number };
+/**
+ * A run being played: its replay so far, the chunk it expects next, when it started and was last heard from, and for
+ * a daily board the device playing (a hash of its key).
+ */
+type LiveRun = { verifier: Verifier<unknown>; state: unknown; next: number; started: number; seen: number; device: string | null };
+/**
+ * Runs' replays live in memory, and an object nothing has asked anything of for a minute or two is put away, replays and
+ * all: a paused game sends nothing. While any run is live an alarm this often keeps the object in, until the run has
+ * gone quiet for RUN_IDLE_MS (left for good).
+ */
+const KEEP_ALIVE_MS = 30_000;
+const RUN_IDLE_MS = 3 * 60 * 60_000;
 /** Generous on purpose: a whole classroom behind one IP refreshing and replaying should all count. */
 const STATS_RATE_LIMIT = 240;
 /** Open tabs allowed per IP and in total, so a script can't fake a crowd or exhaust the object. */
 const LIVE_PER_IP = 200;
 const LIVE_MAX = 20_000;
+
+/** Hex SHA-256 of a device key (the streaks table keeps hashes, not the keys themselves). */
+async function sha256(text: string): Promise<string> {
+  const bytes = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 const json = (body: unknown, status = 200, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), {
@@ -74,6 +90,7 @@ export class Boards extends DurableObject<Env> {
   private readonly submissions = new Map<string, number[]>();
   private readonly runsOpened = new Map<string, number[]>();
   private readonly live = new Map<string, LiveRun>();
+  private alarmSet = false;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
@@ -81,6 +98,22 @@ export class Boards extends DurableObject<Env> {
     this.ctx.storage.sql.exec('CREATE INDEX IF NOT EXISTS scores_game ON scores (game, score)');
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS wins (game TEXT NOT NULL, name TEXT NOT NULL, wins INTEGER NOT NULL, date TEXT NOT NULL, PRIMARY KEY (game, name))');
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS ranked_runs (id TEXT PRIMARY KEY, game TEXT NOT NULL, seed INTEGER NOT NULL, issued INTEGER NOT NULL, started INTEGER, finished INTEGER, board TEXT, score REAL, used INTEGER NOT NULL DEFAULT 0)');
+    // daily boards' streaks (see Verifier.daily): the day each device last played, and its streak of wins to that day
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS streaks (device TEXT NOT NULL, game TEXT NOT NULL, day INTEGER NOT NULL, streak INTEGER NOT NULL, PRIMARY KEY (device, game))');
+  }
+
+  /** Keeps the object in while runs are live (see KEEP_ALIVE_MS). */
+  private async keepAlive() {
+    if (this.alarmSet) return;
+    this.alarmSet = true;
+    await this.ctx.storage.setAlarm(Date.now() + KEEP_ALIVE_MS);
+  }
+
+  async alarm() {
+    this.alarmSet = false;
+    const now = Date.now();
+    for (const [id, run] of this.live) if (now - run.seen > RUN_IDLE_MS) this.live.delete(id);
+    if (this.live.size) await this.keepAlive();
   }
 
   private run(id: unknown): RunRow | null {
@@ -139,16 +172,22 @@ export class Boards extends DurableObject<Env> {
       const verifier = VERIFIERS[run.game] as Verifier<unknown>;
       let begun: ReturnType<Verifier<unknown>['start']>;
       try {
-        begun = verifier.start(run.seed, body.init);
+        begun = verifier.start(run.seed, body.init, { issued: run.issued });
       } catch {
         begun = 'bad start';
       }
       sql.exec('UPDATE ranked_runs SET started = ? WHERE id = ?', now, run.id);
       if (typeof begun === 'string') return refuse(begun);
       if (BOARD_OWNERS[begun.board] !== run.game) return refuse('bad board');
+      let device: string | null = null;
+      if (verifier.daily) {
+        if (!isDeviceKey(body.device)) return refuse('no device');
+        device = await sha256(body.device);
+      }
       sql.exec('UPDATE ranked_runs SET board = ? WHERE id = ?', begun.board, run.id);
       if (this.live.size >= LIVE_RUNS) this.live.delete(this.live.keys().next().value!);
-      this.live.set(run.id, { verifier, state: begun.state, next: 0, started: now });
+      this.live.set(run.id, { verifier, state: begun.state, next: 0, started: now, seen: now, device });
+      await this.keepAlive();
       return json({ ok: true });
     }
     // /runs/feed and /runs/finish: the next chunk, played on and timed
@@ -157,6 +196,7 @@ export class Boards extends DurableObject<Env> {
     if (!live) return refuse('run lost', 410);
     if (body.n !== live.next || live.next >= MAX_CHUNKS) return refuse('chunk out of order', 409);
     live.next++;
+    live.seen = now;
     let fed: ReturnType<Verifier<unknown>['feed']>;
     try {
       fed = live.verifier.feed(live.state, body.e, body.t);
@@ -175,9 +215,19 @@ export class Boards extends DurableObject<Env> {
     }
     if (typeof ended === 'string') return refuse(ended);
     if (body.score !== ended.score) return refuse('score does not replay');
+    let score = ended.score;
+    if (live.verifier.daily) {
+      // the device's streak carried on to the run's day (or ended there): what the run puts on the board
+      const played = ended.day;
+      if (!live.device || !played || !Number.isSafeInteger(played.day)) return refuse('bad run');
+      const last = sql.exec<{ day: number; streak: number }>('SELECT day, streak FROM streaks WHERE device = ? AND game = ?', live.device, run.game).toArray()[0];
+      if (last && last.day >= played.day) return refuse('already played');
+      score = played.won ? (last && last.day === played.day - 1 ? last.streak + 1 : 1) : 0;
+      sql.exec('INSERT OR REPLACE INTO streaks (device, game, day, streak) VALUES (?, ?, ?, ?)', live.device, run.game, played.day, score);
+    }
     this.live.delete(run.id);
-    sql.exec('UPDATE ranked_runs SET finished = ?, score = ? WHERE id = ?', now, ended.score, run.id);
-    return json({ ok: true });
+    sql.exec('UPDATE ranked_runs SET finished = ?, score = ? WHERE id = ?', now, score, run.id);
+    return json({ ok: true, score });
   }
 
   /** POST /leaderboard/remove: takes a name's entries off a board (all of them, or one score), for Josh. */

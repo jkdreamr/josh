@@ -11,6 +11,7 @@ import { verifier as game2048 } from '../games/2048/verify.ts';
 import { verifier as invaders } from '../games/invaders/verify.ts';
 import { verifier as snake } from '../games/snake/verify.ts';
 import { verifier as stack } from '../games/stack/verify.ts';
+import { verifier as wordguess } from '../games/wordguess/verify.ts';
 
 export const VERIFIERS: Record<string, Verifier<any>> = {
   blocks,
@@ -23,4 +24,5 @@ export const VERIFIERS: Record<string, Verifier<any>> = {
   invaders,
   snake,
   stack,
+  wordguess,
 };
