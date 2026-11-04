@@ -10,6 +10,7 @@ import { verifier } from '../src/os/arcade/games/snake/verify.ts';
 import { VERIFIERS } from '../src/os/arcade/verify/registry.ts';
 import { BOARD_OWNERS } from '../worker/src/specs.gen.ts';
 import { chunked, rankedWorker, type Chunk } from './ranked-harness.ts';
+import { replayedSource, UNSTABLE_MATH } from './replayed-math.ts';
 
 let w: ReturnType<typeof rankedWorker>;
 beforeEach(() => {
@@ -93,6 +94,16 @@ function replay(seed: number, init: unknown, chunks: Chunk[]) {
 }
 
 const copy = (chunks: Chunk[]) => chunks.map((c) => ({ ...c, e: c.e.map((e) => (Array.isArray(e) ? [...e] : e)) }));
+
+test('the rules the replay walks through use only math every browser computes to the same bit', () => {
+  // (the Worker replays in V8, players' pages run in JavaScriptCore and SpiderMonkey too: see verify/dmath.ts)
+  const src = replayedSource(new URL('../src/os/arcade/games/snake/verify.ts', import.meta.url));
+  assert.match(src, /function stepSnake\b|const stepSnake\b/, 'the walk reaches stepSnake');
+  assert.match(src, /function spawnFood\b|const spawnFood\b/, 'the walk reaches spawnFood');
+  assert.match(src, /function speedForLength\b|const speedForLength\b/, 'the walk reaches speedForLength');
+  assert.match(src, /function powi\b|const powi\b/, 'the walk reaches powi');
+  assert.doesNotMatch(src, UNSTABLE_MATH);
+});
 
 test('snake is checked, on its own board', () => {
   assert.equal(VERIFIERS.snake, verifier);

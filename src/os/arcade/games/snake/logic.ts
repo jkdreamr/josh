@@ -1,3 +1,5 @@
+import { powi } from '../../verify/dmath.ts';
+
 export type Direction = 'up' | 'down' | 'left' | 'right';
 export type Point = { x: number; y: number };
 
@@ -36,10 +38,14 @@ export function gridFor(w: number, h: number) {
 export const MIN_SPEED = 6.5;
 export const MAX_SPEED = 12.5;
 
+/** e^(-1/20), written out: Math.exp need not give the same last bit in every browser (see verify/dmath.ts). */
+const EASE = 0.951229424500714;
+
 /** Cells per second: brisk from the first bite, easing toward the cap instead of running away. */
 export function speedForLength(length: number) {
-  const grown = Math.max(0, length - 3);
-  return MIN_SPEED + (MAX_SPEED - MIN_SPEED) * (1 - Math.exp(-grown / 20));
+  const grown = Math.max(0, Math.floor(length) - 3);
+  // (e^(-grown / 20) by whole powers, so a ranked round's replay times its steps exactly as the page did)
+  return MIN_SPEED + (MAX_SPEED - MIN_SPEED) * (1 - powi(EASE, grown));
 }
 
 export type Rect = { x: number; y: number; w: number; h: number };
