@@ -1,5 +1,21 @@
 # Ridgeline model credits
 
+## The project owner's soldier outfit
+
+`outfit.glb` and `outfit-lod.glb` are the project owner's own Soldier Outfit (v1) and its helmet (Soldier Helmet
+Outfit v1), with their texture sets, provided by the project owner for this game. They are not under the licenses
+below. For the game the outfit and the helmet were baked into one file: posed as bound, turned to face the game's
+front and scaled to its soldier, the sniper rifle slung on the back left out, the fingers curled round a grip, the skin
+weights of the outfit's skeleton summed onto the game's twenty bones, and a lofted head in a knit balaclava with
+wraparound glasses added (the outfit is made for a separate head). The seven texture sets and the helmet's set (its
+2K maps) were packed into one atlas: base color (its alpha says how much a kit may recolor each texel), normal (turned
+from DirectX to glTF's convention) and AO/roughness/metal, WebP at 2048 (color) and 1024 (the rest). The meshes were
+welded, simplified with meshoptimizer (the body to 15,000 triangles and the helmet to 3,000; the far copy to 2,600 and
+350, with no textures of its own), quantized and meshopt compressed with glTF Transform. The outfit's emissive maps
+(black) and the sniper rifle's textures are not used.
+
+## Sketchfab models
+
 Every model in the first table was downloaded from Sketchfab and then reduced for the game: stray parts removed,
 re-oriented and scaled to meters, simplified, textures resized and re-encoded as WebP, and the files meshopt compressed. The soldier
 was also skinned to the game's skeleton. The `-lite` files are low detail copies with the textures baked into vertex
@@ -14,7 +30,7 @@ except the AWP, which is Creative Commons Attribution-NonCommercial 4.0 (CC BY-N
 
 | File | Model | Author | License | Source |
 | --- | --- | --- | --- | --- |
-| `soldier.glb` | Modern Tactical Soldier | ItsKrish7 | CC BY 4.0 | <https://sketchfab.com/3d-models/modern-tactical-soldier-ab88f581b1ba46f2a0bd33de06040533> |
+| `soldier.glb`, `soldier-lod.glb` (the stand-in, fetched only when `outfit.glb` fails to load) | Modern Tactical Soldier | ItsKrish7 | CC BY 4.0 | <https://sketchfab.com/3d-models/modern-tactical-soldier-ab88f581b1ba46f2a0bd33de06040533> |
 | `m4.glb`, `m4-lite.glb` | Modern Warefare M4A1 | Nneako | CC BY 4.0 | <https://sketchfab.com/3d-models/modern-warefare-m4a1-167dd49ffff14d41ab11b6417f128bf1> |
 | `ak-lite.glb` | AK-47 Assault rifle | Nneako | CC BY 4.0 | <https://sketchfab.com/3d-models/ak-47-assault-rifle-948f6b1beeb749759b91bf1d5a6db481> |
 | `mp5.glb`, `mp5-lite.glb` | MP5 Submachine Gun | Rotuma | CC BY 4.0 | <https://sketchfab.com/3d-models/mp5-submachine-gun-a73b61932a0e4eecb5db5c63c158aa24> |
