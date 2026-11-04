@@ -26,6 +26,8 @@ export const VISIBLE_ROWS = 20;
 export const PIECES: Piece[] = ['I', 'O', 'T', 'S', 'Z', 'J', 'L'];
 export const LOCK_DELAY = 0.5;
 export const LOCK_RESETS = 15;
+/** The rules' fixed step (s): play runs in steps of it, so a run replays the same at any frame rate (see verify.ts). */
+export const STEP = 1 / 120;
 const SPAWN_Y = 18;
 
 const spawnCells: Record<Piece, Cell[]> = {
@@ -44,9 +46,17 @@ const rotateCells = (cells: Cell[], turns: number, size: number): Cell[] => {
   return result;
 };
 
+/** Each piece's cells in each of its rotations, worked out once: the rules look them up every step. */
+const shapes = Object.fromEntries(PIECES.map((type) => [
+  type,
+  [0, 1, 2, 3].map((turns) => (type === 'O' ? spawnCells.O : rotateCells(spawnCells[type], turns, type === 'I' ? 4 : 3))),
+])) as Record<Piece, Cell[][]>;
+
+/** A piece's cells in a rotation (shared: not to be changed). */
+const shape = (type: Piece, rotation: number): readonly Cell[] => shapes[type][((rotation % 4) + 4) % 4];
+
 export function cellsFor(type: Piece, rotation = 0): Cell[] {
-  if (type === 'O') return spawnCells.O.map(([x, y]) => [x, y]);
-  return rotateCells(spawnCells[type], ((rotation % 4) + 4) % 4, type === 'I' ? 4 : 3);
+  return shape(type, rotation).map(([x, y]) => [x, y]);
 }
 
 export function createBoard(): Board {
@@ -73,6 +83,11 @@ export function seededRandom(seed: string): () => number {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/** The pieces a ranked run deals, from the seed the leaderboard picked for it (see verify.ts). */
+export function runRandom(seed: number): () => number {
+  return seededRandom(`blocks run ${seed >>> 0}`);
 }
 
 export type BlocksGame = {
@@ -105,6 +120,10 @@ export type BlocksGame = {
   event: LockEvent | null;
   /** Bumps on every lock, so the view can react to each one once. */
   seq: number;
+  /** Fixed steps taken (STEP each): a run's moves are stamped with it, so the leaderboard can replay the run. */
+  ticks: number;
+  /** Time not yet stepped (s), for the next frame. */
+  acc: number;
 };
 
 function drawBag(state: BlocksGame, rand: () => number): Piece {
@@ -116,15 +135,20 @@ function fillQueue(state: BlocksGame, rand: () => number) {
   while (state.next.length < 5) state.next.push(drawBag(state, rand));
 }
 
-export function collides(board: Board, piece: ActivePiece): boolean {
-  return cellsFor(piece.type, piece.rotation).some(([dx, dy]) => {
+export function collides(board: Board, piece: ActivePiece, down = 0): boolean {
+  for (const [dx, dy] of shape(piece.type, piece.rotation)) {
     const x = piece.x + dx;
-    const y = piece.y + dy;
-    return x < 0 || x >= WIDTH || y >= HEIGHT || (y >= 0 && board[y][x] !== null);
-  });
+    const y = piece.y + down + dy;
+    if (x < 0 || x >= WIDTH || y >= HEIGHT || (y >= 0 && board[y][x] !== null)) return true;
+  }
+  return false;
 }
 
-const bottomOf = (piece: ActivePiece) => Math.max(...cellsFor(piece.type, piece.rotation).map(([, y]) => y + piece.y));
+function bottomOf(piece: ActivePiece) {
+  let bottom = -Infinity;
+  for (const [, dy] of shape(piece.type, piece.rotation)) bottom = Math.max(bottom, piece.y + dy);
+  return bottom;
+}
 
 /** Puts a piece in just above the well and, when there is room, drops it one row so it shows at once. */
 function spawn(state: BlocksGame, type: Piece): boolean {
@@ -134,7 +158,7 @@ function spawn(state: BlocksGame, type: Piece): boolean {
     state.over = true;
     return false;
   }
-  if (!collides(state.board, { ...piece, y: piece.y + 1 })) piece.y++;
+  if (!collides(state.board, piece, 1)) piece.y++;
   state.active = piece;
   state.gravity = 0;
   state.lockTimer = 0;
@@ -177,6 +201,8 @@ export function createGame(rand: () => number = Math.random): BlocksGame {
     lastLocked: [],
     event: null,
     seq: 0,
+    ticks: 0,
+    acc: 0,
   };
   fillQueue(state, rand);
   spawn(state, takeNext(state, rand));
@@ -189,13 +215,22 @@ function takeNext(state: BlocksGame, rand: () => number): Piece {
   return piece;
 }
 
+const gravityAt: number[] = [];
+
 /** Seconds per row at a level: one second at level 1, close to instant by level 20. */
 export function gravitySeconds(level: number): number {
-  return Math.pow(Math.max(0.01, 0.8 - (level - 1) * 0.007), level - 1);
+  const known = gravityAt[level];
+  if (known !== undefined) return known;
+  // (multiplied out rather than Math.pow, whose last digit can differ between browsers: a run replays on another)
+  const base = Math.max(0.01, 0.8 - (level - 1) * 0.007);
+  let seconds = 1;
+  for (let i = 1; i < level; i++) seconds *= base;
+  if (Number.isSafeInteger(level) && level > 0 && level < 1_000) gravityAt[level] = seconds;
+  return seconds;
 }
 
 export function grounded(state: BlocksGame): boolean {
-  return !!state.active && collides(state.board, { ...state.active, y: state.active.y + 1 });
+  return !!state.active && collides(state.board, state.active, 1);
 }
 
 /** Moving or turning a piece that sits on the stack restarts its lock delay, up to LOCK_RESETS times per row. */
@@ -375,6 +410,29 @@ export function step(state: BlocksGame, dt: number, soft = false, rand: () => nu
   state.lockTimer += dt;
   if (state.lockTimer < LOCK_DELAY) return false;
   lock(state, rand);
+  return true;
+}
+
+/** One fixed step of the rules (see STEP), as play and a run's replay both take them. True when the piece locked. */
+export function tick(state: BlocksGame, soft: boolean, rand: () => number = Math.random): boolean {
+  if (state.over) return false;
+  state.ticks++;
+  return step(state, STEP, soft, rand);
+}
+
+/** Plays `dt` seconds of a frame on in fixed steps; what is left over waits for the next frame. */
+export function advance(state: BlocksGame, dt: number, soft = false, rand: () => number = Math.random): void {
+  state.acc += dt;
+  while (state.acc >= STEP && !state.over) {
+    state.acc -= STEP;
+    tick(state, soft, rand);
+  }
+}
+
+/** Drags the piece a row down for a point (the touch soft drop). False when it can't fall. */
+export function dragDown(state: BlocksGame): boolean {
+  if (!move(state, 0, 1)) return false;
+  state.score++;
   return true;
 }
 

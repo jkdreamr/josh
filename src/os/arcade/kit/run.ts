@@ -64,7 +64,7 @@ export class RankedRun {
 
   /** Something the player did, as the game's verifier reads it. */
   record(event: unknown) {
-    if (!this.begun || this.ended) return;
+    if (!this.begun || this.ended || this.broken) return;
     this.events.push(event);
     if (this.events.length >= CHUNK_EVENTS) this.flush();
   }

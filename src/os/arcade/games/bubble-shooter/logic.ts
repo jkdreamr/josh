@@ -12,6 +12,8 @@ export const SHOT_SPEED = 1100;
 export const HIT_DIST = 2 * R * 0.82;
 export const MIN_ANGLE = 0.12;
 export const PALETTE_SIZE = 8;
+/** The rules' fixed step (s): play runs in steps of it, so a run replays the same at any frame rate (see verify.ts). */
+export const STEP = 1 / 120;
 
 /** Cell values: -1 empty, 0..7 colors, ICE + color frozen, then the specials. */
 export const EMPTY = -1;
@@ -78,6 +80,10 @@ export type Game = {
   outcome: Outcome | null;
   stars: number;
   time: number;
+  /** Fixed steps taken (STEP each): a run's shots are stamped with it, so the leaderboard can replay the run. */
+  ticks: number;
+  /** Time not yet stepped (s), for the next frame. */
+  acc: number;
   effects: Effect[];
   rng: () => number;
 };
@@ -275,6 +281,8 @@ export function createGame(opts?: { seed?: number; level?: number; rng?: () => n
     outcome: null,
     stars: 0,
     time: 0,
+    ticks: 0,
+    acc: 0,
     effects: [],
     rng,
   };
@@ -645,5 +653,21 @@ export function step(game: Game, dt: number): void {
   } else if (game.dropInterval > 0) {
     game.dropTimer -= dt;
     if (game.dropTimer <= 0) pressure(game);
+  }
+}
+
+/** One fixed step of the rules (see STEP), as play and a run's replay both take them. */
+export function tick(game: Game): void {
+  if (game.ended) return;
+  game.ticks++;
+  step(game, STEP);
+}
+
+/** Plays `dt` seconds of a frame on in fixed steps; what is left over waits for the next frame. */
+export function advance(game: Game, dt: number): void {
+  game.acc += dt;
+  while (game.acc >= STEP && !game.ended) {
+    game.acc -= STEP;
+    tick(game);
   }
 }
