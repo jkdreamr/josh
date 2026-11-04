@@ -3,6 +3,8 @@ import { GameShell, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnlin
 import type { GameProps } from '../../types';
 import { cloud, column, conifer, dish, ground, hash, hills, medal, moon, palette, ridge, stars, tree } from './draw';
 import { GROUND, H, R, START_SPEED, createState, hover, medalFor, nextMedal, resize, riseOf, rng32, step, type Medal } from './logic';
+import { PROOF_VERSION, type FlappyProof } from './proof';
+import { finishRun, openRun, startRun, type RunTicket } from '../../kit/leaderboard';
 import { meta } from './meta';
 import './flappy.css';
 
@@ -38,6 +40,16 @@ function Play() {
   const s = useRef({
     world: createState(800),
     rng: online ? rng32(courseSeed(online.round, online.players)) : Math.random,
+    /**
+     * The global board takes a score only from a run the Worker can replay (see proof.ts): it hands out the run and the
+     * seed its columns come from, hears when the run starts, and gets the flaps when it ends. Asked for as play begins;
+     * a run that starts without one (offline, or it was slow to come) still plays, its score kept on this device.
+     */
+    ticket: null as RunTicket | null,
+    asked: false,
+    asking: false,
+    run: null as string | null,
+    proof: null as FlappyProof | null,
     started: false,
     idle: 0,
     t: 0,
@@ -123,7 +135,18 @@ function Play() {
       const { vw } = view();
       if (!vw) return;
       const w = s.world;
-      if (w.w !== vw) resize(w, vw);
+      if (!s.asked && !online && !shell.compact) {
+        s.asked = true;
+        s.asking = true;
+        openRun(meta.id).then((t) => {
+          s.ticket = t;
+          s.asking = false;
+        });
+      }
+      if (w.w !== vw) {
+        resize(w, vw);
+        if (s.proof && !w.dead) s.proof.sizes.push([w.ticks, vw]);
+      }
       s.t += dt;
       const flapIn = keys.pressed('action', 'up') || s.tap;
       s.tap = false;
@@ -132,11 +155,21 @@ function Play() {
         s.idle += START_SPEED * dt;
         w.y = hover(s.t);
         w.rot = 0;
-        if (flapIn) s.started = true;
+        // (a moment's wait for the run, if it is still on its way, so the flight can count globally)
+        if (flapIn && !(s.asking && s.t < 1.5)) {
+          s.started = true;
+          if (s.ticket) {
+            s.rng = rng32(s.ticket.seed);
+            s.run = s.ticket.run;
+            s.proof = { v: PROOF_VERSION, w: w.w, y0: w.y, flaps: [], sizes: [] };
+            startRun(s.ticket.run);
+          }
+        }
       }
       if (s.started && s.freeze > 0) s.freeze = Math.max(0, s.freeze - dt);
       else if (s.started) {
         const before = w.score;
+        if (flapIn && s.proof && !w.dead) s.proof.flaps.push(w.ticks);
         const ev = step(w, dt, { flap: flapIn }, s.rng);
         if (ev.flapped) {
           s.wing = 1;
@@ -172,9 +205,12 @@ function Play() {
             const m = medalFor(n);
             const next = nextMedal(n);
             const more = next === null ? 'That is the top of the tree.' : `${next - n} more for ${title(medalFor(next))}.`;
+            // the flight goes off to be checked now; a score submitted from the card waits for the answer
+            if (s.run && s.proof) finishRun(s.run, n, s.proof);
             shell.gameOver(n, {
               title: m === 'none' ? undefined : `${title(m)} Medal`,
               detail: `You cleared ${n} ${n === 1 ? 'column' : 'columns'}. ${more}`,
+              ...(s.run && s.proof ? { run: s.run } : {}),
             });
           }
         }
@@ -411,6 +447,8 @@ function Play() {
         c.restore();
       }
     },
+    // (a slow frame is caught up rather than played in slow motion: a slowed-down course is easier to fly)
+    { realtime: true },
   );
 
   const onDown = (e: RPointerEvent<HTMLCanvasElement>) => {

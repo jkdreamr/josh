@@ -40,7 +40,7 @@ export function BoardScopeNote({ board }: { board: Board | null }) {
 }
 
 /** Board for a finished round: loads it, says whether the score qualifies and submits a name. */
-export function useRoundBoard(game: string, spec: LeaderboardSpec | undefined, score: number | undefined, round: unknown) {
+export function useRoundBoard(game: string, spec: LeaderboardSpec | undefined, score: number | undefined, round: unknown, run?: string) {
   const [board, setBoard] = useState<Board | null>(null);
   const [mine, setMine] = useState<BoardEntry | null>(null);
   const [busy, setBusy] = useState(false);
@@ -65,12 +65,12 @@ export function useRoundBoard(game: string, spec: LeaderboardSpec | undefined, s
       setBusy(true);
       const clean = cleanName(name);
       saveName(clean);
-      const res = await submitScore(game, spec, clean, score);
+      const res = await submitScore(game, spec, clean, score, undefined, run);
       setBoard(res);
       setMine(res.entry);
       setBusy(false);
     },
-    [game, spec, score],
+    [game, spec, score, run],
   );
   return { enabled, board, mine, busy, canSubmit, submit };
 }

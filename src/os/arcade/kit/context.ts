@@ -8,6 +8,8 @@ export type GameOverInfo = {
   detail?: string;
   /** Which of meta.leaderboard.variants this round counts for (a level or pace). */
   board?: string;
+  /** The run this round was flown in, for a game whose global scores the Worker checks (see openRun and finishRun). */
+  run?: string;
   /** Score to rank on the leaderboard when the round shows no score of its own (games that track bests per level). */
   rank?: number;
   /**

@@ -34,6 +34,8 @@ export type State = {
   score: number;
   dist: number;
   time: number;
+  /** Fixed steps taken (STEP each): a run's flaps are stamped with it, so the leaderboard can replay the run. */
+  ticks: number;
   dead: boolean;
   grounded: boolean;
   acc: number;
@@ -75,6 +77,7 @@ export function createState(w: number): State {
     score: 0,
     dist: 0,
     time: 0,
+    ticks: 0,
     dead: false,
     grounded: false,
     acc: 0,
@@ -129,6 +132,7 @@ export function flap(s: State): boolean {
 
 function sub(s: State, dt: number, rng: () => number, ev: Events) {
   s.time += dt;
+  s.ticks += 1;
   s.vy = Math.min(MAX_FALL, s.vy + GRAVITY * dt);
   s.y += s.vy * dt;
   const target = s.vy < 0 ? -0.42 : Math.min(1.45, (s.vy / MAX_FALL) * 1.7 - 0.25);
@@ -175,6 +179,11 @@ function sub(s: State, dt: number, rng: () => number, ev: Events) {
 export function riseOf(s: State, c: Column) {
   if (c.rise < 0) return 1;
   return Math.min(1, Math.max(0, (s.time - c.born - c.rise) / RISE));
+}
+
+/** One fixed step of the rules, exactly as step() takes them: what a run's replay walks through. */
+export function tick(s: State, rng: () => number, ev: Events) {
+  sub(s, STEP, rng, ev);
 }
 
 export function step(s: State, dt: number, input: { flap: boolean }, rng: () => number): Events {

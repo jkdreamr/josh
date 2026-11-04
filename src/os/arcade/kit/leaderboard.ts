@@ -116,17 +116,66 @@ export async function getBoardTops(specs: Record<string, LeaderboardSpec>, onlin
 
 const errorText: Record<number, string> = {
   400: 'That score could not be saved globally.',
+  403: 'This run could not be checked, so its score stays on this device.',
   429: 'Too many scores at once. Try again in a minute.',
 };
 
-/** Saves on this device, then globally. Returns the global board, or this device's board if that fails. */
-export async function submitScore(game: string, spec: LeaderboardSpec, rawName: string, score: number, api = ARCADE_API): Promise<Board & { entry: BoardEntry }> {
+/**
+ * A run the Worker can check, for games whose global scores it verifies (see the Worker's /runs): its id, and the seed
+ * the run's course must come from.
+ */
+export type RunTicket = { run: string; seed: number };
+/** Runs on their way to being checked: a score submitted for one waits for the check to land first. */
+const finishing = new Map<string, Promise<boolean>>();
+const post = (url: string, body: unknown) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+/** A new run for `game` from the Worker, or null (no API, offline, or a Worker that doesn't check this game). */
+export async function openRun(game: string, api = ARCADE_API): Promise<RunTicket | null> {
+  if (!api) return null;
+  try {
+    const res = await post(`${api}/runs`, { game });
+    if (!res.ok) return null;
+    const body = (await res.json()) as { run?: unknown; seed?: unknown };
+    return typeof body.run === 'string' && Number.isSafeInteger(body.seed) ? { run: body.run, seed: (body.seed as number) >>> 0 } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Tells the Worker the run has begun (its clock starts now). Tried a few times; a run it never hears start can't rank. */
+export function startRun(run: string, api = ARCADE_API): void {
+  if (!api) return;
+  const attempt = (left: number) => {
+    post(`${api}/runs/start`, { run }).then(
+      (res) => {
+        if (!res.ok && res.status >= 500 && left > 0) window.setTimeout(() => attempt(left - 1), 400);
+      },
+      () => left > 0 && window.setTimeout(() => attempt(left - 1), 400),
+    );
+  };
+  attempt(2);
+}
+
+/** Sends the finished run to be checked (replayed) by the Worker. Resolves to whether it was accepted. */
+export function finishRun(run: string, score: number, proof: unknown, api = ARCADE_API): Promise<boolean> {
+  if (!api) return Promise.resolve(false);
+  const done = post(`${api}/runs/finish`, { run, score, proof }).then((res) => res.ok, () => false);
+  finishing.set(run, done);
+  return done;
+}
+
+/**
+ * Saves on this device, then globally. Returns the global board, or this device's board if that fails. A game whose
+ * scores the Worker checks passes the run they were flown in (see openRun).
+ */
+export async function submitScore(game: string, spec: LeaderboardSpec, rawName: string, score: number, api = ARCADE_API, run?: string): Promise<Board & { entry: BoardEntry }> {
   const name = Array.from(cleanName(rawName)).slice(0, NAME_MAX).join('');
   const entry: BoardEntry = { name, score, date: new Date().toISOString() };
   const local = saveDevice(game, entry, spec);
   if (!api) return { entries: local, scope: 'device', entry };
   try {
-    const res = await fetch(`${api}/leaderboard`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ game, name, score }) });
+    if (run) await finishing.get(run);
+    const res = await post(`${api}/leaderboard`, run ? { game, name, score, run } : { game, name, score });
     if (!res.ok) return { entries: local, scope: 'device', entry, error: errorText[res.status] };
     const entries = rankEntries(await readEntries(res), spec.order);
     const mine = entries.find((e) => e.name === name && e.score === score);
