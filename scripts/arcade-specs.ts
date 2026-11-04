@@ -20,14 +20,19 @@ export async function boardOwners(): Promise<Pick<GameMeta, 'id' | 'title' | 'le
 
 export async function generateArcadeSpecs(): Promise<string> {
   const specs: [string, LeaderboardSpec][] = [];
+  const owners: [string, string][] = [];
   const onlineSpecs: [string, OnlineSpec][] = [];
   for (const owner of await boardOwners()) {
-    for (const board of boardsOf(owner)) specs.push([board.id, board.spec]);
+    for (const board of boardsOf(owner)) {
+      specs.push([board.id, board.spec]);
+      owners.push([board.id, board.owner]);
+    }
     if (owner.online && (owner.online.seats < 2 || owner.online.seats > MAX_SEATS)) throw new Error(`${owner.id}: rooms hold 2 to ${MAX_SEATS} seats`);
     if (owner.online?.quick && !owner.online.bots) throw new Error(`${owner.id}: quick play needs bots, to fill the seats nobody takes`);
     if (owner.online) onlineSpecs.push([owner.id, { seats: owner.online.seats, ...(owner.online.lateJoin ? { lateJoin: true } : {}), ...(owner.online.bots ? { bots: true } : {}), ...(owner.online.quick ? { quick: true } : {}), ...(owner.online.watch ? { watch: true } : {}), ...(owner.online.migrate ? { migrate: true } : {}) }]);
   }
   specs.sort(([a], [b]) => a.localeCompare(b));
+  owners.sort(([a], [b]) => a.localeCompare(b));
   onlineSpecs.sort(([a], [b]) => a.localeCompare(b));
 
   return [
@@ -36,6 +41,11 @@ export async function generateArcadeSpecs(): Promise<string> {
     '',
     'export const LEADERBOARD_SPECS: Record<string, LeaderboardSpec> = {',
     ...specs.map(([id, spec]) => `  ${JSON.stringify(id)}: ${JSON.stringify(spec)},`),
+    '};',
+    '',
+    '/** The game (or app game) each board belongs to: a run opened for a game can only count for its boards. */',
+    'export const BOARD_OWNERS: Record<string, string> = {',
+    ...owners.map(([id, owner]) => `  ${JSON.stringify(id)}: ${JSON.stringify(owner)},`),
     '};',
     '',
     'export const ONLINE_SPECS: Record<string, OnlineSpec> = {',

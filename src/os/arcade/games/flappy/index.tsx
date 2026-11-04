@@ -1,10 +1,8 @@
 import { useEffect, useRef, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useShell } from '../../kit';
+import { GameShell, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useRankedRun, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { cloud, column, conifer, dish, ground, hash, hills, medal, moon, palette, ridge, stars, tree } from './draw';
 import { GROUND, H, R, START_SPEED, createState, hover, medalFor, nextMedal, resize, riseOf, rng32, step, type Medal } from './logic';
-import { PROOF_VERSION, type FlappyProof } from './proof';
-import { finishRun, openRun, startRun, type RunTicket } from '../../kit/leaderboard';
 import { meta } from './meta';
 import './flappy.css';
 
@@ -40,16 +38,8 @@ function Play() {
   const s = useRef({
     world: createState(800),
     rng: online ? rng32(courseSeed(online.round, online.players)) : Math.random,
-    /**
-     * The global board takes a score only from a run the Worker can replay (see proof.ts): it hands out the run and the
-     * seed its columns come from, hears when the run starts, and gets the flaps when it ends. Asked for as play begins;
-     * a run that starts without one (offline, or it was slow to come) still plays, its score kept on this device.
-     */
-    ticket: null as RunTicket | null,
-    asked: false,
-    asking: false,
-    run: null as string | null,
-    proof: null as FlappyProof | null,
+    /** This run is ranked: the Worker replays it (see verify.ts), so its flaps and resizes are recorded. */
+    ranked: false,
     started: false,
     idle: 0,
     t: 0,
@@ -74,6 +64,9 @@ function Play() {
     measured: 0,
   }).current;
   const { status, touch, root, setScore } = shell;
+  // The global board takes a score only from a run the Worker replays (see verify.ts): the run is asked for as play
+  // begins, and its seed lays out the columns. A run that starts without it (offline, or it was slow) still plays.
+  const rankedRun = useRankedRun(meta.id, !online && !shell.compact);
 
   useEffect(() => {
     setScore(null);
@@ -135,17 +128,10 @@ function Play() {
       const { vw } = view();
       if (!vw) return;
       const w = s.world;
-      if (!s.asked && !online && !shell.compact) {
-        s.asked = true;
-        s.asking = true;
-        openRun(meta.id).then((t) => {
-          s.ticket = t;
-          s.asking = false;
-        });
-      }
+      const ranked = rankedRun();
       if (w.w !== vw) {
         resize(w, vw);
-        if (s.proof && !w.dead) s.proof.sizes.push([w.ticks, vw]);
+        if (s.ranked && !w.dead) ranked?.record([w.ticks, vw]);
       }
       s.t += dt;
       const flapIn = keys.pressed('action', 'up') || s.tap;
@@ -156,21 +142,21 @@ function Play() {
         w.y = hover(s.t);
         w.rot = 0;
         // (a moment's wait for the run, if it is still on its way, so the flight can count globally)
-        if (flapIn && !(s.asking && s.t < 1.5)) {
+        if (flapIn && !(ranked?.pending && s.t < 1.5)) {
           s.started = true;
-          if (s.ticket) {
-            s.rng = rng32(s.ticket.seed);
-            s.run = s.ticket.run;
-            s.proof = { v: PROOF_VERSION, w: w.w, y0: w.y, flaps: [], sizes: [] };
-            startRun(s.ticket.run);
+          const seed = ranked?.seed;
+          if (ranked && seed !== null && seed !== undefined && ranked.begin({ w: w.w, y0: w.y })) {
+            s.rng = rng32(seed);
+            s.ranked = true;
           }
         }
       }
       if (s.started && s.freeze > 0) s.freeze = Math.max(0, s.freeze - dt);
       else if (s.started) {
         const before = w.score;
-        if (flapIn && s.proof && !w.dead) s.proof.flaps.push(w.ticks);
+        if (flapIn && s.ranked && !w.dead) ranked?.record(w.ticks);
         const ev = step(w, dt, { flap: flapIn }, s.rng);
+        if (s.ranked) ranked?.clock(w.ticks);
         if (ev.flapped) {
           s.wing = 1;
           sfx.tone({ freq: 460, to: 760, dur: 0.09, type: 'triangle', vol: 0.09 });
@@ -205,12 +191,12 @@ function Play() {
             const m = medalFor(n);
             const next = nextMedal(n);
             const more = next === null ? 'That is the top of the tree.' : `${next - n} more for ${title(medalFor(next))}.`;
-            // the flight goes off to be checked now; a score submitted from the card waits for the answer
-            if (s.run && s.proof) finishRun(s.run, n, s.proof);
+            // the end of the flight goes off to be checked now; a score submitted from the card waits for the answer
+            const run = s.ranked ? rankedRun()?.end(n) : undefined;
             shell.gameOver(n, {
               title: m === 'none' ? undefined : `${title(m)} Medal`,
               detail: `You cleared ${n} ${n === 1 ? 'column' : 'columns'}. ${more}`,
-              ...(s.run && s.proof ? { run: s.run } : {}),
+              ...(run ? { run } : {}),
             });
           }
         }

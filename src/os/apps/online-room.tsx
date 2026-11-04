@@ -413,11 +413,12 @@ export function RoomPanel({ room, title, note, startLabel = 'Start Game' }: { ro
  * Leaderboard card for a finished game in an app: offers the name field when the score makes the
  * top 100 and shows the board. `round` changes for every finished game so each one loads fresh.
  */
-export function AppBoard({ board, score, round }: { board: BoardInfo; score: number; round: number }) {
+/** `run`: the ranked run the score was played in, for a game whose global scores the Worker checks (see RankedRun). */
+export function AppBoard({ board, score, round, run }: { board: BoardInfo; score: number; round: number; run?: string }) {
   // Callers rebuild the board info on every render; keep one spec per board so the board loads once.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const spec = useMemo(() => board.spec, [board.id]);
-  const state = useRoundBoard(board.id, spec, score, round);
+  const state = useRoundBoard(board.id, spec, score, round, run);
   const [name, setName] = useState(() => savedName());
   const [open, setOpen] = useState(false);
   const fmt = (n: number) => formatBoardScore(n, spec);

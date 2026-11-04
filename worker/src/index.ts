@@ -10,14 +10,17 @@ import { Chat, type ChatEnv } from './chat';
 import { Lobby } from './lobby';
 import { Lounge, type LoungeEnv } from './lounge';
 import { Telemetry, type TelemetryEnv } from './telemetry';
-import { LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
+import { BOARD_OWNERS, LEADERBOARD_SPECS, ONLINE_SPECS } from './specs.gen';
 import { agreedWinners, beginRound, benchSeat, botSeats, canJoinRoom, canResume, keepFor, canStartRoom, canWatchRoom, endRound, GATHER_MS, gatherFull, gathering, handOffRound, HOLD_MS, holdsDue, holdUntil, isPool, isRelayMessage, lowestFreeSeat, makeRoomCode, markRoundRecorded, nextAlarm, nextHost, orphanSeats, parseRoomMessage, relayTargets, RESUME_VERSION, roomListing, roundPlayable, roundSeats, seatsFor, type Hold, type RecordedRounds, type RelayRoomMessage, type RoomPlayer, type RoomState, type RoundReports, type SeatKey } from './room-core';
 import { MAX_BODY_BYTES } from '../../src/os/arcade/games/soccer/telemetry-core.ts';
-import { checkRun as checkFlappyRun } from '../../src/os/arcade/games/flappy/proof.ts';
+import { VERIFIERS } from '../../src/os/arcade/verify/registry.ts';
+import { MAX_CHUNK_BYTES, MAX_CHUNKS, paceError, type Verifier } from '../../src/os/arcade/verify/protocol.ts';
 
 export { Chat, Lobby, Lounge, Telemetry };
 
 interface Env extends ChatEnv, LoungeEnv, TelemetryEnv {
+  /** Optional: lets POST /leaderboard/remove take entries off a board (see the README). */
+  BOARDS_ADMIN_TOKEN?: string;
   BOARDS: DurableObjectNamespace<Boards>;
   ROOMS: DurableObjectNamespace<Room>;
   STATS: DurableObjectNamespace<Stats>;
@@ -30,23 +33,18 @@ interface Env extends ChatEnv, LoungeEnv, TelemetryEnv {
 const RATE_LIMIT = 6;
 const RATE_WINDOW_MS = 60_000;
 
-/**
- * Boards whose scores have to be flown, not just sent: a run is opened (POST /runs, which picks the seed its course
- * comes from), started, and finished with a proof the Worker replays; only then can its score go on the board, once.
- * Each check says why a run fails, or null when it scored what it says (`elapsedMs`: from its start to its finish).
- */
-const CHECKED: Record<string, (seed: number, proof: unknown, score: number, elapsedMs: number) => string | null> = {
-  flappy: checkFlappyRun,
-};
 /** Runs opened per IP a minute: a run a round, with room for a classroom behind one address. */
 const RUN_RATE_LIMIT = 40;
-/** How long a run can wait to start, and a finished one to be put on the board; runs older than a day are dropped. */
+/** How long a run can wait to start, and a finished one to be put on the board; run records older than a day go. */
 const RUN_START_MS = 2 * 60 * 60_000;
 const RUN_SUBMIT_MS = 2 * 60 * 60_000;
 const RUN_KEEP_MS = 24 * 60 * 60_000;
-/** The largest proof a run can send (an hour of constant flapping fits easily). */
-const RUN_BODY_BYTES = 512 * 1024;
-type RunRow = { id: string; game: string; seed: number; issued: number; started: number | null; finished: number | null; score: number | null; used: number };
+/** Runs being played at once, whose replays are kept in memory (the oldest goes past this). */
+const LIVE_RUNS = 5_000;
+const RUN_PATHS = new Set(['/runs', '/runs/start', '/runs/feed', '/runs/finish']);
+type RunRow = { id: string; game: string; seed: number; issued: number; started: number | null; finished: number | null; board: string | null; score: number | null; used: number };
+/** A run being played: its replay so far, and the chunk it expects next. */
+type LiveRun = { verifier: Verifier<unknown>; state: unknown; next: number; started: number };
 /** Generous on purpose: a whole classroom behind one IP refreshing and replaying should all count. */
 const STATS_RATE_LIMIT = 240;
 /** Open tabs allowed per IP and in total, so a script can't fake a crowd or exhaust the object. */
@@ -75,28 +73,32 @@ function winEntries(sql: SqlStorage, game: string, limit = TOP): BoardEntry[] {
 export class Boards extends DurableObject<Env> {
   private readonly submissions = new Map<string, number[]>();
   private readonly runsOpened = new Map<string, number[]>();
+  private readonly live = new Map<string, LiveRun>();
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS scores (game TEXT NOT NULL, name TEXT NOT NULL, score REAL NOT NULL, date TEXT NOT NULL)');
     this.ctx.storage.sql.exec('CREATE INDEX IF NOT EXISTS scores_game ON scores (game, score)');
     this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS wins (game TEXT NOT NULL, name TEXT NOT NULL, wins INTEGER NOT NULL, date TEXT NOT NULL, PRIMARY KEY (game, name))');
-    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS runs (id TEXT PRIMARY KEY, game TEXT NOT NULL, seed INTEGER NOT NULL, issued INTEGER NOT NULL, started INTEGER, finished INTEGER, score REAL, used INTEGER NOT NULL DEFAULT 0)');
+    this.ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS ranked_runs (id TEXT PRIMARY KEY, game TEXT NOT NULL, seed INTEGER NOT NULL, issued INTEGER NOT NULL, started INTEGER, finished INTEGER, board TEXT, score REAL, used INTEGER NOT NULL DEFAULT 0)');
   }
 
   private run(id: unknown): RunRow | null {
     if (typeof id !== 'string' || id.length > 64) return null;
-    return this.ctx.storage.sql.exec<RunRow>('SELECT * FROM runs WHERE id = ?', id).toArray()[0] ?? null;
+    return this.ctx.storage.sql.exec<RunRow>('SELECT * FROM ranked_runs WHERE id = ?', id).toArray()[0] ?? null;
   }
 
-  /** POST /runs, /runs/start and /runs/finish: see CHECKED. */
+  /**
+   * POST /runs, /runs/start, /runs/feed and /runs/finish (see verify/protocol.ts). A run's replay lives in memory while
+   * it is played: a run whose replay is gone (the object restarted) can't finish, and doesn't rank.
+   */
   private async runs(request: Request, path: string): Promise<Response> {
     const length = Number(request.headers.get('content-length'));
-    if (Number.isFinite(length) && length > RUN_BODY_BYTES) return json({ error: 'too large' }, 413);
+    if (Number.isFinite(length) && length > MAX_CHUNK_BYTES) return json({ error: 'too large' }, 413);
     let body: Record<string, unknown>;
     try {
       const text = await request.text();
-      if (text.length > RUN_BODY_BYTES) return json({ error: 'too large' }, 413);
+      if (text.length > MAX_CHUNK_BYTES) return json({ error: 'too large' }, 413);
       const parsed: unknown = JSON.parse(text);
       if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return json({ error: 'invalid body' }, 400);
       body = parsed as Record<string, unknown>;
@@ -107,7 +109,7 @@ export class Boards extends DurableObject<Env> {
     const now = Date.now();
     if (path === '/runs') {
       const game = body.game;
-      if (typeof game !== 'string' || !Object.hasOwn(CHECKED, game)) return json({ error: 'unknown game' }, 404);
+      if (typeof game !== 'string' || !Object.hasOwn(VERIFIERS, game)) return json({ error: 'unknown game' }, 404);
       const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
       const recent = (this.runsOpened.get(ip) ?? []).filter((time) => now - time < RATE_WINDOW_MS);
       if (recent.length >= RUN_RATE_LIMIT) {
@@ -117,44 +119,100 @@ export class Boards extends DurableObject<Env> {
       recent.push(now);
       this.runsOpened.set(ip, recent);
       if (this.runsOpened.size > 10_000) this.runsOpened.clear();
-      sql.exec('DELETE FROM runs WHERE issued < ?', now - RUN_KEEP_MS);
+      sql.exec('DELETE FROM ranked_runs WHERE issued < ?', now - RUN_KEEP_MS);
       const id = crypto.randomUUID();
       const seed = crypto.getRandomValues(new Uint32Array(1))[0];
-      sql.exec('INSERT INTO runs (id, game, seed, issued) VALUES (?, ?, ?, ?)', id, game, seed, now);
+      sql.exec('INSERT INTO ranked_runs (id, game, seed, issued) VALUES (?, ?, ?, ?)', id, game, seed, now);
       return json({ run: id, seed });
     }
     const run = this.run(body.run);
     if (!run) return json({ error: 'unknown run' }, 404);
+    const refuse = (why: string, status = 403) => {
+      // a run that fails a check is over: it can't be fed on or finished, and doesn't rank
+      this.live.delete(run.id);
+      if (run.finished === null) sql.exec('UPDATE ranked_runs SET finished = ? WHERE id = ?', now, run.id);
+      return json({ error: why }, status);
+    };
     if (path === '/runs/start') {
-      // (the first start counts: a run can't be restarted to make it look slower or faster)
-      if (run.started === null) {
-        if (now - run.issued > RUN_START_MS) return json({ error: 'expired' }, 410);
-        sql.exec('UPDATE runs SET started = ? WHERE id = ?', now, run.id);
+      if (run.started !== null) return json({ error: 'already started' }, 409);
+      if (now - run.issued > RUN_START_MS) return refuse('expired', 410);
+      const verifier = VERIFIERS[run.game] as Verifier<unknown>;
+      let begun: ReturnType<Verifier<unknown>['start']>;
+      try {
+        begun = verifier.start(run.seed, body.init);
+      } catch {
+        begun = 'bad start';
       }
+      sql.exec('UPDATE ranked_runs SET started = ? WHERE id = ?', now, run.id);
+      if (typeof begun === 'string') return refuse(begun);
+      if (BOARD_OWNERS[begun.board] !== run.game) return refuse('bad board');
+      sql.exec('UPDATE ranked_runs SET board = ? WHERE id = ?', begun.board, run.id);
+      if (this.live.size >= LIVE_RUNS) this.live.delete(this.live.keys().next().value!);
+      this.live.set(run.id, { verifier, state: begun.state, next: 0, started: now });
       return json({ ok: true });
     }
-    // /runs/finish: one try per run, checked against the clock the Worker kept for it
-    if (run.started === null) return json({ error: 'not started' }, 409);
+    // /runs/feed and /runs/finish: the next chunk, played on and timed
     if (run.finished !== null) return json({ error: 'already finished' }, 409);
-    sql.exec('UPDATE runs SET finished = ? WHERE id = ?', now, run.id);
-    const score = body.score;
-    if (typeof score !== 'number' || !Number.isFinite(score)) return json({ error: 'invalid score' }, 400);
-    let why: string | null;
+    const live = this.live.get(run.id);
+    if (!live) return refuse('run lost', 410);
+    if (body.n !== live.next || live.next >= MAX_CHUNKS) return refuse('chunk out of order', 409);
+    live.next++;
+    let fed: ReturnType<Verifier<unknown>['feed']>;
     try {
-      why = CHECKED[run.game](run.seed, body.proof, score, now - run.started);
+      fed = live.verifier.feed(live.state, body.e, body.t);
     } catch {
-      why = 'bad proof';
+      fed = 'bad chunk';
     }
-    if (why) return json({ error: why }, 403);
-    sql.exec('UPDATE runs SET score = ? WHERE id = ?', score, run.id);
+    if (typeof fed === 'string') return refuse(fed);
+    const late = paceError(fed.ms, now - live.started, live.verifier.pace);
+    if (late) return refuse(late);
+    if (path === '/runs/feed') return json({ ok: true });
+    let ended: ReturnType<Verifier<unknown>['end']>;
+    try {
+      ended = live.verifier.end(live.state);
+    } catch {
+      ended = 'bad run';
+    }
+    if (typeof ended === 'string') return refuse(ended);
+    if (body.score !== ended.score) return refuse('score does not replay');
+    this.live.delete(run.id);
+    sql.exec('UPDATE ranked_runs SET finished = ?, score = ? WHERE id = ?', now, ended.score, run.id);
     return json({ ok: true });
+  }
+
+  /** POST /leaderboard/remove: takes a name's entries off a board (all of them, or one score), for Josh. */
+  private async remove(request: Request): Promise<Response> {
+    const token = this.env.BOARDS_ADMIN_TOKEN;
+    if (!token) return json({ error: 'disabled' }, 403);
+    const given = (request.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '');
+    if (!(await sameSecret(given, token))) return json({ error: 'forbidden' }, 401);
+    let body: { game?: unknown; name?: unknown; score?: unknown };
+    try {
+      body = (await request.json()) as typeof body;
+    } catch {
+      return json({ error: 'invalid body' }, 400);
+    }
+    if (typeof body.game !== 'string' || !Object.hasOwn(LEADERBOARD_SPECS, body.game) || typeof body.name !== 'string') return json({ error: 'invalid body' }, 400);
+    if (body.score !== undefined && (typeof body.score !== 'number' || !Number.isFinite(body.score))) return json({ error: 'invalid body' }, 400);
+    const sql = this.ctx.storage.sql;
+    const removed = body.score === undefined
+      ? sql.exec('DELETE FROM scores WHERE game = ? AND name = ?', body.game, body.name).rowsWritten
+      : sql.exec('DELETE FROM scores WHERE game = ? AND name = ? AND score = ?', body.game, body.name, body.score).rowsWritten;
+    return json({ ok: true, removed, entries: boardEntries(sql, body.game, LEADERBOARD_SPECS[body.game]) });
   }
 
   async fetch(request: Request): Promise<Response> {
     const url = new URL(request.url);
-    if ((url.pathname === '/runs' || url.pathname === '/runs/start' || url.pathname === '/runs/finish') && request.method === 'POST') {
+    if (RUN_PATHS.has(url.pathname) && request.method === 'POST') {
       try {
         return await this.runs(request, url.pathname);
+      } catch {
+        return json({ error: 'unavailable' }, 503);
+      }
+    }
+    if (url.pathname === '/leaderboard/remove' && request.method === 'POST') {
+      try {
+        return await this.remove(request);
       } catch {
         return json({ error: 'unavailable' }, 503);
       }
@@ -224,13 +282,15 @@ export class Boards extends DurableObject<Env> {
     const direction = spec.order === 'desc' ? 'DESC' : 'ASC';
     const date = new Date().toISOString();
     try {
-      // A checked board takes a score only from a run that was flown, replayed here to that score, and not used before.
-      if (Object.hasOwn(CHECKED, game)) {
+      // A checked game's board takes a score only from a run of it that was replayed here to that score, on that board,
+      // and not used before.
+      const owner = BOARD_OWNERS[game];
+      if (owner && Object.hasOwn(VERIFIERS, owner)) {
         const run = this.run((body as { run?: unknown }).run);
-        if (!run || run.game !== game || run.used || run.score === null || run.score !== score || run.finished === null || now - run.finished > RUN_SUBMIT_MS) {
+        if (!run || run.game !== owner || run.board !== game || run.used || run.score === null || run.score !== score || run.finished === null || now - run.finished > RUN_SUBMIT_MS) {
           return json({ error: 'unverified run' }, 403);
         }
-        this.ctx.storage.sql.exec('UPDATE runs SET used = 1 WHERE id = ?', run.id);
+        this.ctx.storage.sql.exec('UPDATE ranked_runs SET used = 1 WHERE id = ?', run.id);
       }
       this.ctx.storage.sql.exec('INSERT INTO scores (game, name, score, date) VALUES (?, ?, ?, ?)', game, name, score, date);
       this.ctx.storage.sql.exec(
@@ -1045,7 +1105,7 @@ export default {
       const id = env.BOARDS.idFromName('global');
       return withCors(await env.BOARDS.get(id).fetch(request));
     }
-    if ((url.pathname === '/runs' || url.pathname === '/runs/start' || url.pathname === '/runs/finish') && request.method === 'POST') {
+    if ((RUN_PATHS.has(url.pathname) || url.pathname === '/leaderboard/remove') && request.method === 'POST') {
       const id = env.BOARDS.idFromName('global');
       return withCors(await env.BOARDS.get(id).fetch(request));
     }

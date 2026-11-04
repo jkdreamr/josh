@@ -127,7 +127,7 @@ const errorText: Record<number, string> = {
 export type RunTicket = { run: string; seed: number };
 /** Runs on their way to being checked: a score submitted for one waits for the check to land first. */
 const finishing = new Map<string, Promise<boolean>>();
-const post = (url: string, body: unknown) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+export const post = (url: string, body: unknown) => fetch(url, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 /** A new run for `game` from the Worker, or null (no API, offline, or a Worker that doesn't check this game). */
 export async function openRun(game: string, api = ARCADE_API): Promise<RunTicket | null> {
@@ -142,26 +142,9 @@ export async function openRun(game: string, api = ARCADE_API): Promise<RunTicket
   }
 }
 
-/** Tells the Worker the run has begun (its clock starts now). Tried a few times; a run it never hears start can't rank. */
-export function startRun(run: string, api = ARCADE_API): void {
-  if (!api) return;
-  const attempt = (left: number) => {
-    post(`${api}/runs/start`, { run }).then(
-      (res) => {
-        if (!res.ok && res.status >= 500 && left > 0) window.setTimeout(() => attempt(left - 1), 400);
-      },
-      () => left > 0 && window.setTimeout(() => attempt(left - 1), 400),
-    );
-  };
-  attempt(2);
-}
-
-/** Sends the finished run to be checked (replayed) by the Worker. Resolves to whether it was accepted. */
-export function finishRun(run: string, score: number, proof: unknown, api = ARCADE_API): Promise<boolean> {
-  if (!api) return Promise.resolve(false);
-  const done = post(`${api}/runs/finish`, { run, score, proof }).then((res) => res.ok, () => false);
+/** A run's last chunk on its way (see RankedRun.end): a score submitted for that run waits for its answer first. */
+export function noteFinishing(run: string, done: Promise<boolean>) {
   finishing.set(run, done);
-  return done;
 }
 
 /**
