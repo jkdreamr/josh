@@ -32,7 +32,34 @@ Scores and online wins live in the `Boards` Durable Object. A game's Game Over c
 
 ### Checked runs
 
-Some boards only take a score from a run the Worker replays itself (`CHECKED` in `src/index.ts`; Flappy Tree so far). The game asks for a run as play begins with `POST /runs` `{ game }`, which answers `{ run, seed }`: the run's course comes from that seed. It says when the run really starts with `POST /runs/start` `{ run }` (the first start counts), and when it ends sends `POST /runs/finish` `{ run, score, proof }`: the proof is what the game recorded (for Flappy Tree, the step each flap came on; see `src/os/arcade/games/flappy/proof.ts`). The Worker replays it from the seed and keeps the score only if it comes out the same, and only if the time between start and finish is at least the time the run takes (and not so much longer that it was slowed down). A run finishes once. `POST /leaderboard` for a checked board then needs `run`, and takes that run's own score, once (403 otherwise). Runs are dropped after a day; a run can be opened 40 times a minute per IP. Deploy the site before the Worker: an older Worker ignores the extra fields and keeps taking scores, while a newer Worker refuses checked boards' scores from pages that don't send a run.
+A board whose game has a verifier (`src/os/arcade/verify/registry.ts`) only takes scores from runs the Worker replays itself (`src/os/arcade/verify/protocol.ts` has the whole contract):
+
+1. `POST /runs` `{ game }` as play begins: answers `{ run, seed }`. The run's randomness must come from that seed. 40 a minute per IP.
+2. `POST /runs/start` `{ run, init }` when the run really starts: `init` is how it starts (and picks the board, which must be one of that game's boards in `BOARD_OWNERS`). Starts once.
+3. `POST /runs/feed` `{ run, n, e, t }` every few seconds while it plays: `e` is what the player did since the last chunk, `t` the run's own clock, `n` the chunk's number (in order). The Worker plays each chunk on through the game's verifier as it comes, so no request does much work, and checks the run keeps pace with its clock: not ahead of the Worker's, and not so far behind that it was slowed down (each verifier sets how far, and time boards are pinned close).
+4. `POST /runs/finish` `{ run, n, e, t, score }` with the last chunk: the score must be what the replay ended on.
+5. `POST /leaderboard` for that board then needs `run`, and takes that run's own score on that run's board, once.
+
+Any check that fails ends the run (403, with the reason), and it can't rank. Replays live in the Boards object's memory while a run is played (no storage writes per chunk); a run whose replay is lost (the object restarted mid-run) can't finish. Run records go after a day. Some verifiers can only check part of a run (a computer opponent the Worker can't run, say): their `partial` field says what they can't check.
+
+Deploy the site before the Worker: an older Worker ignores the extra fields and keeps taking scores, while a newer Worker refuses a checked board's scores from pages that don't send a run.
+
+### Removing entries
+
+To take scores off a board (old ones from before checked runs, say), set a long random secret once from `worker/`:
+
+```sh
+npx wrangler secret put BOARDS_ADMIN_TOKEN
+```
+
+Then remove a name's entries from one board (all of them, or just one score with `"score"`):
+
+```sh
+curl -X POST -H "Authorization: Bearer $BOARDS_ADMIN_TOKEN" -H "content-type: application/json" \
+  -d '{"game":"flappy","name":"KingVaan","score":507}' https://josh-arcade.joshuakoo.workers.dev/leaderboard/remove
+```
+
+It answers `{ "ok": true, "removed": <count>, "entries": [...] }` (the board after), 401 for a wrong token, or 403 when no secret is set.
 
 ## Open Rooms
 
