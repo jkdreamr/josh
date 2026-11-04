@@ -1,4 +1,6 @@
 // Pure bubble-shooter logic: hex grid, aim tracing, popping, special bubbles, ceiling pressure.
+// (Its trig and distances come from verify/dmath, not Math: a ranked run replays on the Worker to the last bit.)
+import { atan2, cos, hypot, sin } from '../../verify/dmath.ts';
 import { LEVELS, type LevelDef } from './levels.ts';
 
 export const COLS = 10;
@@ -134,7 +136,7 @@ export function clampAim(angle: number): number {
 }
 
 export function aimAt(from: Pt, to: Pt): number {
-  const raw = Math.atan2(-(to.y - from.y), to.x - from.x);
+  const raw = atan2(-(to.y - from.y), to.x - from.x);
   if (raw <= -Math.PI / 2) return Math.PI - MIN_ANGLE;
   if (raw < 0) return MIN_ANGLE;
   return clampAim(raw);
@@ -254,7 +256,7 @@ function startCampaign(game: Game): void {
 }
 
 export function createGame(opts?: { seed?: number; level?: number; rng?: () => number; mode?: Mode }): Game {
-  const rng = opts?.rng ?? mulberry32(opts?.seed ?? ((Math.random() * 2 ** 32) >>> 0));
+  const rng = opts?.rng ?? mulberry32(opts?.seed ?? ((Math.random() * 4294967296) >>> 0));
   const game: Game = {
     mode: opts?.mode ?? 'endless',
     grid: [],
@@ -299,7 +301,7 @@ const EPS = 1e-7;
 
 export function traceAim(game: Game, angle: number): { points: Pt[]; cell: CellRef | null } {
   const a = clampAim(angle);
-  const dir = { x: Math.cos(a), y: -Math.sin(a) };
+  const dir = { x: cos(a), y: -sin(a) };
   const pos = { ...SHOOTER };
   const points: Pt[] = [{ ...pos }];
   let bounces = 0;
@@ -346,7 +348,7 @@ export function traceAim(game: Game, angle: number): { points: Pt[]; cell: CellR
       if (getCell(game, r, c) >= 0) continue;
       if (r !== 0 && !neighbors(r, c, game.parity).some((p) => getCell(game, p.r, p.c) >= 0)) continue;
       const cc = cellCenter(game, r, c);
-      const d = (cc.x - hit.x) ** 2 + (cc.y - hit.y) ** 2;
+      const d = (cc.x - hit.x) * (cc.x - hit.x) + (cc.y - hit.y) * (cc.y - hit.y);
       if (d < bestD) {
         bestD = d;
         best = { r, c };
@@ -482,7 +484,7 @@ function detonate(game: Game, bombs: CellRef[]): number {
       for (let c = 0; c < game.grid[r].length; c++) {
         if (game.grid[r][c] < 0) continue;
         const cc = cellCenter(game, r, c);
-        const d = Math.hypot(cc.x - at.x, cc.y - at.y);
+        const d = hypot(cc.x - at.x, cc.y - at.y);
         if (d <= BLAST_R) hit.push({ cell: { r, c }, d });
       }
     hit.sort((u, v) => u.d - v.d);
@@ -519,7 +521,9 @@ function settle(game: Game): void {
     const sorted = [...group].sort((u, v) => {
       const a = cellCenter(game, u.r, u.c);
       const b = cellCenter(game, v.r, v.c);
-      return (a.x - placed.x) ** 2 + (a.y - placed.y) ** 2 - ((b.x - placed.x) ** 2 + (b.y - placed.y) ** 2);
+      const da = (a.x - placed.x) * (a.x - placed.x) + (a.y - placed.y) * (a.y - placed.y);
+      const db = (b.x - placed.x) * (b.x - placed.x) + (b.y - placed.y) * (b.y - placed.y);
+      return da - db;
     });
     sorted.forEach((cell, i) => remove(game, cell, 'pop', i));
     popped = sorted.length;
@@ -631,7 +635,7 @@ export function step(game: Game, dt: number): void {
     while (rem > 0 && game.shot !== null) {
       const a = shot.points[shot.seg];
       const b = shot.points[shot.seg + 1];
-      const segLen = Math.hypot(b.x - a.x, b.y - a.y);
+      const segLen = hypot(b.x - a.x, b.y - a.y);
       const left = segLen - shot.along;
       if (rem < left) {
         shot.along += rem;

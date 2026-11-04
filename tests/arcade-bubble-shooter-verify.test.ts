@@ -2,6 +2,7 @@
 // at several frame rates, replay to the same score on the Worker's verifier, and the Worker takes their scores once;
 // scores the run didn't reach, runs played too fast or too slow, edited or borrowed shots, and Levels are refused.
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, test } from 'node:test';
 import { loopSteps } from '../src/os/arcade/kit/loop-core.ts';
 import { advance, canShoot, createGame, findMatches, fire, MIN_ANGLE, rowLength, STEP, swap, traceAim, type Game } from '../src/os/arcade/games/bubble-shooter/logic.ts';
@@ -118,6 +119,25 @@ function replay(seed: number, played: Pick<Played, 'init' | 'chunks'>): number |
 }
 
 const clone = <T>(v: T): T => JSON.parse(JSON.stringify(v)) as T;
+
+/**
+ * The source of every module the Worker runs to replay a run, from `entry` through its relative imports (types left
+ * out), with comments taken out.
+ */
+function replayedSources(entry: URL): Map<string, string> {
+  const seen = new Map<string, string>();
+  const visit = (url: URL) => {
+    if (seen.has(url.pathname)) return;
+    const src = readFileSync(url, 'utf8');
+    seen.set(url.pathname, src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, ''));
+    for (const m of src.matchAll(/^import\s+(?!type\b)[^;]*?from\s+'(\.{1,2}\/[^']+)'/gm)) visit(new URL(m[1], url));
+  };
+  visit(entry);
+  return seen;
+}
+
+/** Math whose last digit can differ between engines (and **, which is Math.pow). */
+const ENGINE_MATH = /Math\.(sin|cos|tan|asin|acos|atan|atan2|sinh|cosh|tanh|asinh|acosh|atanh|hypot|exp|expm1|log|log1p|log2|log10|pow|cbrt)\s*\(|\*\*/;
 
 test('bubble shooter is checked, on its own board', () => {
   assert.equal(VERIFIERS['bubble-shooter'], verifier);
@@ -285,4 +305,10 @@ test('a bubble shooter run only counts on its own board', async () => {
   // and another game's checked run doesn't count here
   w.db.prepare('INSERT INTO ranked_runs (id, game, seed, issued, started, finished, board, score, used) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)').run('flown', 'flappy', 1, w.clock, w.clock, w.clock, 'flappy', 42);
   assert.equal((await w.submit('bubble-shooter', 42, 'flown')).status, 403);
+});
+
+test('the replayed rules use no Math whose last digit can differ between browsers (see verify/dmath.ts)', () => {
+  const sources = replayedSources(new URL('../src/os/arcade/games/bubble-shooter/verify.ts', import.meta.url));
+  for (const name of ['logic.ts', 'levels.ts', 'verify.ts']) assert.ok([...sources.keys()].some((path) => path.endsWith(`/games/bubble-shooter/${name}`)), `${name} is replayed`);
+  for (const [path, src] of sources) assert.ok(!ENGINE_MATH.test(src), `${path}: ${src.match(ENGINE_MATH)?.[0]}`);
 });
