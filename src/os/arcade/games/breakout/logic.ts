@@ -1,3 +1,5 @@
+import { atan2, cos, hypot, sin } from '../../verify/dmath.ts';
+
 export type Brick = { x: number; y: number; w: number; h: number; hp: number; maxHp: number; row: number; col: number };
 export type Ball = { x: number; y: number; vx: number; vy: number; r: number; attached: boolean };
 export type PowerKind = 'wide' | 'multi' | 'slow';
@@ -32,10 +34,18 @@ export type BreakoutState = {
   chain: number;
   ended: boolean;
   effects: Effect[];
+  /** Steps taken: a ranked run's inputs are stamped with it, so the leaderboard can replay the run (see verify.ts). */
+  ticks: number;
+  /** Time not yet stepped (play takes fixed steps of STEP). */
+  acc: number;
 };
+/** The paddle's input for a step: the arrow keys' axis, or where the pointer is (it wins when set). */
+export type Pad = { axis: number; x: number | null };
 
 export const COLS = 11;
 export const SLOW = 0.65;
+/** Play goes in fixed steps of this many seconds, so a run plays the same at any frame rate. */
+export const STEP = 1 / 120;
 const BALL_R = 7;
 const PADDLE_H = 13;
 const SIDE = 12;
@@ -152,6 +162,8 @@ export function createBreakout(level = 1, field: Partial<Field> = {}): BreakoutS
     chain: 0,
     ended: false,
     effects: [],
+    ticks: 0,
+    acc: 0,
   };
   state.bricks = bricksForLevel(state, level);
   return state;
@@ -190,8 +202,8 @@ export function launchBall(ball: Ball, speed = 340, aim = 0.18) {
   if (!ball.attached) return;
   ball.attached = false;
   const angle = Math.max(-0.9, Math.min(0.9, aim));
-  ball.vx = speed * Math.sin(angle);
-  ball.vy = -speed * Math.cos(angle);
+  ball.vx = speed * sin(angle);
+  ball.vy = -speed * cos(angle);
 }
 
 /** Launches the waiting ball, aimed a little toward where the paddle is heading. Returns false when no ball is waiting. */
@@ -207,11 +219,11 @@ export function serve(state: BreakoutState, rng: () => number = Math.random) {
 }
 
 export function paddleBounce(ball: Ball, paddle: BreakoutState['paddle']) {
-  const speed = Math.hypot(ball.vx, ball.vy);
+  const speed = hypot(ball.vx, ball.vy);
   const offset = Math.max(-1, Math.min(1, (ball.x - paddle.x) / (paddle.width / 2)));
   const angle = offset * (Math.PI / 3);
-  ball.vx = speed * Math.sin(angle);
-  ball.vy = -speed * Math.cos(angle);
+  ball.vx = speed * sin(angle);
+  ball.vy = -speed * cos(angle);
   ball.y = paddle.y - paddle.height / 2 - ball.r - 0.1;
   return angle;
 }
@@ -266,13 +278,13 @@ export function applyPowerup(state: BreakoutState, kind: PowerKind) {
   if (kind === 'multi') {
     const source = state.balls.find((ball) => !ball.attached);
     if (source && state.balls.length < 9) {
-      const speed = Math.hypot(source.vx, source.vy);
-      const angle = Math.atan2(source.vy, source.vx);
+      const speed = hypot(source.vx, source.vy);
+      const angle = atan2(source.vy, source.vx);
       for (const delta of [-0.4, 0.4]) {
         const next = angle + delta;
         // Keep the copies from leaving almost flat, which would leave them bouncing wall to wall.
-        const vy = Math.sin(next) * speed;
-        const vx = Math.cos(next) * speed;
+        const vy = sin(next) * speed;
+        const vx = cos(next) * speed;
         const minVy = speed * 0.35;
         const fixedVy = Math.abs(vy) < minVy ? Math.sign(vy || -1) * minVy : vy;
         const fixedVx = Math.sign(vx) * Math.sqrt(Math.max(0, speed * speed - fixedVy * fixedVy));
@@ -310,6 +322,61 @@ function collideBrick(ball: Ball, brick: Brick) {
   return true;
 }
 
+/**
+ * How the wall lies for hitBrick: how far down it reaches, its tallest brick, and whether its bricks go top to bottom
+ * (they always do in play: the rows are laid out in order and only ever lose bricks).
+ */
+type Wall = { bottom: number; tallest: number; sorted: boolean };
+
+function wallOf(bricks: Brick[]): Wall {
+  let bottom = Number.NEGATIVE_INFINITY;
+  let tallest = 0;
+  let sorted = true;
+  for (let i = 0; i < bricks.length; i++) {
+    const b = bricks[i];
+    bottom = Math.max(bottom, b.y + b.h);
+    tallest = Math.max(tallest, b.h);
+    if (i && b.y < bricks[i - 1].y) sorted = false;
+  }
+  return { bottom, tallest, sorted };
+}
+
+/**
+ * The first brick (in order) the ball overlaps, bounced off as collideBrick does, or undefined. Bricks clearly out of
+ * the ball's reach (by more than a unit, far beyond rounding) are passed over without the full test, and in a wall
+ * that goes top to bottom the search starts at the rows the ball can reach and stops past them, which keeps a screen
+ * of balls cheap to replay; the brick it finds is the same.
+ */
+function hitBrick(ball: Ball, bricks: Brick[], wall: Wall) {
+  const top = ball.y - ball.r - 1;
+  const bottom = ball.y + ball.r + 1;
+  if (top > wall.bottom) return undefined;
+  const left = ball.x - ball.r - 1;
+  const right = ball.x + ball.r + 1;
+  let i = 0;
+  if (wall.sorted) {
+    // (the first brick that starts low enough to reach the ball: every one before it ends more than a unit above it)
+    const from = top - wall.tallest - 1;
+    let hi = bricks.length;
+    while (i < hi) {
+      const mid = (i + hi) >> 1;
+      if (bricks[mid].y < from) i = mid + 1;
+      else hi = mid;
+    }
+  }
+  for (; i < bricks.length; i++) {
+    const b = bricks[i];
+    if (bottom < b.y) {
+      // (every brick after this one starts lower still)
+      if (wall.sorted) break;
+      continue;
+    }
+    if (top > b.y + b.h || right < b.x || left > b.x + b.w) continue;
+    if (collideBrick(ball, b)) return b;
+  }
+  return undefined;
+}
+
 function startLevel(state: BreakoutState, level: number) {
   state.level = level;
   state.bricks = bricksForLevel(state, level);
@@ -325,8 +392,23 @@ function startLevel(state: BreakoutState, level: number) {
   state.levelStart = state.time;
 }
 
+/**
+ * e^x for the paddle's friction (x is small and negative: -1.8 at the longest step), summed from its series with
+ * arithmetic alone, so every browser and the Worker get the same bits (Math.exp need not).
+ */
+function decay(x: number) {
+  let term = 1;
+  let sum = 1;
+  for (let n = 1; n <= 30; n++) {
+    term *= x / n;
+    sum += term;
+  }
+  return sum;
+}
+
 export function stepBreakout(state: BreakoutState, dt: number, axis = 0, pointerX: number | null = null, rng: () => number = Math.random) {
   if (state.ended) return;
+  state.ticks++;
   state.time += dt;
   state.effects = [];
   if (state.slowActive && state.time >= state.slowUntil) state.slowActive = false;
@@ -348,7 +430,7 @@ export function stepBreakout(state: BreakoutState, dt: number, axis = 0, pointer
     paddle.vx = Math.max(-maxSpeed, Math.min(maxSpeed, paddle.vx + axis * maxSpeed * 6 * dt));
     paddle.x += paddle.vx * dt;
   } else {
-    paddle.vx *= Math.exp(-18 * dt);
+    paddle.vx *= decay(-18 * dt);
     paddle.x += paddle.vx * dt;
   }
   const minX = paddle.width / 2 + 4;
@@ -372,6 +454,7 @@ export function stepBreakout(state: BreakoutState, dt: number, axis = 0, pointer
   state.drops = state.drops.filter((drop) => drop.y < state.height + 20);
 
   const factor = state.slowActive ? SLOW : 1;
+  let wall: Wall | null = null;
   for (const ball of state.balls) {
     if (ball.attached) continue;
     const dx = ball.vx * dt * factor;
@@ -392,15 +475,18 @@ export function stepBreakout(state: BreakoutState, dt: number, axis = 0, pointer
         paddleBounce(ball, paddle);
         // A moving paddle puts a little english on the ball.
         const english = Math.max(-0.18, Math.min(0.18, (paddle.vx / maxSpeed) * 0.22));
-        const angle = Math.max(-1.1, Math.min(1.1, Math.atan2(ball.vx, -ball.vy) + english));
-        ball.vx = speed * Math.sin(angle);
-        ball.vy = -speed * Math.cos(angle);
+        const angle = Math.max(-1.1, Math.min(1.1, atan2(ball.vx, -ball.vy) + english));
+        ball.vx = speed * sin(angle);
+        ball.vy = -speed * cos(angle);
         state.effects.push({ type: 'paddle', x: ball.x, y: ball.y });
         continue;
       }
-      const brick = state.bricks.find((b) => collideBrick(ball, b));
+      wall ??= wallOf(state.bricks);
+      const brick = hitBrick(ball, state.bricks, wall);
       if (brick) {
         damageBrick(state, brick, rng);
+        // (a broken brick leaves the wall: the next ball looks at it afresh)
+        if (brick.hp <= 0) wall = null;
         break;
       }
     }
@@ -429,4 +515,32 @@ export function stepBreakout(state: BreakoutState, dt: number, axis = 0, pointer
 
 export function isLevelClear(state: Pick<BreakoutState, 'bricks'>) {
   return state.bricks.length === 0;
+}
+
+/**
+ * Plays `dt` seconds on in fixed steps of STEP, the paddle taking `pad` (the time left over waits for the next call).
+ * `onStep` hears of each step just before it is taken (a ranked run notes the input there). The steps' effects.
+ */
+export function play(state: BreakoutState, dt: number, pad: Pad, rng: () => number = Math.random, onStep?: () => void) {
+  const effects: Effect[] = [];
+  state.acc += Math.min(Math.max(0, dt), 0.1);
+  while (state.acc >= STEP && !state.ended) {
+    state.acc -= STEP;
+    onStep?.();
+    stepBreakout(state, STEP, pad.x === null ? pad.axis : 0, pad.x, rng);
+    for (const effect of state.effects) effects.push(effect);
+  }
+  return effects;
+}
+
+/** A small seeded generator: a ranked run's serves and drops come from the seed the leaderboard picked. */
+export function rng32(seed: number) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }
