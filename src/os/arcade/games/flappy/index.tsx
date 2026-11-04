@@ -2,7 +2,9 @@ import { useEffect, useRef, type PointerEvent as RPointerEvent } from 'react';
 import { GameShell, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { cloud, column, conifer, dish, ground, hash, hills, medal, moon, palette, ridge, stars, tree } from './draw';
-import { GROUND, H, R, START_SPEED, createState, hover, medalFor, nextMedal, resize, riseOf, rng32, step, type Medal } from './logic';
+import { GROUND, H, R, START_SPEED, STEP, birdXFor, hover, medalFor, nextMedal, riseOf, type Medal } from './logic';
+import { createReplay, MAX_RUN_TICKS, tickReplay, type RunTicket } from './replay';
+import { startRankedRun } from './client';
 import { meta } from './meta';
 import './flappy.css';
 
@@ -36,8 +38,11 @@ function Play() {
   const { ref, size, ctx } = useCanvas();
   const { best } = useHighScore(meta.id);
   const s = useRef({
-    world: createState(800),
-    rng: online ? rng32(courseSeed(online.round, online.players)) : Math.random,
+    run: createReplay(online ? courseSeed(online.round, online.players) : crypto.getRandomValues(new Uint32Array(1))[0]),
+    ticket: null as RunTicket | null,
+    requested: false,
+    acc: 0,
+    pendingFlap: false,
     started: false,
     idle: 0,
     t: 0,
@@ -66,6 +71,20 @@ function Play() {
   useEffect(() => {
     setScore(null);
   }, [setScore]);
+
+  useEffect(() => {
+    if (online || status !== 'playing' || s.requested || s.started) return;
+    s.requested = true;
+    const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 5000);
+    void startRankedRun(controller.signal).then((ticket) => {
+      if (!controller.signal.aborted && ticket && !s.started) {
+        s.ticket = ticket;
+        s.run = createReplay(ticket.seed);
+      }
+    });
+    return () => { clearTimeout(timeout); controller.abort(); };
+  }, [online, status, s]);
 
   // Measure the frame scale again on every status change too: the iPad frame may still be scaling in at mount.
   useEffect(() => {
@@ -122,8 +141,7 @@ function Play() {
     (dt) => {
       const { vw } = view();
       if (!vw) return;
-      const w = s.world;
-      if (w.w !== vw) resize(w, vw);
+      const w = s.run.world;
       s.t += dt;
       const flapIn = keys.pressed('action', 'up') || s.tap;
       s.tap = false;
@@ -132,12 +150,26 @@ function Play() {
         s.idle += START_SPEED * dt;
         w.y = hover(s.t);
         w.rot = 0;
-        if (flapIn) s.started = true;
+        if (flapIn) {
+          s.started = true;
+          w.y = H * 0.42;
+        }
       }
       if (s.started && s.freeze > 0) s.freeze = Math.max(0, s.freeze - dt);
       else if (s.started) {
         const before = w.score;
-        const ev = step(w, dt, { flap: flapIn }, s.rng);
+        s.pendingFlap ||= flapIn;
+        s.acc += dt;
+        const ev = { flapped: false, scored: 0, crashed: false, landed: false };
+        while (s.acc >= STEP) {
+          s.acc -= STEP;
+          const tick = tickReplay(s.run, s.pendingFlap);
+          s.pendingFlap = false;
+          ev.flapped ||= tick.flapped;
+          ev.scored += tick.scored;
+          ev.crashed ||= tick.crashed;
+          ev.landed ||= tick.landed;
+        }
         if (ev.flapped) {
           s.wing = 1;
           sfx.tone({ freq: 460, to: 760, dur: 0.09, type: 'triangle', vol: 0.09 });
@@ -172,9 +204,12 @@ function Play() {
             const m = medalFor(n);
             const next = nextMedal(n);
             const more = next === null ? 'That is the top of the tree.' : `${next - n} more for ${title(medalFor(next))}.`;
+            const proof = s.ticket && s.run.ended !== null && s.run.ended <= MAX_RUN_TICKS ?
+              { ...s.ticket, ticks: s.run.ended, flaps: [...s.run.flaps] } : undefined;
             shell.gameOver(n, {
+              proof,
               title: m === 'none' ? undefined : `${title(m)} Medal`,
-              detail: `You cleared ${n} ${n === 1 ? 'column' : 'columns'}. ${more}`,
+              detail: `You cleared ${n} ${n === 1 ? 'column' : 'columns'}. ${more}${proof ? '' : ' Local score only; this run is not verified.'}`,
             });
           }
         }
@@ -216,7 +251,8 @@ function Play() {
         s.measured = now;
         measureCovers();
       }
-      const w = s.world;
+      const w = s.run.world;
+      const offset = birdXFor(vw) - w.birdX;
       const d = s.idle + w.dist;
       const pal = palette(s.tod);
 
@@ -285,10 +321,10 @@ function Play() {
       }
 
       for (const col of w.cols) {
-        if (col.x > vw + 20 || col.x < -100) continue;
+        if (col.x + offset > vw + 20 || col.x + offset < -100) continue;
         const p = riseOf(w, col);
         const e = 1 - Math.pow(1 - p, 3);
-        column(c, col.x, col.gapY, col.gap, GROUND, (1 - e) * (GROUND + 60));
+        column(c, col.x + offset, col.gapY, col.gap, GROUND, (1 - e) * (GROUND + 60));
       }
       if (pal.night > 0) {
         c.fillStyle = `rgba(16,24,58,${pal.night * 0.3})`;
@@ -306,14 +342,14 @@ function Play() {
         c.strokeStyle = `rgba(255,255,255,${0.7 * (1 - q)})`;
         c.lineWidth = 3 * (1 - q) + 0.5;
         c.beginPath();
-        c.arc(r.x, r.y, R + 6 + q * 26, 0, Math.PI * 2);
+        c.arc(r.x + offset, r.y, R + 6 + q * 26, 0, Math.PI * 2);
         c.stroke();
       }
 
       for (const p of s.leaves) {
         c.save();
         c.globalAlpha = Math.max(0, 1 - p.life / p.max);
-        c.translate(p.x, p.y);
+        c.translate(p.x + offset, p.y);
         c.rotate(p.rot);
         c.fillStyle = p.color;
         c.beginPath();
@@ -323,7 +359,7 @@ function Play() {
       }
 
       c.save();
-      c.translate(w.birdX, w.y);
+      c.translate(w.birdX + offset, w.y);
       c.rotate(w.rot);
       const sq = 1 + s.wing * 0.06;
       c.scale(2 - sq, sq);
@@ -337,9 +373,9 @@ function Play() {
       if (w.y < -R * 0.6) {
         c.fillStyle = pal.night > 0.5 ? 'rgba(255,255,255,0.85)' : 'rgba(23,96,58,0.85)';
         c.beginPath();
-        c.moveTo(w.birdX, 4);
-        c.lineTo(w.birdX - 9, 18);
-        c.lineTo(w.birdX + 9, 18);
+        c.moveTo(w.birdX + offset, 4);
+        c.lineTo(w.birdX + offset - 9, 18);
+        c.lineTo(w.birdX + offset + 9, 18);
         c.closePath();
         c.fill();
       }
@@ -419,5 +455,5 @@ function Play() {
     s.tap = true;
   };
 
-  return <canvas ref={ref} className="g-flappy-canvas" aria-label={`flappy tree, score ${s.world.score}`} onPointerDown={onDown} />;
+  return <canvas ref={ref} className="g-flappy-canvas" aria-label={`flappy tree, score ${s.run.world.score}`} onPointerDown={onDown} />;
 }

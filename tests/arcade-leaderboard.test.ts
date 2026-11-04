@@ -105,6 +105,23 @@ test('an empty API URL never calls fetch and keeps the device board', async () =
   assert.equal(calls, 0);
 });
 
+test('Flappy never sends an unverified score or falls back to the legacy endpoint', async () => {
+  let calls = 0;
+  globalThis.fetch = async (url, init) => {
+    calls++;
+    assert.equal(url, 'https://arcade.test/flappy/submit');
+    assert.ok(JSON.parse(String(init?.body)).proof);
+    return new Response('{}', { status: 404 });
+  };
+  const unverified = await submitScore('flappy', desc, 'Player', 4, 'https://arcade.test');
+  assert.equal(unverified.scope, 'device');
+  assert.equal(calls, 0);
+  const proof = { seed: 1, token: 'test', version: 1, ticks: 100, flaps: [0] };
+  const oldWorker = await submitScore('flappy', desc, 'Player', 4, 'https://arcade.test', proof);
+  assert.equal(oldWorker.scope, 'device');
+  assert.equal(calls, 1);
+});
+
 test('falls back to the device board when the API is offline', async () => {
   globalThis.fetch = async () => {
     throw new TypeError('offline');

@@ -1,5 +1,6 @@
 import type { LeaderboardSpec } from '../types';
 import { cleanName, isEntry, parseBoardTops, rankEntries, topsOf, NAME_MAX, type BoardEntry } from './leaderboard-core.ts';
+import type { FlappyProof } from '../games/flappy/replay.ts';
 
 export {
   NAME_MAX,
@@ -120,13 +121,15 @@ const errorText: Record<number, string> = {
 };
 
 /** Saves on this device, then globally. Returns the global board, or this device's board if that fails. */
-export async function submitScore(game: string, spec: LeaderboardSpec, rawName: string, score: number, api = ARCADE_API): Promise<Board & { entry: BoardEntry }> {
+export async function submitScore(game: string, spec: LeaderboardSpec, rawName: string, score: number, api = ARCADE_API, proof?: FlappyProof): Promise<Board & { entry: BoardEntry }> {
   const name = Array.from(cleanName(rawName)).slice(0, NAME_MAX).join('');
   const entry: BoardEntry = { name, score, date: new Date().toISOString() };
   const local = saveDevice(game, entry, spec);
+  if (game === 'flappy' && !proof) return { entries: local, scope: 'device', entry, error: 'This run is local only; no verified replay is available.' };
   if (!api) return { entries: local, scope: 'device', entry };
   try {
-    const res = await fetch(`${api}/leaderboard`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ game, name, score }) });
+    const path = game === 'flappy' ? '/flappy/submit' : '/leaderboard';
+    const res = await fetch(`${api}${path}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ game, name, score, ...(game === 'flappy' ? { proof } : {}) }) });
     if (!res.ok) return { entries: local, scope: 'device', entry, error: errorText[res.status] };
     const entries = rankEntries(await readEntries(res), spec.order);
     const mine = entries.find((e) => e.name === name && e.score === score);

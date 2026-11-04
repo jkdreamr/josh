@@ -137,7 +137,7 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   /** When the round last ended, so keys pressed in the moment it ends don't count on the Game Over card. */
   const overAt = useRef(0);
   const roundBoard = useMemo(() => (compact ? null : boardFor(meta, result?.board)), [compact, meta, result?.board]);
-  const board = useRoundBoard(roundBoard?.id ?? meta.id, roundBoard?.spec, result?.rank ?? result?.score, result?.id);
+  const board = useRoundBoard(roundBoard?.id ?? meta.id, roundBoard?.spec, result?.rank ?? result?.score, result?.id, result?.proof);
   const [boardOpen, setBoardOpen] = useState(false);
   const [name, setName] = useState('');
   const [onlineOpen, setOnlineOpen] = useState(false);
