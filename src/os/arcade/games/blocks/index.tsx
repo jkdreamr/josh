@@ -1,9 +1,9 @@
 import { useEffect, useRef } from 'react';
-import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useOnline, useShell } from '../../kit';
+import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useOnline, useRankedRun, useShell, type RankedRun } from '../../kit';
 import type { GameProps } from '../../types';
 import {
-  cellsFor, createGame, ghostY, grounded, hardDrop, holdPiece, HEIGHT, LOCK_DELAY, move, rotate, seededRandom, stackTop, step,
-  VISIBLE_ROWS, WIDTH, type BlocksGame, type LockEvent, type Piece,
+  advance, cellsFor, createGame, dragDown, ghostY, grounded, hardDrop, holdPiece, HEIGHT, LOCK_DELAY, move, rotate, runRandom, seededRandom,
+  stackTop, VISIBLE_ROWS, WIDTH, type BlocksGame, type LockEvent, type Piece,
 } from './logic';
 import { blocksLayout, spinTitle, type Layout, type Rect } from './layout';
 import { meta } from './meta';
@@ -39,7 +39,12 @@ function Play() {
   const state = useRef<BlocksGame>(createGame());
   const rand = useRef<() => number>(Math.random);
   const seedKey = useRef('');
-  const timing = useRef({ dir: 0 as -1 | 0 | 1, last: 0 as -1 | 1, das: 0, arr: 0, seq: 0, overT: -1 });
+  const timing = useRef({ dir: 0 as -1 | 0 | 1, last: 0 as -1 | 1, das: 0, arr: 0, seq: 0, overT: -1, reported: false });
+  // The global board takes a score only from a game the Worker replays (see verify.ts): the run is asked for as the
+  // game opens, and its seed deals the pieces. A game that starts without it (offline, or it was slow) still plays.
+  const rankedRun = useRankedRun(meta.id, !online && !shell.compact);
+  /** begun: the game is under way (inputs count from then). on: it is a ranked run, recording what took effect. */
+  const ranked = useRef({ begun: false, on: false, wait: 0, soft: false, run: null as RankedRun | null });
   const vfx = useRef({
     particles: [] as Particle[],
     toasts: [] as Toast[],
@@ -71,25 +76,45 @@ function Play() {
     return () => { root?.style.removeProperty('--g-blocks-u'); };
   }, [shell.root]);
 
-  const nudge = (dx: number) => {
-    if (move(state.current, dx)) sfx.play('tick', 0.84);
+  // (asked for as soon as the game opens, so it is usually in before the first piece falls)
+  useEffect(() => {
+    rankedRun();
+  }, []);
+
+  /** Something the player did that took effect, for a ranked game's replay: stamped with the step it came before. */
+  const log = (what: string, on?: 0 | 1) => {
+    const r = ranked.current;
+    if (r.on) r.run?.record(on === undefined ? [state.current.ticks, what] : [state.current.ticks, what, on]);
+  };
+
+  const shift = (dx: -1 | 1) => {
+    if (!ranked.current.begun || !move(state.current, dx)) return false;
+    log(dx < 0 ? 'l' : 'r');
+    return true;
+  };
+
+  const nudge = (dx: -1 | 1) => {
+    if (shift(dx)) sfx.play('tick', 0.84);
   };
 
   const turn = (dir: 1 | -1) => {
     const s = state.current;
-    if (!rotate(s, dir)) return;
+    if (!ranked.current.begun || !rotate(s, dir)) return;
+    log(dir === 1 ? 'cw' : 'ccw');
     sfx.play('blip', dir === 1 ? 1.2 : 0.92);
     if (s.spin !== 'none') sfx.tone({ freq: 880, to: 1320, dur: 0.08, type: 'triangle', vol: 0.05 });
   };
 
   const hold = () => {
-    if (holdPiece(state.current, rand.current)) sfx.play('select');
+    if (!ranked.current.begun || !holdPiece(state.current, rand.current)) return;
+    log('hold');
+    sfx.play('select');
   };
 
   const drop = () => {
     const s = state.current;
     const piece = s.active;
-    if (!piece || s.over) return;
+    if (!piece || s.over || !ranked.current.begun) return;
     const landing = ghostY(s);
     const fx = vfx.current;
     const cols = new Map<number, number>();
@@ -97,12 +122,13 @@ function Play() {
     fx.beams = [...cols].map(([x, dy]) => ({ x, top: piece.y + dy, bottom: landing + dy, color: colors[piece.type] }));
     fx.beamLife = 0.2;
     const distance = hardDrop(s, rand.current);
+    log('drop');
     fx.shake = Math.min(1, 0.45 + distance / 30);
     sfx.play('hit', 0.72);
   };
 
   const keys = useKeys((code, event) => {
-    if (event?.repeat || state.current.over) return;
+    if (event?.repeat || state.current.over || !ranked.current.begun) return;
     const t = timing.current;
     if (code === 'ArrowLeft' || code === 'KeyA' || code === 'ArrowRight' || code === 'KeyD') {
       const dir = code === 'ArrowLeft' || code === 'KeyA' ? -1 : 1;
@@ -161,6 +187,21 @@ function Play() {
   };
 
   useGameLoop((dt) => {
+    const r = ranked.current;
+    if (!r.begun) {
+      // (a moment's wait for the run, if it is still on its way, so the game can count globally)
+      const run = rankedRun();
+      r.wait += dt;
+      if (run?.pending && r.wait < 1.5) return;
+      r.begun = true;
+      const seed = run?.seed;
+      if (run && seed !== null && seed !== undefined && run.begin({ board: meta.id })) {
+        rand.current = runRandom(seed);
+        state.current = createGame(rand.current);
+        r.on = true;
+        r.run = run;
+      }
+    }
     const s = state.current;
     const t = timing.current;
     const fx = vfx.current;
@@ -194,7 +235,12 @@ function Play() {
         sfx.play('lose');
       }
       t.overT += dt;
-      if (t.overT >= TOP_OUT) shell.gameOver(s.score, { detail: `${s.lines} ${s.lines === 1 ? 'line' : 'lines'}, level ${s.level}.` });
+      if (t.overT >= TOP_OUT && !t.reported) {
+        t.reported = true;
+        // the end of the game goes off to be checked now; a score submitted from the card waits for the answer
+        const run = r.on ? r.run?.end(s.score) : undefined;
+        shell.gameOver(s.score, { detail: `${s.lines} ${s.lines === 1 ? 'line' : 'lines'}, level ${s.level}.`, ...(run ? { run } : {}) });
+      }
       return;
     }
     // Movement: the last direction pressed wins, so rolling from left to right never stalls.
@@ -212,14 +258,21 @@ function Play() {
         t.arr += dt;
         while (t.arr >= ARR) {
           t.arr -= ARR;
-          if (!move(s, direction)) {
+          if (!shift(direction)) {
             t.arr = 0;
             break;
           }
         }
       }
     }
-    step(s, dt, keys.down('down'), rand.current);
+    // (the rules run in fixed steps, so a ranked game replays the same at any frame rate)
+    const soft = keys.down('down');
+    if (soft !== r.soft) {
+      r.soft = soft;
+      log('soft', soft ? 1 : 0);
+    }
+    advance(s, dt, soft, rand.current);
+    if (r.on) r.run?.clock(s.ticks);
     if (s.seq !== t.seq) {
       t.seq = s.seq;
       react(s);
@@ -232,7 +285,9 @@ function Play() {
     if (!w || !h) return;
     const L = measure(w, h);
     draw(c, L, w, h);
-  });
+  },
+  // (a slow frame is caught up rather than played in slow motion: a slowed-down fall is easier to stack)
+  { realtime: true });
 
   const measure = (w: number, h: number): Layout => {
     const v = view.current;
@@ -444,12 +499,12 @@ function Play() {
           const rows = Math.floor(dy / step);
           while (rows > g.down) {
             g.down++;
-            if (move(state.current, 0, 1)) state.current.score++;
+            if (ranked.current.begun && dragDown(state.current)) log('d');
           }
         } else {
           const cells = Math.trunc(dx / step);
           const prev = Math.trunc((g.lastX - g.x) / step);
-          for (let i = prev; i !== cells; i += Math.sign(cells - prev)) nudge(Math.sign(cells - prev));
+          for (let i = prev; i !== cells; i += Math.sign(cells - prev)) nudge(cells > prev ? 1 : -1);
           g.lastX = e.clientX;
         }
       }}
