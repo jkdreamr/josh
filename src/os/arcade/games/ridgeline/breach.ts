@@ -699,6 +699,70 @@ const DRAFT: Record<PlaceKind, Drafter> = {
   },
 };
 
+/** The military dressing each kind of place gets once the map is built (world.ts lays it out from a random stream of
+ * its own, only where nothing stands yet, so the layout above never moves): what, and how many of each. */
+export const PLACE_DRESS: Record<PlaceKind, [PropKind, number][]> = {
+  farm: [
+    ['pallets', 2],
+    ['drums', 1],
+    ['carwreck', 1],
+  ],
+  square: [
+    ['carwreck', 1],
+    ['pallets', 1],
+    ['brokenwall', 1],
+  ],
+  quarry: [
+    ['pallets', 2],
+    ['drums', 1],
+    ['carwreck', 1],
+  ],
+  compound: [
+    ['bagarc', 1],
+    ['drums', 1],
+    ['carwreck', 1],
+  ],
+  pumps: [
+    ['drums', 2],
+    ['pallets', 1],
+    ['razor', 1],
+  ],
+  gate: [
+    ['bagarc', 1],
+    ['razor', 1],
+  ],
+  station: [
+    ['tower', 1],
+    ['bagarc', 1],
+    ['razor', 2],
+    ['tent', 1],
+    ['net', 1],
+  ],
+  lumber: [
+    ['pallets', 2],
+    ['drums', 1],
+  ],
+  pond: [
+    ['tent', 2],
+    ['drums', 1],
+    ['net', 1],
+  ],
+  dock: [
+    ['pallets', 2],
+    ['drums', 2],
+    ['carwreck', 1],
+  ],
+  wreck: [['drums', 1]],
+  hamlet: [
+    ['carwreck', 1],
+    ['pallets', 1],
+  ],
+  ruins: [
+    ['brokenwall', 2],
+    ['bagarc', 1],
+  ],
+};
+
 /** Drafts every place of a plan, in order. `keep` are rectangles nothing may cover (the spawns, the site pads). */
 export function draftPlaces(plan: Plan, def: MapDef): Item[] {
   const keep: Rect[] = [];

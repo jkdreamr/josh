@@ -1,11 +1,14 @@
-// Buildings, cover, and the site, charge and spawn markers. Every box of every building is merged into one mesh per material
-// (about eight draw calls for a whole town), textured with photographed surfaces (Poly Haven plaster, planks, roof
-// tiles, corrugated metal and concrete, with their normal and roughness maps) where those loaded, and surfaces painted at
-// load otherwise (and for the sandbags and wire baskets). Insides are darkened so rooms read as rooms.
+// Buildings, cover, and the site, charge and spawn markers. Every box of every building, and all their finer detail and
+// the props built from primitives (dress.ts), is merged into one mesh per finish (about a dozen draw calls for the whole
+// map), textured with photographed surfaces (Poly Haven plaster, planks, roof tiles, corrugated metal, concrete, floor
+// boards, rusted paint and burlap, with their normal and roughness maps) where those loaded, and surfaces painted at
+// load otherwise (and for the sandbags and wire baskets). Insides are darkened so rooms read as rooms, and every finish
+// weathers: blotches, rain streaks and the grime rising from the ground.
 import { mulberry32 } from '../noise.ts';
 import { heightAt } from '../terrain.ts';
 import type { Part, Piece, World } from '../world.ts';
 import { ADDITIVE, DOUBLE, NO_SPACE, canvas, lin, patch, type Shared, type T, type Three } from './common.ts';
+import { dressStatic, type Add } from './dress.ts';
 
 type Paint = { size: number; draw: (g: CanvasRenderingContext2D, h: CanvasRenderingContext2D, r: () => number) => void };
 
@@ -251,8 +254,11 @@ function paintSet(THREE: Three, key: string, seed: number) {
 }
 
 /** Photographed finishes (Poly Haven) that replace a painted one when their images loaded: meters per repeat. */
-const PHOTO_SIZE: Partial<Record<string, number>> = { plaster: 2.6, wood: 2.2, roof: 2.4, metal: 1.8, concrete: 3 };
-export type Photos = Partial<Record<'plaster' | 'plaster-n' | 'wood' | 'wood-n' | 'roof' | 'roof-n' | 'metal' | 'metal-n' | 'concrete' | 'concrete-n', ImageBitmap>>;
+const PHOTO_SIZE: Partial<Record<string, number>> = { plaster: 2.6, wood: 2.2, roof: 2.4, metal: 1.8, concrete: 3, floor: 2, rust: 2.2, burlap: 0.9 };
+type PhotoKey = 'plaster' | 'wood' | 'roof' | 'metal' | 'concrete' | 'floor' | 'rust' | 'burlap';
+export type Photos = Partial<Record<PhotoKey | `${PhotoKey}-n`, ImageBitmap>>;
+/** The painted finish to fall back on for a photographed one that has no painting of its own. */
+const PAINT_OF: Partial<Record<string, string>> = { floor: 'wood', rust: 'metal', burlap: 'plaster' };
 
 /** Color (roughness in alpha) and normal map from a photographed finish, or null when it didn't load. */
 function photoSet(THREE: Three, key: string, photos: Photos | undefined) {
@@ -276,12 +282,15 @@ const PART_LOOK: Record<Part, { paint: string; rough: number; metal: number }> =
   wall: { paint: 'plaster', rough: 0.92, metal: 0 },
   trim: { paint: 'wood', rough: 0.78, metal: 0 },
   roof: { paint: 'roof', rough: 0.8, metal: 0 },
-  floor: { paint: 'wood', rough: 0.7, metal: 0 },
+  floor: { paint: 'floor', rough: 0.72, metal: 0 },
   wood: { paint: 'wood', rough: 0.86, metal: 0 },
   metal: { paint: 'metal', rough: 0.5, metal: 0.45 },
   sandbag: { paint: 'sandbag', rough: 1, metal: 0 },
   concrete: { paint: 'concrete', rough: 0.9, metal: 0 },
   hesco: { paint: 'hesco', rough: 0.95, metal: 0 },
+  glass: { paint: '', rough: 0.06, metal: 0 },
+  canvas: { paint: 'burlap', rough: 1, metal: 0 },
+  rust: { paint: 'rust', rough: 0.72, metal: 0.3 },
 };
 
 class Builder {
@@ -322,6 +331,14 @@ class Builder {
     if (this.facing(p, n)) this.idx.push(b, b + 1, b + 2);
     else this.idx.push(b, b + 2, b + 1);
   }
+  /** One vertex as given (its triangles are added by index, wound as the caller wants). */
+  vert(x: number, y: number, z: number, nx: number, ny: number, nz: number, u: number, v: number, c: number[]) {
+    this.pos.push(x, y, z);
+    this.nor.push(nx, ny, nz);
+    this.uv.push(u, v);
+    this.col.push(c[0], c[1], c[2]);
+    return this.pos.length / 3 - 1;
+  }
   build(THREE: Three) {
     const g = new THREE.BufferGeometry();
     g.setAttribute('position', new THREE.Float32BufferAttribute(this.pos, 3));
@@ -334,8 +351,22 @@ class Builder {
   }
 }
 
-/** `skip` leaves out pieces something else draws (the crates, when their real models loaded). */
-export function buildings(THREE: Three, w: World, shared: Shared, shadows: boolean, skip?: (p: Piece) => boolean, photos?: Photos) {
+/** The faces of a unit box: normal axis and sign, then the two axes across it (u, v). */
+const FACES: [number, number, number, number][] = [
+  [0, 1, 2, 1],
+  [0, -1, 2, 1],
+  [1, 1, 0, 2],
+  [1, -1, 0, 2],
+  [2, 1, 0, 1],
+  [2, -1, 0, 1],
+];
+
+/**
+ * Every building and the props made of boxes, merged into one mesh per finish (`skip` leaves out pieces something
+ * else draws: the crates, when their real models loaded), with the finer detail of dress.ts on top at `detail` above 0.
+ * Photographed finishes where those loaded, painted ones otherwise; glass is its own see-through finish.
+ */
+export function buildings(THREE: Three, w: World, shared: Shared, shadows: boolean, skip?: (p: Piece) => boolean, photos?: Photos, detail = 1) {
   const group = new THREE.Group();
   const photo = new Map<string, ReturnType<typeof photoSet>>();
   const photoOf = (paint: string) => {
@@ -349,15 +380,23 @@ export function buildings(THREE: Three, w: World, shared: Shared, shadows: boole
     return b;
   };
   const inside = (x: number, y: number, z: number) => w.interiors.some((q) => x > q.x0 - 0.06 && x < q.x1 + 0.06 && z > q.z0 - 0.06 && z < q.z1 + 0.06 && y > q.y0 && y < q.y1 + 0.35);
-  const sizeOf = (paint: string) => photoOf(paint)?.size ?? PAINTS[paint].size;
+  const sizeOf = (paint: string) => photoOf(paint)?.size ?? PAINTS[PAINT_OF[paint] ?? paint]?.size ?? 1;
   for (const p of w.pieces) {
-    if (skip?.(p)) continue;
+    if (p.skin || skip?.(p)) continue;
     const look = PART_LOOK[p.part];
     const key = `${p.part}`;
     const b = get(key);
     const ts = sizeOf(look.paint);
     const c = lin(p.color);
-    const { x0, y0, z0, x1, y1, z1 } = p;
+    let { x0, y0, z0, x1, y1, z1 } = p;
+    // (a sandbag wall is drawn bag by bag near you: its box stands a little inside the bags, as their core)
+    if (p.part === 'sandbag' && detail > 0) {
+      x0 += 0.05;
+      z0 += 0.05;
+      x1 -= 0.05;
+      z1 -= 0.05;
+      y1 -= 0.05;
+    }
     const groundY = heightAt(w.terrain, (x0 + x1) / 2, (z0 + z1) / 2);
     const faces: [number[][], number[]][] = [
       [[[x1, y0, z0], [x1, y0, z1], [x1, y1, z1], [x1, y1, z0]], [1, 0, 0]],
@@ -406,33 +445,140 @@ export function buildings(THREE: Three, w: World, shared: Shared, shadows: boole
       wall.tri([[x0 + 0.5, y, z1 - 0.5], [x1 - 0.5, y, z1 - 0.5], [xm, y + h - 0.25, z1 - 0.5]], [0, 0, 1], [[x0 / tw, y / tw], [x1 / tw, y / tw], [xm / tw, (y + h) / tw]], wc);
     }
   }
+
+  // the finer detail: boxes turned any way, and geometries, with their UVs in their own frame
+  const m3 = new THREE.Matrix3();
+  const mm = new THREE.Matrix4();
+  const eu = new THREE.Euler();
+  const v3 = new THREE.Vector3();
+  const n3 = new THREE.Vector3();
+  // (what casts no shadow goes in meshes of its own, the same finish)
+  const getS = (part: Part) => get(add.shade ? part : `${part}~`);
+  const add: Add = {
+    shade: true,
+    box(part, color, x, y, z, hx, hy, hz, yaw = 0, pitch = 0, roll = 0) {
+      const b = getS(part);
+      const ts = part === 'glass' ? 1 : sizeOf(PART_LOOK[part].paint);
+      const c0 = lin(color);
+      const dark = inside(x, y, z) ? 0.55 : 1;
+      const c = [c0[0] * dark, c0[1] * dark, c0[2] * dark];
+      mm.makeRotationFromEuler(eu.set(pitch, yaw, roll, 'YXZ'));
+      const e = mm.elements;
+      const h = [hx, hy, hz];
+      // (each box's texture starts somewhere of its own, so a run of boards doesn't repeat one board)
+      const ou = (x * 0.37 + z * 0.61) % ts;
+      const ov = (y * 0.29 + x * 0.13) % ts;
+      for (const [ax, sg, ua, va] of FACES) {
+        const nl = [0, 0, 0];
+        nl[ax] = sg;
+        const nx = e[0] * nl[0] + e[4] * nl[1] + e[8] * nl[2];
+        const ny = e[1] * nl[0] + e[5] * nl[1] + e[9] * nl[2];
+        const nz = e[2] * nl[0] + e[6] * nl[1] + e[10] * nl[2];
+        const base = b.pos.length / 3;
+        for (const [su, sv] of [
+          [-1, -1],
+          [1, -1],
+          [1, 1],
+          [-1, 1],
+        ]) {
+          const l = [0, 0, 0];
+          l[ax] = sg * h[ax];
+          l[ua] = su * h[ua];
+          l[va] = sv * h[va];
+          const px = x + e[0] * l[0] + e[4] * l[1] + e[8] * l[2];
+          const py = y + e[1] * l[0] + e[5] * l[1] + e[9] * l[2];
+          const pz = z + e[2] * l[0] + e[6] * l[1] + e[10] * l[2];
+          b.vert(px, py, pz, nx, ny, nz, (l[ua] + ou) / ts, (l[va] + ov) / ts, c);
+        }
+        // wound counterclockwise seen from outside: (u, v) right handed with the normal on +, flipped on -
+        const ccw = (ua + 1) % 3 === va ? sg > 0 : sg < 0;
+        if (ccw) b.idx.push(base, base + 1, base + 2, base, base + 2, base + 3);
+        else b.idx.push(base, base + 2, base + 1, base, base + 3, base + 2);
+      }
+    },
+    geo(part, color, g, m) {
+      const b = getS(part);
+      const ts = part === 'glass' ? 1 : sizeOf(PART_LOOK[part].paint);
+      const c0 = lin(color);
+      const p = g.attributes.position as T.BufferAttribute;
+      const n = g.attributes.normal as T.BufferAttribute;
+      const vc = g.attributes.color as T.BufferAttribute | undefined;
+      m3.getNormalMatrix(m);
+      const base = b.pos.length / 3;
+      for (let i = 0; i < p.count; i++) {
+        v3.set(p.getX(i), p.getY(i), p.getZ(i));
+        n3.set(n.getX(i), n.getY(i), n.getZ(i));
+        const ax = Math.abs(n3.x);
+        const ay = Math.abs(n3.y);
+        const az = Math.abs(n3.z);
+        const [u, v] = ay >= ax && ay >= az ? [v3.x, v3.z] : az >= ax ? [v3.x, v3.y] : [v3.z, v3.y];
+        v3.applyMatrix4(m);
+        n3.applyMatrix3(m3).normalize();
+        const k = vc ? vc.getX(i) : 1;
+        b.vert(v3.x, v3.y, v3.z, n3.x, n3.y, n3.z, u / ts, v / ts, [c0[0] * k, c0[1] * k, c0[2] * k]);
+      }
+      if (g.index) for (let i = 0; i < g.index.count; i++) b.idx.push(base + g.index.getX(i));
+      else for (let i = 0; i < p.count; i++) b.idx.push(base + i);
+    },
+  };
+  if (detail > 0 || w.dress.length) dressStatic(THREE, add, w, detail);
+
   const textures: T.Texture[] = [];
   const paints = new Map<string, ReturnType<typeof paintSet>>();
   let seed = 11;
-  for (const [key, b] of builders) {
+  const mats = new Map<string, T.Material>();
+  for (const [name, b] of builders) {
     if (!b.idx.length) continue;
+    const key = name.replace('~', '');
     const look = PART_LOOK[key as Part];
+    const made = mats.get(key);
+    if (made) {
+      const mesh = new THREE.Mesh(b.build(THREE), made);
+      mesh.castShadow = shadows && key !== 'glass' && name === key;
+      mesh.receiveShadow = key !== 'glass';
+      mesh.matrixAutoUpdate = false;
+      mesh.frustumCulled = false;
+      if (key === 'glass') mesh.renderOrder = 2;
+      group.add(mesh);
+      continue;
+    }
+    if (key === 'glass') {
+      // see-through and glossy, both faces; it never casts a shadow
+      const mat = new THREE.MeshStandardMaterial({ color: new THREE.Color(1, 1, 1), vertexColors: true, roughness: 0.06, metalness: 0.1, transparent: true, opacity: 0.32, depthWrite: false, side: DOUBLE });
+      patch(mat, shared, { key: 'dz-glass', noBaked: false });
+      mats.set(key, mat);
+      const mesh = new THREE.Mesh(b.build(THREE), mat);
+      mesh.matrixAutoUpdate = false;
+      mesh.frustumCulled = false;
+      mesh.renderOrder = 2;
+      group.add(mesh);
+      continue;
+    }
     let tex = paints.get(look.paint);
     if (!tex) {
-      tex = photoOf(look.paint) ?? paintSet(THREE, look.paint, seed++);
+      tex = photoOf(look.paint) ?? paintSet(THREE, PAINT_OF[look.paint] ?? look.paint, seed++);
       paints.set(look.paint, tex);
       textures.push(tex.map, tex.nmap);
     }
     const real = !!photoOf(look.paint);
+    const rust = key === 'rust' && real;
     // a photographed finish carries its own roughness (in the color's alpha), centered on the part's
     const mat = new THREE.MeshStandardMaterial({ map: tex.map, normalMap: tex.nmap, roughness: real ? Math.min(1.2, look.rough + 0.15) : look.rough, metalness: look.metal, vertexColors: true });
-    mat.normalScale.set(0.9, 0.9);
+    mat.normalScale.set(key === 'canvas' ? 0.35 : 0.9, key === 'canvas' ? 0.35 : 0.9);
     patch(mat, shared, {
-      key: real ? 'dz-build-photo' : 'dz-build',
-      fragDecl: real ? 'float dzMapRough = 1.0;' : '',
+      key: real ? (rust ? 'dz-build-rust' : 'dz-build-photo') : 'dz-build',
+      fragDecl: real ? 'float dzMapRough = 1.0;\nfloat dzRust = 0.0;' : '',
       albedo: `#include <map_fragment>
       ${real ? 'dzMapRough = sampledDiffuseColor.a; diffuseColor.a = 1.0;' : ''}
-      diffuseColor.rgb *= 0.9 + 0.2 * dzNoise(vDzWp.xz * 0.35 + vDzWp.y * 0.2);
-      diffuseColor.rgb *= mix(0.72, 1.0, smoothstep(-0.2, 1.2, vDzWp.y - dzHeight(vDzWp.xz)));`,
+      ${rust ? 'dzRust = texture2D(normalMap, vNormalMapUv).a;' : ''}
+      ${WEATHER}`,
       rough: real ? 'float roughnessFactor = clamp(roughness * dzMapRough, 0.05, 1.0);' : undefined,
+      // rust: where the paint has gone, the steel shows brown whatever the paint's color
+      replace: rust ? [['#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.2, 0.085, 0.04) * (0.6 + 0.8 * dzMapRough), dzRust * 0.85);']] : undefined,
     });
+    mats.set(key, mat);
     const mesh = new THREE.Mesh(b.build(THREE), mat);
-    mesh.castShadow = shadows;
+    mesh.castShadow = shadows && name === key;
     mesh.receiveShadow = true;
     mesh.matrixAutoUpdate = false;
     mesh.frustumCulled = false;
@@ -440,6 +586,26 @@ export function buildings(THREE: Three, w: World, shared: Shared, shadows: boole
   }
   return group;
 }
+
+/**
+ * Weathering on every building finish: big soft blotches of tone, streaks run down the walls under rain, and the
+ * grime and damp that rise from the ground.
+ */
+const WEATHER = /* glsl */ `
+{
+  vec3 dzWN = normalize((vec4(vNormal, 0.0) * viewMatrix).xyz);
+  float dzBlot = dzNoise(vDzWp.xz * 0.11 + vDzWp.y * 0.07);
+  diffuseColor.rgb *= 0.86 + 0.24 * dzBlot;
+  diffuseColor.rgb *= 0.92 + 0.16 * dzNoise(vDzWp.xz * 0.35 + vDzWp.y * 0.2);
+  float dzWall = 1.0 - smoothstep(0.35, 0.7, abs(dzWN.y));
+  vec3 dzT = normalize(vec3(-dzWN.z, 0.0, dzWN.x) + 1e-4);
+  float dzU = dot(vDzWp, dzT);
+  float dzStreak = smoothstep(0.55, 0.95, dzNoise(vec2(dzU * 4.0, vDzWp.y * 0.18))) * smoothstep(0.3, 0.8, dzNoise(vec2(dzU * 0.7, 3.1)));
+  diffuseColor.rgb *= 1.0 - dzStreak * dzWall * 0.22;
+  float dzUp = vDzWp.y - dzHeight(vDzWp.xz);
+  diffuseColor.rgb *= mix(0.72, 1.0, smoothstep(-0.2, 1.2, dzUp));
+  diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.82, 0.86, 0.7), (1.0 - smoothstep(0.0, 0.6, dzUp)) * dzWall * 0.5);
+}`;
 
 // ---------------------------------------------------------------------------------------------------------------
 // site rings, the charge, spawn barriers

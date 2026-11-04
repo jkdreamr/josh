@@ -6,7 +6,7 @@
 import { MAPS, type MapDef, type MapId, type Style, type TreeKind } from './maps.ts';
 import { Noise2, clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
 import { CELL, T_HALF, T_RES, T_SIZE, flattenRect, floorAt, generateTerrain, heightAt, meanHeight, normalAt, type Terrain } from './terrain.ts';
-import { PLANS, STRUCT_SIZE, draftPlaces, openAt, restoreBanks, sculpt, toPlan, toWorld, type Item, type P as BP, type Plan } from './breach.ts';
+import { PLACE_DRESS, PLANS, STRUCT_SIZE, draftPlaces, openAt, restoreBanks, sculpt, toPlan, toWorld, type Item, type P as BP, type Plan, type Sculpt } from './breach.ts';
 
 /** Half the side of the square everyone plays in (breach and deathmatch). The ground you can walk on is less: the
  * lanes and places of the map's plan, bounded by banks, hills and the sea well inside this. */
@@ -21,10 +21,11 @@ export const SITE_R = 9;
 export const SPAWN_R = 15;
 
 export type Surface = 'stone' | 'wood' | 'metal' | 'dirt' | 'sand' | 'snow' | 'leaf' | 'water';
-export type Part = 'wall' | 'trim' | 'roof' | 'floor' | 'wood' | 'metal' | 'sandbag' | 'concrete' | 'hesco';
+export type Part = 'wall' | 'trim' | 'roof' | 'floor' | 'wood' | 'metal' | 'sandbag' | 'concrete' | 'hesco' | 'glass' | 'canvas' | 'rust';
 
-/** A drawn box (and a collider unless solid is false). */
-export type Piece = { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; part: Part; color: number; solid: boolean };
+/** A drawn box (and a collider unless solid is false). `skin` marks a box something else draws in detail (a shipping
+ * container, say): the renderer leaves it out, its collider stays. */
+export type Piece = { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; part: Part; color: number; solid: boolean; skin?: 1 };
 /** A pitched roof over a rectangle: a triangular prism, ridge along x or z. Drawn only. */
 export type Gable = { x0: number; z0: number; x1: number; z1: number; y: number; h: number; alongX: boolean; color: number; wall: number };
 export type Rect3 = { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number };
@@ -36,8 +37,22 @@ export type Rock = { x: number; y: number; z: number; s: number; rot: number; v:
 export type Site = { id: number; name: string; town: string; x: number; y: number; z: number };
 export type Slot = { x: number; z: number; yaw: number };
 export type Vehicle = { x: number; y: number; z: number; rot: number; kind: number };
-/** A placed model; cover also carries its box (across, up, along) for a plain stand-in if the model is missing. */
-export type Placed = { key: ModelKey; x: number; y: number; z: number; yaw: number; size?: [number, number, number] };
+/** A placed model; cover also carries its box (across, up, along) for a plain stand-in if the model is missing. A model
+ * may be tinted (a painted fuel drum) or lie on its side (`lie`, turned about its own across axis after the yaw). */
+export type Placed = { key: ModelKey; x: number; y: number; z: number; yaw: number; size?: [number, number, number]; tint?: number; lie?: 1 };
+/** An opening in a wall: its middle along the wall, width, and bottom and top heights (world y). */
+export type Opening = { c: number; w: number; b: number; t: number };
+/** One wall of a building and its openings, in the building's own frame: along local x (between z t0 and t1) or along
+ * local z (between x t0 and t1); `inner` for a wall between two rooms. */
+export type BWall = { alongX: boolean; t0: number; t1: number; holes: Opening[]; inner: boolean };
+/** A building as built, for the renderer's finer detail (frames, glass, doors, gutters, chimneys, furniture): its frame
+ * (middle and quarter turns, as for a Frame), size, floor level, wall height, colors and walls. */
+export type Bld = { kind: 'house' | 'barn' | 'shed' | 'ruin'; x: number; z: number; rot: number; w: number; d: number; y: number; H: number; style: Style; part: Part; wall: number; trim: number; roof: number; flat: boolean; walls: BWall[] };
+/** Props drawn in detail by the renderer, whose colliders (if any) the world holds already. */
+export type DressKind = 'container' | 'bagarc' | 'pallets' | 'tower' | 'carwreck' | 'razor' | 'tent' | 'net';
+/** A dressed prop: its kind, the middle of its footprint at its base height, quarter turns, a size (meters, or a count),
+ * a variant (0 to 1, for its look) and a color. */
+export type Dress = { k: DressKind; x: number; y: number; z: number; rot: number; s: number; v: number; c: number };
 export type ModelKey =
   | 'barricade'
   | 'jersey'
@@ -106,6 +121,9 @@ export type World = {
   loot: Float32Array;
   /** Doorways: center x, z and the wall's normal x, z per door, so the bots' paths can go through them. */
   doors: Float32Array;
+  /** The buildings as built and the props drawn in detail (see Bld and Dress), for the renderer. */
+  bld: Bld[];
+  dress: Dress[];
 };
 
 export const KIND = 1 << 22;
@@ -149,6 +167,10 @@ type Ctx = {
   doors: number[];
   /** Rocks a place puts down (rubble, a heap of gravel), added to the rest. */
   extraRocks: Rock[];
+  bld: Bld[];
+  dress: Dress[];
+  /** Small rocks the dressing drops (never colliders), added after the rest. */
+  lateRocks: Rock[];
 };
 
 const STYLE_WALLS: Record<Style, number[]> = {
@@ -240,8 +262,6 @@ class Frame {
   }
 }
 
-type Opening = { c: number; w: number; b: number; t: number };
-
 /** A wall along local x (from xa to xb, between z0 and z1) from y0 to y1 with door and window holes. */
 /** Frames round a wall's openings, standing a little proud of both faces: jambs and a lintel, and a sill under a window. */
 function trims(f: Frame, alongX: boolean, holes: Opening[], t0: number, t1: number, y0: number, color: number) {
@@ -260,7 +280,8 @@ function trims(f: Frame, alongX: boolean, holes: Opening[], t0: number, t1: numb
   }
 }
 
-function wallX(f: Frame, xa: number, xb: number, z0: number, z1: number, y0: number, y1: number, holes: Opening[], part: Part, color: number, trim = -1) {
+function wallX(f: Frame, xa: number, xb: number, z0: number, z1: number, y0: number, y1: number, holes: Opening[], part: Part, color: number, trim = -1, rec?: BWall[], inner = false) {
+  rec?.push({ alongX: true, t0: z0, t1: z1, holes, inner });
   trims(f, true, holes, z0, z1, y0, trim);
   let cur = xa;
   for (const o of [...holes].sort((a, b) => a.c - b.c)) {
@@ -276,7 +297,8 @@ function wallX(f: Frame, xa: number, xb: number, z0: number, z1: number, y0: num
 }
 
 /** The same along local z, between x0 and x1. */
-function wallZ(f: Frame, za: number, zb: number, x0: number, x1: number, y0: number, y1: number, holes: Opening[], part: Part, color: number, trim = -1) {
+function wallZ(f: Frame, za: number, zb: number, x0: number, x1: number, y0: number, y1: number, holes: Opening[], part: Part, color: number, trim = -1, rec?: BWall[], inner = false) {
+  rec?.push({ alongX: false, t0: x0, t1: x1, holes, inner });
   trims(f, false, holes, x0, x1, y0, trim);
   let cur = za;
   for (const o of [...holes].sort((a, b) => a.c - b.c)) {
@@ -317,6 +339,10 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
   const barnColor = style === 'farm' ? 0x8e2f24 : style === 'cabin' ? 0x5a4130 : style === 'tropic' ? 0x8a6a4a : 0x9a8f80;
   const wc = kind === 'barn' ? barnColor : wallColor;
   const trim = style === 'cabin' ? 0x3a2a1e : style === 'adobe' ? 0x6b4a2e : 0xd8d2c4;
+  // (what the renderer needs for the finer detail; the roof's look is filled in below)
+  const walls: BWall[] = [];
+  const bld: Bld = { kind, x: cx, z: cz, rot, w, d, y, H, style, part: wallPart, wall: wc, trim, roof: roofColor, flat: false, walls };
+  c.bld.push(bld);
 
   f.box(-hw, base, -hd, hw, floorTop, hd, 'floor', style === 'adobe' ? 0xa08466 : 0x8a6a4a);
   // a plinth round the foot of the walls, a hand proud of them, so the house sits on the ground instead of in it
@@ -337,11 +363,11 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
 
   if (kind === 'barn') {
     const bd: Opening = { c: 0, w: 3.8, b: base, t: y + 4 };
-    wallX(f, -hw, hw, -hd, -hd + T, base, top, [bd], wallPart, wc, trim);
-    wallX(f, -hw, hw, hd - T, hd, base, top, [{ ...bd }], wallPart, wc, trim);
+    wallX(f, -hw, hw, -hd, -hd + T, base, top, [bd], wallPart, wc, trim, walls);
+    wallX(f, -hw, hw, hd - T, hd, base, top, [{ ...bd }], wallPart, wc, trim, walls);
     const hi: Opening[] = [-hd * 0.5, 0, hd * 0.5].map((z) => ({ c: z, w: 1.6, b: y + 2.6, t: y + 3.6 }));
-    wallZ(f, -hd + T, hd - T, -hw, -hw + T, base, top, [...hi, door(hd * 0.25, 1.4)], wallPart, wc);
-    wallZ(f, -hd + T, hd - T, hw - T, hw, base, top, hi, wallPart, wc);
+    wallZ(f, -hd + T, hd - T, -hw, -hw + T, base, top, [...hi, door(hd * 0.25, 1.4)], wallPart, wc, -1, walls);
+    wallZ(f, -hd + T, hd - T, hw - T, hw, base, top, hi, wallPart, wc, -1, walls);
   } else {
     const w0 = r() < 0.5;
     const frontHoles = kind === 'shed' ? [door(0, 1.2, 2.1)] : [door(w0 ? -hw * 0.35 : hw * 0.35), win(w0 ? hw * 0.4 : -hw * 0.4)];
@@ -364,22 +390,23 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
       zp.forEach(([a, b], i) => r() > 0.25 && f.box(-hw, base, a, -hw + T, wallTop(i + 2), b, 'wall', wc));
       zp.forEach(([a, b], i) => r() > 0.3 && f.box(hw - T, base, a, hw, wallTop(i), b, 'wall', wc));
     } else {
-      wallX(f, -hw, hw, -hd, -hd + T, base, top, frontHoles, wallPart, wc, ruin ? -1 : trim);
-      wallX(f, -hw, hw, hd - T, hd, base, top, backHoles, wallPart, wc, ruin ? -1 : trim);
-      wallZ(f, -hd + T, hd - T, -hw, -hw + T, base, top, sideA, wallPart, wc, ruin ? -1 : trim);
-      wallZ(f, -hd + T, hd - T, hw - T, hw, base, top, sideB, wallPart, wc, ruin ? -1 : trim);
+      wallX(f, -hw, hw, -hd, -hd + T, base, top, frontHoles, wallPart, wc, ruin ? -1 : trim, walls);
+      wallX(f, -hw, hw, hd - T, hd, base, top, backHoles, wallPart, wc, ruin ? -1 : trim, walls);
+      wallZ(f, -hd + T, hd - T, -hw, -hw + T, base, top, sideA, wallPart, wc, ruin ? -1 : trim, walls);
+      wallZ(f, -hd + T, hd - T, hw - T, hw, base, top, sideB, wallPart, wc, ruin ? -1 : trim, walls);
       // sills under the windows
       for (const o of frontHoles) if (o.b > y) f.box(o.c - o.w / 2 - 0.05, o.b - 0.08, -hd - 0.08, o.c + o.w / 2 + 0.05, o.b, -hd + 0.05, 'trim', trim, false);
       for (const o of backHoles) if (o.b > y) f.box(o.c - o.w / 2 - 0.05, o.b - 0.08, hd - 0.05, o.c + o.w / 2 + 0.05, o.b, hd + 0.08, 'trim', trim, false);
       if (kind === 'house' && w >= 9) {
         const px = hw * 0.1;
         const dz = (r() - 0.5) * d * 0.4;
-        wallZ(f, -hd + T, hd - T, px - 0.08, px + 0.08, base, top, [door(dz, 1.1)], wallPart === 'wood' ? 'wood' : 'wall', style === 'cabin' ? wc : 0xe2dccd);
+        wallZ(f, -hd + T, hd - T, px - 0.08, px + 0.08, base, top, [door(dz, 1.1)], wallPart === 'wood' ? 'wood' : 'wall', style === 'cabin' ? wc : 0xe2dccd, -1, walls, true);
       }
     }
   }
   if (!ruin) {
     const flat = style === 'adobe' || (style === 'tropic' && r() < 0.3);
+    bld.flat = flat;
     const ov = flat ? 0.15 : 0.35;
     f.box(-hw - ov, top, -hd - ov, hw + ov, top + 0.22, hd + ov, flat ? 'wall' : 'trim', flat ? wc : trim);
     if (flat) {
@@ -469,7 +496,27 @@ function tryBuilding(c: Ctx, kind: Kind, x: number, z: number, bound: number) {
   return true;
 }
 
-export type PropKind = 'container' | 'crates' | 'sandbags' | 'barrier' | 'truck' | 'hesco' | 'pile' | 'wire' | 'dumpsters' | 'fence';
+export type PropKind =
+  | 'container'
+  | 'crates'
+  | 'sandbags'
+  | 'barrier'
+  | 'truck'
+  | 'hesco'
+  | 'pile'
+  | 'wire'
+  | 'dumpsters'
+  | 'fence'
+  // the military dressing (see dressBreach and dressRoyale)
+  | 'bagarc'
+  | 'pallets'
+  | 'drums'
+  | 'carwreck'
+  | 'razor'
+  | 'tent'
+  | 'net'
+  | 'tower'
+  | 'brokenwall';
 
 /** Footprint (across, along) of each kind of cover. */
 const PROP_SIZE: Record<Exclude<PropKind, 'hesco'>, [number, number]> = {
@@ -482,7 +529,18 @@ const PROP_SIZE: Record<Exclude<PropKind, 'hesco'>, [number, number]> = {
   wire: [5.16, 1.4],
   dumpsters: [5.55, 2.6],
   fence: [3, 0.54],
+  bagarc: [4.9, 3.1],
+  pallets: [2.6, 1.3],
+  drums: [2.2, 1.6],
+  carwreck: [2.0, 4.6],
+  razor: [5.2, 1.0],
+  tent: [4.6, 6.4],
+  net: [6.4, 6.4],
+  tower: [3.4, 8.2],
+  brokenwall: [5, 0.5],
 };
+/** How far the ground under each kind of the dressing may rise and fall across it. */
+const DRESS_SLOPE: Partial<Record<PropKind, number>> = { bagarc: 0.8, pallets: 0.45, drums: 0.4, carwreck: 0.8, razor: 1.1, tent: 0.6, net: 1, tower: 0.9, brokenwall: 1.1 };
 /** Cover drawn by a real model: its collider height and surface. */
 const MODEL_COVER: Partial<Record<PropKind, { h: number; s: Surface }>> = {
   barrier: { h: 1.05, s: 'stone' },
@@ -510,7 +568,7 @@ function clutter(c: Ctx, f: Frame, lx: number, lz: number, key?: ModelKey, y?: n
 type Screen = { turn: number; units: number };
 /** Placing cover by hand: its quarter turns, which model (a fence's), baskets long (HESCO), and whether to skip the
  * checks for room round it and for the roads (cover in a line along a wall stands close by design). */
-type PropOpt = { rot?: number; key?: ModelKey; units?: number; force?: boolean };
+type PropOpt = { rot?: number; key?: ModelKey; units?: number; force?: boolean; bare?: boolean; room?: number };
 
 /** Places a piece of cover if it fits; a screen stands on a road, and `roadside` cover may stand at a road's edge. */
 function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number, screen?: Screen, roadside = false, opt?: PropOpt) {
@@ -523,7 +581,8 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number, sc
   const hx = (rot & 1 ? d : w) / 2;
   const hz = (rot & 1 ? w : d) / 2;
   if (Math.abs(x) + hx > bound || Math.abs(z) + hz > bound) return false;
-  if (!opt?.force && overlaps(c, x - hx - 1.5, z - hz - 1.5, x + hx + 1.5, z + hz + 1.5)) return false;
+  const room = opt?.room ?? 1.5;
+  if (!opt?.force && overlaps(c, x - hx - room, z - hz - room, x + hx + room, z + hz + room)) return false;
   if (!screen && !opt?.force && roadDist(c, x, z) < (roadside ? 3.4 + Math.max(hx, hz) * 0.3 : 2.5 + Math.max(hx, hz))) return false;
   let lo = Infinity;
   let hi = -Infinity;
@@ -540,8 +599,8 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number, sc
     lo = Math.min(lo, h);
     hi = Math.max(hi, h);
   }
-  if (hi - lo > (kind === 'container' ? 2.2 : kind === 'truck' ? 1.4 : MODEL_COVER[kind] ? 0.7 : screen ? 2.4 : 1.2) || (!c.t.ice && lo < c.t.water + 0.3)) return false;
-  if (iced && (kind === 'truck' || hi - lo > 0.3)) return false;
+  if (hi - lo > (kind === 'container' ? 2.2 : kind === 'truck' ? 1.4 : MODEL_COVER[kind] ? 0.7 : (DRESS_SLOPE[kind] ?? (screen ? 2.4 : 1.2))) || (!c.t.ice && lo < c.t.water + 0.3)) return false;
+  if (iced && (kind === 'truck' || kind === 'tower' || kind === 'tent' || hi - lo > 0.3)) return false;
   const f = new Frame(c, x, z, rot);
   let y = lo - 0.15;
   if (kind === 'container' && iced) y = lo;
@@ -549,8 +608,17 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number, sc
     y = meanHeight(c.t, x, z, hx, hz);
     flattenRect(c.t, x, z, hx + 0.4, hz + 0.4, y, 3);
     c.pads.push({ x, z, hx: hx + 0.4, hz: hz + 0.4, y });
-    f.box(-w / 2, y - 0.2, -d / 2, w / 2, y + 2.59, d / 2, 'metal', pick(r, CONTAINER_COLORS));
-    if (r() < 0.25) f.box(-w / 2, y + 2.59, -d / 2, w / 2, y + 2.59 + 2.79, d / 2, 'metal', pick(r, CONTAINER_COLORS));
+    // (drawn in detail by the renderer: corrugated walls, corner posts, doors; the box is its collider)
+    const col = pick(r, CONTAINER_COLORS);
+    f.box(-w / 2, y - 0.2, -d / 2, w / 2, y + 2.59, d / 2, 'metal', col);
+    c.pieces[c.pieces.length - 1].skin = 1;
+    c.dress.push({ k: 'container', x, y, z, rot, s: 2.59, v: hash01(x, z), c: col });
+    if (r() < 0.25) {
+      const top = pick(r, CONTAINER_COLORS);
+      f.box(-w / 2, y + 2.59, -d / 2, w / 2, y + 2.59 + 2.79, d / 2, 'metal', top);
+      c.pieces[c.pieces.length - 1].skin = 1;
+      c.dress.push({ k: 'container', x, y: y + 2.59, z, rot, s: 2.79, v: hash01(z, x), c: top });
+    }
     c.blocks.push({ x0: x - hx, y0: y, z0: z - hz, x1: x + hx, y1: y + 2.6, z1: z + hz });
   } else if (kind === 'truck') {
     // parked on a leveled pad; the body is drawn by the renderer, the hull collides as one box
@@ -588,8 +656,12 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number, sc
     const col = c.def.style === 'cabin' ? 0xcfcfc6 : 0xb3a07a;
     f.box(-w / 2, y, -d / 2, w / 2, hi + 0.95, d / 2, 'sandbag', col);
     if (r() < 0.5) f.box(w / 2 - 0.8, y, d / 2, w / 2, hi + 0.95, d / 2 + 1.8, 'sandbag', col);
-  }
+  } else if (DRESS_SLOPE[kind] !== undefined) dressProp(c, f, kind, x, z, rot, lo, hi);
   // loot by the cover, on the side away from its middle
+  if (opt?.bare) {
+    c.taken.push({ x0: x - hx - 0.5, z0: z - hz - 0.5, x1: x + hx + 0.5, z1: z + hz + 0.5 });
+    return true;
+  }
   if (kind !== 'truck' && c.deco() < 0.5) {
     const [lx, lz] = f.xz((c.deco() - 0.5) * (w - 0.8), (c.deco() < 0.5 ? -1 : 1) * (d / 2 + 0.7));
     c.loot.push(lx, heightAt(c.t, lx, lz) + 0.02, lz);
@@ -601,6 +673,198 @@ function tryProp(c: Ctx, kind: PropKind, x: number, z: number, bound: number, sc
   }
   c.taken.push({ x0: x - hx - 0.5, z0: z - hz - 0.5, x1: x + hx + 0.5, z1: z + hz + 0.5 });
   return true;
+}
+
+/** A stable hash of a point, 0 to 1: a look for something placed there that draws on no random stream. */
+const hash01 = (x: number, z: number) => {
+  const s = Math.sin(x * 12.9898 + z * 78.233) * 43758.5453;
+  return s - Math.floor(s);
+};
+
+/** A collider for a box in a frame's local space (nothing drawn: the renderer draws the prop it belongs to). */
+function solidBox(c: Ctx, f: Frame, lx0: number, y0: number, lz0: number, lx1: number, y1: number, lz1: number, s: Surface) {
+  const r = f.rect(lx0, lz0, lx1, lz1);
+  c.colliders.push({ x0: r.x0, y0, z0: r.z0, x1: r.x1, y1, z1: r.z1, s });
+}
+
+/** The watchtower's platform height over its base, its side, and its stair's steps (rise, run, how many). */
+export const TOWER = { h: 4.2, side: 3, rise: 0.3, run: 0.38, steps: 13 };
+/** The horseshoe of sandbags: radius to the middle of the bags, half its thickness, height, how far round either way
+ * from its front (radians), and its middle's offset back along the footprint. */
+export const BAGARC = { r: 2.1, t: 0.31, h: 1.05, a: 1.75, cz: 0.9 };
+
+/**
+ * The colliders (and the record the renderer draws from) of one piece of the military dressing, in its frame at its
+ * spot; lo and hi are the lowest and highest ground under it. Draws from c.rng and c.deco, which the dressing passes
+ * set to streams of their own.
+ */
+function dressProp(c: Ctx, f: Frame, kind: PropKind, x: number, z: number, rot: number, lo: number, hi: number) {
+  const r = c.deco;
+  const [w, d] = PROP_SIZE[kind as Exclude<PropKind, 'hesco'>];
+  const base = (lo + hi) / 2;
+  const y0 = lo - 0.15;
+  const add = (k: DressKind, size: number, color = 0, y = base) => c.dress.push({ k, x, y, z, rot, s: size, v: r(), c: color });
+  const block = (h: number, hw = w / 2, hd = d / 2) => c.blocks.push({ ...f.rect(-hw, -hd, hw, hd), y0: lo, y1: base + h });
+  const style = c.def.style;
+  switch (kind) {
+    case 'bagarc': {
+      // a horseshoe of sandbags round a fighting position, open at the back: drawn bag by bag, colliding as a chain of
+      // boxes along the arc
+      const { r: R, t: T, h: H, a: A, cz } = BAGARC;
+      const n = 7;
+      for (let k = 0; k < n; k++) {
+        const a0 = lerp(-A, A, k / n);
+        const a1 = lerp(-A, A, (k + 1) / n);
+        const ax = Math.sin(a0) * R;
+        const az = cz - Math.cos(a0) * R;
+        const bx = Math.sin(a1) * R;
+        const bz = cz - Math.cos(a1) * R;
+        const am = (a0 + a1) / 2;
+        const ex = Math.abs(Math.sin(am)) * T + 0.04;
+        const ez = Math.abs(Math.cos(am)) * T + 0.04;
+        solidBox(c, f, Math.min(ax, bx) - ex, y0, Math.min(az, bz) - ez, Math.max(ax, bx) + ex, base + H, Math.max(az, bz) + ez, 'dirt');
+      }
+      add('bagarc', H, style === 'cabin' ? 0xcfcfc6 : 0xb3a07a);
+      block(H);
+      break;
+    }
+    case 'pallets': {
+      // one or two stacks of wooden pallets, 1.2 by 0.8 m, 14.4 cm a pallet
+      const a = 1 + Math.floor(r() * 8);
+      const b = r() < 0.7 ? 1 + Math.floor(r() * 6) : 0;
+      solidBox(c, f, -1.25, y0, -0.4, -0.05, base + a * 0.144, 0.4, 'wood');
+      if (b) solidBox(c, f, 0.05, y0, -0.4, 1.25, base + b * 0.144, 0.4, 'wood');
+      add('pallets', a + b * 16);
+      block(Math.max(a, b) * 0.144);
+      break;
+    }
+    case 'drums': {
+      // fuel drums standing together, painted one color mostly, and one lying in front now and then
+      const paint = [0x2f4f78, 0x7a2a22, 0x4f5a36, 0x8a8a84, 0x2f4f78];
+      const main = paint[Math.floor(r() * paint.length)];
+      const slots: [number, number][] = [
+        [-0.66, 0.36],
+        [0, 0.36],
+        [0.66, 0.36],
+        [-0.33, -0.22],
+        [0.33, -0.22],
+      ];
+      const n = 3 + Math.floor(r() * 3);
+      for (let k = 0; k < n; k++) {
+        const [lx, lz] = slots[k];
+        const [px, pz] = f.xz(lx + (r() - 0.5) * 0.06, lz + (r() - 0.5) * 0.06);
+        const py = floorAt(c.t, px, pz);
+        c.models.push({ key: 'barrel', x: px, y: py - 0.02, z: pz, yaw: r() * Math.PI * 2, tint: r() < 0.8 ? main : paint[Math.floor(r() * paint.length)] });
+        c.colliders.push({ x0: px - 0.3, y0: py, z0: pz - 0.3, x1: px + 0.3, y1: py + 0.92, z1: pz + 0.3, s: 'metal' });
+      }
+      if (n < 5 && r() < 0.6) {
+        const [px, pz] = f.xz(0.3, -0.5);
+        const py = floorAt(c.t, px, pz);
+        c.models.push({ key: 'barrel', x: px, y: py, z: pz, yaw: (-rot * Math.PI) / 2, tint: main, lie: 1 });
+        solidBox(c, f, -0.18, py, -0.8, 0.78, py + 0.6, -0.2, 'metal');
+      }
+      break;
+    }
+    case 'carwreck': {
+      // a burnt out or rusted car shell, on its rims: the body and the cabin collide
+      solidBox(c, f, -0.9, y0, -2.25, 0.9, base + 0.92, 2.25, 'metal');
+      solidBox(c, f, -0.78, base + 0.92, -0.8, 0.78, base + 1.36, 0.95, 'metal');
+      const paint = [0x6a6e70, 0x5a2e24, 0x2e3e52, 0x7a6a4a, 0x4a5240, 0xb8b4a8];
+      add('carwreck', 0, paint[Math.floor(r() * paint.length)]);
+      block(1.36);
+      break;
+    }
+    case 'razor': {
+      // a coil of razor wire on steel pickets
+      solidBox(c, f, -2.5, y0, -0.42, 2.5, base + 0.92, 0.42, 'metal');
+      add('razor', 5);
+      break;
+    }
+    case 'tent': {
+      // a ridge tent: canvas walls and roof over a frame of poles (closed: it stands as one block)
+      solidBox(c, f, -2.1, y0, -3, 2.1, base + 2.05, 3, 'dirt');
+      add('tent', 0, style === 'adobe' ? 0x9a8a68 : style === 'cabin' ? 0x6e7258 : 0x5e6244);
+      block(3, 2.1, 3);
+      break;
+    }
+    case 'net': {
+      // a camouflage net on four poles over a stack of crates and a generator
+      for (const [a, b] of [
+        [-1, -1],
+        [1, -1],
+        [-1, 1],
+        [1, 1],
+      ])
+        solidBox(c, f, a * 2.9 - 0.07, y0, b * 2.9 - 0.07, a * 2.9 + 0.07, base + 2.7, b * 2.9 + 0.07, 'wood');
+      crates(c, f, -0.9, 0.2, lo);
+      const [gx, gz] = f.xz(1.3, -0.4);
+      clutter(c, f, 1.3, -0.4, r() < 0.5 ? 'generator' : 'ammo-crate', floorAt(c.t, gx, gz));
+      add('net', 2.7, style === 'adobe' ? 0xa08a60 : style === 'cabin' ? 0xd8dcd8 : 0x56603e);
+      break;
+    }
+    case 'tower': {
+      // a watchtower: four legs, a platform with a parapet of planks open where the stair comes up, a roof on posts,
+      // and a straight stair down the back (each step a solid block from the ground, so you walk up it)
+      const { h: PH, side: S, rise, run, steps } = TOWER;
+      const pz0 = -d / 2;
+      const pz1 = pz0 + S;
+      const hs = S / 2;
+      const top = base + PH;
+      const s: Surface = style === 'adobe' ? 'metal' : 'wood';
+      for (const lx of [-hs, hs - 0.22]) for (const lz of [pz0, pz1 - 0.22]) solidBox(c, f, lx, y0, lz, lx + 0.22, top - 0.2, lz + 0.22, s);
+      solidBox(c, f, -hs, top - 0.2, pz0, hs, top, pz1, s);
+      // the parapet: front and sides whole, the back open over the stair
+      const ph = top + 1.05;
+      solidBox(c, f, -hs, top, pz0, hs, ph, pz0 + 0.08, s);
+      solidBox(c, f, -hs, top, pz0 + 0.08, -hs + 0.08, ph, pz1, s);
+      solidBox(c, f, hs - 0.08, top, pz0 + 0.08, hs, ph, pz1, s);
+      solidBox(c, f, -hs + 0.08, top, pz1 - 0.08, -0.5, ph, pz1, s);
+      solidBox(c, f, 0.5, top, pz1 - 0.08, hs - 0.08, ph, pz1, s);
+      // the roof, high enough to stand under, low enough that a jump stops at it
+      solidBox(c, f, -hs - 0.25, top + 2.35, pz0 - 0.25, hs + 0.25, top + 2.47, pz1 + 0.25, s);
+      for (let k = 0; k < steps; k++) {
+        const z0 = pz1 + k * run;
+        solidBox(c, f, -0.45, y0, z0, 0.45, top - (k + 1) * rise, z0 + run, s);
+      }
+      add('tower', PH, style === 'adobe' ? 1 : 0);
+      c.blocks.push({ ...f.rect(-hs, pz0, hs, pz1), y0: top - 0.2, y1: top + 2.5 });
+      break;
+    }
+    case 'brokenwall': {
+      // what is left of a wall: a run of columns broken off at uneven heights, a breach knocked through it and
+      // sometimes a window, with rubble at its foot
+      const part: Part = style === 'cabin' || style === 'adobe' ? 'concrete' : 'wall';
+      const col = style === 'adobe' ? 0xc4a07a : style === 'cabin' ? 0x9a978f : style === 'tropic' ? 0xe2d8c4 : 0xcfc5b2;
+      const H0 = 2.3 + r() * 0.7;
+      const gap = 2 + Math.floor(r() * 6);
+      const win = r() < 0.5 ? (gap < 5 ? 7 : 1) : -1;
+      let h = H0;
+      const fromLeft = r() < 0.5;
+      for (let i = 0; i < 10; i++) {
+        const k = fromLeft ? i : 9 - i;
+        const lx = -2.5 + k * 0.5;
+        // stepping down toward the broken end, with a jag now and then
+        h = Math.max(0.35, Math.min(H0, h - r() * 0.32 + (r() < 0.25 ? 0.35 : 0)));
+        if (k === gap || k === gap + 1) {
+          f.box(lx, y0, -0.25, lx + 0.5, base + 0.35, 0.25, part, col);
+          continue;
+        }
+        if (k === win && h > 2) {
+          f.box(lx, y0, -0.25, lx + 0.5, base + 0.95, 0.25, part, col);
+          f.box(lx, base + 1.95, -0.25, lx + 0.5, base + h, 0.25, part, col);
+          continue;
+        }
+        f.box(lx, y0, -0.25, lx + 0.5, base + h, 0.25, part, col);
+      }
+      for (let k = 0; k < 4; k++) {
+        const [px, pz] = f.xz((r() - 0.5) * 4.6, (r() < 0.5 ? -1 : 1) * (0.55 + r() * 0.6));
+        const sz = 0.22 + r() * 0.26;
+        c.lateRocks.push({ x: px, y: heightAt(c.t, px, pz) - sz * 0.35, z: pz, s: sz, rot: r() * 6, v: Math.floor(r() * 3), flat: 0.45 + r() * 0.3 });
+      }
+      block(H0 * 0.8);
+      break;
+    }
+  }
 }
 
 /**
@@ -912,7 +1176,7 @@ function buildGrid(boxes: Box[], trunks: Trunk[], rocks: RockCol[]): Grid {
   return { n, size, start, items };
 }
 
-const SURFACE: Record<Part, Surface> = { wall: 'stone', trim: 'stone', roof: 'stone', floor: 'wood', wood: 'wood', metal: 'metal', sandbag: 'dirt', concrete: 'stone', hesco: 'dirt' };
+const SURFACE: Record<Part, Surface> = { wall: 'stone', trim: 'stone', roof: 'stone', floor: 'wood', wood: 'wood', metal: 'metal', sandbag: 'dirt', concrete: 'stone', hesco: 'dirt', glass: 'stone', canvas: 'dirt', rust: 'metal' };
 
 /** Loot spots minus any that ended up inside something solid (a crate in a barn, a truck, a tree trunk). */
 function clearSpots(spots: number[], boxes: Box[], trunks: Trunk[]) {
@@ -1565,17 +1829,115 @@ function structure(c: Ctx, it: Extract<Item, { t: 'struct' }>, x: number, z: num
   }
 }
 
+/** What the dressing must keep clear of besides everything in c.taken: tree trunks, rocks, loot spots, and round
+ * points (spawns, the middle of a site) by a distance; and in a breach, any ground off the lanes and places. */
+type Keep = { trunks: Trunk[]; rocks: RockCol[]; away: { x: number; z: number; r: number }[]; shape: Sculpt | null; region: Uint8Array };
+
+/** Tries one piece of the dressing at random spots round (x, z), r0 to r1 out (or along a road, with `roadside`),
+ * until one fits. A broken wall stands on a line of the bots' path grid, like every thin wall. */
+function dressAt(c: Ctx, keep: Keep, kind: PropKind, x: number, z: number, r0: number, r1: number, roadside = false, tries = 48, key?: ModelKey) {
+  const q = c.rng;
+  const [w, d] = PROP_SIZE[kind as Exclude<PropKind, 'hesco'>];
+  for (let k = 0; k < tries; k++) {
+    const a = q() * Math.PI * 2;
+    const dd = lerp(r0, r1, q());
+    let px = x + Math.cos(a) * dd;
+    let pz = z + Math.sin(a) * dd;
+    const rot = Math.floor(q() * 4);
+    if (kind === 'brokenwall') {
+      if (rot & 1) px = onNavLine(c, px);
+      else pz = onNavLine(c, pz);
+    }
+    const hx = (rot & 1 ? d : w) / 2 + 1;
+    const hz = (rot & 1 ? w : d) / 2 + 1;
+    if (Math.abs(px) > c.arena - 8 || Math.abs(pz) > c.arena - 8) continue;
+    // (all of it on the open ground of a breach: none up a bank)
+    const sh = keep.shape;
+    if (!onRegion(keep.region, px, pz) || (sh && [0, -1, 1].some((a) => [-1, 1].some((b) => openAt(sh, px + a * (hx - 1), pz + b * (hz - 1)) > 0)))) continue;
+    if (keep.away.some((p) => Math.hypot(p.x - px, p.z - pz) < p.r + Math.max(hx, hz))) continue;
+    const inside = (x0: number, z0: number) => Math.abs(x0 - px) < hx && Math.abs(z0 - pz) < hz;
+    if (keep.trunks.some((t) => inside(t.x, t.z)) || keep.rocks.some((rk) => Math.abs(rk.x - px) < hx + rk.r && Math.abs(rk.z - pz) < hz + rk.r)) continue;
+    // nowhere near a doorway, and never on a loot spot
+    let near = false;
+    for (let i = 0; i < c.doors.length && !near; i += 4) near = Math.abs(c.doors[i] - px) < hx + 2.2 && Math.abs(c.doors[i + 1] - pz) < hz + 2.2;
+    for (let i = 0; i < c.loot.length && !near; i += 3) near = inside(c.loot[i], c.loot[i + 2]);
+    if (near) continue;
+    if (tryProp(c, kind, px, pz, c.arena - 4, undefined, roadside, { rot, bare: true, room: 0.8, key })) return true;
+  }
+  return false;
+}
+
+/** Breach: each place gets the dressing its kind calls for (see PLACE_DRESS), out toward the edge of its open ground,
+ * clear of the spawns and the middle of the sites. */
+function dressBreach(c: Ctx, keep: Keep) {
+  const plan = PLANS[c.def.id];
+  plan.places.forEach((pl) => {
+    const pz = plan.plazas[pl.plaza];
+    const [x, z] = toWorld(plan, pz.at[0], pz.at[1]);
+    for (const [kind, n] of PLACE_DRESS[pl.kind]) for (let k = 0; k < n; k++) dressAt(c, keep, kind, x, z, pz.r * (kind === 'tower' ? 0.3 : 0.2), pz.r * (kind === 'tower' || kind === 'tent' ? 1.5 : 1.05), false, 160);
+  });
+}
+
+/** Royale: a camp by each spawn, each site and a few towns (tents, a camo net, a watchtower, sandbagged positions,
+ * razor wire, fuel drums, pallets), wrecks and pallets in every town, checkpoints of barriers on the roads out of the
+ * towns, and wrecked cars along the roads. */
+function dressRoyale(c: Ctx, keep: Keep, spawns: Spawn[], sites: Site[], towns: Town[]) {
+  const q = c.rng;
+  const camps: { x: number; z: number }[] = [...spawns, ...sites];
+  for (const t of towns) if (t.site === -2 && camps.length < 9 && q() < 0.5) camps.push(t);
+  const camp: [PropKind, number][] = [
+    ['tower', 1],
+    ['tent', 2],
+    ['net', 1],
+    ['bagarc', 2],
+    ['razor', 2],
+    ['drums', 2],
+    ['pallets', 2],
+    ['carwreck', 1],
+  ];
+  for (const p of camps) for (const [kind, n] of camp) for (let k = 0; k < n; k++) dressAt(c, keep, kind, p.x, p.z, 16, 38);
+  const town: [PropKind, number][] = [
+    ['carwreck', 2],
+    ['pallets', 1],
+    ['brokenwall', 1],
+  ];
+  for (const t of towns) for (const [kind, n] of town) for (let k = 0; k < n; k++) dressAt(c, keep, kind, t.x, t.z, 8, 40, kind === 'carwreck');
+  // checkpoints: where a road leaves a town, barriers either side of it and a sandbagged position by them
+  for (const t of towns) {
+    if (q() < 0.4) continue;
+    let best = -1;
+    let bd = Infinity;
+    const s = c.roadSegs;
+    for (let i = 0; i < s.length; i += 4) {
+      const dd = Math.abs(Math.hypot(s[i] - t.x, s[i + 1] - t.z) - 42);
+      if (dd < bd) {
+        bd = dd;
+        best = i;
+      }
+    }
+    if (best < 0 || bd > 8) continue;
+    const x = s[best];
+    const z = s[best + 1];
+    for (let k = 0; k < 3; k++) dressAt(c, keep, 'barrier', x, z, 3.5, 7, true, 12, 'jersey');
+    dressAt(c, keep, 'bagarc', x, z, 6, 12);
+    dressAt(c, keep, 'razor', x, z, 5, 12);
+  }
+  // and wrecks by the roads out in the country
+  for (let k = 0, placed = 0; k < 120 && placed < 14; k++) {
+    const s = c.roadSegs;
+    const i = Math.floor(q() * (s.length / 4)) * 4;
+    if (dressAt(c, keep, 'carwreck', s[i], s[i + 1], 4, 9, true, 4)) placed++;
+  }
+}
+
 /** Builds a map: the breach arena, or with `royale` the whole land, with many more towns, cover and loot. */
 export function buildWorld(id: MapId, royale = false): World {
   const def = MAPS[id];
   const t = generateTerrain(def);
   const arena = royale ? ROYALE_ARENA : ARENA;
-  const c: Ctx = { def, t, rng: mulberry32(def.seed * 7 + 3), n: new Noise2(def.seed + 99), pieces: [], gables: [], interiors: [], taken: [], pads: [], roadSegs: [], roads: [], blocks: [], vehicles: [], models: [], colliders: [], deco: mulberry32(def.seed * 13 + 5), arena, loot: [], doors: [], extraRocks: [] };
+  const c: Ctx = { def, t, rng: mulberry32(def.seed * 7 + 3), n: new Noise2(def.seed + 99), pieces: [], gables: [], interiors: [], taken: [], pads: [], roadSegs: [], roads: [], blocks: [], vehicles: [], models: [], colliders: [], deco: mulberry32(def.seed * 13 + 5), arena, loot: [], doors: [], extraRocks: [], bld: [], dress: [], lateRocks: [] };
   const r = c.rng;
   const { region, spawns, sites, towns, shape } = royale ? royaleLayout(c) : breachLayout(c);
-
-  const boxes: Box[] = c.pieces.filter((p) => p.solid).map((p) => ({ x0: p.x0, y0: p.y0, z0: p.z0, x1: p.x1, y1: p.y1, z1: p.z1, s: p.part === 'wall' && def.style === 'cabin' ? 'wood' : SURFACE[p.part] }));
-  boxes.push(...c.colliders);
 
   // trees and rocks, kept off roads, pads and buildings
   const trees: Tree[] = [];
@@ -1676,6 +2038,21 @@ export function buildWorld(id: MapId, royale = false): World {
     rockList.push(rk);
     if (rk.s > 0.55) rocks.push({ x: rk.x, y: rk.y + rk.s * rk.flat - rk.s * 0.95 * 0.92, z: rk.z, r: rk.s * 0.95 });
   }
+
+  // the military dressing, over everything else and from streams of its own, so nothing laid out above moves
+  {
+    const keep = [c.rng, c.deco];
+    c.rng = mulberry32(def.seed * 89 + 23);
+    c.deco = mulberry32(def.seed * 97 + 31);
+    const away = royale ? [...spawns.map((p) => ({ x: p.x, z: p.z, r: 10 })), ...sites.map((p) => ({ x: p.x, z: p.z, r: 10 }))] : [...spawns.map((p) => ({ x: p.x, z: p.z, r: 30 })), ...sites.map((p) => ({ x: p.x, z: p.z, r: 8 }))];
+    const k: Keep = { trunks, rocks, away, shape, region };
+    if (royale) dressRoyale(c, k, spawns, sites, towns);
+    else dressBreach(c, k);
+    [c.rng, c.deco] = keep;
+    for (const rk of c.lateRocks) rockList.push(rk);
+  }
+  const boxes: Box[] = c.pieces.filter((p) => p.solid).map((p) => ({ x0: p.x0, y0: p.y0, z0: p.z0, x1: p.x1, y1: p.y1, z1: p.z1, s: p.part === 'wall' && def.style === 'cabin' ? 'wood' : SURFACE[p.part] }));
+  boxes.push(...c.colliders);
   const grid = buildGrid(boxes, trunks, rocks);
 
   // deathmatch spawns: dry, flat, outdoors and spread out
@@ -1720,6 +2097,8 @@ export function buildWorld(id: MapId, royale = false): World {
     region,
     loot: new Float32Array(clearSpots(c.loot, boxes, trunks)),
     doors: new Float32Array(c.doors),
+    bld: c.bld,
+    dress: c.dress,
   };
   world.light = bakeLight(world, c.blocks);
   world.minimap = paintMinimap(world);
