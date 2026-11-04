@@ -458,6 +458,52 @@ export const SOLDIER_BUILD: Build = {
   cup: turn([0, -0.9, -0.4], [1, 0, 0], [0.35, -0.45, -0.82], [1, 0.2, 0]),
 };
 
+/**
+ * The outfit soldier (models/outfit.glb), its joints where the outfit's own skeleton has them (the bake sums each of
+ * its bones' weights onto the one of these it moves with: pelvis, spine_03, spine_05, neck_01, head, clavicles, upper
+ * and lower arms, hands, thighs, calves and feet): a looser A pose than the old soldier, hands out ahead of the hips,
+ * fingers out, down and forward, palms in and down.
+ */
+const FINGERS_R: V3 = [0.53, -0.54, -0.65];
+const PALM_R: V3 = [-0.81, -0.56, -0.18];
+const FINGERS_L: V3 = [-0.53, -0.55, -0.65];
+const PALM_L: V3 = [0.82, -0.53, -0.21];
+export const OUTFIT_BUILD: Build = {
+  joints: [
+    [0, 0, 0],
+    [0, 0.892, -0.023],
+    [0, 1.091, -0.049],
+    [0, 1.303, -0.015],
+    [0, 1.481, 0.012],
+    [0, 1.588, -0.01],
+    [0.016, 1.41, 0.018],
+    [0.172, 1.388, 0.022],
+    [0.343, 1.164, 0.014],
+    [0.478, 1.002, -0.151],
+    [-0.015, 1.41, 0.018],
+    [-0.171, 1.388, 0.022],
+    [-0.343, 1.163, 0.014],
+    [-0.476, 1.004, -0.149],
+    [0.099, 0.898, -0.028],
+    [0.119, 0.468, -0.019],
+    [0.136, 0.082, -0.004],
+    [-0.098, 0.898, -0.028],
+    [-0.118, 0.467, -0.019],
+    [-0.135, 0.081, -0.004],
+  ],
+  butt: [0.15, 0.08, -0.17],
+  pistol: [0.03, 0.13, -0.5],
+  twist: 0.5,
+  splay: 0,
+  armRest: -0.42,
+  gripAt: [0.03, 0.035, 0.065],
+  foreAt: [-0.045, -0.035, 0.06],
+  cupAt: [-0.035, 0, 0.07],
+  grip: turn(FINGERS_R, PALM_R, [0, -0.35, -0.94], [-1, 0, 0]),
+  fore: turn(FINGERS_L, PALM_L, [0.55, 0.1, -0.83], [0, 1, 0]),
+  cup: turn(FINGERS_L, PALM_L, [0.35, -0.45, -0.82], [1, 0.2, 0]),
+};
+
 /** A skeleton in the bind pose. */
 export function skeleton(THREE: Three, joints: V3[] = JOINT) {
   const bones = joints.map(() => new THREE.Bone());

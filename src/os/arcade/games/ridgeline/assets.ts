@@ -39,6 +39,8 @@ import m67 from './models/m67.glb?url';
 import medkit from './models/medkit.glb?url';
 import mp5Lite from './models/mp5-lite.glb?url';
 import mp5 from './models/mp5.glb?url';
+import outfitLod from './models/outfit-lod.glb?url';
+import outfit from './models/outfit.glb?url';
 import pan from './models/pan.glb?url';
 import pile from './models/pile.glb?url';
 import propane from './models/propane.glb?url';
@@ -89,8 +91,9 @@ import woodN from './textures/wood-n.webp?url';
 import wood from './textures/wood.webp?url';
 
 const URLS = {
-  soldier,
-  'soldier-lod': soldierLod,
+  // the project owner's soldier outfit (with its helmet), near and far
+  outfit,
+  'outfit-lod': outfitLod,
   xd,
   'xd-lite': xdLite,
   'beretta-lite': berettaLite,
@@ -149,6 +152,12 @@ const URLS = {
   tape,
 } as const;
 
+/** Models fetched only when another failed: the old soldier, if the outfit doesn't load. */
+const FALLBACK = {
+  soldier: ['outfit', soldier],
+  'soldier-lod': ['outfit', soldierLod],
+} as const;
+
 /** Photographed textures (Poly Haven, CC0): the ground's layer strips, and a color and a normal map per finish (walls,
  * planks, roof tiles, sheet metal, concrete, floor boards, rusted paint and burlap). */
 const IMAGES = {
@@ -175,7 +184,7 @@ const IMAGES = {
 /** Each map's sky photo, small and large. */
 const SKIES: Record<MapId, [string, string]> = { vale: [skyVale2, skyVale4], mesa: [skyMesa2, skyMesa4], frost: [skyFrost2, skyFrost4], isles: [skyIsles2, skyIsles4] };
 
-export type AssetKey = keyof typeof URLS;
+export type AssetKey = keyof typeof URLS | keyof typeof FALLBACK;
 export type ImageKey = keyof typeof IMAGES;
 /** Each loaded model's scene, its animation clips in `animations` (a model that failed is missing), and the images. */
 export type Assets = Partial<Record<AssetKey, T.Object3D>> & { images?: Partial<Record<ImageKey, ImageBitmap>> };
@@ -211,6 +220,17 @@ export function loadAssets(): Promise<Assets> {
     const images: NonNullable<Assets['images']> = {};
     out.images = images;
     const pics = typeof createImageBitmap === 'function' ? (Object.entries(IMAGES) as [ImageKey, string][]) : [];
+    const model = (key: AssetKey, url: string) =>
+      loader.loadAsync(url).then(
+        (g) => {
+          // the clips ride along on the scene (the animated first person arms play them)
+          g.scene.animations = g.animations;
+          out[key] = g.scene;
+        },
+        () => {
+          if (import.meta.env.DEV) console.warn('[ridgeline] model failed to load', key);
+        },
+      );
     await Promise.all([
       ...pics.map(([key, url]) =>
         bitmap(url).then(
@@ -222,19 +242,9 @@ export function loadAssets(): Promise<Assets> {
           },
         ),
       ),
-      ...(Object.entries(URLS) as [AssetKey, string][]).map(([key, url]) =>
-        loader.loadAsync(url).then(
-          (g) => {
-            // the clips ride along on the scene (the animated first person arms play them)
-            g.scene.animations = g.animations;
-            out[key] = g.scene;
-          },
-          () => {
-            if (import.meta.env.DEV) console.warn('[ridgeline] model failed to load', key);
-          },
-        ),
-      ),
+      ...(Object.entries(URLS) as [AssetKey, string][]).map(([key, url]) => model(key, url)),
     ]);
+    await Promise.all((Object.entries(FALLBACK) as [AssetKey, readonly [AssetKey, string]][]).filter(([, [instead]]) => !out[instead]).map(([key, [, url]]) => model(key, url)));
     loaded = out;
     return out;
   })().catch(() => {
