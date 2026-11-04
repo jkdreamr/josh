@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useOnline, useShell } from '../../kit';
+import { GameShell, sfx, useCanvas, useGameLoop, useKeys, useOnline, useRankedRun, useShell, type RankedRun } from '../../kit';
 import type { GameProps } from '../../types';
-import { createBreakout, fieldFor, resizeBreakout, serve, stepBreakout, type Ball, type Brick, type BreakoutState, type Field, type PowerKind } from './logic';
+import { createBreakout, fieldFor, play, resizeBreakout, rng32, serve, type Ball, type Brick, type BreakoutState, type Effect, type Field, type Pad, type PowerKind } from './logic';
 import { meta } from './meta';
 import './breakout.css';
 
@@ -12,6 +12,19 @@ type Glow = { x: number; y: number; life: number };
 type Hud = { mode: 'top' | 'bottom'; x: number };
 type Round = {
   game: BreakoutState;
+  /** The field the game was last fitted to. */
+  field: Field;
+  /** Where serves aim and power-ups drop from: the run's seed once it is ranked. */
+  rng: () => number;
+  /** The ranked run being recorded (see verify.ts), once it has begun. */
+  run: RankedRun | null;
+  /** The paddle input the run last recorded. */
+  pad: Pad;
+  started: boolean;
+  /** How long play has waited for the run to come in. */
+  wait: number;
+  /** A serve asked for (a click, tap or Space), taken at the next step. */
+  serve: boolean;
   pointerX: number | null;
   drag: { id: number; x: number; target: number; moved: number } | null;
   mouse: boolean;
@@ -67,8 +80,16 @@ function Play() {
   const [cursorHidden, setCursorHidden] = useState(false);
   const roundRef = useRef<Round | null>(null);
   if (!roundRef.current) {
+    const field = layout(500, 700, { mode: 'top', x: 250 }).field;
     roundRef.current = {
-      game: createBreakout(1, layout(500, 700, { mode: 'top', x: 250 }).field),
+      game: createBreakout(1, field),
+      field,
+      rng: Math.random,
+      run: null,
+      pad: { axis: 0, x: null },
+      started: false,
+      wait: 0,
+      serve: false,
       pointerX: null,
       drag: null,
       mouse: false,
@@ -89,6 +110,9 @@ function Play() {
   const round = roundRef.current;
   const onlineRef = useRef(online !== null);
   onlineRef.current = online !== null;
+  // The global board takes a score only from a run the Worker replays (see verify.ts): the run is asked for as play
+  // begins, and its seed aims the serves and drops the power-ups. A round that starts without it still plays.
+  const rankedRun = useRankedRun(meta.id, !online && !shell.compact);
 
   // A phone or iPad frame is scaled down to fit; canvas text and shell controls grow by the same factor so they stay readable.
   useEffect(() => {
@@ -139,31 +163,70 @@ function Play() {
     round.hud = right - left >= need ? { mode: 'top', x: Math.max(left + need / 2, Math.min(right - need / 2, size.w / 2)) } : { mode: 'bottom', x: size.w / 2 };
   };
 
+  /** Fits the game to the canvas (a ranked run records each new field, for the replay). */
   const view = () => {
     const { fit, field } = layout(size.w, size.h, round.hud);
-    resizeBreakout(round.game, field);
+    const was = round.field;
+    if (field.width !== was.width || field.height !== was.height || field.top !== was.top || field.bottom !== was.bottom) {
+      round.field = field;
+      resizeBreakout(round.game, field);
+      if (round.run && !round.game.ended) round.run.record([round.game.ticks, 'f', field.width, field.height, field.top, field.bottom]);
+    }
     return fit;
+  };
+
+  /** Starts the round, as a ranked run when its ticket came: a fresh game on the field as it is now, played from the seed. */
+  const begin = (ranked: RankedRun | null) => {
+    round.started = true;
+    const seed = ranked?.seed;
+    if (!ranked || seed === null || seed === undefined) return;
+    const { field } = layout(size.w, size.h, round.hud);
+    if (!ranked.begin({ f: [field.width, field.height, field.top, field.bottom] })) return;
+    // (nothing has moved yet, so the fresh game looks just like the one it replaces)
+    round.game = createBreakout(1, field);
+    round.field = field;
+    round.rng = rng32(seed);
+    round.run = ranked;
   };
 
   useGameLoop(
     (dt) => {
-      const game = round.game;
       if (round.frame++ % 20 === 0) placeHud();
+      if (keys.pressed('action')) round.serve = true;
+      const ranked = rankedRun();
+      if (!round.started) {
+        // (a moment's wait for the run, if it is still on its way, so the round can count globally)
+        if (ranked?.pending && round.wait < 1.5) {
+          round.wait += dt;
+          return;
+        }
+        begin(ranked);
+      }
+      const game = round.game;
       view();
       const axis = keys.axis('left', 'right');
       if (axis) {
         round.pointerX = null;
         round.drag = null;
       }
-      if (keys.pressed('action')) serve(game);
-      stepBreakout(game, dt, axis, round.pointerX);
-      react(round, game);
+      const run = round.run;
+      if (round.serve) {
+        round.serve = false;
+        if (serve(game, round.rng) && run) run.record([game.ticks, 's']);
+      }
+      // (the pointer in eighths of a unit, so a ranked run records it exactly in a few characters)
+      const pad: Pad = { axis, x: round.pointerX === null ? null : Math.round(round.pointerX * 8) / 8 };
+      const effects = play(game, dt, pad, round.rng, run ? () => note(round, run, pad) : undefined);
+      if (run) run.clock(game.ticks);
+      react(round, game, effects);
       tick(round, dt);
       shell.setScore(game.score);
       if (game.ended && !round.ended) {
         round.ended = true;
         const cleared = game.level - 1;
-        shell.gameOver(game.score, { detail: cleared ? `You cleared ${cleared} ${cleared === 1 ? 'wall' : 'walls'}.` : 'Clear the wall to reach level 2.' });
+        // the end of the run goes off to be checked now; a score submitted from the card waits for the answer
+        const id = run?.end(game.score);
+        shell.gameOver(game.score, { detail: cleared ? `You cleared ${cleared} ${cleared === 1 ? 'wall' : 'walls'}.` : 'Clear the wall to reach level 2.', ...(id ? { run: id } : {}) });
       }
     },
     () => {
@@ -209,7 +272,7 @@ function Play() {
           round.mouse = true;
           round.pointerX = toField(event.nativeEvent.offsetX);
           setCursorHidden(true);
-          if (event.button === 0) serve(round.game);
+          if (event.button === 0) round.serve = true;
           return;
         }
         round.mouse = false;
@@ -221,7 +284,7 @@ function Play() {
         if (drag?.id !== event.pointerId) return;
         round.drag = null;
         round.pointerX = null;
-        if (shell.status === 'playing' && drag.moved < 14) serve(round.game);
+        if (shell.status === 'playing' && drag.moved < 14) round.serve = true;
       }}
       onPointerCancel={(event) => {
         if (round.drag?.id !== event.pointerId) return;
@@ -235,8 +298,18 @@ function Play() {
   );
 }
 
-function react(round: Round, game: BreakoutState) {
-  for (const effect of game.effects) {
+/** A ranked run's paddle input for the step about to be taken, recorded when it changes. */
+function note(round: Round, run: RankedRun, pad: Pad) {
+  const was = round.pad;
+  const step = round.game.ticks;
+  if (pad.x !== null) {
+    if (was.x !== pad.x) run.record([step, 'p', pad.x]);
+  } else if (was.x !== null || was.axis !== pad.axis) run.record([step, 'k', pad.axis]);
+  round.pad = pad.x !== null ? { axis: 0, x: pad.x } : { axis: pad.axis, x: null };
+}
+
+function react(round: Round, game: BreakoutState, effects: Effect[]) {
+  for (const effect of effects) {
     if (effect.type === 'brick') {
       const step = Math.min(effect.chain, 12);
       if (effect.broke) {
