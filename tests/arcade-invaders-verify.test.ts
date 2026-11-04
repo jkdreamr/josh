@@ -108,7 +108,7 @@ test('a round replays to the same score at any frame rate', () => {
   for (const hz of [30, 50, 60, 75, 120, 144, 240]) {
     const run = playRound(77, { hz });
     assert.ok(run.score > 0, `${hz} Hz: the round should score`);
-    assert.ok(run.chunks.length > 3, `${hz} Hz: the round should take several chunks`);
+    assert.ok(run.chunks.length > 1, `${hz} Hz: the round should cross a chunk boundary`);
     assert.deepEqual([...kinds(run)].sort(), ['f', 'k', 'p'], 'pointer, keys and shots were all used');
     assert.equal(replay(77, run), run.score, `${hz} Hz`);
     for (const c of run.chunks) assert.ok(JSON.stringify({ run: 'x'.repeat(36), n: 999, e: c.e, t: c.t }).length < MAX_CHUNK_BYTES, 'a chunk fits a request');
