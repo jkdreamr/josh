@@ -1,9 +1,9 @@
 import { useEffect, useRef, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, Segmented, defineSetting, getSetting, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
+import { GameShell, Segmented, defineSetting, getSetting, sfx, useCanvas, useGameLoop, useKeys, useOnline, useRankedRun, useSetting, useShell, type RankedRun } from '../../kit';
 import type { GameProps } from '../../types';
 import { NEXT, NEXT_R, draw, fitField, lightOf, toField, type View } from './draw';
 import { LEVELS, LEVEL_IDS } from './levels';
-import { R, ROW_H, SHOOTER, aimAt, clampAim, createGame, fire, mulberry32, step, swap, traceAim, type Mode } from './logic';
+import { R, ROW_H, SHOOTER, advance, aimAt, clampAim, createGame, fire, mulberry32, swap, traceAim, type Mode } from './logic';
 import { meta } from './meta';
 import { loadProgress, recordClear, saveProgress, totalStars, unlocked } from './progress';
 import './bubble-shooter.css';
@@ -129,7 +129,17 @@ function LevelPicker() {
   );
 }
 
-type Round = View & { armed: number | null; overIn: number; reported: boolean };
+/**
+ * begun: play is under way (shots and swaps count from then). ranked: the run the Worker replays (see verify.ts), for a
+ * solo Endless round that got one; what the player did goes to it.
+ */
+type Round = View & { armed: number | null; overIn: number; reported: boolean; begun: boolean; wait: number; ranked: RankedRun | null };
+
+/** The round's mode and level from the settings (online races are always Endless). */
+function pick(online: boolean): { mode: Mode; level: number } {
+  const mode: Mode = online ? 'endless' : getSetting(MODE);
+  return { mode, level: mode === 'levels' ? Math.max(1, LEVEL_IDS.indexOf(getSetting(LEVEL)) + 1) : 1 };
+}
 
 function seedFrom(text: string): number {
   let h = 2166136261;
@@ -150,8 +160,7 @@ function Play() {
   if (round.current === null || roundKey.current !== key) {
     roundKey.current = key;
     // online races are always endless, on the same board for everyone in the room
-    const mode: Mode = online ? 'endless' : getSetting(MODE);
-    const level = mode === 'levels' ? Math.max(1, LEVEL_IDS.indexOf(getSetting(LEVEL)) + 1) : 1;
+    const { mode, level } = pick(!!online);
     const seed = online ? seedFrom(`${online.players.map((p) => p.name).join('|')}#${online.round}`) : undefined;
     round.current = {
       game: createGame({ mode, level, rng: seed !== undefined ? mulberry32(seed) : undefined }),
@@ -174,10 +183,19 @@ function Play() {
       armed: null,
       overIn: -1,
       reported: false,
+      begun: false,
+      wait: 0,
+      ranked: null,
     };
   }
   const r0 = round.current;
   const playing = shell.status === 'playing';
+  // The global board takes an Endless score only from a run the Worker replays (see verify.ts): the run is asked for as
+  // the round opens, and its seed lays out the board. A run that starts without it (offline, or it was slow) still plays.
+  const rankedRun = useRankedRun(meta.id, !online && !shell.compact);
+  useEffect(() => {
+    if (pick(false).mode === 'endless') rankedRun();
+  }, []);
   useFrameScale((u) => {
     r0.u = u;
     shell.invalidate();
@@ -195,7 +213,9 @@ function Play() {
     const g = r0.game;
     const combo = g.bestCombo >= 2 ? ` Best combo ${g.bestCombo}.` : '';
     if (g.mode === 'endless') {
-      shell.gameOver(g.score, { detail: `You reached speed ${g.level} in ${g.shots} shots.${combo}` });
+      // the end of the run goes off to be checked now; a score submitted from the card waits for the answer
+      const run = r0.ranked?.end(g.score);
+      shell.gameOver(g.score, { detail: `You reached speed ${g.level} in ${g.shots} shots.${combo}`, ...(run ? { run } : {}) });
       return;
     }
     const def = g.def!;
@@ -225,16 +245,46 @@ function Play() {
     });
   };
 
+  /** A shot at the launcher's aim, recorded for a ranked run with the step it came before. */
+  const shoot = () => {
+    const g = r0.game;
+    if (!r0.begun || !fire(g, r0.aim)) return;
+    r0.ranked?.record([g.ticks, r0.aim]);
+  };
+  const trade = () => {
+    const g = r0.game;
+    if (!r0.begun || !swap(g)) return;
+    r0.ranked?.record(g.ticks);
+  };
+
   useGameLoop(
     (dt) => {
       const round = r0;
+      if (!round.begun) {
+        // A solo Endless round lays its board out from the ranked run's seed (with a moment's wait for the run, if it
+        // is still on its way, so it can count globally). Settings picked on the start card apply from here too.
+        const { mode, level } = pick(!!online);
+        const run = mode === 'endless' ? rankedRun() : null;
+        round.wait += dt;
+        if (run?.pending && round.wait < 1.5) return;
+        round.begun = true;
+        const seed = run?.seed;
+        if (run && seed !== null && seed !== undefined && run.begin({ mode: 'endless' })) {
+          round.game = createGame({ mode: 'endless', seed });
+          round.ranked = run;
+        } else if (!online && (round.game.mode !== mode || (mode === 'levels' && round.game.level !== level))) {
+          round.game = createGame({ mode, level });
+        }
+      }
       const g = round.game;
       const turn = keys.axis('left', 'right');
       if (turn) round.aim = clampAim(round.aim - turn * AIM_SPEED * dt);
-      if (keys.pressed('up', 'action')) fire(g, round.aim);
-      if (keys.pressed('down', 'KeyX')) swap(g);
+      if (keys.pressed('up', 'action')) shoot();
+      if (keys.pressed('down', 'KeyX')) trade();
 
-      step(g, dt);
+      // (the rules run in fixed steps, so a ranked run replays the same at any frame rate)
+      advance(g, dt);
+      round.ranked?.clock(g.ticks);
       let drops = 0;
       for (const e of g.effects.splice(0)) {
         if (e.type === 'fire') {
@@ -335,6 +385,8 @@ function Play() {
       }
     },
     () => draw(ctx(), size.w, size.h, size.dpr, r0),
+    // (a slow frame is caught up rather than played in slow motion: slowed-down rows are easier to keep up with)
+    { realtime: true },
   );
 
   const local = (e: RPointerEvent<HTMLCanvasElement>) => {
@@ -366,7 +418,7 @@ function Play() {
         e.preventDefault();
         const { fit, p } = local(e);
         if (onLauncher(fit, p.x, p.y)) {
-          swap(r0.game);
+          trade();
           return;
         }
         e.currentTarget.setPointerCapture?.(e.pointerId);
@@ -379,7 +431,7 @@ function Play() {
         const { p } = local(e);
         if (p.y < SHOOTER.y - R * 0.5) {
           aimTo(p.x, p.y);
-          if (playing) fire(r0.game, r0.aim);
+          if (playing) shoot();
         }
       }}
       onPointerCancel={() => {
