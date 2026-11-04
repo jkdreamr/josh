@@ -8,6 +8,7 @@ import { verifier } from '../src/os/arcade/games/stack/verify.ts';
 import { VERIFIERS } from '../src/os/arcade/verify/registry.ts';
 import { BOARD_OWNERS } from '../worker/src/specs.gen.ts';
 import { chunked, rankedWorker, type Chunk } from './ranked-harness.ts';
+import { replayedSource, UNSTABLE_MATH } from './replayed-math.ts';
 
 let w: ReturnType<typeof rankedWorker>;
 beforeEach(() => {
@@ -62,6 +63,16 @@ function replay(chunks: Chunk[], seed = 1, init: unknown = {}) {
 }
 
 const copy = (chunks: Chunk[]) => chunks.map((c) => ({ ...c, e: [...c.e] }));
+
+test('the rules the replay walks through use only math every browser computes to the same bit', () => {
+  // (the Worker replays in V8, players' pages run in JavaScriptCore and SpiderMonkey too: see verify/dmath.ts)
+  const src = replayedSource(new URL('../src/os/arcade/games/stack/verify.ts', import.meta.url));
+  assert.match(src, /function drop\b|const drop\b/, 'the walk reaches drop');
+  assert.match(src, /function place\b|const place\b/, 'the walk reaches place');
+  assert.match(src, /function speedFor\b|const speedFor\b/, 'the walk reaches speedFor');
+  assert.match(src, /function powi\b|const powi\b/, 'the walk reaches powi');
+  assert.doesNotMatch(src, UNSTABLE_MATH);
+});
 
 test('stack is checked, on its own board', () => {
   assert.equal(VERIFIERS.stack, verifier);

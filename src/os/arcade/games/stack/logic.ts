@@ -1,4 +1,6 @@
 // Pure rules for Stack: slabs, slicing, perfect combos and difficulty. No DOM, no three.js.
+import { powi } from '../../verify/dmath.ts';
+
 export type Axis = 'x' | 'z';
 export type Slab = { x: number; z: number; w: number; d: number };
 
@@ -51,8 +53,13 @@ export type State = {
 
 export const MIN_SPEED = 2.4;
 export const MAX_SPEED = 5.4;
-/** Slab speed for a score: quick to pick up early, easing toward MAX_SPEED around 60 slabs so the perfect window never gets unfair. */
-export const speedFor = (score: number) => MIN_SPEED + (MAX_SPEED - MIN_SPEED) * (1 - Math.exp(-Math.max(0, score) / 28));
+/** e^(-1/28), written out: Math.exp need not give the same last bit in every browser (see verify/dmath.ts). */
+const EASE = 0.96491594437237;
+/**
+ * Slab speed for a score: quick to pick up early, easing toward MAX_SPEED around 60 slabs so the perfect window never
+ * gets unfair. (e^(-score / 28) by whole powers, so a ranked tower's replay slides every slab exactly as the page did.)
+ */
+export const speedFor = (score: number) => MIN_SPEED + (MAX_SPEED - MIN_SPEED) * (1 - powi(EASE, Math.max(0, Math.floor(score))));
 
 function spawn(stack: Slab[], axis: Axis, grow: boolean): Slab {
   const top = stack[stack.length - 1];
