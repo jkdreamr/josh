@@ -93,7 +93,7 @@ test('Agent learns a repeated short reply after two observations, but keeps each
   recordReply(brain, rally, 'drop', 1.2);
   assert.equal(agentHome(brain, 'clear'), 2.6);
   recordReply(brain, rally, 'drop', 1.2);
-  assert.ok(agentHome(brain, 'clear') < 1.75);
+  assert.ok(Math.abs(agentHome(brain, 'clear') - 2.072) < 1e-12);
   assert.equal(agentHome(brain, 'smash'), 2.6);
   assert.equal(agentHome(newBrain(), 'clear'), 2.6);
   assert.deepEqual(newBrain(), { rallies: 0, shots: {}, smash: {}, replies: {} });
@@ -135,8 +135,18 @@ test('seeded Agent matches and learning are deterministic', () => {
   assert.deepEqual(play(), play());
 });
 
-test('faster reply learning improves Agent against the repetitive net trap', () => {
-  const slowHome = (brain: AgentBrain, played: Parameters<typeof agentHome>[1]) => {
+test('Agent retains baseline confidence and home bounds for sparse, mixed and established habits', () => {
+  for (const n of [0, 1, 2, 3, 20, 400]) for (const depth of [0, 1.2, 3.6, 6.5, 7]) {
+    const brain = newBrain();
+    brain.replies.clear = { n, depth, short: n / 2, fast: 0, deep: n / 2 };
+    const expected = n < 2 ? 2.6 : Math.max(1.7, Math.min(4.3, 2.6 + (depth - 3.6) * 0.55 * (n / (n + 3))));
+    assert.equal(agentHome(brain, 'clear'), expected);
+    assert.equal(agentHome(brain, 'drop'), 2.6);
+  }
+});
+
+test('restored Agent preserves seeded baseline results and learning against the repetitive net trap', () => {
+  const baselineHome = (brain: AgentBrain, played: Parameters<typeof agentHome>[1]) => {
     const habit = brain.replies[played];
     if (!habit || habit.n < 2) return 2.6;
     return Math.max(1.7, Math.min(4.3, 2.6 + (habit.depth - 3.6) * 0.55 * habit.n / (habit.n + 3)));
@@ -157,8 +167,8 @@ test('faster reply learning improves Agent against the repetitive net trap', () 
     }
     return { wins, early, late, resolved };
   };
-  const before = play(slowHome), after = play(agentHome);
-  console.log('Agent net-trap human wins, before/after:', before, after);
-  assert.ok(after.wins < before.wins);
+  const before = play(baselineHome), after = play(agentHome);
+  console.log('Agent net-trap human wins, baseline/restored:', before, after);
+  assert.deepEqual(after, before);
   assert.ok(after.late < after.early);
 });
