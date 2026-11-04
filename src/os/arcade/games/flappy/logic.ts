@@ -1,5 +1,7 @@
 // Pure Flappy Tree rules. World units: the playfield is always H tall, width follows the aspect ratio.
 
+import { sin } from '../../verify/dmath.ts';
+
 export const H = 600;
 export const GROUND = 520;
 export const CEIL = -40;
@@ -202,7 +204,7 @@ export function step(s: State, dt: number, input: { flap: boolean }, rng: () => 
 }
 
 /** Idle bob used before the first flap. */
-export const hover = (t: number) => H * 0.42 + Math.sin(t * 5) * 8;
+export const hover = (t: number) => H * 0.42 + sin(t * 5) * 8;
 
 /** Simple controller used by tests: flap whenever the tree sinks below a point just under the next gap center. */
 export function autopilot(s: State): boolean {
