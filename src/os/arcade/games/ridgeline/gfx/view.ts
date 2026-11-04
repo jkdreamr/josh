@@ -19,7 +19,7 @@ import { brush } from './brush.ts';
 import { disposeGuns, installRealGuns } from './guns.ts';
 import { crateSkip, modelOf, placedModels } from './models.ts';
 import { royaleFx } from './royale.ts';
-import { kitOf, paletteOf, soldiers } from './soldiers.ts';
+import { kitOf, paletteOf, soldierLook, soldiers } from './soldiers.ts';
 import { groundTextures, terrainMesh, terrainTextures, waterMesh } from './terrain.ts';
 import { vegetation } from './veg.ts';
 import { vehicles } from './vehicles.ts';
@@ -225,7 +225,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
   const mark = markers(THREE, w);
   scene.add(mark.group);
   installRealGuns(THREE, assets);
-  const troops = soldiers(THREE, shared, Q.shadows > 0, modelOf(THREE, assets, 'soldier')?.parts[0] ?? null, modelOf(THREE, assets, 'soldier-lod')?.parts[0] ?? null, modelOf(THREE, assets, 'shield')?.parts);
+  const troops = soldiers(THREE, shared, Q.shadows > 0, soldierLook(THREE, assets), modelOf(THREE, assets, 'shield')?.parts);
   const royale = royaleFx(THREE, shared, assets, Q.shadows > 0);
   scene.add(royale.group);
   const cars = carsView(THREE, shared, Q.shadows > 0);
