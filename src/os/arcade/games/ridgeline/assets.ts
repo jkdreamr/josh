@@ -1,7 +1,7 @@
 // The real models (soldier, guns, vehicles, cover, clutter, rocks, plants and loot), meshopt compressed glTF in ./models,
-// and the photographed textures (ground, walls and roofs) in ./textures. They load in the background while the map
-// generates, once per page, and are shared by every view. Anything that fails to load just leaves its procedural
-// stand-in, so the game always starts. A map's sky photo is fetched on its own when a view asks for it.
+// and the photographed textures (ground, walls, roofs, floors, rusted steel and burlap) in ./textures. They load in the
+// background while the map generates, once per page, and are shared by every view. Anything that fails to load just
+// leaves its procedural stand-in, so the game always starts. A map's sky photo is fetched on its own when a view asks for it.
 import { useEffect, useState } from 'react';
 import type * as T from 'three';
 import type { MapId } from './maps.ts';
@@ -61,8 +61,12 @@ import vmVector from './models/vm-vector.glb?url';
 import wire from './models/wire.glb?url';
 import xdLite from './models/xd-lite.glb?url';
 import xd from './models/xd.glb?url';
+import burlapN from './textures/burlap-n.webp?url';
+import burlap from './textures/burlap.webp?url';
 import concreteN from './textures/concrete-n.webp?url';
 import concrete from './textures/concrete.webp?url';
+import floorN from './textures/floor-n.webp?url';
+import floor from './textures/floor.webp?url';
 import groundAlbedo from './textures/ground-albedo.webp?url';
 import groundNormal from './textures/ground-normal.webp?url';
 import metalN from './textures/metal-n.webp?url';
@@ -71,6 +75,8 @@ import plasterN from './textures/plaster-n.webp?url';
 import plaster from './textures/plaster.webp?url';
 import roofN from './textures/roof-n.webp?url';
 import roof from './textures/roof.webp?url';
+import rustN from './textures/rust-n.webp?url';
+import rust from './textures/rust.webp?url';
 import skyFrost2 from './textures/sky-frost-2k.webp?url';
 import skyFrost4 from './textures/sky-frost-4k.webp?url';
 import skyIsles2 from './textures/sky-isles-2k.webp?url';
@@ -143,7 +149,8 @@ const URLS = {
   tape,
 } as const;
 
-/** Photographed textures (Poly Haven, CC0): the ground's layer strips, and a color and a normal map per wall finish. */
+/** Photographed textures (Poly Haven, CC0): the ground's layer strips, and a color and a normal map per finish (walls,
+ * planks, roof tiles, sheet metal, concrete, floor boards, rusted paint and burlap). */
 const IMAGES = {
   'ground-albedo': groundAlbedo,
   'ground-normal': groundNormal,
@@ -157,6 +164,12 @@ const IMAGES = {
   'metal-n': metalN,
   concrete,
   'concrete-n': concreteN,
+  floor,
+  'floor-n': floorN,
+  rust,
+  'rust-n': rustN,
+  burlap,
+  'burlap-n': burlapN,
 } as const;
 
 /** Each map's sky photo, small and large. */

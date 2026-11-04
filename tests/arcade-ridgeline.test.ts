@@ -1169,7 +1169,7 @@ test('royale vehicles: a wall stops a car (it never drives through), a person in
   let found: { k: number; a: number; x: number; z: number } | null = null;
   for (let k = 0; k < w.boxes.length && !found; k++) {
     const o = w.boxes[k];
-    if (o.y1 - o.y0 < 2.4 || o.x1 - o.x0 < 3 || o.z1 - o.z0 > 3 || Math.abs(o.x0) > 250 || Math.abs(o.z0) > 250) continue;
+    if (o.y1 - o.y0 < 2.4 || o.x1 - o.x0 < 3 || o.z1 - o.z0 > 3 || Math.abs(o.x0) > 300 || Math.abs(o.z0) > 300) continue;
     for (const a of [-1, 1]) {
       const x = (o.x0 + o.x1) / 2;
       const face = a < 0 ? o.z0 : o.z1;
@@ -1185,6 +1185,16 @@ test('royale vehicles: a wall stops a car (it never drives through), a person in
           rayWorld(w, x + dx, g + up, z, 0, 0, -a, RUN + 4, hit);
           if (hit.kind !== 'box' || hit.i !== k || Math.abs(hit.t - RUN) > 0.05) clear = false;
         }
+      // (and nothing standing in the run over the ground as it falls and rises, a low wall, a floor or a stack of
+      // pallets, from the run's start to a hand short of the wall's face)
+      const z0 = Math.min(z, face + a * 0.1);
+      const z1 = Math.max(z, face + a * 0.1);
+      for (let q = 0; q < w.boxes.length && clear; q++) {
+        const b = w.boxes[q];
+        if (q === k || b.x1 < x - 1.2 || b.x0 > x + 1.2 || b.z1 < z0 || b.z0 > z1) continue;
+        const gz = floorAt(w.terrain, x, Math.min(Math.max((b.z0 + b.z1) / 2, z0), z1));
+        if (b.y1 > gz + 0.45 && b.y0 < gz + 2) clear = false;
+      }
       if (clear && [0, 1.2, 2.4].every((d) => !blockedAt(w, x, z + a * d, g, J.hw))) {
         found = { k, a, x, z };
         break;

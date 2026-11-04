@@ -107,6 +107,21 @@ desaturated, so a building's own color tints it, and roughness in alpha) and `<p
 | `../textures/roof*.webp` | Clay Roof Tiles 02 | Amal Kumar | CC0 1.0 | <https://polyhaven.com/a/clay_roof_tiles_02> |
 | `../textures/metal*.webp` | Worn Corrugated Iron | Jenelle van Heerden, Dimitrios Savva | CC0 1.0 | <https://polyhaven.com/a/worn_corrugated_iron> |
 | `../textures/concrete*.webp` | Concrete Layers 02 | Rob Tuytel | CC0 1.0 | <https://polyhaven.com/a/concrete_layers_02> |
+| `../textures/floor*.webp` | Wood Floor Worn | Dimitrios Savva | CC0 1.0 | <https://polyhaven.com/a/wood_floor_worn> |
+| `../textures/rust*.webp` | Rusty Painted Metal | Amal Kumar | CC0 1.0 | <https://polyhaven.com/a/rusty_painted_metal> |
+| `../textures/burlap*.webp` | Hessian 230 | colormass (photography), Rico Cilliers (processing) | CC0 1.0 | <https://polyhaven.com/a/hessian_230> |
+
+The floor boards, rusted paint and burlap were taken the same way, from the 1K JPEG sets (color, roughness and OpenGL
+normal map): `floor` at 512 (color partly desaturated), `rust` at 512 (color fully desaturated, so a container's or a
+car's paint tints it; the normal map's alpha holds a mask of where the paint has rusted through, drawn from the dark,
+brown streaks of the color, which the shader turns brown whatever the paint), and `burlap` at 256 (the weave of the
+sandbags and the canvas of the tents and mattresses). Their sizes: `floor.webp` 101 KB and `floor-n.webp` 16 KB,
+`rust.webp` 104 KB and `rust-n.webp` 37 KB, `burlap.webp` 70 KB and `burlap-n.webp` 27 KB.
+
+The buildings' finer detail and the military props (shipping containers, wrecked cars, watchtowers, tents, sandbags,
+pallets, razor wire, camo nets, broken walls) are not models: they are built in code (`../gfx/dress.ts`) from boxes and
+simple shapes of our own design, dressed in the textures above. The camo net's garnish is painted in code. The fuel
+drums are the Poly Haven barrel above, tinted.
 
 The plants and the tape are 1K glTF bundles, reduced like the models above: the meshes wanted kept (one of the four
 bushes in Shrub 02 for each of `shrub.glb` and `shrub2.glb`, one of the four ferns), the leaf cards' separate alpha

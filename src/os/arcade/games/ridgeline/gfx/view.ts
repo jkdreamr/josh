@@ -14,6 +14,7 @@ import { effects, type Fx } from './fx.ts';
 import { Post } from './post.ts';
 import { carsView } from './cars.ts';
 import { buildings, markers } from './props.ts';
+import { camoNets, nearDress } from './dress.ts';
 import { applySky, skyDome, skyEnv } from './sky.ts';
 import { brush } from './brush.ts';
 import { disposeGuns, installRealGuns } from './guns.ts';
@@ -28,13 +29,15 @@ import { viewModel, type ViewState } from './viewmodel.ts';
 export type Quality = 'low' | 'medium' | 'high' | 'ultra';
 /**
  * Per tier: `ground` 0 paints the ground, 1 adds the photographed ground, 2 also projects rock from the side on steep
- * slopes; `brush` is the undergrowth's density (0 none); `sky` picks the large sky photo.
+ * slopes; `brush` is the undergrowth's density (0 none); `sky` picks the large sky photo; `detail` is the buildings' and
+ * props' finer detail (0 plain buildings, 1 frames, glass, doors, gutters, furniture and every sandbag near you, 2 also
+ * louvered shutters and what stands on the shelves, and rounder bags drawn further out).
  */
-export const QUALITY: Record<Quality, { dpr: number; scale: number; shadows: number; extent: number; grass: number; trees: number; bloom: boolean; msaa: number; step: number; clouds: number; ground: number; brush: number; sky: boolean }> = {
-  low: { dpr: 1, scale: 0.8, shadows: 0, extent: 0, grass: 0, trees: 0.5, bloom: false, msaa: 0, step: 2, clouds: 2, ground: 0, brush: 0, sky: false },
-  medium: { dpr: 1.25, scale: 0.9, shadows: 1024, extent: 36, grass: 30000, trees: 0.75, bloom: true, msaa: 0, step: 1, clouds: 3, ground: 1, brush: 0.6, sky: false },
-  high: { dpr: 1.5, scale: 1, shadows: 2048, extent: 52, grass: 64000, trees: 1, bloom: true, msaa: 4, step: 1, clouds: 4, ground: 2, brush: 1, sky: true },
-  ultra: { dpr: 2, scale: 1, shadows: 4096, extent: 70, grass: 110000, trees: 1, bloom: true, msaa: 4, step: 1, clouds: 5, ground: 2, brush: 1.3, sky: true },
+export const QUALITY: Record<Quality, { dpr: number; scale: number; shadows: number; extent: number; grass: number; trees: number; bloom: boolean; msaa: number; step: number; clouds: number; ground: number; brush: number; sky: boolean; detail: number }> = {
+  low: { dpr: 1, scale: 0.8, shadows: 0, extent: 0, grass: 0, trees: 0.5, bloom: false, msaa: 0, step: 2, clouds: 2, ground: 0, brush: 0, sky: false, detail: 0 },
+  medium: { dpr: 1.25, scale: 0.9, shadows: 1024, extent: 36, grass: 30000, trees: 0.75, bloom: true, msaa: 0, step: 1, clouds: 3, ground: 1, brush: 0.6, sky: false, detail: 1 },
+  high: { dpr: 1.5, scale: 1, shadows: 2048, extent: 52, grass: 64000, trees: 1, bloom: true, msaa: 4, step: 1, clouds: 4, ground: 2, brush: 1, sky: true, detail: 2 },
+  ultra: { dpr: 2, scale: 1, shadows: 4096, extent: 70, grass: 110000, trees: 1, bloom: true, msaa: 4, step: 1, clouds: 5, ground: 2, brush: 1.3, sky: true, detail: 2 },
 };
 
 /** The GPU's name, where the browser tells it (lower case), else ''. */
@@ -219,7 +222,10 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
   scene.add(veg.group);
   const under = brush(THREE, w, shared, assets, Q.brush);
   scene.add(under.group);
-  scene.add(buildings(THREE, w, shared, Q.shadows > 0, crateSkip(assets), assets.images));
+  scene.add(buildings(THREE, w, shared, Q.shadows > 0, crateSkip(assets), assets.images, Q.detail));
+  const bags = nearDress(THREE, w, shared, assets.images, Q.detail, Q.shadows > 0);
+  scene.add(bags.group);
+  scene.add(camoNets(THREE, w, shared, Q.shadows > 0));
   scene.add(vehicles(THREE, w, shared, Q.shadows > 0, assets));
   scene.add(placedModels(THREE, w, shared, Q.shadows > 0, assets));
   const mark = markers(THREE, w);
@@ -323,6 +329,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
    */
   const warm = () => {
     camera.position.set(0, 60, 0);
+    bags.near(0, 0);
     camera.rotation.set(-0.3, 0, 0, 'YXZ');
     camera.updateMatrixWorld();
     const unwarm = troops.prewarm(camera);
@@ -423,6 +430,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
         renderer.shadowMap.autoUpdate = shed < 2;
         post.setBloom(Q.bloom && shed < 3);
         under.group.visible = shed < 2;
+        bags.group.visible = shed < 3;
       }
       if (!renderer.shadowMap.autoUpdate && (frameNo & 1) === 0) renderer.shadowMap.needsUpdate = true;
       frameNo++;
@@ -437,6 +445,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
       camera.updateMatrixWorld();
       dome.position.copy(camera.position);
       under.near(camera.position.x, camera.position.z);
+      bags.near(camera.position.x, camera.position.z);
       // the shadow box sits a little ahead of where you look, snapped to its texels
       if (Q.shadows) {
         veg.casters(camera.position.x, camera.position.z);
@@ -527,6 +536,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
       canvas.removeEventListener('webglcontextrestored', onRestored);
       veg.dispose();
       under.dispose();
+      bags.dispose();
       skyTex?.dispose();
       ground?.albedo.dispose();
       ground?.normal.dispose();
