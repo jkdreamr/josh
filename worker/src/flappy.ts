@@ -37,9 +37,11 @@ export async function readScoreBody(request: Request): Promise<unknown> {
 export class FlappyRuns {
   private readonly key: Promise<CryptoKey>;
   private readonly sql: SqlStorage;
+  private readonly clock: () => number;
 
-  constructor(sql: SqlStorage) {
+  constructor(sql: SqlStorage, clock = Date.now) {
     this.sql = sql;
+    this.clock = clock;
     sql.exec('CREATE TABLE IF NOT EXISTS flappy_keys (id INTEGER PRIMARY KEY, secret TEXT NOT NULL)');
     sql.exec('CREATE TABLE IF NOT EXISTS flappy_runs_v1 (id TEXT PRIMARY KEY, expires INTEGER NOT NULL)');
     sql.exec('CREATE INDEX IF NOT EXISTS flappy_runs_expiry ON flappy_runs_v1 (expires)');
@@ -68,9 +70,11 @@ export class FlappyRuns {
     return false;
   }
 
-  async fetch(request: Request, now = Date.now()): Promise<Response> {
+  async fetch(request: Request, at?: number): Promise<Response> {
     const path = new URL(request.url).pathname;
+    if (request.method === 'GET' && path === '/flappy/status') return json({ version: RUN_VERSION, ranking: 'verified-replay' });
     if (request.method !== 'POST' || !['/flappy/run', '/flappy/submit'].includes(path)) return json({ error: 'not found' }, 404);
+    const now = at ?? this.clock();
     const ip = base64(new Uint8Array(await crypto.subtle.digest('SHA-256', encoder.encode(request.headers.get('CF-Connecting-IP') || 'unknown'))));
     if (this.limited(ip, path === '/flappy/run' ? 'start' : 'submit', now)) return json({ error: 'rate limited' }, 429);
     if (path === '/flappy/run') {
@@ -90,17 +94,18 @@ export class FlappyRuns {
       const parts = proof.token.split('.');
       if (parts.length !== 2 || !await crypto.subtle.verify('HMAC', await this.key, unbase64(parts[1]), encoder.encode(parts[0]))) throw new Error('signature');
       ticket = JSON.parse(new TextDecoder().decode(unbase64(parts[0])));
-      if (ticket.v !== RUN_VERSION || ticket.ip !== ip || ticket.issued > now || ticket.expires < now) throw new Error('expired or wrong owner');
     } catch { return json({ error: 'invalid run token' }, 400); }
+    const checkedAt = at ?? this.clock();
+    if (ticket.v !== RUN_VERSION || ticket.ip !== ip || ticket.issued > checkedAt || ticket.expires < checkedAt) return json({ error: 'invalid run token' }, 400);
 
     // No await after consuming: concurrent submissions cannot both use a ticket, even across eviction/redeploy.
-    const consumed = this.sql.exec('DELETE FROM flappy_runs_v1 WHERE id = ? AND expires >= ? RETURNING id', ticket.id, now).toArray();
+    const consumed = this.sql.exec('DELETE FROM flappy_runs_v1 WHERE id = ? AND expires >= ? RETURNING id', ticket.id, checkedAt).toArray();
     if (!consumed.length) return json({ error: 'run already used or expired' }, 409);
     const name = typeof body.name === 'string' ? cleanName(body.name) : '';
     if (nameLength(name) < 1 || nameLength(name) > 16 || typeof body.score !== 'number' || body.score <= 0 || body.score > 10_000) return json({ error: 'invalid name or score' }, 400);
-    const result = verifyReplay(ticket.seed, proof, body.score, now - ticket.issued);
+    const result = verifyReplay(ticket.seed, proof, body.score, checkedAt - ticket.issued);
     if ('error' in result) return json(result, 400);
-    const date = new Date(now).toISOString();
+    const date = new Date(checkedAt).toISOString();
     this.sql.exec('INSERT INTO flappy_verified_v1 (name, score, date) VALUES (?, ?, ?)', name, result.score, date);
     this.sql.exec('DELETE FROM flappy_verified_v1 WHERE rowid NOT IN (SELECT rowid FROM flappy_verified_v1 ORDER BY score DESC, date ASC LIMIT 100)');
     return json({ entries: this.entries() });
