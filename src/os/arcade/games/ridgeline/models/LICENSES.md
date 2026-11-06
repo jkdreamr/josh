@@ -137,7 +137,8 @@ sandbags and the canvas of the tents and mattresses). Their sizes: `floor.webp` 
 The buildings' finer detail and the military props (shipping containers, wrecked cars, watchtowers, tents, sandbags,
 pallets, razor wire, camo nets, broken walls) are not models: they are built in code (`../gfx/dress.ts`) from boxes and
 simple shapes of our own design, dressed in the textures above. The camo net's garnish is painted in code. The fuel
-drums are the Poly Haven barrel above, tinted.
+drums are the Poly Haven barrel above, tinted. The furniture in the rooms and the props against the buildings' outside
+walls are the Poly Haven models of `props.glb` below (where that file doesn't load, the furniture is drawn in boxes).
 
 The plants and the tape are 1K glTF bundles, reduced like the models above: the meshes wanted kept (one of the four
 bushes in Shrub 02 for each of `shrub.glb` and `shrub2.glb`, one of the four ferns), the leaf cards' separate alpha
@@ -150,3 +151,43 @@ map merged into the color, set on the ground at the origin, welded, simplified w
 | `fern.glb` | Fern 02 | Rob Tuytel, Rico Cilliers | CC0 1.0 | <https://polyhaven.com/a/fern_02> |
 | `branches.glb` | Dry Branches Medium 01 | Rico Cilliers | CC0 1.0 | <https://polyhaven.com/a/dry_branches_medium_01> |
 | `tape.glb` | Medical Tape | Miroslav Turura | CC0 1.0 | <https://polyhaven.com/a/medical_tape> |
+
+### Furniture and street props (`props.glb`)
+
+Twenty two models from [Poly Haven](https://polyhaven.com), CC0 1.0 (<https://creativecommons.org/publicdomain/zero/1.0/>,
+<https://polyhaven.com/license>), taken as 1K glTF bundles straight from Poly Haven's file server through its API
+(<https://api.polyhaven.com>). No attribution is required; the authors are listed as a courtesy. They share one file and
+one material, so the game draws them all in two batches (one draw call each). For the game each model was baked to world
+space (its parts joined, the trash can pair cut down to the rusted bin with its lid), turned so its front faces +z (the
+bed so it lies along x), scaled to its size in the game (the table squashed to 1.6 by 0.95 m, the tall dresser to 1.9 m,
+the bookshelf to 1.2 m wide, the sofa and the chair to four fifths), set on the ground at the origin, welded and
+simplified with meshoptimizer (to a few hundred to about 4,000 triangles, 37,000 in all), its UVs moved into its tile of
+the atlases, and the file quantized and meshopt compressed with glTF Transform. The textures are atlases of the models'
+own 1K maps: color at 2048 x 2048 (a 512 tile for each of the bigger models, 256 for the small ones, each tile padded
+with its own edge), the normal maps and the AO/rough/metal maps at 1024 x 1024, WebP. The unused maps (the second
+bin's, the bed frame's vertex colors, the vice's skin) were dropped. The file is 1.25 MB.
+
+| Node | Model | Author | License | Source |
+| --- | --- | --- | --- | --- |
+| `bed` | Old Bed Frame | Luca B | CC0 1.0 | <https://polyhaven.com/a/old_bed_frame> |
+| `table` | Dining Table | Aron Łyczek | CC0 1.0 | <https://polyhaven.com/a/dining_table> |
+| `chair` | Painted Wooden Chair 02 | Kirill Sannikov | CC0 1.0 | <https://polyhaven.com/a/painted_wooden_chair_02> |
+| `sideboard` | Painted Wooden Cabinet | Kirill Sannikov | CC0 1.0 | <https://polyhaven.com/a/painted_wooden_cabinet> |
+| `cabinet` | Painted Wooden Cabinet 02 | Kirill Sannikov | CC0 1.0 | <https://polyhaven.com/a/painted_wooden_cabinet_02> |
+| `shelf` | Wooden Bookshelf Worn | Ulan Cabanilla | CC0 1.0 | <https://polyhaven.com/a/wooden_bookshelf_worn> |
+| `rack` | Worn Metal Rack | Luca B | CC0 1.0 | <https://polyhaven.com/a/worn_metal_rack> |
+| `stove` | Barrel Stove | MP | CC0 1.0 | <https://polyhaven.com/a/barrel_stove> |
+| `sofa` | Painted Wooden Sofa | Kirill Sannikov | CC0 1.0 | <https://polyhaven.com/a/painted_wooden_sofa> |
+| `nightstand` | Painted Wooden Nightstand | Kirill Sannikov | CC0 1.0 | <https://polyhaven.com/a/painted_wooden_nightstand> |
+| `stool` | Painted Wooden Stool | Kirill Sannikov | CC0 1.0 | <https://polyhaven.com/a/painted_wooden_stool> |
+| `vice` | Bench Vice 01 | Yann Kervran, Antanas Kep | CC0 1.0 | <https://polyhaven.com/a/bench_vice_01> |
+| `cans` | Russian Food Cans 01 | Kosan Aziz | CC0 1.0 | <https://polyhaven.com/a/russian_food_cans_01> |
+| `tin` | Can Rusted | Rahul Chaudhary | CC0 1.0 | <https://polyhaven.com/a/can_rusted> |
+| `ladder` | Wooden Ladder | Miroslav Turura | CC0 1.0 | <https://polyhaven.com/a/wooden_ladder> |
+| `bench` | Painted Wooden Bench | Kirill Sannikov | CC0 1.0 | <https://polyhaven.com/a/painted_wooden_bench> |
+| `ubox` | Utility Box 01 | James Ray Cock | CC0 1.0 | <https://polyhaven.com/a/utility_box_01> |
+| `bins` | Metal Trash Can | GurJas Studios | CC0 1.0 | <https://polyhaven.com/a/metal_trash_can> |
+| `cask` | Wine Barrel 01 | James Ray Cock | CC0 1.0 | <https://polyhaven.com/a/wine_barrel_01> |
+| `bucket` | Wooden Bucket 01 | James Ray Cock | CC0 1.0 | <https://polyhaven.com/a/wooden_bucket_01> |
+| `wcan` | Watering Can Metal 01 | Charles Nderitu | CC0 1.0 | <https://polyhaven.com/a/watering_can_metal_01> |
+| `rim` | Rusted Wheel Rim 01 | John Hutcheson | CC0 1.0 | <https://polyhaven.com/a/rusted_wheel_rim_01> |

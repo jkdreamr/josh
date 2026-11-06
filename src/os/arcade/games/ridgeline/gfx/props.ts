@@ -9,6 +9,7 @@ import { heightAt } from '../terrain.ts';
 import type { Part, Piece, World } from '../world.ts';
 import { ADDITIVE, DOUBLE, NO_SPACE, canvas, lin, patch, type Shared, type T, type Three } from './common.ts';
 import { dressStatic, type Add } from './dress.ts';
+import type { Props } from './furnish.ts';
 
 type Paint = { size: number; draw: (g: CanvasRenderingContext2D, h: CanvasRenderingContext2D, r: () => number) => void };
 
@@ -364,9 +365,10 @@ const FACES: [number, number, number, number][] = [
 /**
  * Every building and the props made of boxes, merged into one mesh per finish (`skip` leaves out pieces something
  * else draws: the crates, when their real models loaded), with the finer detail of dress.ts on top at `detail` above 0.
- * Photographed finishes where those loaded, painted ones otherwise; glass is its own see-through finish.
+ * Photographed finishes where those loaded, painted ones otherwise; glass is its own see-through finish. The real
+ * furniture and street props go to `props` (see furnish.ts), where they loaded.
  */
-export function buildings(THREE: Three, w: World, shared: Shared, shadows: boolean, skip?: (p: Piece) => boolean, photos?: Photos, detail = 1) {
+export function buildings(THREE: Three, w: World, shared: Shared, shadows: boolean, skip?: (p: Piece) => boolean, photos?: Photos, detail = 1, props?: Props) {
   const group = new THREE.Group();
   const photo = new Map<string, ReturnType<typeof photoSet>>();
   const photoOf = (paint: string) => {
@@ -456,6 +458,7 @@ export function buildings(THREE: Three, w: World, shared: Shared, shadows: boole
   const getS = (part: Part) => get(add.shade ? part : `${part}~`);
   const add: Add = {
     shade: true,
+    props,
     box(part, color, x, y, z, hx, hy, hz, yaw = 0, pitch = 0, roll = 0) {
       const b = getS(part);
       const ts = part === 'glass' ? 1 : sizeOf(PART_LOOK[part].paint);

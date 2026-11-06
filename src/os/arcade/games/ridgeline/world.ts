@@ -48,8 +48,10 @@ export type BWall = { alongX: boolean; t0: number; t1: number; holes: Opening[];
 /** A building as built, for the renderer's finer detail (frames, glass, doors, gutters, chimneys, furniture): its frame
  * (middle and quarter turns, as for a Frame), size, floor level, wall height, colors and walls. */
 export type Bld = { kind: 'house' | 'barn' | 'shed' | 'ruin'; x: number; z: number; rot: number; w: number; d: number; y: number; H: number; style: Style; part: Part; wall: number; trim: number; roof: number; flat: boolean; walls: BWall[] };
-/** Props drawn in detail by the renderer, whose colliders (if any) the world holds already. */
-export type DressKind = 'container' | 'bagarc' | 'pallets' | 'tower' | 'carwreck' | 'razor' | 'tent' | 'net';
+/** Props drawn in detail by the renderer, whose colliders (if any) the world holds already: the military dressing, and
+ * the street props against the buildings' outside walls. */
+export type DressKind = 'container' | 'bagarc' | 'pallets' | 'tower' | 'carwreck' | 'razor' | 'tent' | 'net' | StreetKind;
+export type StreetKind = 'bench' | 'ubox' | 'bins' | 'cask' | 'bucket' | 'wcan' | 'rim';
 /** A dressed prop: its kind, the middle of its footprint at its base height, quarter turns, a size (meters, or a count),
  * a variant (0 to 1, for its look) and a color. */
 export type Dress = { k: DressKind; x: number; y: number; z: number; rot: number; s: number; v: number; c: number };
@@ -1833,6 +1835,136 @@ function structure(c: Ctx, it: Extract<Item, { t: 'struct' }>, x: number, z: num
  * points (spawns, the middle of a site) by a distance; and in a breach, any ground off the lanes and places. */
 type Keep = { trunks: Trunk[]; rocks: RockCol[]; away: { x: number; z: number; r: number }[]; shape: Sculpt | null; region: Uint8Array };
 
+/** What stands against the outside walls of the buildings (drawn by the real models, see gfx/furnish.ts): its width
+ * along the wall, its depth out from it and its height. */
+export const STREET: Record<StreetKind, [number, number, number]> = {
+  bench: [1.18, 0.5, 0.89],
+  ubox: [0.54, 0.44, 1.12],
+  bins: [0.8, 0.56, 0.91],
+  cask: [0.76, 0.76, 0.87],
+  bucket: [0.4, 0.38, 0.55],
+  wcan: [0.46, 0.46, 0.22],
+  rim: [0.42, 0.24, 0.42],
+};
+/** The side of a cell of the bots' path grid (nav.ts NAV_CELL). */
+const NAV_STEP = 2;
+/** Those that stop you and a bullet (the rest are too small to), and what they are made of. */
+const STREET_SOLID: Partial<Record<StreetKind, Surface>> = { bench: 'wood', ubox: 'metal', bins: 'metal', cask: 'wood' };
+
+/**
+ * Street props against the outside walls of the houses, sheds and barns: a bench by a house's door, now and then a
+ * utility box, a pair of bins or a cask, and odds and ends (a bucket, a watering can, an old wheel rim). Each stands
+ * clear of the doors (and their steps), of the windows when it would reach them, of the corners, of everything solid,
+ * of the loot, the doorways and the roads, on level ground, and its collider (if it has one) is its box. Draws on c.rng,
+ * which the caller sets to a stream of its own.
+ */
+function streetProps(c: Ctx, away: { x: number; z: number; r: number }[], trunks: Trunk[], rocks: RockCol[]) {
+  const q = c.rng;
+  const t = c.t;
+  for (const b of c.bld) {
+    if (b.kind === 'ruin') continue;
+    const wish: StreetKind[] = [];
+    if (b.kind === 'house') {
+      if (q() < 0.65) wish.push('bench');
+      if (q() < 0.6) wish.push(pick(q, ['ubox', 'bins', 'cask', 'bins'] as const));
+    } else if (q() < 0.55) wish.push(b.kind === 'barn' ? 'cask' : pick(q, ['bins', 'cask'] as const));
+    const n = Math.floor(q() * 3);
+    for (let k = 0; k < n; k++) wish.push(pick(q, ['bucket', 'wcan', 'rim', 'bucket'] as const));
+    if (!wish.length) continue;
+    const f = new Frame(c, b.x, b.z, b.rot);
+    const hw = b.w / 2;
+    const hd = b.d / 2;
+    // the outside walls: which way is out (in the frame), half their length, and their openings
+    const sides = [
+      { nx: 0, nz: -1, half: hw, holes: b.walls.find((w) => w.alongX && !w.inner && w.t0 < 0)?.holes ?? [] },
+      { nx: 0, nz: 1, half: hw, holes: b.walls.find((w) => w.alongX && !w.inner && w.t0 > 0)?.holes ?? [] },
+      { nx: -1, nz: 0, half: hd, holes: b.walls.find((w) => !w.alongX && !w.inner && w.t0 < 0)?.holes ?? [] },
+      { nx: 1, nz: 0, half: hd, holes: b.walls.find((w) => !w.alongX && !w.inner && w.t0 > 0)?.holes ?? [] },
+    ];
+    const placed: { x0: number; z0: number; x1: number; z1: number }[] = [];
+    // (what stands round this building, to test against)
+    const br = f.rect(-hw - 3, -hd - 3, hw + 3, hd + 3);
+    const inR = (o: { x0: number; z0: number; x1: number; z1: number }) => o.x0 < br.x1 && o.x1 > br.x0 && o.z0 < br.z1 && o.z1 > br.z0;
+    const pieces = c.pieces.filter((p) => p.solid && inR(p));
+    const colliders = c.colliders.filter(inR);
+    const models = c.models.filter((m) => m.x > br.x0 - 1 && m.x < br.x1 + 1 && m.z > br.z0 - 1 && m.z < br.z1 + 1);
+    // (whether something blocks a cell of the bots' path grid already: a box within a body's reach of its middle, between
+    // a step and head height, a trunk or the heart of a rock; see nav.ts and physics.ts blockedAt)
+    const blocked = (x: number, z: number) => {
+      const g = floorAt(t, x, z);
+      const by = (o: { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number }) => o.y1 > g + 0.5 && o.y0 < g + 1.8 && (x - clamp(x, o.x0, o.x1)) ** 2 + (z - clamp(z, o.z0, o.z1)) ** 2 < 0.49;
+      return pieces.some(by) || colliders.some(by) || trunks.some((k) => k.y1 > g + 0.5 && Math.hypot(x - k.x, z - k.z) < k.r + 0.7) || rocks.some((k) => Math.hypot(x - k.x, z - k.z) < k.r * 0.5);
+    };
+    /** Whether a box leaves the path grid as it was: every cell it comes within reach of is blocked already. */
+    const gridSafe = (r: { x0: number; z0: number; x1: number; z1: number }) => {
+      const A = c.arena;
+      for (let i = Math.ceil((r.x0 - 0.7 + A) / NAV_STEP - 0.5); -A + (i + 0.5) * NAV_STEP < r.x1 + 0.7; i++)
+        for (let j = Math.ceil((r.z0 - 0.7 + A) / NAV_STEP - 0.5); -A + (j + 0.5) * NAV_STEP < r.z1 + 0.7; j++) {
+          const x = -A + (i + 0.5) * NAV_STEP;
+          const z = -A + (j + 0.5) * NAV_STEP;
+          if ((x - clamp(x, r.x0, r.x1)) ** 2 + (z - clamp(z, r.z0, r.z1)) ** 2 < 0.49 && !blocked(x, z)) return false;
+        }
+      return true;
+    };
+    for (const kind of wish) {
+      const [pw, pd, ph] = STREET[kind];
+      const solid = STREET_SOLID[kind];
+      for (let tries = 0; tries < 10; tries++) {
+        const si = Math.floor(q() * 4);
+        const sd = sides[si];
+        const doors = sd.holes.filter((o) => o.b <= b.y - 0.35);
+        let u: number;
+        if (kind === 'bench') {
+          // beside a door, either hand
+          if (!doors.length) continue;
+          const o = doors[Math.floor(q() * doors.length)];
+          u = o.c + (q() < 0.5 ? -1 : 1) * (o.w / 2 + 0.45 + pw / 2);
+        } else u = (q() * 2 - 1) * (sd.half - 0.6 - pw / 2);
+        if (Math.abs(u) + pw / 2 > sd.half - 0.5) continue;
+        if (sd.holes.some((o) => (o.b <= b.y - 0.35 || b.y + ph > o.b - 0.1) && Math.abs(u - o.c) < o.w / 2 + pw / 2 + (o.b <= b.y - 0.35 ? 0.4 : 0.1))) continue;
+        // in the frame: u along the wall, out from its face (past the plinth)
+        const off = (sd.nx ? hw : hd) + 0.09;
+        const lx = sd.nx ? sd.nx * (off + pd / 2) : u;
+        const lz = sd.nz ? sd.nz * (off + pd / 2) : u;
+        const [hx, hz] = sd.nx ? [pd / 2, pw / 2] : [pw / 2, pd / 2];
+        const r = f.rect(lx - hx, lz - hz, lx + hx, lz + hz);
+        const [x, z] = f.xz(lx, lz);
+        let lo = Infinity;
+        let hi = -Infinity;
+        for (const [a, e] of [
+          [r.x0, r.z0],
+          [r.x1, r.z0],
+          [r.x0, r.z1],
+          [r.x1, r.z1],
+        ]) {
+          const h = heightAt(t, a, e);
+          lo = Math.min(lo, h);
+          hi = Math.max(hi, h);
+        }
+        if (hi - lo > 0.3 || lo < t.water + 0.3) continue;
+        const y0 = lo - 0.02;
+        const hit = (o: { x0: number; z0: number; x1: number; z1: number }, m: number) => r.x0 - m < o.x1 && r.x1 + m > o.x0 && r.z0 - m < o.z1 && r.z1 + m > o.z0;
+        if (placed.some((o) => hit(o, 0.3))) continue;
+        if (models.some((m) => Math.hypot(m.x - x, m.z - z) < 1 + Math.max(pw, pd) / 2)) continue;
+        if (pieces.some((p) => p.y1 > y0 + 0.05 && p.y0 < y0 + ph && hit(p, 0.05))) continue;
+        if (colliders.some((o) => o.y1 > y0 && o.y0 < y0 + ph + 0.5 && hit(o, 0.4))) continue;
+        if (trunks.some((k) => Math.hypot(k.x - x, k.z - z) < k.r + 0.8) || rocks.some((k) => Math.hypot(k.x - x, k.z - z) < k.r + 0.6)) continue;
+        if (away.some((a) => Math.hypot(a.x - x, a.z - z) < a.r) || roadDist(c, x, z) < 2.2) continue;
+        let near = false;
+        for (let i = 0; i < c.loot.length && !near; i += 3) near = Math.hypot(c.loot[i] - x, c.loot[i + 2] - z) < 0.9 + Math.max(pw, pd) / 2;
+        for (let i = 0; i < c.doors.length && !near; i += 4) near = Math.hypot(c.doors[i] - x, c.doors[i + 1] - z) < 1.5;
+        if (near || (solid && !gridSafe(r))) continue;
+        // facing out from the wall: front (out -z) two quarter turns, back none, left one, right three
+        const rot = (b.rot + [2, 0, 1, 3][si]) & 3;
+        c.dress.push({ k: kind, x, y: y0, z, rot, s: 0, v: q(), c: 0 });
+        if (solid) c.colliders.push({ ...r, y0, y1: y0 + ph, s: solid });
+        placed.push(r);
+        break;
+      }
+    }
+  }
+}
+
 /** Tries one piece of the dressing at random spots round (x, z), r0 to r1 out (or along a road, with `roadside`),
  * until one fits. A broken wall stands on a line of the bots' path grid, like every thin wall. */
 function dressAt(c: Ctx, keep: Keep, kind: PropKind, x: number, z: number, r0: number, r1: number, roadside = false, tries = 48, key?: ModelKey) {
@@ -2050,6 +2182,14 @@ export function buildWorld(id: MapId, royale = false): World {
     else dressBreach(c, k);
     [c.rng, c.deco] = keep;
     for (const rk of c.lateRocks) rockList.push(rk);
+  }
+  // the street props, last and from a stream of their own
+  {
+    const keep = c.rng;
+    c.rng = mulberry32(def.seed * 103 + 41);
+    const away = royale ? spawns.map((p) => ({ x: p.x, z: p.z, r: 6 })) : [...spawns.map((p) => ({ x: p.x, z: p.z, r: 30 })), ...sites.map((p) => ({ x: p.x, z: p.z, r: 8 }))];
+    streetProps(c, away, trunks, rocks);
+    c.rng = keep;
   }
   const boxes: Box[] = c.pieces.filter((p) => p.solid).map((p) => ({ x0: p.x0, y0: p.y0, z0: p.z0, x1: p.x1, y1: p.y1, z1: p.z1, s: p.part === 'wall' && def.style === 'cabin' ? 'wood' : SURFACE[p.part] }));
   boxes.push(...c.colliders);
