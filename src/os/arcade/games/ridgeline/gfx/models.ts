@@ -9,7 +9,7 @@ export type Part = { geo: T.BufferGeometry; mat: T.MeshStandardMaterial };
 export type Model = { parts: Part[]; min: T.Vector3; max: T.Vector3 };
 
 /** A float copy of a (possibly quantized) attribute. */
-function floatAttr(THREE: Three, a: T.BufferAttribute | T.InterleavedBufferAttribute) {
+export function floatAttr(THREE: Three, a: T.BufferAttribute | T.InterleavedBufferAttribute) {
   const n = a.count;
   const k = a.itemSize;
   const out = new Float32Array(n * k);

@@ -3,6 +3,7 @@ import { GameShell, Segmented, defineSetting, useGameLoop, useKeys, useOnline, u
 import type { GameProps } from '../../types';
 import { meta } from './meta';
 import { airSounds, chargeBeeps, engineSounds, playEvents, stopEngines } from './audio.ts';
+import { releaseSamples, wantSamples } from './samples.ts';
 import { CARS, carNear } from './cars.ts';
 import { Score, type Mood } from './score.ts';
 import { useAssets } from './assets.ts';
@@ -436,8 +437,16 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
   // (the engines too: they hum on until told to stop)
   useEffect(() => {
     if (shell.status !== 'playing') stopEngines();
+    // the recorded sounds load once a match is under way (never holding up the menu); synthesized until then
+    else wantSamples();
   }, [shell.status]);
-  useEffect(() => () => stopEngines(), []);
+  useEffect(
+    () => () => {
+      stopEngines();
+      releaseSamples();
+    },
+    [],
+  );
 
   // the world: from the cache, or built in a worker (main thread if workers fail)
   useEffect(() => {
@@ -1027,7 +1036,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       // sound from where the camera is
       const eyeA = watched(m);
       if (net) net.watch = eyeA.id;
-      const ear = { x: eyeA.body.x, z: eyeA.body.z, yaw: eyeA.yaw };
+      const ear = { x: eyeA.body.x, z: eyeA.body.z, yaw: eyeA.yaw, y: eyeY(eyeA) };
       playEvents(m, m.events, ear, m.me);
       chargeBeeps(m, ear);
       engineSounds(m, ear, m.me);
