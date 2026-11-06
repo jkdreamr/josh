@@ -28,6 +28,41 @@ function flight(ticket: RunTicket) {
 }
 const NOW = 1_800_000_000_000;
 
+test('read-only status exposes the verification version without issuing tickets', async () => {
+  const { sql, routes } = setup();
+  for (let i = 0; i < 35; i++) {
+    const response = await routes.fetch(new Request('http://local/flappy/status'));
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await response.json(), { version: 1, ranking: 'verified-replay' });
+  }
+  assert.equal(sql.exec('SELECT COUNT(*) AS n FROM flappy_runs_v1').toArray()[0].n, 0);
+  assert.equal(sql.exec('SELECT COUNT(*) AS n FROM flappy_limits').toArray()[0].n, 0);
+});
+
+test('a token expiring while the body streams cannot write a score', async () => {
+  const sql = eagerStorage();
+  let now = NOW;
+  const routes = new FlappyRuns(sql as any, () => now);
+  const ticket = await (await routes.fetch(request('/flappy/run'))).json();
+  const { body, duration } = flight(ticket);
+  now += duration + 1000;
+  const streamed = new Request('http://local/flappy/submit', {
+    method: 'POST', headers: { 'CF-Connecting-IP': '127.0.0.1' },
+    body: new ReadableStream({
+      pull(controller) {
+        now = NOW + RUN_TTL_MS + 1;
+        controller.enqueue(new TextEncoder().encode(JSON.stringify(body)));
+        controller.close();
+      },
+    }, { highWaterMark: 0 }), duplex: 'half',
+  } as any);
+  const response = await routes.fetch(streamed);
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: 'invalid run token' });
+  assert.deepEqual(routes.entries(), []);
+});
+
 test('worker accepts a real replay, computes the score, and durably rejects reused tokens', async () => {
   const { sql, routes } = setup();
   const ticket = await (await routes.fetch(request('/flappy/run'), NOW)).json();

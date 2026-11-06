@@ -947,7 +947,8 @@ export default {
       }
     }
     if ((url.pathname === '/leaderboard' && (request.method === 'GET' || request.method === 'POST')) ||
-        (['/flappy/run', '/flappy/submit'].includes(url.pathname) && request.method === 'POST')) {
+        (['/flappy/run', '/flappy/submit'].includes(url.pathname) && request.method === 'POST') ||
+        (url.pathname === '/flappy/status' && request.method === 'GET')) {
       const id = env.BOARDS.idFromName('global');
       return withCors(await env.BOARDS.get(id).fetch(request));
     }

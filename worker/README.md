@@ -60,6 +60,31 @@ positives for rhythmic human play. No CAPTCHA or paid service is used.
 `node --test tests/arcade-flappy*.test.ts` includes worker-route tests using Node
 24 SQLite. There is no separate worker test script.
 
+### Flappy release checks
+
+Use Node 24. With a local Worker running on port 8787, run from the repo root:
+
+```sh
+node scripts/flappy-release-check.mjs --api http://127.0.0.1:8787
+```
+
+This checks both board reads, rejects a fabricated 508 through both submit
+routes, verifies the board was unchanged, then submits a legal local replay and
+rejects its reuse. It refuses write tests against non-loopback hosts and does
+not follow redirects. Never run forged submissions against production.
+
+After deploying, check production without creating tickets or posting scores:
+
+```sh
+node scripts/flappy-release-check.mjs --read-only --api https://josh-arcade.joshuakoo.workers.dev
+```
+
+`GET /flappy/status` must return `{ "version": 1, "ranking": "verified-replay" }`.
+A missing status means the protected release has not been deployed. The script
+also checks the score-board and card reads agree and Flappy Online Wins is empty.
+Ticket expiry is checked after the complete request body and signature are read,
+so starting a slow upload does not extend a ticket's lifetime.
+
 ## Open Rooms
 
 Public rooms are listed for strangers to join. `POST /rooms?game=<id>&public=1` makes a public room, and the host can switch any room with `{ t: 'listed', on }` on its socket; `welcome` and `players` say whether the room is public (`listed`). Each room keeps its own line in the `Lobby` Durable Object (migration `v5`): it adds the line once its host is in, updates it as people come and go, refreshes it every minute from an alarm, and removes it when the room fills with people, starts in a game nobody can join mid-game, goes private, or closes. Lines nobody refreshed for three minutes are dropped. `GET /rooms` (optionally `?game=<id>`) lists up to 40 open rooms, the ones still gathering first. Until the Worker is redeployed, Open Rooms stay hidden and new rooms are private.
