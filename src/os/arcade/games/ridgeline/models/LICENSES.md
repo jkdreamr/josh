@@ -191,3 +191,11 @@ bin's, the bed frame's vertex colors, the vice's skin) were dropped. The file is
 | `bucket` | Wooden Bucket 01 | James Ray Cock | CC0 1.0 | <https://polyhaven.com/a/wooden_bucket_01> |
 | `wcan` | Watering Can Metal 01 | Charles Nderitu | CC0 1.0 | <https://polyhaven.com/a/watering_can_metal_01> |
 | `rim` | Rusted Wheel Rim 01 | John Hutcheson | CC0 1.0 | <https://polyhaven.com/a/rusted_wheel_rim_01> |
+
+## Sounds
+
+The recorded sounds (gunshots, bullet cracks, footsteps, reloads, impacts, blasts and the propeller) live in
+`../sounds/`, with every source, author and license listed in `../sounds/LICENSES.md`. Most are CC0; the footsteps on
+grass, wood, metal and water (congusbongus, from recordings by swuing, Eelke and EminYILDIRIM), the grenade and big
+blasts and two weapon clicks (Michel Baradari) and the propeller loop (AntumDeluge, from a recording by jakobthiesen)
+are CC BY 3.0.
