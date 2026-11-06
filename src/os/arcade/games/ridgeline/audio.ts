@@ -4,12 +4,16 @@
 // reloads, grenades and the charge, and in a royale the bombardment's shells (heard from far off), supply drops and
 // the vehicles (engines that rise with the speed, doors, crashes). Every sound off to one side comes from that side,
 // and distance muffles it. Nothing plays while the arcade is muted (graph() is null then).
+// Most of it is real recordings once they have loaded (samples.ts): the gunshots close up and from far off, the crack
+// of a bullet going past you, footsteps, reloads, bullet impacts, the blasts and the transport's propeller. The
+// synthesized sounds here are what plays until then, if a browser cannot decode them, and for everything else.
 import { sfx } from '../../kit';
 import { CARS } from './cars.ts';
 import { echoOfMine, type Ev, type Match } from './match.ts';
 import { planeAt } from './royale.ts';
+import { PROP_LEN, hasClip, playClip, spriteOf } from './samples.ts';
 import type { Surface } from './world.ts';
-import { WEAPONS, type WeaponClass, type WeaponId } from './weapons.ts';
+import { WEAPONS, type WeaponClass, type WeaponDef, type WeaponId } from './weapons.ts';
 
 type Graph = NonNullable<ReturnType<typeof sfx.graph>>;
 
@@ -114,8 +118,8 @@ function osc(g: Graph, place: Place, o: Osc, bus?: AudioNode) {
 // ---------------------------------------------------------------------------------------------------------------
 // where things are
 
-/** The listener: where the camera is and which way it faces. */
-export type Ear = { x: number; z: number; yaw: number };
+/** The listener: where the camera is and which way it faces (and how high the ears are, for bullets going past). */
+export type Ear = { x: number; z: number; yaw: number; y?: number };
 
 /** A sound at (x, z) heard from the ear: placed left or right, quieter and duller with distance, late when far. */
 function placeAt(ear: Ear, x: number, z: number, range: number, late = true): Place | null {
@@ -162,12 +166,47 @@ function burning(g: Graph, place: Place) {
   burst(g, place, { type: 'lowpass', freq: 500, attack: 0.5, hold: 5.5, decay: 1, vol: 0.08, at: 0.2 });
 }
 
+/** A recorded clip at a place (false while the recordings load: the caller synthesizes it then). */
+function sample(g: Graph, sprite: 'guns' | 'steps' | 'foley' | 'booms', key: string, place: Place, vol: number, more?: { rate?: number; at?: number; lowpass?: number }) {
+  return playClip(g.ctx, g.out, sprite, key, { ...place, vol, ...more });
+}
+
+/** Guns with a recording of their own; the rest sound like their class. */
+const GUN_SOUND: Partial<Record<WeaponId, string>> = { bulwark: 'bulwark', marshal: 'marshal', wasp: 'wasp', mauler: 'mauler' };
+/** How loud each class's recording plays, close and far, next to the synthesized levels in SHOTS. */
+const SHOT_GAIN = { near: 1.05, far: 1.25 };
+
+/**
+ * A recorded gunshot: the close take near by, the far take (recorded down range, so it already sounds distant)
+ * further off, the two crossfading in between; distance then dulls, delays and quietens either one like any sound.
+ */
+function shotSample(g: Graph, w: WeaponId, cls: WeaponClass, place: Place, mine: boolean) {
+  const s = SHOTS[cls];
+  const v = s.vol * (mine ? 0.75 : 1);
+  const own = GUN_SOUND[w];
+  const key = own && hasClip('guns', own) ? own : cls;
+  const farKey = hasClip('guns', `${key}.far`) ? `${key}.far` : `${cls}.far`;
+  const near = mine ? 1 : Math.max(0, Math.min(1, (place.muffle - 0.5) / 0.35));
+  const rate = 0.96 + Math.random() * 0.08;
+  // (close by, the recording stays bright: the muffle only starts to bite once it is a little way off)
+  const nearPlace = mine ? place : { ...place, muffle: Math.min(1, place.muffle * 1.15) };
+  let ok = true;
+  if (near > 0) ok = sample(g, 'guns', key, nearPlace, v * SHOT_GAIN.near * near, { rate });
+  if (ok && near < 1) ok = sample(g, 'guns', farKey, place, v * SHOT_GAIN.far * (1 - near), { rate });
+  if (!ok) return false;
+  // your own gun: a little weight in the chest under the recording
+  if (mine) osc(g, place, { freq: s.thump * 1.6, to: s.thump * 0.45, decay: 0.1, vol: v * 0.35 });
+  return true;
+}
+
 /** A gunshot: your own up close and punchy, others by distance (a whip crack when it is fired your way). */
-function shot(g: Graph, cls: WeaponClass, place: Place, mine: boolean) {
+function shot(g: Graph, w: WeaponId, place: Place, mine: boolean) {
+  const cls = WEAPONS[w].cls;
   if (cls === 'crossbow') {
     twang(g, place, mine);
     return;
   }
+  if (shotSample(g, w, cls, place, mine)) return;
   const s = SHOTS[cls];
   const v = s.vol * (mine ? 0.75 : 1);
   const near = place.muffle > 0.7;
@@ -176,6 +215,51 @@ function shot(g: Graph, cls: WeaponClass, place: Place, mine: boolean) {
   osc(g, place, { freq: s.thump * 1.6, to: s.thump * 0.45, decay: 0.12, vol: v * (near ? 0.8 : 0.35) });
   // the echo off the land, longer and duller the further off it was
   burst(g, place, { type: 'lowpass', freq: 900, to: 220, attack: 0.02, decay: s.tail * (1.4 - place.muffle * 0.5), vol: v * 0.22, at: 0.03 });
+}
+
+/** How close a bullet has to pass to be heard going by, meters. */
+const PASS_R = 4;
+
+/**
+ * A bullet going past your head: where its line comes closest to the ear, and how soon it gets there. A fast round
+ * cracks (its shock wave: a recorded snap, then a short tearing hiss), a slow one (a pistol, a bolt) only whips past.
+ * The crack comes before the shot is heard, as it does for real, since the bullet outruns its own report.
+ */
+function passBy(g: Graph, e: Extract<Ev, { t: 'shot' }>, ear: Ear) {
+  const def = WEAPONS[e.w];
+  let dx = e.dx;
+  let dy = e.dy;
+  let dz = e.dz;
+  if (e.v && e.v.length >= 3) {
+    const l = Math.hypot(e.v[0], e.v[1], e.v[2]) || 1;
+    dx = e.v[0] / l;
+    dy = e.v[1] / l;
+    dz = e.v[2] / l;
+  }
+  const ey = ear.y ?? e.y;
+  const rx = ear.x - e.x;
+  const ry = ey - e.y;
+  const rz = ear.z - e.z;
+  const along = rx * dx + ry * dy + rz * dz;
+  if (along < 4 || along > 600) return false;
+  const px = e.x + dx * along - ear.x;
+  const py = e.y + dy * along - ey;
+  const pz = e.z + dz * along - ear.z;
+  const miss = Math.hypot(px, py, pz);
+  if (miss > PASS_R) return false;
+  const k = 1 - miss / PASS_R;
+  const h = Math.hypot(px, pz);
+  const side = h > 0.05 ? (px * Math.cos(ear.yaw) - pz * Math.sin(ear.yaw)) / h : 0;
+  const place: Place = { pan: side * 0.9 * Math.min(1, miss), gain: 0.35 + 0.65 * k, delay: Math.min(1.5, along / def.speed), muffle: 1 };
+  const fast = def.speed > 400 && def.cls !== 'crossbow';
+  if (fast && !sample(g, 'guns', 'crack', place, 0.55 + 0.35 * k, { rate: 0.9 + Math.random() * 0.2 })) {
+    // (synthesized until the recordings load: a sharp bright snap)
+    burst(g, place, { type: 'highpass', freq: 3500, attack: 0.0005, decay: 0.012, vol: 0.5 + 0.3 * k });
+    burst(g, place, { type: 'bandpass', freq: 1800, q: 1.2, attack: 0.0005, decay: 0.03, vol: 0.25 * k });
+  }
+  // the air it tears through, sweeping down as it goes by (louder and longer for a slow one)
+  burst(g, place, { type: 'bandpass', freq: fast ? 4200 : 2600, to: fast ? 1600 : 900, q: 1.6, attack: fast ? 0.004 : 0.03, decay: fast ? 0.09 : 0.18, vol: (fast ? 0.12 : 0.2) * (0.4 + k), at: fast ? 0.004 : 0 });
+  return true;
 }
 
 type StepLook = { lp: number; q: number; decay: number; vol: number; grit?: number };
@@ -190,8 +274,14 @@ const STEPS: Partial<Record<Surface, StepLook>> = {
   water: { lp: 1300, q: 0.6, decay: 0.22, vol: 0.34 },
 };
 
+/** How loud each surface's recorded steps play (the takes are all normalized to the same peak). */
+const STEP_GAIN: Record<Surface, number> = { leaf: 0.5, dirt: 0.55, sand: 0.6, snow: 0.6, stone: 0.55, wood: 0.5, metal: 0.45, water: 0.55 };
+
 /** A footstep: a soft muffled heel, then the toe, by what is underfoot (never a sharp crack). */
 function step(g: Graph, surface: Surface, place: Place, mine: boolean) {
+  // recorded: a random take, a touch higher or lower each time, a little duller than the recording
+  const k = (mine ? 0.45 : 1) * (0.85 + Math.random() * 0.3);
+  if (sample(g, 'steps', surface, place, STEP_GAIN[surface] * k, { rate: 0.9 + Math.random() * 0.2, lowpass: 9000 })) return;
   const s = STEPS[surface] ?? STEPS.dirt!;
   const v = s.vol * (mine ? 0.45 : 1) * (0.85 + Math.random() * 0.3);
   const lp = s.lp * (0.9 + Math.random() * 0.2);
@@ -201,7 +291,21 @@ function step(g: Graph, surface: Surface, place: Place, mine: boolean) {
   if (surface === 'wood') osc(g, place, { freq: 140 + Math.random() * 30, to: 90, decay: 0.07, vol: v * 0.35 });
 }
 
+/** A blast: the recorded one close by (a grenade, or the big one), the far rumble from a distance, crossfading. */
+function boomSample(g: Graph, place: Place, big: boolean) {
+  const v = big ? 1.2 : 0.9;
+  const near = Math.max(0, Math.min(1, (place.muffle - 0.45) / 0.35));
+  let ok = true;
+  if (near > 0) ok = sample(g, 'booms', big ? 'big' : 'nade', { ...place, muffle: Math.min(1, place.muffle * 1.1) }, v * 0.9 * near, { rate: 0.94 + Math.random() * 0.1 });
+  if (ok && near < 1) ok = sample(g, 'booms', 'far', place, v * 1.1 * (1 - near), { rate: 0.9 + Math.random() * 0.15 });
+  if (!ok) return false;
+  // the shove of air under the recording, felt more than heard
+  osc(g, place, { freq: 60, to: 24, decay: big ? 1.1 : 0.6, vol: v * 0.45 });
+  return true;
+}
+
 function boom(g: Graph, place: Place, big: boolean) {
+  if (boomSample(g, place, big)) return;
   const v = big ? 1.2 : 0.9;
   osc(g, place, { freq: 70, to: 26, decay: big ? 1.4 : 0.8, vol: v * 0.9 });
   burst(g, place, { type: 'lowpass', freq: 2400, to: 160, attack: 0.004, decay: big ? 1.8 : 1.1, vol: v * 0.8 });
@@ -210,7 +314,31 @@ function boom(g: Graph, place: Place, big: boolean) {
   for (let i = 0; i < (big ? 7 : 4); i++) burst(g, place, { type: 'bandpass', freq: 1800 + Math.random() * 2500, q: 2, decay: 0.03, vol: v * 0.05, at: 0.25 + Math.random() * 0.9 });
 }
 
+/** A reload in recorded foley, its steps spread over the reload time by the kind of gun (false while it loads). */
+function reloadSample(g: Graph, def: WeaponDef) {
+  const t = def.reload;
+  const f = (key: string, at: number, vol: number) => sample(g, 'foley', key, HERE, vol, { at, rate: 0.97 + Math.random() * 0.06 });
+  switch (def.cls) {
+    case 'crossbow':
+      return false;
+    case 'pistol':
+      return f('pmagout', 0.08, 0.32) && f('pmagin', t * 0.5, 0.36) && f('slide', t * 0.8, 0.3);
+    case 'shotgun': {
+      // a shell at a time, then the pump
+      const n = Math.max(2, Math.min(5, Math.round(t / 0.55)));
+      if (!f('shell', 0.1, 0.3)) return false;
+      for (let i = 1; i < n; i++) f('shell', 0.1 + (i * (t * 0.72 - 0.1)) / n, 0.3);
+      return f('rack', t * 0.82, 0.32);
+    }
+    case 'sniper':
+      return f('magout', 0.1, 0.3) && f('magin', t * 0.45, 0.34) && f('bolt', t * 0.66, 0.3);
+    default:
+      return f('magout', 0.1, 0.3) && f('magin', t * 0.55, 0.34) && f('charge', t * 0.84, 0.32);
+  }
+}
+
 function reload(g: Graph, w: WeaponId) {
+  if (reloadSample(g, WEAPONS[w])) return;
   const t = WEAPONS[w].reload;
   const click = (at: number, f: number, v: number) => {
     burst(g, HERE, { type: 'bandpass', freq: f, q: 3, decay: 0.035, vol: v, at });
@@ -234,15 +362,19 @@ export function playEvents(m: Match, evs: Ev[], ear: Ear, you: number) {
   let far = 0;
   let steps = 0;
   let shells = 0;
+  let passes = 0;
+  let impacts = 0;
   for (const e of evs) {
     switch (e.t) {
       case 'shot': {
         const mine = e.a === you;
         const cls = WEAPONS[e.w].cls;
+        // fired your way: the bullet going past (a few a frame at most)
+        if (!mine && passes < 3 && passBy(g, e, ear)) passes++;
         const p = mine ? HERE : placeAt(ear, e.x, e.z, SHOTS[cls].range);
         if (!p) break;
         if (!mine && p.muffle < 0.75 && ++far > 4) break;
-        shot(g, cls, p, mine);
+        shot(g, e.w, p, mine);
         break;
       }
       case 'decoy': {
@@ -250,7 +382,7 @@ export function playEvents(m: Match, evs: Ev[], ear: Ear, you: number) {
         const cls = WEAPONS[e.w].cls;
         const p = placeAt(ear, e.x, e.z, SHOTS[cls].range);
         if (!p || (p.muffle < 0.75 && ++far > 4)) break;
-        shot(g, cls, p, false);
+        shot(g, e.w, p, false);
         break;
       }
       case 'fire': {
@@ -286,9 +418,14 @@ export function playEvents(m: Match, evs: Ev[], ear: Ear, you: number) {
       }
       case 'impact': {
         const p = placeAt(ear, e.x, e.z, 22, false);
-        if (!p) break;
+        if (!p || ++impacts > 4) break;
+        // recorded for the hard surfaces (metal rings, wood knocks, stone chips); soft ground and water stay a
+        // filtered thud, which is what a bullet into earth sounds like anyway
+        const hard = e.s === 'metal' ? 'imp.metal' : e.s === 'wood' ? 'imp.wood' : e.s === 'stone' ? 'imp.stone' : null;
+        if (hard && sample(g, 'foley', hard, p, e.s === 'metal' ? 0.22 : 0.26, { rate: 0.9 + Math.random() * 0.25 })) break;
         const f = e.s === 'metal' ? 3800 : e.s === 'wood' ? 1200 : e.s === 'stone' ? 2600 : e.s === 'water' ? 900 : 1600;
         burst(g, p, { type: 'bandpass', freq: f, q: e.s === 'metal' ? 6 : 1.5, decay: e.s === 'metal' ? 0.12 : 0.05, vol: 0.12 });
+        if (!hard && e.s !== 'water') burst(g, p, { type: 'lowpass', freq: 500, attack: 0.002, decay: 0.07, vol: 0.1 });
         break;
       }
       case 'hit':
@@ -309,7 +446,13 @@ export function playEvents(m: Match, evs: Ev[], ear: Ear, you: number) {
             osc(g, HERE, { type: 'triangle', freq: e.armor ? 1250 : 880, to: e.armor ? 900 : 620, decay: 0.05, vol: 0.2 });
           }
         }
+        if (e.v !== you && e.a !== you && e.est === undefined) {
+          // someone else hit near you: the dull smack of it
+          const p = placeAt(ear, e.x, e.z, 18, false);
+          if (p && ++impacts <= 4) sample(g, 'foley', 'imp.flesh', p, 0.18, { rate: 0.9 + Math.random() * 0.2, lowpass: 5000 });
+        }
         if (e.v === you) {
+          sample(g, 'foley', 'imp.flesh', HERE, 0.3, { rate: 0.85 + Math.random() * 0.2, lowpass: 4000 });
           osc(g, HERE, { freq: 120, to: 55, decay: 0.16, vol: 0.4 });
           burst(g, HERE, { type: 'lowpass', freq: 500, decay: 0.12, vol: 0.3 });
           if (e.zone === 'head') osc(g, HERE, { freq: 3400, to: 3100, decay: 0.5, vol: 0.03 });
@@ -319,12 +462,13 @@ export function playEvents(m: Match, evs: Ev[], ear: Ear, you: number) {
         if (e.a === you) reload(g, e.w);
         break;
       case 'empty':
-        if (e.a === you) burst(g, HERE, { type: 'bandpass', freq: 3000, q: 5, decay: 0.025, vol: 0.18 });
+        if (e.a === you && !sample(g, 'foley', 'empty', HERE, 0.35)) burst(g, HERE, { type: 'bandpass', freq: 3000, q: 5, decay: 0.025, vol: 0.18 });
         break;
       case 'swap':
         if (e.a === you) {
+          // cloth and hands, then the gun coming up and clicking home
           burst(g, HERE, { type: 'lowpass', freq: 700, attack: 0.02, decay: 0.12, vol: 0.12 });
-          burst(g, HERE, { type: 'bandpass', freq: 2000, q: 3, decay: 0.03, vol: 0.12, at: 0.15 });
+          if (!sample(g, 'foley', 'draw', HERE, 0.26, { at: 0.13, rate: 0.95 + Math.random() * 0.1 })) burst(g, HERE, { type: 'bandpass', freq: 2000, q: 3, decay: 0.03, vol: 0.12, at: 0.15 });
         }
         break;
       case 'throw':
@@ -660,9 +804,9 @@ export function engineSounds(m: Match, ear: Ear, you: number) {
 // ---------------------------------------------------------------------------------------------------------------
 // the air
 
-/** The wind (looped noise through a band that rises with the speed) and the transport's drone (two low saws a little
- * apart, through a lowpass), each with its own level. */
-type Air = { ctx: AudioContext; src: AudioBufferSourceNode; wf: BiquadFilterNode; wg: GainNode; a: OscillatorNode; b: OscillatorNode; df: BiquadFilterNode; dg: GainNode };
+/** The wind (looped noise through a band that rises with the speed) and the transport's drone (the recorded
+ * propeller loop once it has loaded, else two low saws a little apart, through a lowpass), each with its own level. */
+type Air = { ctx: AudioContext; src: AudioBufferSourceNode; wf: BiquadFilterNode; wg: GainNode; drone: AudioScheduledSourceNode[]; prop: boolean; df: BiquadFilterNode; dg: GainNode };
 let air: Air | null = null;
 
 function startAir(g: Graph): Air {
@@ -677,25 +821,35 @@ function startAir(g: Graph): Air {
   const wg = ctx.createGain();
   wg.gain.value = 0.0001;
   src.connect(wf).connect(wg).connect(g.out);
-  const a = ctx.createOscillator();
-  a.type = 'sawtooth';
-  a.frequency.value = 57;
-  const b = ctx.createOscillator();
-  b.type = 'sawtooth';
-  b.frequency.value = 57.8;
   const df = ctx.createBiquadFilter();
   df.type = 'lowpass';
   df.frequency.value = 240;
   df.Q.value = 1.1;
   const dg = ctx.createGain();
   dg.gain.value = 0.0001;
-  a.connect(df);
-  b.connect(df);
   df.connect(dg).connect(g.out);
+  const drone: AudioScheduledSourceNode[] = [];
+  const pb = spriteOf(ctx, 'prop');
+  if (pb) {
+    const p = ctx.createBufferSource();
+    p.buffer = pb;
+    p.loop = true;
+    p.loopStart = 0;
+    p.loopEnd = Math.min(PROP_LEN, pb.duration);
+    p.connect(df);
+    p.start(0, Math.random() * p.loopEnd);
+    drone.push(p);
+  } else
+    for (const f of [57, 57.8]) {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.value = f;
+      o.connect(df);
+      o.start();
+      drone.push(o);
+    }
   src.start();
-  a.start();
-  b.start();
-  return { ctx, src, wf, wg, a, b, df, dg };
+  return { ctx, src, wf, wg, drone, prop: !!pb, df, dg };
 }
 
 function stopAir() {
@@ -707,10 +861,9 @@ function stopAir() {
     v.wg.gain.setTargetAtTime(0.0001, t, 0.08);
     v.dg.gain.setTargetAtTime(0.0001, t, 0.08);
     v.src.stop(t + 0.5);
-    v.a.stop(t + 0.5);
-    v.b.stop(t + 0.5);
-    v.a.onended = () => {
-      for (const n of [v.src, v.wf, v.wg, v.a, v.b, v.df, v.dg]) n.disconnect();
+    for (const d of v.drone) d.stop(t + 0.5);
+    v.src.onended = () => {
+      for (const n of [v.src, v.wf, v.wg, ...v.drone, v.df, v.dg]) n.disconnect();
     };
   } catch {
     /* already stopped */
@@ -757,10 +910,13 @@ export function airSounds(m: Match, you: number) {
     return;
   }
   if (air && air.ctx !== g.ctx) stopAir();
+  // (the propeller recording loaded after the drone started: swap it in)
+  if (air && !air.prop && spriteOf(g.ctx, 'prop')) stopAir();
   if (!air) air = startAir(g);
   const t = g.ctx.currentTime;
   air.wg.gain.setTargetAtTime(Math.max(0.0001, wind), t, 0.12);
   air.wf.frequency.setTargetAtTime(windF, t, 0.15);
-  air.dg.gain.setTargetAtTime(Math.max(0.0001, drone), t, 0.3);
-  air.df.frequency.setTargetAtTime(droneF, t, 0.3);
+  // the recording is brighter than the saws: a higher corner and a little more level, so it reads through the hull
+  air.dg.gain.setTargetAtTime(Math.max(0.0001, drone * (air.prop ? 1.6 : 1)), t, 0.3);
+  air.df.frequency.setTargetAtTime(air.prop ? droneF * 4 : droneF, t, 0.3);
 }

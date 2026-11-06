@@ -150,3 +150,11 @@ map merged into the color, set on the ground at the origin, welded, simplified w
 | `fern.glb` | Fern 02 | Rob Tuytel, Rico Cilliers | CC0 1.0 | <https://polyhaven.com/a/fern_02> |
 | `branches.glb` | Dry Branches Medium 01 | Rico Cilliers | CC0 1.0 | <https://polyhaven.com/a/dry_branches_medium_01> |
 | `tape.glb` | Medical Tape | Miroslav Turura | CC0 1.0 | <https://polyhaven.com/a/medical_tape> |
+
+## Sounds
+
+The recorded sounds (gunshots, bullet cracks, footsteps, reloads, impacts, blasts and the propeller) live in
+`../sounds/`, with every source, author and license listed in `../sounds/LICENSES.md`. Most are CC0; the footsteps on
+grass, wood, metal and water (congusbongus, from recordings by swuing, Eelke and EminYILDIRIM), the grenade and big
+blasts and two weapon clicks (Michel Baradari) and the propeller loop (AntumDeluge, from a recording by jakobthiesen)
+are CC BY 3.0.
