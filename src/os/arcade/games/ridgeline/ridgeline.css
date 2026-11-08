@@ -28,9 +28,31 @@
   touch-action: none;
   cursor: crosshair;
 }
+/* The Start and Pause cards: wide enough for the settings, and the long controls line left to How to Play (it shows
+   it there in full). */
+.g-ridgeline .arcade-card:has(.g-ridgeline-setup) {
+  width: min(460px, 100%);
+}
+.g-ridgeline .arcade-card:has(.g-ridgeline-setup) > .arcade-controls {
+  display: none;
+}
 .g-ridgeline .g-ridgeline-setup {
   display: grid;
+  /* one column no wider than the card (a grid track would otherwise grow to fit every label in a row) */
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
+  min-width: 0;
+}
+/* A row with more options than fit wraps onto a second line, each option at its label's width, rather than spilling
+   out of the card or cutting its labels short. */
+.g-ridgeline .g-ridgeline-setup .arcade-seg {
+  flex-wrap: wrap;
+  gap: 2px;
+  min-width: 0;
+}
+.g-ridgeline .g-ridgeline-setup .arcade-seg > button {
+  flex: 1 0 auto;
+  overflow: visible;
 }
 .g-ridgeline .g-ridgeline-note {
   margin: -2px 0 2px;
