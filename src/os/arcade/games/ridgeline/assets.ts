@@ -44,6 +44,7 @@ import outfit from './models/outfit.glb?url';
 import pan from './models/pan.glb?url';
 import pile from './models/pile.glb?url';
 import propane from './models/propane.glb?url';
+import props from './models/props.glb?url';
 import rgd5 from './models/rgd5.glb?url';
 import rock from './models/rock.glb?url';
 import shield from './models/shield.glb?url';
@@ -150,6 +151,8 @@ const URLS = {
   fern,
   branches,
   tape,
+  // Poly Haven furniture and street props, one file sharing one set of atlas textures (CC0)
+  props,
 } as const;
 
 /** Models fetched only when another failed: the old soldier, if the outfit doesn't load. */

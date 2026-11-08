@@ -15,6 +15,7 @@ import { Post } from './post.ts';
 import { carsView } from './cars.ts';
 import { buildings, markers } from './props.ts';
 import { camoNets, nearDress } from './dress.ts';
+import { furnished, propKit } from './furnish.ts';
 import { applySky, skyDome, skyEnv } from './sky.ts';
 import { brush } from './brush.ts';
 import { disposeGuns, installRealGuns } from './guns.ts';
@@ -222,7 +223,10 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
   scene.add(veg.group);
   const under = brush(THREE, w, shared, assets, Q.brush);
   scene.add(under.group);
-  scene.add(buildings(THREE, w, shared, Q.shadows > 0, crateSkip(assets), assets.images, Q.detail));
+  const kit = propKit(THREE, assets);
+  scene.add(buildings(THREE, w, shared, Q.shadows > 0, crateSkip(assets), assets.images, Q.detail, kit));
+  const furn = furnished(THREE, kit, shared, Q.detail, Q.shadows > 0);
+  scene.add(furn.group);
   const bags = nearDress(THREE, w, shared, assets.images, Q.detail, Q.shadows > 0);
   scene.add(bags.group);
   scene.add(camoNets(THREE, w, shared, Q.shadows > 0));
@@ -330,6 +334,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
   const warm = () => {
     camera.position.set(0, 60, 0);
     bags.near(0, 0);
+    furn.near(0, 0);
     camera.rotation.set(-0.3, 0, 0, 'YXZ');
     camera.updateMatrixWorld();
     const unwarm = troops.prewarm(camera);
@@ -446,6 +451,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
       dome.position.copy(camera.position);
       under.near(camera.position.x, camera.position.z);
       bags.near(camera.position.x, camera.position.z);
+      furn.near(camera.position.x, camera.position.z);
       // the shadow box sits a little ahead of where you look, snapped to its texels
       if (Q.shadows) {
         veg.casters(camera.position.x, camera.position.z);
@@ -537,6 +543,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
       veg.dispose();
       under.dispose();
       bags.dispose();
+      furn.dispose();
       skyTex?.dispose();
       ground?.albedo.dispose();
       ground?.normal.dispose();

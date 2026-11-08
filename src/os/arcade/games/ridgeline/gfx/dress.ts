@@ -6,10 +6,13 @@
 // the pickets of razor wire. All of that is baked into the merged meshes of the buildings (one draw call a finish, see
 // props.ts), so it costs triangles and no draw calls. What is small and many is drawn instanced and only near you: every
 // sandbag of every sandbag wall and emplacement, and the coils of razor wire. The camo nets are one mesh of their own.
+// The furniture and the street props against the outside walls are real models (Poly Haven) where those loaded: they
+// are only put down here, and drawn by furnish.ts; the furniture's boxes stand in for them otherwise.
 import { mulberry32 } from '../noise.ts';
 import { floorAt, heightAt } from '../terrain.ts';
-import { BAGARC, TOWER, type Bld, type Dress, type Opening, type Part, type World } from '../world.ts';
+import { BAGARC, STREET, TOWER, type Bld, type Dress, type Opening, type Part, type World } from '../world.ts';
 import { DOUBLE, canvas, lin, patch, roundBox, type Shared, type T, type Three } from './common.ts';
+import type { PropKey, Props } from './furnish.ts';
 
 /** Where detail goes: a box (middle, half sizes, turned by yaw about y, then pitch about its x, then roll about its z)
  * or a geometry built in its own space and placed by a matrix, each in a finish and a color. */
@@ -18,6 +21,8 @@ export type Add = {
   shade: boolean;
   box(part: Part, color: number, x: number, y: number, z: number, hx: number, hy: number, hz: number, yaw?: number, pitch?: number, roll?: number): void;
   geo(part: Part, color: number, g: T.BufferGeometry, m: T.Matrix4): void;
+  /** The real furniture and street props, where their file loaded (see furnish.ts). */
+  props?: Props;
 };
 
 /** A stable hash of a few numbers, 0 to 1. */
@@ -54,6 +59,16 @@ class Local {
     if (hx < 0.002 || hy < 0.002 || hz < 0.002) return;
     const [x, z] = this.xz(lx, lz);
     this.add.box(part, color, x, ly, z, hx, hy, hz, this.yaw + yaw, pitch, roll);
+  }
+  /** Whether a real prop loaded. */
+  has(k: PropKey) {
+    return !!this.add.props?.has(k);
+  }
+  /** A real prop standing in the frame at (lx, lz) on height y, its front turned to yaw in the frame, tipped by pitch
+   * and roll. */
+  prop(k: PropKey, lx: number, lz: number, y: number, yaw: number, inside = true, pitch = 0, roll = 0) {
+    const [x, z] = this.xz(lx, lz);
+    this.add.props?.put(k, x, y, z, this.yaw + yaw, inside, pitch, roll);
   }
   /** A beam from one point to another (in the frame), w wide and h deep. */
   beam(part: Part, color: number, a: [number, number, number], b: [number, number, number], w: number, h: number) {
@@ -269,9 +284,13 @@ function tank(L: Local, lx: number, y: number, lz: number) {
   L.box('metal', 0x9aa2a4, lx - 0.42, y + 0.66, lz - 0.42, lx + 0.42, y + 1.6, lz + 0.42);
 }
 
-// furniture: each piece a few boxes, against the walls of a room, clear of the doors, of the tall windows and of the
-// loot on the floor
-type Piece = { w: number; d: number; h: number; tall: boolean; draw: (L: Local, x: number, y: number, z: number, along: boolean, flip: number, level: number) => void };
+// furniture: against the walls of a room, clear of the doors, of the tall windows and of the loot on the floor. A piece
+// is drawn with the real models where props.glb loaded (see furnish.ts), and with a few boxes otherwise
+/** A piece: its footprint along and across the wall it stands on, its height, and whether it is tall (kept from under a
+ * window). `side` says which wall: -1 the low one, +1 the high one (of local z when `along`, of local x otherwise), and
+ * its front faces away from it. `real` draws it with the real models, false when they didn't load. */
+type Piece = { w: number; d: number; h: number; tall: boolean; draw: Draw; real?: (...a: Parameters<Draw>) => boolean };
+type Draw = (L: Local, x: number, y: number, z: number, along: boolean, side: number, level: number) => void;
 
 const WOOD = 0x7a5a3a;
 const DARK = 0x4a3a2a;
@@ -284,6 +303,33 @@ function legs(L: Local, x: number, y: number, z: number, hx: number, hz: number,
 function fbox(L: Local, part: Part, c: number, x: number, z: number, ha: number, hc: number, y0: number, y1: number, along: boolean) {
   const [hx, hz] = along ? [ha, hc] : [hc, ha];
   L.box(part, c, x - hx, y0, z - hz, x + hx, y1, z + hz);
+}
+/** The yaw in the frame that turns a model's front (+z) away from the wall a piece stands against. */
+const face = (along: boolean, side: number) => (along ? (side < 0 ? 0 : Math.PI) : side < 0 ? Math.PI / 2 : -Math.PI / 2);
+/** The point `d` out from (x, z) toward the room (away from the piece's wall) and `a` along the wall. */
+const outOf = (x: number, z: number, along: boolean, side: number, d: number, a = 0): [number, number] => (along ? [x + a, z - side * d] : [x - side * d, z + a]);
+
+/** A real model standing at a piece's middle, facing the room. */
+const model =
+  (k: PropKey, turn = 0): Piece['real'] =>
+  (L, x, y, z, along, side) => {
+    if (!L.has(k)) return false;
+    L.prop(k, x, z, y, face(along, side) + turn * (hash(x, z, 9) - 0.5));
+    return true;
+  };
+/** A few cans (or a paint tin) standing on a top at height y, somewhere along it. */
+function cans(L: Local, x: number, y: number, z: number, along: boolean, side: number, spread: number) {
+  const h = hash(z + y, x, 4);
+  const k: PropKey = h < 0.6 ? 'cans' : 'tin';
+  if (!L.has(k)) return;
+  L.prop(k, ...outOf(x, z, along, side, 0.05, (h - 0.5) * spread), y, h * 40);
+}
+
+/** The workbench's top, legs and shelf. */
+function benchBody(L: Local, x: number, y: number, z: number, along: boolean) {
+  fbox(L, 'wood', WOOD, x, z, 0.9, 0.35, y + 0.84, y + 0.9, along);
+  legs(L, x, y, z, 0.9, 0.35, 0.84, WOOD, along);
+  fbox(L, 'wood', DARK, x, z, 0.86, 0.32, y + 0.22, y + 0.25, along);
 }
 
 const PIECES: Record<string, Piece> = {
@@ -307,29 +353,56 @@ const PIECES: Record<string, Piece> = {
       const bz = along ? z : z - e * 0.25;
       fbox(L, 'canvas', 0x6a5a3a, bx, bz, 0.72, 0.47, y + 0.48, y + 0.54, along);
     },
+    // the iron bedstead; a mattress on its springs in most, a pillow at its head (the frame's -x end) and a blanket
+    real(L, x, y, z, along, side) {
+      if (!L.has('bed')) return false;
+      const yaw = face(along, side);
+      L.prop('bed', x, z, y, yaw);
+      const h = hash(x, z, 5);
+      if (h < 0.7) {
+        fbox(L, 'canvas', 0xcfc8b4, x, z, 0.9, 0.4, y + 0.49, y + 0.63, along);
+        const hx = -Math.cos(yaw) * 0.7;
+        const hz = Math.sin(yaw) * 0.7;
+        fbox(L, 'canvas', 0xe2ddd0, x + hx, z + hz, 0.17, 0.28, y + 0.63, y + 0.71, along);
+        if (h < 0.45) fbox(L, 'canvas', 0x5a4c34, x - hx * 0.3, z - hz * 0.3, 0.6, 0.41, y + 0.62, y + 0.67, along);
+      }
+      return true;
+    },
   },
   table: {
-    w: 1.4,
-    d: 0.8,
+    w: 1.6,
+    d: 0.95,
     h: 0.78,
     tall: false,
-    draw(L, x, y, z, along) {
+    draw(L, x, y, z, along, side) {
       fbox(L, 'wood', WOOD, x, z, 0.7, 0.4, y + 0.72, y + 0.77, along);
       legs(L, x, y, z, 0.7, 0.4, 0.72, WOOD, along);
-      // two chairs, one knocked over
+      // two chairs on the room's side, one knocked over
       for (const s of [-0.35, 0.35]) {
-        const cx = along ? x + s : x - 0.62;
-        const cz = along ? z - 0.62 : z + s;
+        const [cx, cz] = outOf(x, z, along, side, 0.62, s);
         if (s > 0 && hash(x, z) < 0.4) {
           fbox(L, 'wood', WOOD, cx, cz, 0.2, 0.21, y, y + 0.05, along);
           continue;
         }
         fbox(L, 'wood', WOOD, cx, cz, 0.2, 0.2, y + 0.43, y + 0.47, along);
         legs(L, cx, y, cz, 0.2, 0.2, 0.43, WOOD, along);
-        const bx = along ? cx : cx - 0.18;
-        const bz = along ? cz - 0.18 : cz;
+        const [bx, bz] = outOf(cx, cz, along, side, 0.18);
         fbox(L, 'wood', WOOD, bx, bz, 0.2, 0.02, y + 0.47, y + 0.92, along);
       }
+    },
+    // the table in its cloth, two chairs pulled up to it on the room's side (one knocked over now and then), a few cans
+    real(L, x, y, z, along, side, level) {
+      if (!L.has('table')) return false;
+      const yaw = face(along, side);
+      L.prop('table', x, z, y, yaw);
+      if (L.has('chair'))
+        for (const s of [-0.4, 0.4]) {
+          const j = hash(x + s, z, 3);
+          if (s > 0 && hash(x, z) < 0.4) L.prop('chair', ...outOf(x, z, along, side, 1.05, s + 0.2), y + 0.24, yaw + Math.PI + 0.6 + j, true, 0, Math.PI / 2);
+          else L.prop('chair', ...outOf(x, z, along, side, 0.7 + j * 0.12, s), y, yaw + Math.PI + (j - 0.5) * 0.5);
+        }
+      if (level > 1) cans(L, x, y + 0.71, z, along, side, 0.9);
+      return true;
     },
   },
   cabinet: {
@@ -337,28 +410,27 @@ const PIECES: Record<string, Piece> = {
     d: 0.5,
     h: 1.9,
     tall: true,
-    draw(L, x, y, z, along) {
+    draw(L, x, y, z, along, side) {
       fbox(L, 'wood', DARK, x, z, 0.5, 0.25, y, y + 1.9, along);
       for (const s of [-0.25, 0.25]) {
-        const hx = along ? x + s : x - 0.255;
-        const hz = along ? z - 0.255 : z + s;
+        const [hx, hz] = outOf(x, z, along, side, 0.255, s);
         fbox(L, 'wood', WOOD, hx, hz, 0.23, 0.006, y + 0.1, y + 1.8, along);
       }
     },
+    real: model('cabinet'),
   },
   shelf: {
     w: 1.2,
-    d: 0.38,
+    d: 0.5,
     h: 1.8,
     tall: true,
-    draw(L, x, y, z, along, _flip, level) {
+    draw(L, x, y, z, along, side, level) {
       for (const s of [-0.58, 0.58]) {
         const sx = along ? x + s : x;
         const sz = along ? z : z + s;
         fbox(L, 'wood', WOOD, sx, sz, 0.02, 0.19, y, y + 1.8, along);
       }
-      const bx = along ? x : x + 0.17;
-      const bz = along ? z + 0.17 : z;
+      const [bx, bz] = outOf(x, z, along, side, -0.17);
       fbox(L, 'wood', DARK, bx, bz, 0.58, 0.01, y, y + 1.8, along);
       const r = mulberry32(Math.floor(hash(x, z) * 1e6));
       for (let k = 0; k < 5; k++) {
@@ -376,21 +448,35 @@ const PIECES: Record<string, Piece> = {
         }
       }
     },
+    // (and at the highest detail a few cans and tins on its boards)
+    real(L, x, y, z, along, side, level) {
+      if (!L.has('shelf')) return false;
+      L.prop('shelf', x, z, y, face(along, side));
+      if (level > 1) for (const b of [0.34, 0.84, 1.45]) if (hash(x, b, z) < 0.6) cans(L, x, y + b, z, along, side, 0.8);
+      return true;
+    },
   },
   stove: {
     w: 0.65,
     d: 0.6,
     h: 0.9,
-    tall: false,
-    draw(L, x, y, z, along) {
+    // (its flue runs up past a window's height)
+    tall: true,
+    draw(L, x, y, z, along, side) {
       fbox(L, 'rust', 0x3a3836, x, z, 0.32, 0.3, y, y + 0.86, along);
       fbox(L, 'rust', 0x2a2826, x, z, 0.34, 0.31, y + 0.86, y + 0.9, along);
-      const dx = along ? x : x - 0.305;
-      const dz = along ? z - 0.305 : z;
+      const [dx, dz] = outOf(x, z, along, side, 0.305);
       fbox(L, 'rust', 0x5a5852, dx, dz, 0.22, 0.008, y + 0.2, y + 0.6, along);
-      const px = along ? x + 0.15 : x + 0.12;
-      const pz = along ? z + 0.12 : z + 0.15;
+      const [px, pz] = outOf(x, z, along, side, -0.12, 0.15);
       L.box('metal', 0x2a2826, px - 0.06, y + 0.9, pz - 0.06, px + 0.06, y + 2.3, pz + 0.06);
+    },
+    // a stove made of an oil drum, and its flue
+    real(L, x, y, z, along, side) {
+      if (!L.has('stove')) return false;
+      L.prop('stove', x, z, y, face(along, side) + hash(x, z, 2) * 6);
+      const [px, pz] = outOf(x, z, along, side, -0.1);
+      L.box('metal', 0x2a2826, px - 0.06, y + 0.85, pz - 0.06, px + 0.06, y + 2.3, pz + 0.06);
+      return true;
     },
   },
   bench: {
@@ -399,11 +485,18 @@ const PIECES: Record<string, Piece> = {
     h: 0.9,
     tall: false,
     draw(L, x, y, z, along) {
-      fbox(L, 'wood', WOOD, x, z, 0.9, 0.35, y + 0.84, y + 0.9, along);
-      legs(L, x, y, z, 0.9, 0.35, 0.84, WOOD, along);
-      fbox(L, 'wood', DARK, x, z, 0.86, 0.32, y + 0.22, y + 0.25, along);
+      benchBody(L, x, y, z, along);
       fbox(L, 'metal', 0x4a5a6a, x - 0.4, z, 0.12, 0.1, y + 0.9, y + 1.02, along);
       fbox(L, 'canvas', 0x7a2a22, x + 0.3, z, 0.22, 0.14, y + 0.9, y + 1.08, along);
+    },
+    // a vice at one end of the bench, and a tin on it
+    real(L, x, y, z, along, side) {
+      if (!L.has('vice')) return false;
+      benchBody(L, x, y, z, along);
+      const e = hash(x, z, 6) < 0.5 ? -1 : 1;
+      L.prop('vice', ...outOf(x, z, along, side, 0.16, e * 0.6), y + 0.9, face(along, side));
+      cans(L, x, y + 0.9, z, along, side, 0.6);
+      return true;
     },
   },
   bales: {
@@ -412,23 +505,104 @@ const PIECES: Record<string, Piece> = {
     h: 1.0,
     tall: false,
     draw(L, x, y, z, along) {
-      for (const s of [-0.55, 0.55]) for (const k of [0, 1]) {
-        if (k === 1 && s > 0 && hash(x, z) < 0.5) continue;
-        const bx = along ? x + s : x;
-        const bz = along ? z : z + s;
-        fbox(L, 'canvas', 0xc8b070, bx, bz, 0.52, 0.47, y + k * 0.48, y + k * 0.48 + 0.46, along);
-      }
+      for (const s of [-0.55, 0.55])
+        for (const k of [0, 1]) {
+          if (k === 1 && s > 0 && hash(x, z) < 0.5) continue;
+          const bx = along ? x + s : x;
+          const bz = along ? z : z + s;
+          fbox(L, 'canvas', 0xc8b070, bx, bz, 0.52, 0.47, y + k * 0.48, y + k * 0.48 + 0.46, along);
+        }
     },
   },
+  sofa: {
+    w: 2.0,
+    d: 0.65,
+    h: 1.02,
+    tall: false,
+    draw(L, x, y, z, along, side) {
+      fbox(L, 'wood', DARK, x, z, 0.98, 0.3, y + 0.1, y + 0.42, along);
+      legs(L, x, y, z, 0.98, 0.3, 0.1, DARK, along);
+      fbox(L, 'canvas', 0x5a6a7a, x, z, 0.92, 0.27, y + 0.42, y + 0.52, along);
+      const [bx, bz] = outOf(x, z, along, side, -0.27);
+      fbox(L, 'wood', DARK, bx, bz, 0.98, 0.04, y + 0.42, y + 0.95, along);
+      for (const s of [-0.95, 0.95]) {
+        const [ax, az] = outOf(x, z, along, side, 0, s);
+        fbox(L, 'wood', DARK, ax, az, 0.04, 0.3, y + 0.42, y + 0.68, along);
+      }
+    },
+    real: model('sofa'),
+  },
+  sideboard: {
+    w: 1.1,
+    d: 0.56,
+    h: 1.06,
+    tall: false,
+    draw(L, x, y, z, along, side) {
+      fbox(L, 'wood', 0xb8b0a0, x, z, 0.54, 0.27, y, y + 1.0, along);
+      fbox(L, 'wood', DARK, x, z, 0.56, 0.28, y + 1.0, y + 1.04, along);
+      for (const s of [-0.26, 0.26]) {
+        const [dx, dz] = outOf(x, z, along, side, 0.275, s);
+        fbox(L, 'wood', 0xa8a090, dx, dz, 0.24, 0.006, y + 0.12, y + 0.7, along);
+      }
+    },
+    real(L, x, y, z, along, side, level) {
+      if (!L.has('sideboard')) return false;
+      L.prop('sideboard', x, z, y, face(along, side));
+      if (level > 1) cans(L, x, y + 1.06, z, along, side, 0.7);
+      return true;
+    },
+  },
+  nightstand: {
+    w: 0.45,
+    d: 0.45,
+    h: 0.6,
+    tall: false,
+    draw(L, x, y, z, along) {
+      fbox(L, 'wood', DARK, x, z, 0.2, 0.2, y, y + 0.55, along);
+      fbox(L, 'wood', WOOD, x, z, 0.22, 0.22, y + 0.55, y + 0.58, along);
+    },
+    real: model('nightstand'),
+  },
+  stool: {
+    w: 0.42,
+    d: 0.42,
+    h: 0.58,
+    tall: false,
+    draw(L, x, y, z, along) {
+      fbox(L, 'wood', WOOD, x, z, 0.17, 0.17, y + 0.53, y + 0.57, along);
+      legs(L, x, y, z, 0.16, 0.16, 0.53, WOOD, along);
+    },
+    real: model('stool', 2),
+  },
+  rack: {
+    w: 0.95,
+    d: 0.62,
+    h: 1.9,
+    tall: true,
+    draw(L, x, y, z, along) {
+      const [ax, az] = along ? [0.44, 0.28] : [0.28, 0.44];
+      for (const a of [-1, 1]) for (const b of [-1, 1]) L.box('metal', 0x5a5a54, x + a * ax - 0.02, y, z + b * az - 0.02, x + a * ax + 0.02, y + 1.9, z + b * az + 0.02);
+      for (let k = 0; k < 4; k++) fbox(L, 'metal', 0x6a6a62, x, z, 0.46, 0.29, y + 0.15 + k * 0.55, y + 0.17 + k * 0.55, along);
+    },
+    real(L, x, y, z, along, side, level) {
+      if (!L.has('rack')) return false;
+      L.prop('rack', x, z, y, face(along, side));
+      if (level > 1) for (const b of [0.43, 0.92, 1.41]) if (hash(x, b, z) < 0.5) cans(L, x, y + b, z, along, side, 0.6);
+      return true;
+    },
+  },
+  // (only where the real ones loaded: nothing stands in for them)
+  ladder: { w: 1.0, d: 0.55, h: 1.33, tall: false, draw() {}, real: model('ladder') },
+  cask: { w: 0.8, d: 0.8, h: 0.87, tall: false, draw() {}, real: model('cask', 3) },
 };
 
 const ROOMS: Record<string, string[][]> = {
   house: [
-    ['table', 'stove', 'cabinet', 'shelf'],
-    ['bed', 'cabinet', 'table'],
+    ['table', 'stove', 'sideboard', 'shelf', 'stool'],
+    ['bed', 'nightstand', 'cabinet', 'sofa'],
   ],
-  shed: [['bench', 'shelf']],
-  barn: [['bales', 'bench', 'bales']],
+  shed: [['bench', 'rack', 'stool']],
+  barn: [['bales', 'bench', 'bales', 'ladder', 'cask']],
 };
 
 function furniture(L: Local, b: Bld, loot: Float32Array, level: number) {
@@ -469,15 +643,16 @@ function furniture(L: Local, b: Bld, loot: Float32Array, level: number) {
       const tries: [number, number, boolean, number][] = [];
       for (const along of [true, false]) {
         const [hx, hz] = along ? [p.w / 2, p.d / 2] : [p.d / 2, p.w / 2];
-        for (const fx of [0, 1, 0.5]) for (const fz of [0, 1, 0.5]) {
-          if (fx === 0.5 && fz === 0.5) continue;
-          // against a wall: across it touching, along it at a corner or the middle
-          if (along && fz === 0.5) continue;
-          if (!along && fx === 0.5) continue;
-          const x = fx === 0 ? x0 + hx + 0.02 : fx === 1 ? x1 - hx - 0.02 : (x0 + x1) / 2;
-          const z = fz === 0 ? z0 + hz + 0.02 : fz === 1 ? z1 - hz - 0.02 : (z0 + z1) / 2;
-          tries.push([x, z, along, along ? (fz === 0 ? -1 : 1) : fx === 0 ? -1 : 1]);
-        }
+        for (const fx of [0, 1, 0.5])
+          for (const fz of [0, 1, 0.5]) {
+            if (fx === 0.5 && fz === 0.5) continue;
+            // against a wall: across it touching, along it at a corner or the middle
+            if (along && fz === 0.5) continue;
+            if (!along && fx === 0.5) continue;
+            const x = fx === 0 ? x0 + hx + 0.02 : fx === 1 ? x1 - hx - 0.02 : (x0 + x1) / 2;
+            const z = fz === 0 ? z0 + hz + 0.02 : fz === 1 ? z1 - hz - 0.02 : (z0 + z1) / 2;
+            tries.push([x, z, along, along ? (fz === 0 ? -1 : 1) : fx === 0 ? -1 : 1]);
+          }
       }
       const start = Math.floor(hash(b.x + ri, b.z, name.length) * tries.length);
       for (let k = 0; k < tries.length && !done; k++) {
@@ -495,7 +670,7 @@ function furniture(L: Local, b: Bld, loot: Float32Array, level: number) {
         if (spots.some(([sx, sz]) => Math.abs(sx - x) < hx + 0.35 && Math.abs(sz - z) < hz + 0.35)) continue;
         if (taken.some(([a, bb, cc, d]) => x + hx > a && x - hx < cc && z + hz > bb && z - hz < d)) continue;
         taken.push([x - hx - 0.1, z - hz - 0.1, x + hx + 0.1, z + hz + 0.1]);
-        p.draw(L, x, floor, z, along, side, level);
+        if (!p.real?.(L, x, floor, z, along, side, level)) p.draw(L, x, floor, z, along, side, level);
         done = true;
       }
     }
@@ -967,6 +1142,26 @@ function arcCore(L: Local, y: number, h: number, color: number) {
 
 const lerp = (a: number, b: number, k: number) => a + (b - a) * k;
 
+/** A street prop against a building's outside wall (see world.ts streetProps), its front out from the wall: the real
+ * model, or where that didn't load, for those that collide, boxes where the collider stands. */
+function street(L: Local, d: Dress) {
+  const k = d.k as keyof typeof STREET;
+  // (the round ones, and the small ones, turned a little or anyhow; the old rim leans on the wall)
+  const turn = k === 'bins' || k === 'cask' ? 0.3 : k === 'bucket' || k === 'wcan' ? 2 : 0;
+  if (L.has(k)) {
+    L.prop(k, 0, k === 'rim' ? -0.05 : 0, d.y, (d.v - 0.5) * turn, false, k === 'rim' ? -0.2 : 0);
+    return;
+  }
+  const [w, dd, h] = STREET[k];
+  if (k === 'bench') {
+    L.at('wood', 0x5a6a72, 0, d.y + 0.42, 0.04, w / 2, 0.03, dd / 2 - 0.06);
+    L.at('wood', 0x5a6a72, 0, d.y + 0.68, -dd / 2 + 0.05, w / 2, 0.2, 0.03);
+    for (const s of [-1, 1]) L.at('wood', 0x4a5258, s * (w / 2 - 0.06), d.y + 0.2, 0, 0.04, 0.2, dd / 2 - 0.08);
+  } else if (k === 'ubox') L.at('metal', 0x7a8a84, 0, d.y + h / 2, 0, w / 2, h / 2, dd / 2);
+  else if (k === 'bins') for (const s of [-1, 1]) L.at('metal', 0x8a8c86, s * w * 0.22, d.y + h / 2, 0, w * 0.2, h / 2, dd / 2 - 0.02);
+  else if (k === 'cask') L.at('wood', 0x6a4a30, 0, d.y + h / 2, 0, w / 2 - 0.04, h / 2, dd / 2 - 0.04);
+}
+
 /** Every building's detail and every dressed prop, into the merged meshes. */
 export function dressStatic(three: Three, add: Add, w: World, level: number) {
   // (on the lowest setting the buildings stay plain: only the props whose boxes stand for them are drawn)
@@ -1010,6 +1205,8 @@ export function dressStatic(three: Three, add: Add, w: World, level: number) {
       case 'bagarc':
         arcCore(L, d.y, d.s, d.c);
         break;
+      default:
+        street(L, d);
     }
   }
 }

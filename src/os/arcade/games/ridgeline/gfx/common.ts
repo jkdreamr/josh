@@ -262,6 +262,9 @@ const PATCH_VERT = /* glsl */ `
 #include <project_vertex>
 {
   vec4 dzw = vec4(transformed, 1.0);
+  #ifdef USE_BATCHING
+  dzw = batchingMatrix * dzw;
+  #endif
   #ifdef USE_INSTANCING
   dzw = instanceMatrix * dzw;
   #endif
