@@ -15,6 +15,8 @@ export type View = {
   render: () => void;
   hit: (speed: number, perfect?: boolean) => void;
   replayCamera: (active: boolean) => void;
+  replayProgress: (t: number, slow: boolean, slowProgress: number, hitTeam: number | null) => void;
+  punch: (strength: number) => void;
   bounce: (x: number, z: number, line: boolean) => void;
   netHit: () => void;
   point: (winner: number, longRally?: boolean) => void;
@@ -303,7 +305,7 @@ function buildStadium(THREE: Three, scene: T.Scene, lite: boolean) {
   const rows: Array<[number, number, number, number]> = [];
   for (let side of [-1, 1]) {
     for (let row = 0; row < 8; row++) {
-      const x = side * (8.1 + row * 0.82);
+      const x = side * (11.2 + row * 0.82);
       for (let i = 0; i < 42; i++) rows.push([x, 0.72 + row * 0.48, -16.8 + i * 0.82, side]);
     }
   }
@@ -419,13 +421,13 @@ function buildStadium(THREE: Three, scene: T.Scene, lite: boolean) {
   const treeMaterials = [standard(THREE, '#567348', 1), standard(THREE, '#6f8354', 1), standard(THREE, '#9a7b56', 0.95)];
   const treeTrunk = standard(THREE, '#564437', 0.98);
   for (let i = 0; i < (lite ? 8 : 20); i++) {
-    const x = (i % 2 ? 1 : -1) * (16 + Math.random() * 16);
-    const z = -30 + Math.floor(i / 2) * 7 + Math.random() * 4;
-    const height = 2.5 + Math.random() * 3;
+    const x = (i % 2 ? 1 : -1) * (30 + Math.floor(i / 4) * 4.1 + (i % 3) * 1.4);
+    const z = (i % 4 < 2 ? -1 : 1) * (32 + Math.floor(i / 4) * 7 + (i % 3) * 2);
+    const height = 2.5 + (i % 4) * 0.62;
     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.22, height, 7), treeTrunk);
     trunk.position.set(x, height / 2, z);
     scene.add(trunk);
-    const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(1.8 + Math.random(), 1), treeMaterials[i % treeMaterials.length]);
+    const crown = new THREE.Mesh(new THREE.IcosahedronGeometry(1.8 + (i % 3) * 0.28, 1), treeMaterials[i % treeMaterials.length]);
     crown.scale.set(1.2, 0.95, 1.1);
     crown.position.set(x, height + 0.75, z);
     crown.castShadow = false;
@@ -440,8 +442,8 @@ function buildStadium(THREE: Three, scene: T.Scene, lite: boolean) {
   leaflets.receiveShadow = false;
   for (let i = 0; i < 6; i++) {
     const side = i % 2 ? 1 : -1;
-    const x = side * (18 + (i % 3) * 3);
-    const z = -27 - Math.floor(i / 2) * 10;
+    const x = side * (31 + Math.floor(i / 2) * 7);
+    const z = (i % 2 ? 1 : -1) * (38 + Math.floor(i / 2) * 11);
     const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.13, 0.22, 7.2, 12), palmBark);
     trunk.position.set(x, 3.6, z);
     trunk.rotation.z = side * 0.035;
@@ -785,6 +787,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, char
   let playerZ = 0;
   let previousPhase: World['phase'] | null = null;
   let cameraTransition = 0;
+  let cameraTransitionLength = 0.4;
   let cameraInitialized = false;
   const cameraTarget = new THREE.Vector3();
   const cameraFrom = new THREE.Vector3();
@@ -795,7 +798,21 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, char
   let playerX = 0;
   let debugCameraMode: 'front' | 'side' | 'back' | 'game-close' | null = null;
   let replayCameraActive = false;
+  let replayWorld: World | null = null;
+  let replaySlow = false;
+  let replayWasSlow = false;
+  let replaySlowProgress = 0;
+  let replayHitterTeam: number | null = null;
+  let replaySlowHitter: { x: number; z: number; team: number; seat: number } | null = null;
+  let replayHitterLogged = false;
+  let replayCameraInitialized = false;
+  let debugSide: number | null = null;
   let debugCameraSeat = 0;
+  const defaultFov = camera.fov;
+  let punchFrom = 0;
+  let punchTarget = 0;
+  let punchElapsed = 1;
+  let punchAmount = 0;
   let lastRenderAt = 0;
   let frameEma = 0;
   let qualityTier = 0;
@@ -854,10 +871,71 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, char
     positionCamera(0);
   }
 
+  function positionReplayCamera(dt: number) {
+    const world = replayWorld;
+    if (!world) return;
+    const ballPosition = world.ball.p;
+    let desiredPosition: T.Vector3;
+    let desiredLook: T.Vector3;
+    if (!replaySlow) {
+      const sx = 1;
+      desiredPosition = new THREE.Vector3(sx * 10.4, 5.4, clamp(ballPosition.z * 0.35, -7, 7));
+      desiredLook = new THREE.Vector3(ballPosition.x * 0.5, 0.9, ballPosition.z * 0.75);
+      camera.fov = 46;
+    } else {
+      if (!replaySlowHitter) {
+        const team = replayHitterTeam ?? world.ball.hitByTeam;
+        const hitter = world.players
+          .filter((player) => player.team === team)
+          .sort((a, b) => Math.hypot(a.x - ballPosition.x, a.z - ballPosition.z) - Math.hypot(b.x - ballPosition.x, b.z - ballPosition.z))[0];
+        if (hitter) {
+          replaySlowHitter = { x: hitter.x, z: hitter.z, team: hitter.team, seat: hitter.seat };
+          if (import.meta.env.DEV && !replayHitterLogged) {
+            replayHitterLogged = true;
+            const diagnostic = { seat: hitter.seat, team: hitter.team, ball: { ...ballPosition } };
+            (window as Window & { __tennisOtsHitter?: typeof diagnostic }).__tennisOtsHitter = diagnostic;
+            console.info('Tennis replay OTS hitter', diagnostic);
+          }
+        }
+      }
+      const hitter = replaySlowHitter;
+      if (hitter) {
+        const side = Math.sign(hitter.x) || 1;
+        const back = hitter.team === 0 ? 1 : -1;
+        const dolly = replaySlowProgress * 0.4;
+        desiredPosition = new THREE.Vector3(
+          clamp(hitter.x + 0.9 * side, -8.5, 8.5),
+          1.75,
+          hitter.z + back * (3.4 - dolly),
+        );
+        const chest = new THREE.Vector3(hitter.x, 1.2, hitter.z);
+        const ballFocus = new THREE.Vector3(ballPosition.x, Math.max(0.25, ballPosition.y), ballPosition.z);
+        desiredLook = chest.lerp(ballFocus, 0.6);
+      } else {
+        desiredPosition = new THREE.Vector3(10.4, 5.4, clamp(ballPosition.z * 0.35, -7, 7));
+        desiredLook = new THREE.Vector3(ballPosition.x * 0.5, 0.9, ballPosition.z * 0.75);
+      }
+      camera.fov = 38;
+    }
+    camera.updateProjectionMatrix();
+    if (!replayCameraInitialized) {
+      camera.position.copy(desiredPosition);
+      cameraTarget.copy(desiredLook);
+      replayCameraInitialized = true;
+    } else {
+      camera.position.x = damp(camera.position.x, desiredPosition.x, 4, dt);
+      camera.position.y = damp(camera.position.y, desiredPosition.y, 4, dt);
+      camera.position.z = damp(camera.position.z, desiredPosition.z, 4, dt);
+      cameraTarget.x = damp(cameraTarget.x, desiredLook.x, 4, dt);
+      cameraTarget.y = damp(cameraTarget.y, desiredLook.y, 4, dt);
+      cameraTarget.z = damp(cameraTarget.z, desiredLook.z, 4, dt);
+    }
+    camera.lookAt(cameraTarget);
+  }
+
   function positionCamera(dt: number) {
     if (replayCameraActive) {
-      camera.position.set(27, 14, 0);
-      camera.lookAt(0, 1.1, 0);
+      positionReplayCamera(dt);
       cameraInitialized = true;
       return;
     }
@@ -897,7 +975,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, char
     }
     if (cameraTransition > 0) {
       cameraTransition = Math.max(0, cameraTransition - dt);
-      const t = 1 - cameraTransition / 0.4;
+      const t = 1 - cameraTransition / cameraTransitionLength;
       const ease = t * t * (3 - 2 * t);
       camera.position.set(
         cameraFrom.x + (desiredX - cameraFrom.x) * ease,
@@ -909,8 +987,20 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, char
         cameraLookFrom.y + (cameraTarget.y - cameraLookFrom.y) * ease,
         cameraLookFrom.z + (cameraTarget.z - cameraLookFrom.z) * ease,
       );
+      camera.fov = defaultFov;
+      camera.updateProjectionMatrix();
       return;
     }
+    punchElapsed = Math.min(0.82, punchElapsed + dt);
+    if (punchElapsed <= 0.12) {
+      const t = punchElapsed / 0.12;
+      punchAmount = punchFrom + (punchTarget - punchFrom) * t * t * (3 - 2 * t);
+    } else {
+      const t = clamp((punchElapsed - 0.12) / 0.7, 0, 1);
+      punchAmount = punchTarget * (1 - t * t * (3 - 2 * t));
+    }
+    camera.fov = defaultFov - 6 * punchAmount;
+    camera.updateProjectionMatrix();
     camera.position.x = damp(camera.position.x, desiredX, 4.2, dt);
     camera.position.y = damp(camera.position.y, height, 4.2, dt);
     camera.position.z = damp(camera.position.z, desiredZ, 4.2, dt);
@@ -919,9 +1009,11 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, char
 
   function update(world: World, dt: number, humanSeats: ReadonlySet<number>, side: number, aimTarget?: { x: number; z: number } | null) {
     time += dt;
-    currentSide = side;
+    currentSide = debugSide ?? side;
+    if (replayCameraActive) replayWorld = world;
     if (previousPhase === 'point' && world.phase === 'serve-ready') {
       cameraTransition = 0.4;
+      cameraTransitionLength = 0.4;
       cameraFrom.copy(camera.position);
       cameraLookFrom.copy(cameraTarget);
     }
@@ -946,7 +1038,10 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, char
       updatePlayer(model, player, world.ball, dt, humanSeats.has(player.seat), clamp(x, -half - 1, half + 1), z, ballX, ballY, world.phase, player.seat === world.serverSeat);
       const shadow = playerShadows[index]!;
       shadow.visible = true;
-      shadow.position.set(x, 0.068, z);
+      shadow.position.set(model.root.position.x, 0.068, model.root.position.z);
+      const lunge = player.swingLunge;
+      shadow.scale.set(0.9 + lunge * 0.16, 0.58 + lunge * 0.1, 1);
+      (shadow.material as T.MeshBasicMaterial).opacity = 0.3 - lunge * 0.045;
       if (humanSeats.has(player.seat) && player.team === side) {
         playerX = x;
         playerZ = z;
@@ -1136,7 +1231,13 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, char
       if (model) model.debugPose = { name, progress, position: model.root.position.clone(), rotation: model.root.rotation.y };
     },
     debugCamera(name, seat) {
-      debugCameraMode = name === 'game' ? seat === undefined ? null : 'game-close' : name;
+      if (name === 'game') {
+        debugCameraMode = null;
+        debugSide = seat === undefined ? null : seat === 1 ? 1 : 0;
+      } else {
+        debugCameraMode = name;
+        debugSide = null;
+      }
       debugCameraSeat = Math.max(0, Math.min(players.length - 1, seat ?? 0));
       cameraInitialized = false;
     },
@@ -1164,9 +1265,51 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, char
       },
     } : {}),
     replayCamera(active) {
-      replayCameraActive = active;
-      cameraInitialized = false;
-      cameraTransition = 0;
+      if (active) {
+        replayCameraActive = true;
+        replayCameraInitialized = false;
+        replayWasSlow = false;
+        replaySlowProgress = 0;
+        replayHitterTeam = null;
+        replaySlowHitter = null;
+        replayHitterLogged = false;
+        cameraTransition = 0;
+        punchAmount = 0;
+        punchFrom = 0;
+        punchTarget = 0;
+        punchElapsed = 1;
+      } else {
+        if (!replayCameraActive) return;
+        replayCameraActive = false;
+        cameraFrom.copy(camera.position);
+        cameraLookFrom.copy(cameraTarget);
+        cameraTransition = 0.8;
+        cameraTransitionLength = 0.8;
+        cameraInitialized = true;
+        camera.fov = defaultFov;
+        camera.updateProjectionMatrix();
+      }
+    },
+    replayProgress(_t, slow, slowProgress, hitTeam) {
+      replaySlow = slow;
+      replaySlowProgress = clamp(slowProgress, 0, 1);
+      replayHitterTeam = hitTeam;
+      if (slow && !replayWasSlow) {
+        replaySlowHitter = null;
+        replayHitterLogged = false;
+        replayCameraInitialized = false;
+      }
+      if (!slow && replayWasSlow) {
+        replaySlowHitter = null;
+        replayCameraInitialized = false;
+      }
+      replayWasSlow = slow;
+    },
+    punch(strength) {
+      if (replayCameraActive) return;
+      punchFrom = punchAmount;
+      punchTarget = clamp(punchAmount + strength, 0, 1.8);
+      punchElapsed = 0;
     },
     render() {
       if (!glContext.lost()) {

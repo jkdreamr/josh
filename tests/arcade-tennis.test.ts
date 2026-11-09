@@ -605,6 +605,16 @@ test('left aim is screen-left from both teams', () => {
   }
 });
 
+test('contact prediction retains the height needed for a smash cue', () => {
+  const world = createWorld();
+  const player = world.players[0]!;
+  world.ball.p = { x: player.x, y: 2.5, z: player.z };
+  world.ball.prev = { ...world.ball.p };
+  world.ball.v = { x: 0, y: 0, z: 0 };
+  const contact = predictContactPoint(world.ball, player);
+  assert.ok(contact.y >= 2.2);
+});
+
 test('buffered swings contact only in range and expire as whiffs', () => {
   const world = createWorld({ level: 2 });
   const player = world.players[0]!;
@@ -913,7 +923,7 @@ test('CPU shot variety varies by level and Normal/Hard tell lob, drop, crosscour
     }
     assert.ok(counts.topspin > 0);
     if (level === 0) {
-      assert.equal(counts.lob, 0);
+      assert.ok(counts.lob > 70 && counts.lob < 170, `level ${level} produced ${counts.lob} net lobs`);
       assert.equal(counts.smash, 0);
       assert.ok(counts.slice > 30);
     } else {

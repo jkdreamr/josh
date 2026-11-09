@@ -22,6 +22,9 @@ export type PlayerModel = {
   boneBinds: BoneBind[];
   poseAngles: Map<string, [number, number, number]>;
   ownedMaterials: Set<T.Material>;
+  ownedGeometries: Set<T.BufferGeometry>;
+  ownedTextures: Set<T.Texture>;
+  fabricNormalMap: T.Texture;
   racketCorrection: T.Quaternion;
   debugPose: { name: PoseName; progress: number; position: T.Vector3; rotation: number } | null;
   disposed: boolean;
@@ -52,7 +55,6 @@ const teamOutfits = [
   { shirt: '#20324d', shorts: '#f1efe6' },
 ] as const;
 const loadedAssets = new Map<string, Promise<LoadedPlayerAsset>>();
-const hemGeometries = new WeakSet<T.BufferGeometry>();
 let warnedAboutPlayerLoadFailure = false;
 
 function playerAssetUrl(seat: number, character = '') {
@@ -164,58 +166,210 @@ export function characterSpaceBoneTarget(
     .multiply(bindWorld);
 }
 
-function groupShortsHem(geometry: T.BufferGeometry) {
-  if (hemGeometries.has(geometry) || !geometry.index) return;
+function triangleIndices(geometry: T.BufferGeometry) {
   const positions = geometry.getAttribute('position');
-  if (!positions) return;
-  const shirtGroup = geometry.groups.find((group) => group.materialIndex === 0);
-  const shortsGroup = geometry.groups.find((group) => group.materialIndex === 1);
-  if (!shirtGroup || !shortsGroup) return;
+  if (!positions) return [];
   const index = geometry.index;
-  let shortsTop = -Infinity;
-  for (let i = shortsGroup.start; i < shortsGroup.start + shortsGroup.count; i++) {
-    shortsTop = Math.max(shortsTop, positions.getY(index.getX(i)));
-  }
-  const hemHeight = shortsTop - 0.12;
-  const shirtIndices: number[] = [];
-  const shortsIndices: number[] = [];
-  for (let i = shirtGroup.start; i < shirtGroup.start + shirtGroup.count; i += 3) {
-    shirtIndices.push(index.getX(i), index.getX(i + 1), index.getX(i + 2));
-  }
-  for (let i = shortsGroup.start; i < shortsGroup.start + shortsGroup.count; i += 3) {
-    const indices = [index.getX(i), index.getX(i + 1), index.getX(i + 2)];
-    const centerY = indices.reduce((sum, index) => sum + positions.getY(index), 0) / 3;
-    (centerY >= hemHeight ? shirtIndices : shortsIndices).push(...indices);
-  }
-  if (!shirtIndices.length) return;
-  geometry.setIndex([...shirtIndices, ...shortsIndices]);
-  geometry.clearGroups();
-  geometry.addGroup(0, shirtIndices.length, 0);
-  geometry.addGroup(shirtIndices.length, shortsIndices.length, 1);
-  hemGeometries.add(geometry);
+  const count = index?.count ?? positions.count;
+  return Array.from({ length: count - (count % 3) }, (_, i) => index ? index.getX(i) : i);
 }
 
-function groupSkinHem(geometry: T.BufferGeometry) {
-  if (hemGeometries.has(geometry) || !geometry.index) return;
-  const positions = geometry.getAttribute('position');
-  if (!positions) return;
-  const skinIndices: number[] = [];
-  const shirtIndices: number[] = [];
-  for (let i = 0; i < geometry.index.count; i += 3) {
-    const indices = [geometry.index.getX(i), geometry.index.getX(i + 1), geometry.index.getX(i + 2)];
-    const centerX = indices.reduce((sum, index) => sum + positions.getX(index), 0) / 3;
-    const centerY = indices.reduce((sum, index) => sum + positions.getY(index), 0) / 3;
-    const centerZ = indices.reduce((sum, index) => sum + positions.getZ(index), 0) / 3;
-    const underHem = centerY >= 0.79 && centerY <= 0.91
-      && Math.abs(centerX) < 0.2 && centerZ > -0.1 && centerZ < 0.22;
-    (underHem ? shirtIndices : skinIndices).push(...indices);
+function fabricNormalTexture(THREE: Three, lite: boolean) {
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const context = canvas.getContext('2d')!;
+  const image = context.createImageData(size, size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const offset = (y * size + x) * 4;
+      image.data[offset] = 128 + Math.round(Math.sin(y * Math.PI / 4) * 8);
+      image.data[offset + 1] = 128 + Math.round(Math.sin(x * Math.PI / 4) * 8);
+      image.data[offset + 2] = 254;
+      image.data[offset + 3] = 255;
+    }
   }
-  if (!shirtIndices.length) return;
-  geometry.setIndex([...skinIndices, ...shirtIndices]);
-  geometry.clearGroups();
-  geometry.addGroup(0, skinIndices.length, 0);
-  geometry.addGroup(skinIndices.length, shirtIndices.length, 1);
-  hemGeometries.add(geometry);
+  context.putImageData(image, 0, 0);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+  texture.repeat.set(8, 8);
+  texture.anisotropy = lite ? 1 : 2;
+  return texture;
+}
+
+function applyFabric(material: T.Material, texture: T.Texture) {
+  const cloth = material as T.MeshStandardMaterial;
+  cloth.normalMap = texture;
+  cloth.normalScale.set(0.14, 0.14);
+  cloth.roughness = Math.max(cloth.roughness, 0.84);
+  cloth.needsUpdate = true;
+}
+
+type HemCut = { bone: T.Bone; length: number; limit: number };
+type HemBounds = { shirtMin: number; shortsMin: number; shortsMax: number };
+
+function materialGroups(geometry: T.BufferGeometry, indexCount: number): { start: number; count: number; materialIndex: number }[] {
+  return geometry.groups.length
+    ? geometry.groups.map(({ start, count, materialIndex }) => ({ start, count, materialIndex: materialIndex ?? 0 }))
+    : [{ start: 0, count: indexCount, materialIndex: 0 }];
+}
+
+function triangleLimb(THREE: Three, mesh: T.Mesh, triangle: number[], prefixes: string[]) {
+  const skinned = mesh as T.SkinnedMesh;
+  const geometry = mesh.geometry as T.BufferGeometry;
+  const skinIndices = geometry.getAttribute('skinIndex');
+  const skinWeights = geometry.getAttribute('skinWeight');
+  const positions = geometry.getAttribute('position');
+  if (!skinned.isSkinnedMesh || !skinIndices || !skinWeights || !positions) return null;
+  const boneWeights = new Map<T.Bone, number>();
+  for (const vertex of triangle) {
+    for (let component = 0; component < 4; component++) {
+      const weight = skinWeights.getComponent(vertex, component);
+      const bone = skinned.skeleton.bones[skinIndices.getComponent(vertex, component)];
+      if (weight > 0 && prefixes.some((prefix) => bone.name.startsWith(prefix))) {
+        boneWeights.set(bone, (boneWeights.get(bone) ?? 0) + weight);
+      }
+    }
+  }
+  const [bone, weight] = [...boneWeights].sort((a, b) => b[1] - a[1])[0] ?? [];
+  if (!bone || weight < 0.6) return null;
+  const center = new THREE.Vector3();
+  for (const vertex of triangle) {
+    const point = new THREE.Vector3(positions.getX(vertex), positions.getY(vertex), positions.getZ(vertex));
+    mesh.localToWorld(point);
+    bone.worldToLocal(point);
+    center.add(point);
+  }
+  return { bone, weight, y: center.y / triangle.length };
+}
+
+function collectHemCuts(THREE: Three, body: T.Object3D, bones: Map<string, T.Bone>) {
+  const distalEdges = new Map<T.Bone, number>();
+  body.updateMatrixWorld(true);
+  body.traverse((object) => {
+    const mesh = object as T.Mesh;
+    if (!mesh.isMesh || !(mesh as T.SkinnedMesh).isSkinnedMesh) return;
+    const geometry = mesh.geometry as T.BufferGeometry;
+    const indices = triangleIndices(geometry);
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const group of materialGroups(geometry, indices.length)) {
+      const name = materials[group.materialIndex]?.name;
+      const prefix = name === 'shirt' ? 'upperarm_' : name === 'shorts' ? 'thigh_' : '';
+      if (!prefix) continue;
+      for (let i = group.start; i + 2 < group.start + group.count; i += 3) {
+        const limb = triangleLimb(THREE, mesh, indices.slice(i, i + 3), [prefix]);
+        if (limb) distalEdges.set(limb.bone, Math.max(distalEdges.get(limb.bone) ?? -Infinity, limb.y));
+      }
+    }
+  });
+  const cuts = new Map<string, HemCut>();
+  for (const [bone, distalEdge] of distalEdges) {
+    const side = bone.name.slice(-1);
+    const childName = bone.name.startsWith('upperarm_') ? `lowerarm_${side}` : `calf_${side}`;
+    const length = Math.abs(bones.get(childName)?.position.y ?? 0);
+    if (length > 0) cuts.set(bone.name, { bone, length, limit: distalEdge - length * 0.1 });
+  }
+  return cuts;
+}
+
+function collectHemBounds(THREE: Three, body: T.Object3D, root: T.Group): HemBounds {
+  const bounds = { shirtMin: Infinity, shortsMin: Infinity, shortsMax: -Infinity };
+  body.updateMatrixWorld(true);
+  body.traverse((object) => {
+    const mesh = object as T.Mesh;
+    if (!mesh.isMesh) return;
+    const geometry = mesh.geometry as T.BufferGeometry;
+    const indices = triangleIndices(geometry);
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    for (const group of materialGroups(geometry, indices.length)) {
+      const name = materials[group.materialIndex]?.name;
+      if (name !== 'shirt' && name !== 'shorts') continue;
+      const positions = geometry.getAttribute('position');
+      if (!positions) continue;
+      for (let i = group.start; i < group.start + group.count; i++) {
+        const vertex = indices[i]!;
+        const point = new THREE.Vector3(positions.getX(vertex), positions.getY(vertex), positions.getZ(vertex));
+        mesh.localToWorld(point);
+        root.worldToLocal(point);
+        if (name === 'shirt') bounds.shirtMin = Math.min(bounds.shirtMin, point.y);
+        else {
+          bounds.shortsMin = Math.min(bounds.shortsMin, point.y);
+          bounds.shortsMax = Math.max(bounds.shortsMax, point.y);
+        }
+      }
+    }
+  });
+  return bounds;
+}
+
+function trimGarmentHem(THREE: Three, mesh: T.Mesh, cuts: Map<string, HemCut>) {
+  const geometry = mesh.geometry as T.BufferGeometry;
+  const indices = triangleIndices(geometry);
+  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  const kept: number[] = [];
+  const keptGroups: { start: number; count: number; materialIndex: number }[] = [];
+  let removed = false;
+  for (const group of materialGroups(geometry, indices.length)) {
+    const start = kept.length;
+    const material = materials[group.materialIndex];
+    const prefix = material?.name === 'shirt' ? 'upperarm_' : material?.name === 'shorts' ? 'thigh_' : '';
+    for (let i = group.start; i + 2 < group.start + group.count; i += 3) {
+      const triangle = indices.slice(i, i + 3);
+      const limb = prefix ? triangleLimb(THREE, mesh, triangle, [prefix]) : null;
+      const cut = limb ? cuts.get(limb.bone.name) : null;
+      if (limb && cut && limb.y > cut.limit) {
+        removed = true;
+        continue;
+      }
+      kept.push(...triangle);
+    }
+    keptGroups.push({ start, count: kept.length - start, materialIndex: group.materialIndex });
+  }
+  if (!removed) return null;
+  const trimmed = geometry.clone();
+  trimmed.setIndex(kept);
+  trimmed.clearGroups();
+  for (const group of keptGroups) {
+    if (group.count) trimmed.addGroup(group.start, group.count, group.materialIndex);
+  }
+  return trimmed;
+}
+
+function groupSkinHem(THREE: Three, mesh: T.Mesh, root: T.Group, cuts: Map<string, HemCut>, bounds: HemBounds) {
+  const geometry = mesh.geometry as T.BufferGeometry;
+  const positions = geometry.getAttribute('position');
+  const indices = triangleIndices(geometry);
+  if (!positions || !indices.length) return false;
+  const skinIndices: number[] = [];
+  const coveredIndices: number[] = [];
+  for (let i = 0; i + 2 < indices.length; i += 3) {
+    const triangle = indices.slice(i, i + 3);
+    const center = new THREE.Vector3();
+    for (const vertex of triangle) {
+      center.add(new THREE.Vector3(positions.getX(vertex), positions.getY(vertex), positions.getZ(vertex)));
+    }
+    center.multiplyScalar(1 / triangle.length);
+    mesh.localToWorld(center);
+    root.worldToLocal(center);
+    const underTorsoHem = Math.abs(center.x) < 0.26 && (
+      (center.y >= bounds.shirtMin && center.y <= bounds.shirtMin + 0.04)
+      || (center.y >= bounds.shortsMin && center.y <= bounds.shortsMin + 0.04)
+      || (center.y >= bounds.shortsMax - 0.04 && center.y <= bounds.shortsMax)
+    );
+    const limb = triangleLimb(THREE, mesh, triangle, ['upperarm_', 'thigh_']);
+    const cut = limb ? cuts.get(limb.bone.name) : null;
+    const underLimbHem = limb && cut && limb.y >= cut.limit - cut.length * 0.1 && limb.y <= cut.limit;
+    if (underTorsoHem || underLimbHem) coveredIndices.push(...triangle);
+    else skinIndices.push(...triangle);
+  }
+  if (!coveredIndices.length) return false;
+  const hidden = geometry.clone();
+  hidden.setIndex([...skinIndices, ...coveredIndices]);
+  hidden.clearGroups();
+  if (skinIndices.length) hidden.addGroup(0, skinIndices.length, 0);
+  hidden.addGroup(skinIndices.length, coveredIndices.length, 1);
+  mesh.geometry = hidden;
+  return true;
 }
 
 function attachPlayerAsset(THREE: Three, seat: number, model: PlayerModel, asset: LoadedPlayerAsset, character = '') {
@@ -224,8 +378,14 @@ function attachPlayerAsset(THREE: Three, seat: number, model: PlayerModel, asset
   const materials = new Set<T.Material>();
   const kit: Character | null = character ? characterOf(character) : null;
   const tint = kit ?? teamOutfits[seat % 2]!;
-  const tones: Record<string, string> = { shirt: tint.shirt, shorts: tint.shorts };
+  const tones: Record<string, string> = {
+    shirt: tint.shirt,
+    shorts: tint.shorts,
+    shoes: kit?.shoeColor ?? '#e9e7dd',
+  };
   const outfitMaterials = new Map<string, T.Material>();
+  const hiddenHemMaterial = new THREE.MeshBasicMaterial({ visible: false });
+  materials.add(hiddenHemMaterial);
   asset.scene.traverse((object) => {
     const mesh = object as T.Mesh;
     if (!mesh.isMesh) return;
@@ -241,6 +401,11 @@ function attachPlayerAsset(THREE: Three, seat: number, model: PlayerModel, asset
       materials.add(instance);
     }
   });
+  model.root.add(body);
+  const bones = captureBoneBinds(THREE, model.root, body);
+  const byName = new Map(bones.map((entry) => [entry.bone.name, entry.bone]));
+  const hemCuts = collectHemCuts(THREE, body, byName);
+  const hemBounds = collectHemBounds(THREE, body, model.root);
   body.traverse((object) => {
     const mesh = object as T.Mesh;
     if (!mesh.isMesh) return;
@@ -248,30 +413,32 @@ function attachPlayerAsset(THREE: Three, seat: number, model: PlayerModel, asset
     mesh.receiveShadow = false;
     if ((mesh as T.SkinnedMesh).isSkinnedMesh) mesh.frustumCulled = false;
     const source = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    if (playerAssetUrl(seat, character) === '/models/tennis/male.glb' && source.some((material) => material.name === 'skin')) {
-      groupSkinHem(mesh.geometry as T.BufferGeometry);
+    if (source.some((material) => material.name === 'skin')) {
       const skin = outfitMaterials.get('skin') ?? source.find((material) => material.name === 'skin')!;
-      mesh.material = mesh.geometry.groups.length > 1 ? [skin, outfitMaterials.get('shirt')!] : skin;
-    } else if (playerAssetUrl(seat, character) === '/models/tennis/male.glb' && source.some((material) => material.name === 'shorts')) {
-      groupShortsHem(mesh.geometry as T.BufferGeometry);
-      mesh.material = mesh.geometry.groups.length > 1
-        ? [outfitMaterials.get('shirt')!, outfitMaterials.get('shorts')!]
-        : outfitMaterials.get(source[0]!.name) ?? source[0]!;
+      const grouped = groupSkinHem(THREE, mesh, model.root, hemCuts, hemBounds);
+      if (grouped) model.ownedGeometries.add(mesh.geometry as T.BufferGeometry);
+      mesh.material = grouped ? [skin, hiddenHemMaterial] : skin;
     } else {
+      const trimmed = trimGarmentHem(THREE, mesh, hemCuts);
+      if (trimmed) {
+        mesh.geometry = trimmed;
+        model.ownedGeometries.add(trimmed);
+      }
       const cloned = source.map((material) => outfitMaterials.get(material.name) ?? material);
       mesh.material = Array.isArray(mesh.material) ? cloned : cloned[0]!;
     }
+    for (const material of source) {
+      const cloth = outfitMaterials.get(material.name);
+      if (cloth && (material.name === 'shirt' || material.name === 'shorts')) applyFabric(cloth, model.fabricNormalMap);
+    }
   });
-  model.root.add(body);
-  const bones = captureBoneBinds(THREE, model.root, body);
-  const byName = new Map(bones.map((entry) => [entry.bone.name, entry.bone]));
+  model.root.updateMatrixWorld(true);
   const headBone = byName.get('head');
   if (kit && headBone) {
     model.root.updateMatrixWorld(true);
-    const top = new THREE.Box3().setFromObject(body).max.y;
     const head = model.root.worldToLocal(headBone.getWorldPosition(new THREE.Vector3()));
     const accessory = makeAccessory(THREE, kit.acc, kit.accColor, 0.1);
-    accessory.position.set(head.x, top - 0.07, head.z);
+    accessory.position.set(head.x, head.y + 0.055, head.z + 0.01);
     accessory.traverse((object) => {
       const mesh = object as T.Mesh;
       if (mesh.isMesh) materials.add(mesh.material as T.Material);
@@ -307,11 +474,21 @@ function attachPlayerAsset(THREE: Three, seat: number, model: PlayerModel, asset
   stringsNormal.crossVectors(racketX, shaft).normalize();
   const racketWorld = new THREE.Matrix4().makeBasis(racketX, shaft, stringsNormal);
   model.racketCorrection.copy(handBindWorld.invert().multiply(new THREE.Quaternion().setFromRotationMatrix(racketWorld)));
+  const wristbandGeometry = new THREE.CylinderGeometry(0.038, 0.038, 0.045, 16);
+  model.ownedGeometries.add(wristbandGeometry);
+  const wristbandMaterial = new THREE.MeshStandardMaterial({ color: kit?.accColor ?? '#f5f1e6', roughness: 0.55 });
+  materials.add(wristbandMaterial);
+  const wristLocal = forearmRight.worldToLocal(handRight.getWorldPosition(new THREE.Vector3()));
+  const bandAxis = wristLocal.clone().normalize();
+  const band = new THREE.Mesh(wristbandGeometry, wristbandMaterial);
+  band.position.copy(wristLocal).addScaledVector(bandAxis, -0.026);
+  band.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), bandAxis);
+  forearmRight.add(band);
   model.skinnedRoot = body;
   model.handLeft = handLeft;
   model.handRight = handRight;
   model.boneBinds = bones;
-  model.ownedMaterials = materials;
+  materials.forEach((material) => model.ownedMaterials.add(material));
   model.torso.visible = false;
 }
 
@@ -344,17 +521,24 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean, character 
   const torso = new THREE.Group();
   root.add(torso);
   const kit = character ? characterOf(character) : null;
+  const ownedMaterials = new Set<T.Material>();
+  const ownedGeometries = new Set<T.BufferGeometry>();
+  const ownedTextures = new Set<T.Texture>();
+  const fabricNormalMap = fabricNormalTexture(THREE, lite);
+  ownedTextures.add(fabricNormalMap);
   const skin = new THREE.MeshStandardMaterial({ color: kit?.skin ?? ['#b77b55', '#e4b58d', '#86563e', '#d89e76'][seat % 4], roughness: 0.83 });
   const shirt = new THREE.MeshStandardMaterial({ color: kit?.shirt ?? teamColors[seat % 2], roughness: 0.72, metalness: 0.02 });
   const shorts = new THREE.MeshStandardMaterial({ color: kit?.shorts ?? ['#142d49', '#a1a39a', '#384344', '#ece8db'][seat % 4], roughness: 0.84 });
-  const shoe = new THREE.MeshStandardMaterial({ color: '#e9e7dd', roughness: 0.55 });
+  const shoe = new THREE.MeshStandardMaterial({ color: kit?.shoeColor ?? '#e9e7dd', roughness: 0.55 });
   const sole = new THREE.MeshStandardMaterial({ color: '#3a4040', roughness: 0.8 });
   const accent = new THREE.MeshStandardMaterial({ color: accents[seat % accents.length], roughness: 0.53 });
   const hairMaterial = new THREE.MeshStandardMaterial({ color: kit?.hair ?? ['#30261f', '#72513c', '#211e20', '#b0a18d'][seat % 4], roughness: 0.91 });
   const dark = new THREE.MeshStandardMaterial({ color: '#172127', roughness: 0.66 });
   const eyes = new THREE.MeshStandardMaterial({ color: '#f2eee2', roughness: 0.55 });
-  const racketFrame = new THREE.MeshStandardMaterial({ color: '#242a2a', metalness: 0.65, roughness: 0.29 });
+  const racketFrame = new THREE.MeshStandardMaterial({ color: kit?.racketColor ?? '#242a2a', metalness: 0.65, roughness: 0.29 });
   const grip = new THREE.MeshStandardMaterial({ color: '#242b31', roughness: 0.88 });
+  applyFabric(shirt, fabricNormalMap);
+  applyFabric(shorts, fabricNormalMap);
 
   const pelvis = new THREE.Mesh(new THREE.SphereGeometry(0.21, 16, 12), shorts);
   pelvis.scale.set(1.18, 0.72, 0.82);
@@ -460,6 +644,10 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean, character 
     legs[index] = upper;
   }
 
+  const fallbackWristbandGeometry = new THREE.CylinderGeometry(0.041, 0.041, 0.05, 16);
+  ownedGeometries.add(fallbackWristbandGeometry);
+  const fallbackWristbandMaterial = new THREE.MeshStandardMaterial({ color: kit?.accColor ?? accents[seat % accents.length], roughness: 0.55 });
+  ownedMaterials.add(fallbackWristbandMaterial);
   const racketArm = new THREE.Group();
   racketArm.position.set(0.34, 1.43, 0);
   torso.add(racketArm);
@@ -479,6 +667,9 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean, character 
   const wrist = new THREE.Mesh(new THREE.SphereGeometry(0.062, 9, 8), skin);
   wrist.position.y = -0.4;
   racketForearm.add(wrist);
+  const racketWristband = new THREE.Mesh(fallbackWristbandGeometry, fallbackWristbandMaterial);
+  racketWristband.position.y = -0.37;
+  racketForearm.add(racketWristband);
   const leadArm = new THREE.Group();
   leadArm.position.set(-0.34, 1.43, 0);
   torso.add(leadArm);
@@ -563,7 +754,10 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean, character 
     handRight: null,
     boneBinds: [],
     poseAngles: new Map(),
-    ownedMaterials: new Set(),
+    ownedMaterials,
+    ownedGeometries,
+    ownedTextures,
+    fabricNormalMap,
     racketCorrection: new THREE.Quaternion(),
     debugPose: null,
     disposed: false,
@@ -601,6 +795,10 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean, character 
       }
       model.ownedMaterials.forEach((material) => material.dispose());
       model.ownedMaterials.clear();
+      model.ownedGeometries.forEach((geometry) => geometry.dispose());
+      model.ownedGeometries.clear();
+      model.ownedTextures.forEach((texture) => texture.dispose());
+      model.ownedTextures.clear();
     },
   };
   requestPlayerAsset(THREE, seat, model, character);

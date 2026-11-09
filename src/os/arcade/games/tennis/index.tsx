@@ -5,12 +5,12 @@ import type { GameProps } from '../../types';
 import { createAudio } from './audio.ts';
 import { Hud } from './hud.tsx';
 import type { HudModel } from './hud.tsx';
-import { createWorld, movePlayer, previewTarget, STEP, stepWorld, teamSeats, timingLabel, type Command, type Format, type Level, type MatchLength, type MoveInput, type Player, type PointCall, type ShotKind, type Swing, type World } from './logic.ts';
+import { createWorld, movePlayer, predictContactPoint, previewTarget, strikeRadius, STEP, stepWorld, teamSeats, timingLabel, type Command, type Format, type Level, type MatchLength, type MoveInput, type Player, type PointCall, type ShotKind, type Swing, type World } from './logic.ts';
 import { configOf, commandOf, eventOf, moveOf, parsePacket, serveOf, stateOf, swingOf } from './net.ts';
 import { meta } from './meta.ts';
 import { createScene, type View } from './scene.ts';
 import { CHARACTER_IDS, characterOf, lineup, ROSTER, seatCharacter, STAT_NAMES, TEMPO_MAX, type CharacterId } from './roster.ts';
-import { appendReplayFrame, REPLAY_DURATION, sampleReplay, selectReplay, type ReplaySelection } from './replay.ts';
+import { appendReplayFrame, REPLAY_SOURCE_SECONDS, sampleReplay, selectReplay, replayProgress, type ReplaySelection } from './replay.ts';
 import './tennis.css';
 
 type LevelName = (typeof LEVEL_NAMES)[number];
@@ -207,7 +207,7 @@ function settingsWorld(mode: StageMode, format: Format, length: MatchLength, lev
   });
 }
 
-function hudCopy(world: World, seat: number | null, watching: boolean, timing: HudModel['timing'], bounceCue: boolean, rallyShots = 0, replaying = false, feedback: HudModel['feedback'] = '', extra: Pick<HudModel, 'shout' | 'intro'> = {}): HudModel {
+function hudCopy(world: World, seat: number | null, watching: boolean, timing: HudModel['timing'], bounceCue: boolean, rallyShots = 0, replaying = false, feedback: HudModel['feedback'] = '', extra: Pick<HudModel, 'shout' | 'intro' | 'wipe'> = {}): HudModel {
   const copy = { ...world, players: world.players.map((player) => ({ ...player })), ball: { ...world.ball, p: { ...world.ball.p }, v: { ...world.ball.v } }, match: structuredClone(world.match) };
   return { world: copy, seat, watching, call: world.callClock > 0 ? world.lastCall : '', timing, bounceCue, rallyShots, replaying, feedback, ...extra };
 }
@@ -241,22 +241,26 @@ function Play({ mode }: { mode: StageMode }) {
   const [sceneLoadFailed, setSceneLoadFailed] = useState(false);
   const audio = useRef<ReturnType<typeof createAudio> | null>(null);
   const replayFrames = useRef<ReturnType<typeof appendReplayFrame>>([]);
-  const replayState = useRef<{ selection: ReplaySelection; elapsed: number } | null>(null);
+  const replayState = useRef<{ selection: ReplaySelection; elapsed: number; cameraStarted: boolean; outStarted: boolean } | null>(null);
   const replayingRef = useRef(false);
   const pointShots = useRef(0);
   const rallyShots = useRef(0);
   const lastHitterTeam = useRef<number | null>(null);
   const oohPlayed = useRef(false);
+  const lastHandledEvent = useRef<string | null>(null);
   const feedbackClock = useRef(0);
   const feedbackRef = useRef<HudModel['feedback']>('');
+  const smashCueActive = useRef(false);
   const shoutRef = useRef('');
   const shoutClock = useRef(0);
   const introClock = useRef(2.6);
   const tempoSeen = useRef(0);
   const hitStopUntil = useRef(0);
+  const lastReplayAttempt = useRef<object | null>(null);
   const [, setReplaying] = useState(false);
   const [, setFeedback] = useState<HudModel['feedback']>('');
   const skipReplayRef = useRef<() => void>(() => {});
+  const wipeRef = useRef(0);
   const localCommands = useRef<Command[]>([]);
   const remoteCommands = useRef<Command[]>([]);
   const guestSnapshots = useRef<{ at: number; state: World }[]>([]);
@@ -281,12 +285,24 @@ function Play({ mode }: { mode: StageMode }) {
     ? new Set((onlineRef.current?.players ?? []).map((player) => player.seat).filter((seat) => seat >= 0))
     : new Set([0]);
 
+  const triggerReplayWipe = () => {
+    wipeRef.current++;
+    setHud((current) => ({ ...current, wipe: wipeRef.current }));
+  };
+
+  const beginReplay = (selection: ReplaySelection) => {
+    replayState.current = { selection, elapsed: -0.35, cameraStarted: false, outStarted: false };
+    replayingRef.current = true;
+    setReplaying(true);
+    triggerReplayWipe();
+  };
+
   const skipReplay = () => {
-    if (!replayState.current) return;
-    replayState.current = null;
-    replayingRef.current = false;
-    setReplaying(false);
-    view.current?.replayCamera(false);
+    const active = replayState.current;
+    if (!active || active.outStarted) return;
+    active.elapsed = Math.max(active.elapsed, active.selection.duration - 0.35);
+    active.outStarted = true;
+    triggerReplayWipe();
   };
   skipReplayRef.current = skipReplay;
 
@@ -348,7 +364,10 @@ function Play({ mode }: { mode: StageMode }) {
         camera: (name: 'front' | 'side' | 'back' | 'game', seat?: number) => void;
         forceHighQuality: () => void;
         perfect: () => void;
+        smashCue: () => void;
+        winner: () => void;
         replay: () => void;
+        replayPoint: () => void;
         crowd: () => void;
         trail: () => void;
         freeze: (active?: boolean) => void;
@@ -357,6 +376,8 @@ function Play({ mode }: { mode: StageMode }) {
     debugWindow.__tennisWorldDebug = () => {
       const current = world.current;
       if (!current) return {};
+      const activeReplay = replayState.current;
+      const progress = activeReplay ? replayProgress(activeReplay.selection, activeReplay.elapsed) : null;
       return {
         phase: current.phase,
         clock: current.clock,
@@ -368,6 +389,20 @@ function Play({ mode }: { mode: StageMode }) {
           p: { ...current.ball.p },
           v: { ...current.ball.v },
         },
+        replay: {
+          frames: replayFrames.current.length,
+          active: !!activeReplay,
+          elapsed: activeReplay?.elapsed ?? null,
+          duration: activeReplay?.selection.duration ?? null,
+          lastAttempt: lastReplayAttempt.current,
+          hitAt: activeReplay?.selection.hitAt ?? null,
+          slow: progress?.slow ?? false,
+          slowProgress: progress?.slowProgress ?? null,
+          wipe: wipeRef.current,
+        },
+        lastHandledEvent: lastHandledEvent.current,
+        pointShots: pointShots.current,
+        rallyShots: rallyShots.current,
         players: current.players.map((player) => ({
           seat: player.seat,
           team: player.team,
@@ -406,35 +441,81 @@ function Play({ mode }: { mode: StageMode }) {
         debugFreezeWorld.current = true;
         shell.invalidate();
       },
+      smashCue: () => {
+        feedbackRef.current = 'Smash!';
+        feedbackClock.current = 1.8;
+        setFeedback('Smash!');
+        shoutRef.current = 'SMASH!';
+        shoutClock.current = 1.8;
+        setHud((current) => ({ ...current, feedback: 'Smash!', shout: 'SMASH!' }));
+        view.current?.punch(1);
+        shell.invalidate();
+      },
+      winner: () => {
+        const current = world.current;
+        const hitter = current?.players.find((player) => player.team === 1);
+        if (!current || !hitter) return;
+        current.phase = 'rally';
+        current.lastCall = '';
+        current.callClock = 0;
+        current.rallyShot = 6;
+        const p = { x: hitter.x + 0.1, y: 0.6, z: hitter.z + 0.5 };
+        current.ball.p = p;
+        current.ball.prev = { ...p };
+        current.ball.v = { x: 1.25, y: 9, z: 4.5 };
+        current.ball.spin = { x: 0, y: 0, z: 0 };
+        current.ball.inPlay = false;
+        current.ball.hitByTeam = 0;
+        current.ball.canHitTeam = 0;
+        current.ball.bounces = 0;
+        current.ball.lastBounceTeam = -1;
+        current.ball.targetTeam = 0;
+        current.ball.rallyShot = 5;
+        current.ball.shotKind = 'flat';
+        pointShots.current = 6;
+        rallyShots.current = 6;
+        lastHitterTeam.current = 1;
+        replayFrames.current = appendReplayFrame([], current);
+        current.clock += 0.001;
+        current.ball.inPlay = true;
+        current.ball.hitByTeam = 1;
+        current.ball.rallyShot = 6;
+        replayFrames.current = appendReplayFrame(replayFrames.current, current);
+        shell.invalidate();
+      },
       replay: () => {
         const current = world.current;
         if (!current) return;
-        const duration = REPLAY_DURATION * 0.35;
+        const duration = REPLAY_SOURCE_SECONDS;
         let staged: typeof replayFrames.current = [];
-        for (let index = 0; index < 24; index++) {
-          const progress = index / 23;
+        for (let index = 0; index < 49; index++) {
+          const progress = index / 48;
           const at = current.clock - duration + progress * duration;
-          const p = { x: -3 + progress * 6, y: 0.7 + Math.sin(progress * Math.PI) * 1.8, z: 8 - progress * 16 };
+          const z = progress <= 0.85 ? 7.811 + progress * 4.222 : 11.4 - (progress - 0.85) * 19.3;
+          const p = { x: 0.8 - progress * 2.95, y: 0.7 + Math.sin(progress * Math.PI) * 1.8, z };
+          const hit = progress >= 0.72;
           staged = appendReplayFrame(staged, {
             ...current,
             clock: at,
             phase: 'rally',
-            ball: { ...current.ball, prev: p, p, v: { x: 7, y: 2, z: -18 } },
+            ball: { ...current.ball, inPlay: true, hitByTeam: hit ? 0 : 1, rallyShot: hit ? 6 : 5, prev: p, p, v: { x: -0.75, y: 2, z: -19.3 } },
           });
         }
         const selection = selectReplay(staged, {
           call: 'out',
           rallyShots: 6,
           pointWinner: 0,
-          lastHitter: 1,
+          lastHitter: 0,
         }, current.clock);
         if (!selection) return;
-        replayState.current = { selection, elapsed: 0 };
-        replayingRef.current = true;
-        setReplaying(true);
-        view.current?.replayCamera(true);
-        view.current?.update(sampleReplay(selection, 0), 0, localHumanSeats(), myTeam());
+        beginReplay(selection);
         debugFreezeWorld.current = true;
+        shell.invalidate();
+      },
+      replayPoint: () => {
+        const current = world.current;
+        if (!current || current.phase !== 'point' || current.pointWinner === null) return;
+        startReplay(current.pointWinner, current.lastCall || 'point');
         shell.invalidate();
       },
       crowd: () => {
@@ -525,11 +606,16 @@ function Play({ mode }: { mode: StageMode }) {
       pointWinner: winner,
       lastHitter: lastHitterTeam.current ?? -1,
     }, current.clock);
+    lastReplayAttempt.current = {
+      call,
+      rallyShots: pointShots.current,
+      pointWinner: winner,
+      lastHitter: lastHitterTeam.current ?? -1,
+      frameCount: replayFrames.current.length,
+      selected: !!selection,
+    };
     if (!selection) return;
-    replayState.current = { selection, elapsed: 0 };
-    replayingRef.current = true;
-    setReplaying(true);
-    view.current?.replayCamera(true);
+    beginReplay(selection);
   };
 
   const sendCommand = (command: Command) => {
@@ -645,6 +731,7 @@ function Play({ mode }: { mode: StageMode }) {
   };
 
   const handleEvent = (event: ReturnType<typeof stepWorld>[number], fromHost = false) => {
+    lastHandledEvent.current = event.type;
     const currentView = view.current;
     if (event.type === 'hit') {
       if (import.meta.env.DEV) lastHit.current = { kind: event.kind, clock: world.current?.clock ?? 0 };
@@ -665,6 +752,7 @@ function Play({ mode }: { mode: StageMode }) {
         feedbackClock.current = 0.72;
       }
       currentView?.hit(event.speed, perfect);
+      if (event.kind === 'smash') currentView?.punch(1);
       if (perfect && mode === 'offline' && event.seat === currentSeat()) hitStopUntil.current = performance.now() + 70;
       audio.current?.hit(event.speed, event.kind, perfect);
       const label = shotShouts[event.kind];
@@ -692,7 +780,10 @@ function Play({ mode }: { mode: StageMode }) {
       if (label) shout(label);
     } else if (event.type === 'point') {
       const call = world.current?.lastCall;
-      if (call !== 'out' && call !== 'net' && call !== 'double fault') shout(pointShots.current <= 1 ? 'ACE!' : 'WINNER!');
+      if (call !== 'out' && call !== 'net' && call !== 'double fault') {
+        shout(pointShots.current <= 1 ? 'ACE!' : 'WINNER!');
+        currentView?.punch(0.7);
+      }
       const mine = world.current?.players.find((player) => player.seat === currentSeat());
       if (mine && mine.team !== event.winner) tempoSeen.current = 0;
       currentView?.point(event.winner, rallyShots.current >= 8);
@@ -828,10 +919,39 @@ function Play({ mode }: { mode: StageMode }) {
       && (current.phase === 'rally' || current.phase === 'serve-flight')
       ? previewTarget(current, aimPlayer, selectedShot.current)
       : null;
+    const strikePoint = aimPlayer && !o?.watching && current.ball.inPlay
+      && current.ball.canHitTeam === aimPlayer.team
+      && (current.phase === 'rally' || current.phase === 'serve-flight')
+      ? predictContactPoint(current.ball, aimPlayer)
+      : null;
+    const smashReachable = !!strikePoint && !!aimPlayer
+      && strikePoint.y >= 2.2
+      && Math.hypot(strikePoint.x - aimPlayer.x, strikePoint.z - aimPlayer.z) <= strikeRadius(current.level);
+    if (!replayingRef.current && smashReachable) {
+      feedbackRef.current = 'Smash!';
+      feedbackClock.current = 0.15;
+      smashCueActive.current = true;
+      setFeedback('Smash!');
+    } else if (smashCueActive.current) {
+      if (feedbackRef.current === 'Smash!') {
+        feedbackRef.current = '';
+        setFeedback('');
+      }
+      feedbackClock.current = 0;
+      smashCueActive.current = false;
+    }
     const activeReplay = replayState.current;
     if (activeReplay) {
       activeReplay.elapsed += dt;
-      if (activeReplay.elapsed >= REPLAY_DURATION) {
+      if (!activeReplay.cameraStarted && activeReplay.elapsed >= 0) {
+        activeReplay.cameraStarted = true;
+        view.current?.replayCamera(true);
+      }
+      if (!activeReplay.outStarted && activeReplay.elapsed >= activeReplay.selection.duration - 0.35) {
+        activeReplay.outStarted = true;
+        triggerReplayWipe();
+      }
+      if (activeReplay.elapsed >= activeReplay.selection.duration) {
         replayState.current = null;
         replayingRef.current = false;
         setReplaying(false);
@@ -839,7 +959,13 @@ function Play({ mode }: { mode: StageMode }) {
         view.current?.update(current, dt, localHumanSeats(), side);
         replayFrames.current = appendReplayFrame(replayFrames.current, current);
       } else {
-        view.current?.update(sampleReplay(activeReplay.selection, activeReplay.elapsed), dt, localHumanSeats(), side);
+        if (activeReplay.cameraStarted) {
+          const progress = replayProgress(activeReplay.selection, activeReplay.elapsed);
+          view.current?.replayProgress(progress.t, progress.slow, progress.slowProgress, activeReplay.selection.hitTeam);
+          view.current?.update(sampleReplay(activeReplay.selection, activeReplay.elapsed), dt, localHumanSeats(), side);
+        } else {
+          view.current?.update(current, dt, localHumanSeats(), side, aimTarget);
+        }
       }
     } else {
       view.current?.update(current, dt, localHumanSeats(), side, aimTarget);
@@ -848,7 +974,7 @@ function Play({ mode }: { mode: StageMode }) {
     hudClock.current += dt;
     if (hudClock.current >= 0.1) {
       hudClock.current = 0;
-      setHud(hudCopy(current, currentSeat(), !!o?.watching, timingClock.current > 0 ? timingRef.current : '', bounceCue, rallyShots.current, replayingRef.current, feedbackRef.current, { shout: shoutRef.current, intro: introClock.current > 0 }));
+      setHud(hudCopy(current, currentSeat(), !!o?.watching, timingClock.current > 0 ? timingRef.current : '', bounceCue, rallyShots.current, replayingRef.current, feedbackRef.current, { shout: shoutRef.current, intro: introClock.current > 0, wipe: wipeRef.current }));
     }
   };
 

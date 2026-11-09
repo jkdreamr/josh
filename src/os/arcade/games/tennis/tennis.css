@@ -41,6 +41,7 @@
 .g-tennis-stage canvas {
   position: absolute;
   inset: 0;
+  z-index: 0;
   outline: 0;
 }
 
@@ -52,6 +53,28 @@
   color: #f5f2e6;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   text-shadow: 0 1px 9px rgba(6, 17, 17, .62);
+}
+
+.g-tennis-wipe {
+  position: absolute;
+  inset: -24% -35%;
+  z-index: 5;
+  display: grid;
+  place-items: center;
+  background: linear-gradient(90deg, #ffd23f 0 2%, #8c1515 2% 98%, #ffd23f 98% 100%);
+  box-shadow: 0 0 36px rgba(12, 6, 4, .5);
+  transform: translateX(-130%) rotate(-7deg);
+  animation: g-tennis-replay-wipe 1.05s cubic-bezier(.65, 0, .35, 1) both;
+  pointer-events: none;
+}
+
+.g-tennis-wipe span {
+  color: #fff8ec;
+  font: 400 clamp(22px, 5vw, 48px)/1 Bungee, "Arial Black", sans-serif;
+  letter-spacing: .07em;
+  text-shadow: 0 3px 0 #5a0d11, 0 6px 18px rgba(0, 0, 0, .4);
+  transform: rotate(7deg);
+  white-space: nowrap;
 }
 
 .g-tennis-scorebar {
@@ -289,6 +312,12 @@
   font-size: clamp(17px, 3vw, 27px);
 }
 
+.g-tennis-feedback-smash {
+  color: #ffd23f;
+  text-shadow: 0 3px 18px rgba(0, 0, 0, .7), 0 0 26px rgba(255, 210, 63, .8);
+  animation: g-tennis-feedback-smash-pop .3s cubic-bezier(.16,.9,.25,1) both;
+}
+
 .g-tennis-timing {
   position: absolute;
   right: 20px;
@@ -392,10 +421,41 @@
   to { opacity: 1; transform: translateY(0) scale(1); }
 }
 
+@keyframes g-tennis-replay-wipe {
+  0% { transform: translateX(-130%) rotate(-7deg); }
+  33% { transform: translateX(0) rotate(-7deg); }
+  45% { transform: translateX(0) rotate(-7deg); }
+  78% { transform: translateX(130%) rotate(-7deg); }
+  100% { transform: translateX(130%) rotate(-7deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .g-tennis-wipe {
+    inset: 0;
+    transform: none;
+    animation: g-tennis-replay-fade .7s ease both;
+  }
+
+  .g-tennis-wipe span {
+    transform: none;
+  }
+}
+
+@keyframes g-tennis-replay-fade {
+  0%, 100% { opacity: 0; }
+  50%, 62% { opacity: 1; }
+}
+
 @keyframes g-tennis-feedback-pop {
   from { opacity: 0; transform: translate(-50%, 10px) scale(.75); }
   25% { opacity: 1; transform: translate(-50%, 0) scale(1.08); }
   to { opacity: 0; transform: translate(-50%, -11px) scale(1); }
+}
+
+@keyframes g-tennis-feedback-smash-pop {
+  from { opacity: 0; transform: translate(-50%, 10px) scale(.75); }
+  55% { opacity: 1; transform: translate(-50%, 0) scale(1.08); }
+  to { opacity: 1; transform: translate(-50%, 0) scale(1); }
 }
 
 @media (max-width: 600px) {

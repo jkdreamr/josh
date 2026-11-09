@@ -474,7 +474,7 @@ export function predictContactPoint(ball: Ball, player: Pick<Player, 'team' | 'x
     v: { ...ball.v },
     spin: { ...ball.spin },
   };
-  let best = { x: ball.p.x, z: ball.p.z };
+  let best = { x: ball.p.x, y: ball.p.y, z: ball.p.z };
   let bestDistance = Infinity;
   const isPlayerSide = (z: number) => player.team === 0 ? z >= 0 : z < 0;
   for (let elapsed = 0; elapsed < durationLimit; elapsed += STEP) {
@@ -487,7 +487,7 @@ export function predictContactPoint(ball: Ball, player: Pick<Player, 'team' | 'x
     const distance = Math.hypot(test.p.x - player.x, test.p.z - player.z);
     if (distance < bestDistance) {
       bestDistance = distance;
-      best = { x: test.p.x, z: test.p.z };
+      best = { x: test.p.x, y: test.p.y, z: test.p.z };
     }
   }
   return best;

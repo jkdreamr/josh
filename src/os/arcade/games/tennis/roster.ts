@@ -12,6 +12,8 @@ export type Character = {
   shorts: string;
   skin: string;
   hair: string;
+  shoeColor: string;
+  racketColor: string;
   acc: Accessory;
   accColor: string;
   stats: Stats;
@@ -23,32 +25,32 @@ export const TEMPO_MAX = 5;
 export const ROSTER = [
   {
     id: 'josh', name: 'Josh', style: 'All-around', blurb: 'Stanford alum and the home crowd favourite. Good at everything.',
-    model: 'male', shirt: '#8c1515', shorts: '#f5f1e6', skin: '#d9a77f', hair: '#1b1512', acc: 'headband', accColor: '#f5f1e6',
+    model: 'male', shirt: '#8c1515', shorts: '#f5f1e6', skin: '#d9a77f', hair: '#1b1512', shoeColor: '#f5f1e6', racketColor: '#8c1515', acc: 'headband', accColor: '#f5f1e6',
     stats: { speed: 4, power: 4, control: 4, spin: 3, serve: 3 },
   },
   {
     id: 'cox', name: 'Cox', style: 'Speedy', blurb: 'Calls the stroke rate from the stern. Gets to every ball.',
-    model: 'female', shirt: '#f5a524', shorts: '#1b1b1f', skin: '#e8be98', hair: '#3a2618', acc: 'cap', accColor: '#8c1515',
+    model: 'female', shirt: '#f5a524', shorts: '#1b1b1f', skin: '#e8be98', hair: '#3a2618', shoeColor: '#f5f1e6', racketColor: '#8c1515', acc: 'cap', accColor: '#8c1515',
     stats: { speed: 5, power: 2, control: 4, spin: 3, serve: 2 },
   },
   {
     id: 'stroke', name: 'Stroke', style: 'Big server', blurb: 'Stroke seat in the eight. Pure leg drive on every serve.',
-    model: 'male', shirt: '#f5f1e6', shorts: '#8c1515', skin: '#b98260', hair: '#2b1d14', acc: 'visor', accColor: '#8c1515',
+    model: 'male', shirt: '#f5f1e6', shorts: '#8c1515', skin: '#b98260', hair: '#2b1d14', shoeColor: '#8c1515', racketColor: '#f5f1e6', acc: 'visor', accColor: '#8c1515',
     stats: { speed: 3, power: 5, control: 2, spin: 3, serve: 5 },
   },
   {
     id: 'beat', name: 'Beatmaker', style: 'Spin', blurb: 'Makes tracks at 2am. Every shot has a little groove on it.',
-    model: 'female', shirt: '#6d3df2', shorts: '#1b1b1f', skin: '#8a5a3e', hair: '#141012', acc: 'headphones', accColor: '#d9f542',
+    model: 'female', shirt: '#6d3df2', shorts: '#1b1b1f', skin: '#8a5a3e', hair: '#141012', shoeColor: '#d9f542', racketColor: '#6d3df2', acc: 'headphones', accColor: '#d9f542',
     stats: { speed: 3, power: 3, control: 3, spin: 5, serve: 3 },
   },
   {
     id: 'go', name: '9-Dan', style: 'Control', blurb: 'Go player. Reads three shots ahead and puts it on the line.',
-    model: 'male', shirt: '#1b1b1f', shorts: '#f5f1e6', skin: '#e2b994', hair: '#0f0d0c', acc: 'beanie', accColor: '#f5f1e6',
+    model: 'male', shirt: '#1b1b1f', shorts: '#f5f1e6', skin: '#e2b994', hair: '#0f0d0c', shoeColor: '#f5f1e6', racketColor: '#d9f542', acc: 'beanie', accColor: '#f5f1e6',
     stats: { speed: 4, power: 2, control: 5, spin: 3, serve: 2 },
   },
   {
     id: 'chef', name: 'Chef', style: 'Tricky', blurb: 'Cooks between sets. Serves up slices and soft drop shots.',
-    model: 'male', shirt: '#00a558', shorts: '#f5f1e6', skin: '#c48d69', hair: '#4a3324', acc: 'toque', accColor: '#ffffff',
+    model: 'male', shirt: '#00a558', shorts: '#f5f1e6', skin: '#c48d69', hair: '#4a3324', shoeColor: '#f5f1e6', racketColor: '#00a558', acc: 'toque', accColor: '#ffffff',
     stats: { speed: 3, power: 3, control: 4, spin: 4, serve: 3 },
   },
 ] as const satisfies readonly Character[];
