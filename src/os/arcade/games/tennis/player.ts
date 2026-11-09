@@ -1,5 +1,6 @@
 import type * as T from 'three';
 import type { Ball, Player, World } from './logic.ts';
+import { characterOf, type Accessory, type Character } from './roster.ts';
 
 type Three = typeof import('three');
 
@@ -54,8 +55,54 @@ const loadedAssets = new Map<string, Promise<LoadedPlayerAsset>>();
 const hemGeometries = new WeakSet<T.BufferGeometry>();
 let warnedAboutPlayerLoadFailure = false;
 
-function playerAssetUrl(seat: number) {
+function playerAssetUrl(seat: number, character = '') {
+  if (character) return `/models/tennis/${characterOf(character).model}.glb`;
   return seat === 0 || seat === 3 ? '/models/tennis/female.glb' : '/models/tennis/male.glb';
+}
+
+/** Builds a hat or headphones around a head centred at the origin, facing +z. */
+function makeAccessory(THREE: Three, kind: Accessory, color: string, radius = 0.145) {
+  const group = new THREE.Group();
+  const material = new THREE.MeshStandardMaterial({ color, roughness: 0.6 });
+  const dark = new THREE.MeshStandardMaterial({ color: '#1b1b1f', roughness: 0.5 });
+  const add = (mesh: T.Mesh, x: number, y: number, z: number) => {
+    mesh.position.set(x, y, z);
+    group.add(mesh);
+    return mesh;
+  };
+  const r = radius;
+  const dome = (scaleY = 1) => {
+    const mesh = add(new THREE.Mesh(new THREE.SphereGeometry(r * 1.07, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), material), 0, r * 0.22, 0);
+    mesh.scale.y = scaleY;
+  };
+  const brim = () => {
+    const mesh = add(new THREE.Mesh(new THREE.CylinderGeometry(r * 1.15, r * 1.15, 0.02, 16, 1, false, -Math.PI / 2, Math.PI), material), 0, r * 0.24, r * 0.55);
+    mesh.scale.z = 0.8;
+  };
+  const band = (y: number, size = 1.04, tube = 0.024) => {
+    const mesh = add(new THREE.Mesh(new THREE.TorusGeometry(r * size, tube, 8, 24), material), 0, y, 0);
+    mesh.rotation.x = Math.PI / 2;
+  };
+  if (kind === 'headband') band(r * 0.28);
+  else if (kind === 'cap') { dome(); brim(); }
+  else if (kind === 'visor') { band(r * 0.3, 1.05, 0.03); brim(); }
+  else if (kind === 'beanie') {
+    dome(1.25);
+    band(r * 0.26, 1.08, 0.03);
+    add(new THREE.Mesh(new THREE.SphereGeometry(r * 0.3, 10, 8), material), 0, r * 1.55, 0);
+  } else if (kind === 'toque') {
+    band(r * 0.3, 1.04, 0.035);
+    add(new THREE.Mesh(new THREE.CylinderGeometry(r * 0.9, r * 0.95, r * 1.1, 14, 1, true), material), 0, r * 0.85, 0);
+    add(new THREE.Mesh(new THREE.SphereGeometry(r * 1.15, 14, 10), material), 0, r * 1.7, 0).scale.y = 0.7;
+  } else {
+    const arc = add(new THREE.Mesh(new THREE.TorusGeometry(r * 1.18, 0.018, 6, 20, Math.PI), dark), 0, 0, 0);
+    arc.rotation.y = Math.PI / 2;
+    for (const side of [-1, 1]) {
+      const cup = add(new THREE.Mesh(new THREE.CylinderGeometry(r * 0.42, r * 0.42, 0.06, 14), material), side * r * 1.12, 0, 0);
+      cup.rotation.z = Math.PI / 2;
+    }
+  }
+  return group;
 }
 
 function loadPlayerAsset(url: string) {
@@ -171,20 +218,23 @@ function groupSkinHem(geometry: T.BufferGeometry) {
   hemGeometries.add(geometry);
 }
 
-function attachPlayerAsset(THREE: Three, seat: number, model: PlayerModel, asset: LoadedPlayerAsset) {
+function attachPlayerAsset(THREE: Three, seat: number, model: PlayerModel, asset: LoadedPlayerAsset, character = '') {
   if (model.disposed) return;
   const body = asset.clone(asset.scene);
   const materials = new Set<T.Material>();
-  const tint = teamOutfits[seat % 2]!;
+  const kit: Character | null = character ? characterOf(character) : null;
+  const tint = kit ?? teamOutfits[seat % 2]!;
+  const tones: Record<string, string> = { shirt: tint.shirt, shorts: tint.shorts };
   const outfitMaterials = new Map<string, T.Material>();
   asset.scene.traverse((object) => {
     const mesh = object as T.Mesh;
     if (!mesh.isMesh) return;
     const source = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     for (const material of source) {
-      if ((material.name !== 'shirt' && material.name !== 'shorts') || outfitMaterials.has(material.name)) continue;
+      const tone = tones[material.name];
+      if (!tone || outfitMaterials.has(material.name)) continue;
       const instance = material.clone() as T.MeshStandardMaterial;
-      instance.color.set(material.name === 'shirt' ? tint.shirt : tint.shorts);
+      instance.color.set(tone);
       if (material.name === 'shirt') instance.side = THREE.DoubleSide;
       instance.needsUpdate = true;
       outfitMaterials.set(material.name, instance);
@@ -198,12 +248,15 @@ function attachPlayerAsset(THREE: Three, seat: number, model: PlayerModel, asset
     mesh.receiveShadow = false;
     if ((mesh as T.SkinnedMesh).isSkinnedMesh) mesh.frustumCulled = false;
     const source = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-    if (playerAssetUrl(seat) === '/models/tennis/male.glb' && source.some((material) => material.name === 'skin')) {
+    if (playerAssetUrl(seat, character) === '/models/tennis/male.glb' && source.some((material) => material.name === 'skin')) {
       groupSkinHem(mesh.geometry as T.BufferGeometry);
-      mesh.material = [source.find((material) => material.name === 'skin')!, outfitMaterials.get('shirt')!];
-    } else if (playerAssetUrl(seat) === '/models/tennis/male.glb' && source.some((material) => material.name === 'shorts')) {
+      const skin = outfitMaterials.get('skin') ?? source.find((material) => material.name === 'skin')!;
+      mesh.material = mesh.geometry.groups.length > 1 ? [skin, outfitMaterials.get('shirt')!] : skin;
+    } else if (playerAssetUrl(seat, character) === '/models/tennis/male.glb' && source.some((material) => material.name === 'shorts')) {
       groupShortsHem(mesh.geometry as T.BufferGeometry);
-      mesh.material = [outfitMaterials.get('shirt')!, outfitMaterials.get('shorts')!];
+      mesh.material = mesh.geometry.groups.length > 1
+        ? [outfitMaterials.get('shirt')!, outfitMaterials.get('shorts')!]
+        : outfitMaterials.get(source[0]!.name) ?? source[0]!;
     } else {
       const cloned = source.map((material) => outfitMaterials.get(material.name) ?? material);
       mesh.material = Array.isArray(mesh.material) ? cloned : cloned[0]!;
@@ -212,6 +265,20 @@ function attachPlayerAsset(THREE: Three, seat: number, model: PlayerModel, asset
   model.root.add(body);
   const bones = captureBoneBinds(THREE, model.root, body);
   const byName = new Map(bones.map((entry) => [entry.bone.name, entry.bone]));
+  const headBone = byName.get('head');
+  if (kit && headBone) {
+    model.root.updateMatrixWorld(true);
+    const top = new THREE.Box3().setFromObject(body).max.y;
+    const head = model.root.worldToLocal(headBone.getWorldPosition(new THREE.Vector3()));
+    const accessory = makeAccessory(THREE, kit.acc, kit.accColor, 0.1);
+    accessory.position.set(head.x, top - 0.07, head.z);
+    accessory.traverse((object) => {
+      const mesh = object as T.Mesh;
+      if (mesh.isMesh) materials.add(mesh.material as T.Material);
+    });
+    model.root.add(accessory);
+    headBone.attach(accessory);
+  }
   const handLeft = byName.get('hand_l');
   const handRight = byName.get('hand_r');
   const forearmRight = byName.get('lowerarm_r');
@@ -248,10 +315,10 @@ function attachPlayerAsset(THREE: Three, seat: number, model: PlayerModel, asset
   model.torso.visible = false;
 }
 
-function requestPlayerAsset(THREE: Three, seat: number, model: PlayerModel) {
-  const url = playerAssetUrl(seat);
+function requestPlayerAsset(THREE: Three, seat: number, model: PlayerModel, character = '') {
+  const url = playerAssetUrl(seat, character);
   void loadPlayerAsset(url)
-    .then((asset) => attachPlayerAsset(THREE, seat, model, asset))
+    .then((asset) => attachPlayerAsset(THREE, seat, model, asset, character))
     .catch((error: unknown) => {
       if (!warnedAboutPlayerLoadFailure) {
         warnedAboutPlayerLoadFailure = true;
@@ -272,17 +339,18 @@ function rod(THREE: Three, a: T.Vector3, b: T.Vector3, radius: number, material:
   return mesh;
 }
 
-export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerModel {
+export function makePlayer(THREE: Three, seat: number, lite: boolean, character = ''): PlayerModel {
   const root = new THREE.Group();
   const torso = new THREE.Group();
   root.add(torso);
-  const skin = new THREE.MeshStandardMaterial({ color: ['#b77b55', '#e4b58d', '#86563e', '#d89e76'][seat % 4], roughness: 0.83 });
-  const shirt = new THREE.MeshStandardMaterial({ color: teamColors[seat % 2], roughness: 0.72, metalness: 0.02 });
-  const shorts = new THREE.MeshStandardMaterial({ color: ['#142d49', '#a1a39a', '#384344', '#ece8db'][seat % 4], roughness: 0.84 });
+  const kit = character ? characterOf(character) : null;
+  const skin = new THREE.MeshStandardMaterial({ color: kit?.skin ?? ['#b77b55', '#e4b58d', '#86563e', '#d89e76'][seat % 4], roughness: 0.83 });
+  const shirt = new THREE.MeshStandardMaterial({ color: kit?.shirt ?? teamColors[seat % 2], roughness: 0.72, metalness: 0.02 });
+  const shorts = new THREE.MeshStandardMaterial({ color: kit?.shorts ?? ['#142d49', '#a1a39a', '#384344', '#ece8db'][seat % 4], roughness: 0.84 });
   const shoe = new THREE.MeshStandardMaterial({ color: '#e9e7dd', roughness: 0.55 });
   const sole = new THREE.MeshStandardMaterial({ color: '#3a4040', roughness: 0.8 });
   const accent = new THREE.MeshStandardMaterial({ color: accents[seat % accents.length], roughness: 0.53 });
-  const hairMaterial = new THREE.MeshStandardMaterial({ color: ['#30261f', '#72513c', '#211e20', '#b0a18d'][seat % 4], roughness: 0.91 });
+  const hairMaterial = new THREE.MeshStandardMaterial({ color: kit?.hair ?? ['#30261f', '#72513c', '#211e20', '#b0a18d'][seat % 4], roughness: 0.91 });
   const dark = new THREE.MeshStandardMaterial({ color: '#172127', roughness: 0.66 });
   const eyes = new THREE.MeshStandardMaterial({ color: '#f2eee2', roughness: 0.55 });
   const racketFrame = new THREE.MeshStandardMaterial({ color: '#242a2a', metalness: 0.65, roughness: 0.29 });
@@ -315,14 +383,20 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerMod
   head.scale.set(0.88, 1.12, 0.93);
   head.position.set(0, 1.79, 0.035);
   torso.add(head);
-  const headband = new THREE.Mesh(new THREE.TorusGeometry(0.145, 0.027, 8, 24), accent);
-  headband.position.set(0, 1.82, 0.015);
-  headband.rotation.x = Math.PI / 2;
-  torso.add(headband);
+  if (kit) {
+    const accessory = makeAccessory(THREE, kit.acc, kit.accColor);
+    accessory.position.set(0, 1.79, 0.02);
+    torso.add(accessory);
+  } else {
+    const headband = new THREE.Mesh(new THREE.TorusGeometry(0.145, 0.027, 8, 24), accent);
+    headband.position.set(0, 1.82, 0.015);
+    headband.rotation.x = Math.PI / 2;
+    torso.add(headband);
+  }
   const hair = new THREE.Mesh(new THREE.SphereGeometry(0.144, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.55), hairMaterial);
   hair.position.set(0, 1.83, 0.02);
   torso.add(hair);
-  if (seat % 2 === 1) {
+  if (!kit && seat % 2 === 1) {
     const cap = new THREE.Mesh(new THREE.SphereGeometry(0.15, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.5), accent);
     cap.position.set(0, 1.86, 0.02);
     torso.add(cap);
@@ -330,7 +404,7 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerMod
     brim.position.set(0, 1.83, 0.11);
     brim.rotation.x = Math.PI / 2;
     torso.add(brim);
-  } else {
+  } else if (kit ? kit.model === 'female' : true) {
     const pony = new THREE.Mesh(new THREE.CapsuleGeometry(0.045, 0.2, 3, 7), hairMaterial);
     pony.position.set(0.02, 1.67, -0.14);
     pony.rotation.x = -0.35;
@@ -529,7 +603,7 @@ export function makePlayer(THREE: Three, seat: number, lite: boolean): PlayerMod
       model.ownedMaterials.clear();
     },
   };
-  requestPlayerAsset(THREE, seat, model);
+  requestPlayerAsset(THREE, seat, model, character);
   return model;
 }
 

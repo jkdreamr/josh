@@ -69,6 +69,10 @@ export function createAudio() {
       else if (name === 'double fault') sfx.play('lose');
       else sfx.play('tick');
     },
+    tempo(level: number) {
+      const notes = [523, 587, 659, 784, 880];
+      sfx.tone({ freq: notes[Math.max(0, Math.min(notes.length - 1, level - 1))]!, dur: 0.09, type: 'sine', vol: 0.06 });
+    },
     dispose() {
       window.clearInterval(crowd);
       void context?.close();

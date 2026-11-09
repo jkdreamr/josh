@@ -13,7 +13,7 @@ export function courtTextures(THREE: Three, lite: boolean, anisotropy = 8) {
   const color = document.createElement('canvas');
   color.width = color.height = size;
   const ctx = color.getContext('2d')!;
-  ctx.fillStyle = '#2b6385';
+  ctx.fillStyle = '#2f6fc4';
   ctx.fillRect(0, 0, size, size);
   for (let i = 0; i < size * size * 0.035; i++) {
     const shade = 185 + Math.floor(Math.random() * 60);
@@ -35,7 +35,7 @@ export function courtTextures(THREE: Three, lite: boolean, anisotropy = 8) {
   const surround = document.createElement('canvas');
   surround.width = surround.height = size;
   const surroundCtx = surround.getContext('2d')!;
-  surroundCtx.fillStyle = '#426b53';
+  surroundCtx.fillStyle = '#9a1c22';
   surroundCtx.fillRect(0, 0, size, size);
   for (let i = 0; i < size * size * 0.035; i++) {
     const shade = 190 + Math.floor(Math.random() * 56);
@@ -134,21 +134,24 @@ export function windscreenTexture(THREE: Three, reversed = false) {
   canvas.width = 1024;
   canvas.height = 256;
   const ctx = canvas.getContext('2d')!;
-  ctx.fillStyle = '#173e31';
+  ctx.fillStyle = '#8c1515';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
   for (let x = 0; x < canvas.width; x += 4) {
-    ctx.fillStyle = `rgba(203,221,199,${Math.random() * 0.04})`;
+    ctx.fillStyle = `rgba(255,230,220,${Math.random() * 0.04})`;
     ctx.fillRect(x, 0, 1, canvas.height);
   }
-  ctx.fillStyle = '#f1eee2';
-  ctx.font = '700 76px Georgia, serif';
+  ctx.fillStyle = '#ffd23f';
+  ctx.fillRect(0, 18, canvas.width, 8);
+  ctx.fillRect(0, canvas.height - 26, canvas.width, 8);
+  ctx.fillStyle = '#fff8ec';
+  ctx.font = '900 84px "Arial Black", Impact, sans-serif';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   if (reversed) {
     ctx.translate(canvas.width, 0);
     ctx.scale(-1, 1);
   }
-  ctx.fillText('STANFORD  •  TAUBE', canvas.width / 2, canvas.height / 2);
+  ctx.fillText('KOO OPEN  •  PALO ALTO', canvas.width / 2, canvas.height / 2 + 4);
   return canvasTexture(THREE, canvas);
 }
 
@@ -167,10 +170,10 @@ export function scoreboardTexture(THREE: Three, score: string[]) {
   ctx.strokeRect(5, 5, canvas.width - 10, canvas.height - 10);
   ctx.fillStyle = '#e4e8d2';
   ctx.font = 'bold 33px Georgia,serif';
-  ctx.fillText('TAUBE STADIUM', 32, 54);
+  ctx.fillText('KOO OPEN', 32, 54);
   ctx.font = '24px Arial,sans-serif';
   ctx.fillStyle = '#b7c2ae';
-  ctx.fillText('STANFORD  •  SINGLES / DOUBLES', 32, 90);
+  ctx.fillText('KOO OPEN  •  PALO ALTO', 32, 90);
   ctx.font = 'bold 38px Arial,sans-serif';
   ctx.fillStyle = '#f4f2d9';
   score.forEach((line, index) => ctx.fillText(line, 32, 150 + index * 54));
