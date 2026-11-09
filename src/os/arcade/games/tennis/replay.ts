@@ -1,10 +1,17 @@
 import type { PointCall, World } from './logic.ts';
 
-export const REPLAY_DURATION = 2.5;
-export const REPLAY_SPEED = 0.35;
-export const REPLAY_BUFFER_SECONDS = 3;
-export const REPLAY_SOURCE_SECONDS = REPLAY_DURATION * REPLAY_SPEED;
-export const REPLAY_POINT_CLOCK = REPLAY_DURATION + 0.55;
+export const REPLAY_BUFFER_SECONDS = 4;
+export const REPLAY_SOURCE_SECONDS = 2.4;
+export const REPLAY_FAST_SOURCE_SECONDS = 1.8;
+export const REPLAY_SLOW_SOURCE_SECONDS = 0.6;
+export const REPLAY_FAST_SPEED = 0.9;
+export const REPLAY_SLOW_SPEED = 0.3;
+export const REPLAY_HOLD_SECONDS = 0.4;
+export const REPLAY_DURATION =
+  REPLAY_FAST_SOURCE_SECONDS / REPLAY_FAST_SPEED
+  + REPLAY_SLOW_SOURCE_SECONDS / REPLAY_SLOW_SPEED
+  + REPLAY_HOLD_SECONDS;
+export const REPLAY_POINT_CLOCK = REPLAY_DURATION + 1.1;
 
 export function rallyCounterLabel(shots: number) {
   return shots >= 4 ? `Rally ${Math.floor(shots)}` : '';
@@ -15,8 +22,11 @@ export type ReplaySelection = {
   frames: ReplayFrame[];
   sourceStart: number;
   sourceEnd: number;
+  fastSourceEnd: number;
+  fastDuration: number;
+  slowDuration: number;
+  holdDuration: number;
   duration: number;
-  speed: number;
 };
 
 export type ReplayPoint = {
@@ -70,16 +80,30 @@ export function selectReplay(
   buffer: readonly ReplayFrame[],
   point: ReplayPoint,
   now = buffer.at(-1)?.at ?? 0,
-  duration = REPLAY_DURATION,
-  speed = REPLAY_SPEED,
 ): ReplaySelection | null {
   if (!shouldReplay(point)) return null;
 
-  const sourceEnd = now;
-  const sourceStart = sourceEnd - duration * speed;
-  const frames = buffer.filter((frame) => frame.at >= sourceStart && frame.at <= sourceEnd);
+  const requestedStart = now - REPLAY_SOURCE_SECONDS;
+  const frames = buffer.filter((frame) => frame.at >= requestedStart && frame.at <= now);
   if (frames.length < 2) return null;
-  return { frames: [...frames], sourceStart: frames[0]!.at, sourceEnd: frames.at(-1)!.at, duration, speed };
+  const sourceStart = frames[0]!.at;
+  const sourceEnd = frames.at(-1)!.at;
+  const sourceSeconds = Math.min(REPLAY_SOURCE_SECONDS, sourceEnd - sourceStart);
+  const slowSourceSeconds = Math.min(REPLAY_SLOW_SOURCE_SECONDS, sourceSeconds);
+  const fastSourceSeconds = Math.min(REPLAY_FAST_SOURCE_SECONDS, sourceSeconds - slowSourceSeconds);
+  const fastDuration = fastSourceSeconds / REPLAY_FAST_SPEED;
+  const slowDuration = slowSourceSeconds / REPLAY_SLOW_SPEED;
+  const holdDuration = REPLAY_HOLD_SECONDS;
+  return {
+    frames: [...frames],
+    sourceStart,
+    sourceEnd,
+    fastSourceEnd: sourceStart + fastSourceSeconds,
+    fastDuration,
+    slowDuration,
+    holdDuration,
+    duration: fastDuration + slowDuration + holdDuration,
+  };
 }
 
 function lerp(a: number, b: number, t: number) {
@@ -88,9 +112,7 @@ function lerp(a: number, b: number, t: number) {
 
 export function sampleReplay(selection: ReplaySelection, elapsed: number): World {
   const frames = selection.frames;
-  const first = frames[0]!;
-  const last = frames.at(-1)!;
-  const time = Math.min(last.at, first.at + Math.max(0, elapsed) * selection.speed);
+  const time = replaySourceTime(selection, elapsed);
   let nextIndex = frames.findIndex((frame) => frame.at >= time);
   if (nextIndex < 0) nextIndex = frames.length - 1;
   const next = frames[nextIndex]!;
@@ -121,4 +143,20 @@ export function sampleReplay(selection: ReplaySelection, elapsed: number): World
   }
   world.acc = 0;
   return world;
+}
+
+export function replaySourceTime(selection: ReplaySelection, elapsed: number) {
+  const time = Math.max(0, elapsed);
+  if (time < selection.fastDuration) return Math.min(selection.fastSourceEnd, selection.sourceStart + time * REPLAY_FAST_SPEED);
+  const slowEnd = selection.fastDuration + selection.slowDuration;
+  if (time < slowEnd) return Math.min(selection.sourceEnd, selection.fastSourceEnd + (time - selection.fastDuration) * REPLAY_SLOW_SPEED);
+  return selection.sourceEnd;
+}
+
+export function replayProgress(selection: ReplaySelection, elapsed: number) {
+  const time = Math.max(0, elapsed);
+  return {
+    t: selection.duration > 0 ? Math.min(1, time / selection.duration) : 1,
+    slow: time >= selection.fastDuration,
+  };
 }

@@ -76,7 +76,8 @@ export function chooseShot(world: World, player: Player): Swing {
   let depth: Swing['depth'];
   const humans = world.players.filter((other) => other.team !== player.team && other.ai === null);
   const humanAtNet = humans.some((human) => Math.abs(human.z) < 6);
-  if (level === 0 && world.random() < 0.18) kind = 'slice';
+  if (level === 0 && humanAtNet && world.random() < 0.15) kind = 'lob';
+  else if (level === 0 && world.random() < 0.18) kind = 'slice';
   if (level > 0) {
     if (shouldSmash(world.ball.p.y)) kind = 'smash';
     else {
