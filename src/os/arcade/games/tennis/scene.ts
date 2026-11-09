@@ -15,7 +15,7 @@ export type View = {
   render: () => void;
   hit: (speed: number, perfect?: boolean) => void;
   replayCamera: (active: boolean) => void;
-  replayProgress: (t: number, slow: boolean) => void;
+  replayProgress: (t: number, slow: boolean, slowProgress: number, hitTeam: number | null) => void;
   punch: (strength: number) => void;
   bounce: (x: number, z: number, line: boolean) => void;
   netHit: () => void;
@@ -799,10 +799,12 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, char
   let debugCameraMode: 'front' | 'side' | 'back' | 'game-close' | null = null;
   let replayCameraActive = false;
   let replayWorld: World | null = null;
-  let replayT = 0;
   let replaySlow = false;
   let replayWasSlow = false;
-  let replaySlowStartT = 0;
+  let replaySlowProgress = 0;
+  let replayHitterTeam: number | null = null;
+  let replaySlowHitter: { x: number; z: number; team: number; seat: number } | null = null;
+  let replayHitterLogged = false;
   let replayCameraInitialized = false;
   let debugSide: number | null = null;
   let debugCameraSeat = 0;
@@ -873,39 +875,47 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, char
     const world = replayWorld;
     if (!world) return;
     const ballPosition = world.ball.p;
-    const ballLead = new THREE.Vector3(world.ball.v.x, world.ball.v.y, world.ball.v.z);
-    if (ballLead.lengthSq() > 0.001) ballLead.normalize().multiplyScalar(0.35);
-    const ballFocus = new THREE.Vector3(ballPosition.x, Math.max(0.25, ballPosition.y), ballPosition.z).add(ballLead);
     let desiredPosition: T.Vector3;
     let desiredLook: T.Vector3;
     if (!replaySlow) {
-      const cameraX = 9.5;
-      desiredPosition = new THREE.Vector3(cameraX, 2.6, clamp(ballPosition.z * 0.55, -8, 8));
-      desiredLook = ballFocus;
-      camera.fov = 40;
+      const sx = 1;
+      desiredPosition = new THREE.Vector3(sx * 10.4, 5.4, clamp(ballPosition.z * 0.35, -7, 7));
+      desiredLook = new THREE.Vector3(ballPosition.x * 0.5, 0.9, ballPosition.z * 0.75);
+      camera.fov = 46;
     } else {
-      const hitter = world.players
-        .filter((player) => player.team === world.ball.hitByTeam)
-        .sort((a, b) => Math.hypot(a.x - ballPosition.x, a.z - ballPosition.z) - Math.hypot(b.x - ballPosition.x, b.z - ballPosition.z))[0];
-      let focus = ballFocus.clone();
-      if (hitter) {
-        const forward = hitter.team === 0 ? -1 : 1;
-        const pastHitter = (ballPosition.z - hitter.z) * forward > 0.6;
-        if (!pastHitter) focus.set(hitter.x, 1, hitter.z);
-        else {
-          const landing = predictLanding(world.ball.p, world.ball.v, world.ball.spin, 6, world.ball.shotKind);
-          focus.set(landing.x, 0.35, landing.z);
+      if (!replaySlowHitter) {
+        const team = replayHitterTeam ?? world.ball.hitByTeam;
+        const hitter = world.players
+          .filter((player) => player.team === team)
+          .sort((a, b) => Math.hypot(a.x - ballPosition.x, a.z - ballPosition.z) - Math.hypot(b.x - ballPosition.x, b.z - ballPosition.z))[0];
+        if (hitter) {
+          replaySlowHitter = { x: hitter.x, z: hitter.z, team: hitter.team, seat: hitter.seat };
+          if (import.meta.env.DEV && !replayHitterLogged) {
+            replayHitterLogged = true;
+            const diagnostic = { seat: hitter.seat, team: hitter.team, ball: { ...ballPosition } };
+            (window as Window & { __tennisOtsHitter?: typeof diagnostic }).__tennisOtsHitter = diagnostic;
+            console.info('Tennis replay OTS hitter', diagnostic);
+          }
         }
-        focus.lerp(ballFocus, 0.35);
       }
-      const slowProgress = replayT > replaySlowStartT
-        ? clamp((replayT - replaySlowStartT) / (1 - replaySlowStartT), 0, 1)
-        : 0;
-      const endSide = Math.sign(focus.z) || (world.ball.hitByTeam === 0 ? 1 : -1);
-      const cameraSide = -(Math.sign(9.5 - focus.x) || 1);
-      desiredPosition = new THREE.Vector3(focus.x + cameraSide * (4.5 - slowProgress * 0.6), 1.5, focus.z + endSide * 0.8);
-      desiredLook = focus.clone().lerp(ballFocus, 0.6);
-      camera.fov = 30;
+      const hitter = replaySlowHitter;
+      if (hitter) {
+        const side = Math.sign(hitter.x) || 1;
+        const back = hitter.team === 0 ? 1 : -1;
+        const dolly = replaySlowProgress * 0.4;
+        desiredPosition = new THREE.Vector3(
+          clamp(hitter.x + 0.9 * side, -8.5, 8.5),
+          1.75,
+          hitter.z + back * (3.4 - dolly),
+        );
+        const chest = new THREE.Vector3(hitter.x, 1.2, hitter.z);
+        const ballFocus = new THREE.Vector3(ballPosition.x, Math.max(0.25, ballPosition.y), ballPosition.z);
+        desiredLook = chest.lerp(ballFocus, 0.6);
+      } else {
+        desiredPosition = new THREE.Vector3(10.4, 5.4, clamp(ballPosition.z * 0.35, -7, 7));
+        desiredLook = new THREE.Vector3(ballPosition.x * 0.5, 0.9, ballPosition.z * 0.75);
+      }
+      camera.fov = 38;
     }
     camera.updateProjectionMatrix();
     if (!replayCameraInitialized) {
@@ -913,12 +923,12 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, char
       cameraTarget.copy(desiredLook);
       replayCameraInitialized = true;
     } else {
-      camera.position.x = damp(camera.position.x, desiredPosition.x, 5, dt);
-      camera.position.y = damp(camera.position.y, desiredPosition.y, 5, dt);
-      camera.position.z = damp(camera.position.z, desiredPosition.z, 5, dt);
-      cameraTarget.x = damp(cameraTarget.x, desiredLook.x, 5, dt);
-      cameraTarget.y = damp(cameraTarget.y, desiredLook.y, 5, dt);
-      cameraTarget.z = damp(cameraTarget.z, desiredLook.z, 5, dt);
+      camera.position.x = damp(camera.position.x, desiredPosition.x, 4, dt);
+      camera.position.y = damp(camera.position.y, desiredPosition.y, 4, dt);
+      camera.position.z = damp(camera.position.z, desiredPosition.z, 4, dt);
+      cameraTarget.x = damp(cameraTarget.x, desiredLook.x, 4, dt);
+      cameraTarget.y = damp(cameraTarget.y, desiredLook.y, 4, dt);
+      cameraTarget.z = damp(cameraTarget.z, desiredLook.z, 4, dt);
     }
     camera.lookAt(cameraTarget);
   }
@@ -1259,6 +1269,10 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, char
         replayCameraActive = true;
         replayCameraInitialized = false;
         replayWasSlow = false;
+        replaySlowProgress = 0;
+        replayHitterTeam = null;
+        replaySlowHitter = null;
+        replayHitterLogged = false;
         cameraTransition = 0;
         punchAmount = 0;
         punchFrom = 0;
@@ -1276,11 +1290,17 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean, char
         camera.updateProjectionMatrix();
       }
     },
-    replayProgress(t, slow) {
-      replayT = clamp(t, 0, 1);
+    replayProgress(_t, slow, slowProgress, hitTeam) {
       replaySlow = slow;
+      replaySlowProgress = clamp(slowProgress, 0, 1);
+      replayHitterTeam = hitTeam;
       if (slow && !replayWasSlow) {
-        replaySlowStartT = replayT;
+        replaySlowHitter = null;
+        replayHitterLogged = false;
+        replayCameraInitialized = false;
+      }
+      if (!slow && replayWasSlow) {
+        replaySlowHitter = null;
         replayCameraInitialized = false;
       }
       replayWasSlow = slow;
