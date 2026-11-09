@@ -1,5 +1,6 @@
 import { cpuSwing, movementTarget } from './ai.ts';
 import { REPLAY_POINT_CLOCK, shouldReplay } from './replay.ts';
+import { controlFactor, powerFactor, serveBonus, speedFactor, spinFactor, tempoFactor, TEMPO_MAX } from './roster.ts';
 
 export const STEP = 1 / 120;
 export const STRIKE_RADIUS = 1.7;
@@ -63,6 +64,8 @@ export type Player = {
   anim: number;
   serveToss: number;
   connected: boolean;
+  character: string;
+  tempo: number;
 };
 export type MatchState = {
   length: MatchLength;
@@ -145,7 +148,7 @@ export function createWorld(options: {
   length?: MatchLength;
   level?: Level;
   seed?: number;
-  players?: Partial<Pick<Player, 'name' | 'ai' | 'connected'>>[];
+  players?: Partial<Pick<Player, 'name' | 'ai' | 'connected' | 'character'>>[];
 } = {}): World {
   const format = options.format ?? 'singles';
   const level = options.level ?? 1;
@@ -179,6 +182,8 @@ export function createWorld(options: {
       anim: 0,
       serveToss: 0,
       connected: setup.connected ?? true,
+      character: setup.character ?? '',
+      tempo: 0,
     };
   });
   const world: World = {
@@ -563,7 +568,7 @@ function humanTarget(world: World, player: Player, kind: ShotKind, aimX: number,
   const aim = clamp(aimX, -1, 1);
   const timing = timingQuality(delta);
   const timingShift = world.level === 0 ? 0
-    : timing.direction * (world.level === 1 ? 0.8 : 1.6) * (1 - timing.quality);
+    : timing.direction * (world.level === 1 ? 0.8 : 1.6) * (1 - timing.quality) * controlFactor(player.character);
   let x = clamp(aim * (width - margin), -width + margin, width - margin) + timingShift;
   if (world.level === 1) x = clamp(x, -width + margin, width - margin);
   const forward = depthInput * direction;
@@ -607,7 +612,7 @@ function shotTarget(world: World, player: Player, swing: Swing, quality: number)
     }
   }
   if (world.format === 'doubles' && world.random() < 0.18) x *= 0.45;
-  const timingSpread = player.ai === 0 ? 0.6 : player.ai === 1 ? 0.65 : 0.4;
+  const timingSpread = (player.ai === 0 ? 0.6 : player.ai === 1 ? 0.65 : 0.4) * controlFactor(player.character);
   x += timingQuality(swing.delta).direction * timingSpread * (1 - quality);
   if (easyReceiverX !== null) x = clamp(x, easyReceiverX - 1.6, easyReceiverX + 1.6);
   x = clamp(x, -width - 0.8, width + 0.8);
@@ -644,6 +649,7 @@ function applyShot(world: World, player: Player, swing: Swing, serve = false, ev
   if (!timing.hit) {
     player.swing = 0.42;
     player.swingKind = swing.kind;
+    if (!serve) player.tempo = 0;
     return false;
   }
   player.swing = 0.56;
@@ -668,10 +674,11 @@ function applyShot(world: World, player: Player, swing: Swing, serve = false, ev
     z: player.z + side * 0.35,
   };
   const profile = shotProfiles[swing.kind];
+  const spinScale = spinFactor(player.character);
   const spin: Spin3 = {
     x: profile.spinX,
-    y: profile.sideSpin * (swing.aim || 0.25),
-    z: profile.topSpin,
+    y: profile.sideSpin * (swing.aim || 0.25) * spinScale,
+    z: profile.topSpin * spinScale,
   };
   const apex = swing.kind === 'smash' ? from.y + 0.12
     : player.ai === null && swing.kind === 'topspin' && world.level === 0 ? profile.apex + 0.25
@@ -679,10 +686,11 @@ function applyShot(world: World, player: Player, swing: Swing, serve = false, ev
       : profile.apex;
   const serveCap = player.ai === 0 ? (easyCpuAgainstHuman ? 85 : 100) / 3.6 : player.ai === 1 ? 120 / 3.6 : player.ai === 2 ? 170 / 3.6 : 175 / 3.6;
   const swipePace = clamp((swing.swipe ?? 0) / 2000, 0, 1) * 0.13;
-  const pace = serve ? 1 : clamp(0.75 + quality * 0.34 + swipePace, 0.68, 1.18) * profile.pace * (easyCpuAgainstHuman ? 0.55 : easyCpu ? 0.82 : 1);
-  const hardHumanSolvePace = profile.pace * clamp(0.75 + 0.34, 0.68, 1.18);
-  const servePace = swing.kind === 'flat' ? 28 + quality * 20
-    : swing.kind === 'slice' ? 24 + quality * 15 : 22 + quality * 16;
+  const drive = powerFactor(player.character) * tempoFactor(player.tempo);
+  const pace = serve ? 1 : clamp(0.75 + quality * 0.34 + swipePace, 0.68, 1.18) * profile.pace * (easyCpuAgainstHuman ? 0.55 : easyCpu ? 0.82 : 1) * drive;
+  const hardHumanSolvePace = profile.pace * clamp(0.75 + 0.34, 0.68, 1.18) * drive;
+  const servePace = (swing.kind === 'flat' ? 28 + quality * 20
+    : swing.kind === 'slice' ? 24 + quality * 15 : 22 + quality * 16) + serveBonus(player.character);
   const velocity = serve
     ? solveServe(from, target, spin, Math.min(servePace, serveCap), swing.kind)
     : solveShot(from, target, spin, apex, player.ai === null && world.level === 2 ? hardHumanSolvePace : pace, swing.kind);
@@ -707,6 +715,7 @@ function applyShot(world: World, player: Player, swing: Swing, serve = false, ev
   world.ball.rallyShot = ++world.rallyShot;
   world.ball.netCord = false;
   world.phase = serve ? 'serve-flight' : 'rally';
+  if (!serve) player.tempo = quality >= 0.7 ? Math.min(TEMPO_MAX, player.tempo + 1) : Math.max(0, player.tempo - 1);
   world.serveClock = 0;
   world.serveSpeed = serve ? Math.round(Math.hypot(world.ball.v.x, world.ball.v.z) * 3.6) : 0;
   events?.push({
@@ -762,6 +771,7 @@ function awardPoint(world: World, winner: number, call: PointCall, events: Event
   world.ball.inPlay = false;
   world.lastCall = call;
   world.callClock = 1.5;
+  for (const player of world.players) if (player.team !== winner) player.tempo = 0;
   events.push({ type: 'call', call });
   events.push({ type: 'point', winner, games: [...match.games], points: [...match.points] });
   if (match.tiebreak) {
@@ -965,14 +975,14 @@ export function movePlayer(world: World, player: Player, dt = STEP) {
     bounds.xMax = box < 0 ? -0.4 : limit;
     desiredX = clamp(player.input.x, -1, 1) * 6.5;
   } else if (player.ai === null) {
-    desiredX = clamp(player.input.x, -1, 1) * 6.5;
-    desiredZ = clamp(player.input.z, -1, 1) * 6.5;
+    desiredX = clamp(player.input.x, -1, 1) * 6.5 * speedFactor(player.character);
+    desiredZ = clamp(player.input.z, -1, 1) * 6.5 * speedFactor(player.character);
   } else {
     const target = movementTarget(world, player);
     const dx = clamp(target.x, bounds.xMin, bounds.xMax) - player.x;
     const dz = clamp(target.z, bounds.zMin, bounds.zMax) - player.z;
     const distance = Math.hypot(dx, dz);
-    const maxSpeed = player.ai === 0 ? 4.6 : player.ai === 1 ? 6.2 : 6.6;
+    const maxSpeed = (player.ai === 0 ? 4.6 : player.ai === 1 ? 6.2 : 6.6) * speedFactor(player.character);
     const speed = Math.min(maxSpeed, distance * 2.2);
     if (distance > 0.01) {
       desiredX = dx / distance * speed;
@@ -980,7 +990,7 @@ export function movePlayer(world: World, player: Player, dt = STEP) {
     }
   }
   const desiredSpeed = Math.hypot(desiredX, desiredZ);
-  const speedLimit = player.ai === 2 ? 6.6 : 6.5;
+  const speedLimit = (player.ai === 2 ? 6.6 : 6.5) * speedFactor(player.character);
   if (desiredSpeed > speedLimit) {
     desiredX *= speedLimit / desiredSpeed;
     desiredZ *= speedLimit / desiredSpeed;

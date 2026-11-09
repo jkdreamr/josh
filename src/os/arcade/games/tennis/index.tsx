@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { GameShell, LEVEL_NAMES, Segmented, TouchControls, defineSetting, levelOptions, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
+import type { CSSProperties } from 'react';
+import { GameShell, LEVEL_NAMES, Segmented, TouchControls, defineSetting, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { createAudio } from './audio.ts';
 import { Hud } from './hud.tsx';
@@ -8,6 +9,7 @@ import { createWorld, movePlayer, previewTarget, STEP, stepWorld, teamSeats, tim
 import { configOf, commandOf, eventOf, moveOf, parsePacket, serveOf, stateOf, swingOf } from './net.ts';
 import { meta } from './meta.ts';
 import { createScene, type View } from './scene.ts';
+import { CHARACTER_IDS, characterOf, lineup, ROSTER, seatCharacter, STAT_NAMES, TEMPO_MAX, type CharacterId } from './roster.ts';
 import { appendReplayFrame, REPLAY_DURATION, sampleReplay, selectReplay, type ReplaySelection } from './replay.ts';
 import './tennis.css';
 
@@ -17,6 +19,10 @@ type StageMode = 'offline' | 'online';
 const FORMAT = defineSetting('tennis:format', ['singles', 'doubles'] as const, 'singles');
 const LENGTH = defineSetting('tennis:length', ['game', 'three', 'set'] as const, 'three');
 const LEVEL = defineSetting('tennis:level', LEVEL_NAMES, 'normal');
+const CHARACTER = defineSetting<CharacterId>('tennis:character', CHARACTER_IDS, 'josh');
+const RIVAL = defineSetting<CharacterId | 'random'>('tennis:rival', ['random', ...CHARACTER_IDS], 'random');
+const shotShouts: Partial<Record<ShotKind, string>> = { smash: 'SMASH!', volley: 'VOLLEY!', drop: 'DROP SHOT' };
+const callShouts: Partial<Record<PointCall, string>> = { out: 'OUT!', net: 'NET!', fault: 'FAULT', 'double fault': 'DOUBLE FAULT', let: 'LET' };
 const formatOptions = [['singles', 'Singles'], ['doubles', 'Doubles']] as const;
 const lengthOptions = [['game', '1 Game'], ['three', 'First to 2'], ['set', '1 Set']] as const;
 const BOT_NAMES = ['Ace', 'Rally', 'Volley'] as const;
@@ -48,9 +54,62 @@ function Setup() {
   const [level, setLevel] = useSetting(LEVEL);
   return (
     <>
+      <CharacterPicker />
       <Segmented label="Mode" value={format} options={formatOptions} onChange={setFormat} />
       <Segmented label="Match" value={length} options={lengthOptions} onChange={setLength} />
       <Segmented label="Difficulty" value={level} options={levelOptions} onChange={setLevel} />
+    </>
+  );
+}
+
+function CharacterPicker() {
+  const [pick, setPick] = useSetting(CHARACTER);
+  const [rival, setRival] = useSetting(RIVAL);
+  const me = characterOf(pick);
+  const choose = (id: CharacterId) => {
+    if (id === pick) return;
+    sfx.play('select');
+    setPick(id);
+    if (rival === id) setRival('random');
+  };
+  return (
+    <>
+      <div className="arcade-field">
+        <span>Player</span>
+        <div className="g-tennis-roster" role="group" aria-label="Player">
+          {ROSTER.map((character) => (
+            <button
+              type="button"
+              key={character.id}
+              aria-pressed={character.id === pick}
+              style={{ '--kit': character.shirt, '--trim': character.accColor } as CSSProperties}
+              onClick={() => choose(character.id)}
+            >
+              <i aria-hidden="true" />
+              <b>{character.name}</b>
+              <small>{character.style}</small>
+            </button>
+          ))}
+        </div>
+        <div className="g-tennis-bio">
+          <p>{me.blurb}</p>
+          <dl>
+            {STAT_NAMES.map((stat) => (
+              <div key={stat}>
+                <dt>{stat}</dt>
+                <dd><i style={{ width: `${me.stats[stat] * 20}%` }} /></dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      </div>
+      <Segmented
+        label="Rival"
+        className="g-tennis-rivals"
+        value={rival}
+        options={[['random', 'Random'], ...ROSTER.filter((character) => character.id !== pick).map((character) => [character.id, character.name] as const)]}
+        onChange={setRival}
+      />
     </>
   );
 }
@@ -116,11 +175,11 @@ function Stage() {
   return <Play key={stage.current.key} mode={stage.current.mode} />;
 }
 
-function settingsWorld(mode: StageMode, format: Format, length: MatchLength, level: Level, online: ReturnType<typeof useOnline>) {
+function settingsWorld(mode: StageMode, format: Format, length: MatchLength, level: Level, online: ReturnType<typeof useOnline>, pick: CharacterId = 'josh', rival: CharacterId | 'random' = 'random') {
   if (mode === 'online' && online) {
     const actualFormat: Format = online.quick || online.players.some((player) => player.seat > 1) ? 'doubles' : format;
     const count = actualFormat === 'singles' ? 2 : 4;
-    const roster = new Map<number, { name: string; ai: Level | null; connected: boolean }>();
+    const roster = new Map<number, { name: string; ai: Level | null; connected: boolean; character?: string }>();
     for (const player of online.players) {
       if (player.seat >= 0 && player.seat < count) roster.set(player.seat, { name: player.name, ai: null, connected: true });
     }
@@ -135,22 +194,22 @@ function settingsWorld(mode: StageMode, format: Format, length: MatchLength, lev
       length: online.quick ? 'three' : length,
       level: online.quick ? 1 : level,
       seed: online.round || 1,
-      players: Array.from({ length: count }, (_, seat) => roster.get(seat)!),
+      players: Array.from({ length: count }, (_, seat) => ({ ...roster.get(seat)!, character: seatCharacter(seat, online.round || 1) })),
     });
   }
+  const count = format === 'singles' ? 2 : 4;
+  const characters = lineup(pick, rival, count, Math.random);
   return createWorld({
     format,
     length,
     level,
-    players: format === 'singles'
-      ? [{ name: 'You', ai: null }, { name: 'Ace', ai: level }]
-      : [{ name: 'You', ai: null }, { name: 'Ace', ai: level }, { name: 'Rally', ai: level }, { name: 'Volley', ai: level }],
+    players: characters.map((character, seat) => ({ name: characterOf(character).name, ai: seat === 0 ? null : level, character })),
   });
 }
 
-function hudCopy(world: World, seat: number | null, watching: boolean, timing: HudModel['timing'], bounceCue: boolean, rallyShots = 0, replaying = false, feedback: HudModel['feedback'] = ''): HudModel {
+function hudCopy(world: World, seat: number | null, watching: boolean, timing: HudModel['timing'], bounceCue: boolean, rallyShots = 0, replaying = false, feedback: HudModel['feedback'] = '', extra: Pick<HudModel, 'shout' | 'intro'> = {}): HudModel {
   const copy = { ...world, players: world.players.map((player) => ({ ...player })), ball: { ...world.ball, p: { ...world.ball.p }, v: { ...world.ball.v } }, match: structuredClone(world.match) };
-  return { world: copy, seat, watching, call: world.callClock > 0 ? world.lastCall : '', timing, bounceCue, rallyShots, replaying, feedback };
+  return { world: copy, seat, watching, call: world.callClock > 0 ? world.lastCall : '', timing, bounceCue, rallyShots, replaying, feedback, ...extra };
 }
 
 function Play({ mode }: { mode: StageMode }) {
@@ -163,6 +222,8 @@ function Play({ mode }: { mode: StageMode }) {
   const [formatSetting] = useSetting(FORMAT);
   const [lengthSetting] = useSetting(LENGTH);
   const [levelSetting] = useSetting(LEVEL);
+  const [pickSetting] = useSetting(CHARACTER);
+  const [rivalSetting] = useSetting(RIVAL);
   const level = online?.quick ? 1 : difficulty(levelSetting);
   const format = online?.quick ? 'doubles' : formatSetting;
   const length = online?.quick ? 'three' : lengthSetting;
@@ -172,7 +233,7 @@ function Play({ mode }: { mode: StageMode }) {
   shellRef.current = shell;
 
   const world = useRef<World | null>(null);
-  world.current ??= settingsWorld(mode, format, length, level, online);
+  world.current ??= settingsWorld(mode, format, length, level, online, pickSetting, rivalSetting);
   const lastHit = useRef<{ kind: Swing['kind']; clock: number } | null>(null);
   const selectedShot = useRef<ShotKind>('topspin');
   const view = useRef<View | null>(null);
@@ -188,6 +249,10 @@ function Play({ mode }: { mode: StageMode }) {
   const oohPlayed = useRef(false);
   const feedbackClock = useRef(0);
   const feedbackRef = useRef<HudModel['feedback']>('');
+  const shoutRef = useRef('');
+  const shoutClock = useRef(0);
+  const introClock = useRef(2.6);
+  const tempoSeen = useRef(0);
   const hitStopUntil = useRef(0);
   const [, setReplaying] = useState(false);
   const [, setFeedback] = useState<HudModel['feedback']>('');
@@ -243,7 +308,7 @@ function Play({ mode }: { mode: StageMode }) {
     const initialize = () => {
       if (cancelled) return;
       try {
-        next = createScene(THREE, host, shell.touch);
+        next = createScene(THREE, host, shell.touch, world.current!.players.map((player) => player.character));
       } catch (error) {
         if (import.meta.env.DEV) console.warn('Tennis scene initialization failed', error);
       }
@@ -574,6 +639,11 @@ function Play({ mode }: { mode: StageMode }) {
     shellRef.current.gameOver(undefined, { title, detail });
   };
 
+  const shout = (text: string) => {
+    shoutRef.current = text;
+    shoutClock.current = 1.1;
+  };
+
   const handleEvent = (event: ReturnType<typeof stepWorld>[number], fromHost = false) => {
     const currentView = view.current;
     if (event.type === 'hit') {
@@ -597,6 +667,13 @@ function Play({ mode }: { mode: StageMode }) {
       currentView?.hit(event.speed, perfect);
       if (perfect && mode === 'offline' && event.seat === currentSeat()) hitStopUntil.current = performance.now() + 70;
       audio.current?.hit(event.speed, event.kind, perfect);
+      const label = shotShouts[event.kind];
+      if (label && !event.serve) shout(label);
+      if (hitter && event.seat === currentSeat()) {
+        if (hitter.tempo > tempoSeen.current) audio.current?.tempo(hitter.tempo);
+        if (hitter.tempo >= TEMPO_MAX && tempoSeen.current < TEMPO_MAX) shout('IN THE ZONE!');
+        tempoSeen.current = hitter.tempo;
+      }
     } else if (event.type === 'bounce') {
       const current = world.current;
       const bounceTeam = event.z >= 0 ? 0 : 1;
@@ -611,7 +688,13 @@ function Play({ mode }: { mode: StageMode }) {
       audio.current?.net();
     } else if (event.type === 'call') {
       audio.current?.call(event.call);
+      const label = callShouts[event.call];
+      if (label) shout(label);
     } else if (event.type === 'point') {
+      const call = world.current?.lastCall;
+      if (call !== 'out' && call !== 'net' && call !== 'double fault') shout(pointShots.current <= 1 ? 'ACE!' : 'WINNER!');
+      const mine = world.current?.players.find((player) => player.seat === currentSeat());
+      if (mine && mine.team !== event.winner) tempoSeen.current = 0;
       currentView?.point(event.winner, rallyShots.current >= 8);
       startReplay(event.winner, world.current?.lastCall || 'point');
       if (rallyShots.current >= 8) audio.current?.cheer();
@@ -730,6 +813,9 @@ function Play({ mode }: { mode: StageMode }) {
     }
     bounceCueClock.current = Math.max(0, bounceCueClock.current - dt);
     if (bounceCueClock.current <= 0) setBounceCue(false);
+    shoutClock.current = Math.max(0, shoutClock.current - dt);
+    if (shoutClock.current <= 0) shoutRef.current = '';
+    introClock.current = Math.max(0, introClock.current - dt);
     feedbackClock.current = Math.max(0, feedbackClock.current - dt);
     if (feedbackClock.current <= 0 && feedbackRef.current) {
       feedbackRef.current = '';
@@ -762,7 +848,7 @@ function Play({ mode }: { mode: StageMode }) {
     hudClock.current += dt;
     if (hudClock.current >= 0.1) {
       hudClock.current = 0;
-      setHud(hudCopy(current, currentSeat(), !!o?.watching, timingClock.current > 0 ? timingRef.current : '', bounceCue, rallyShots.current, replayingRef.current, feedbackRef.current));
+      setHud(hudCopy(current, currentSeat(), !!o?.watching, timingClock.current > 0 ? timingRef.current : '', bounceCue, rallyShots.current, replayingRef.current, feedbackRef.current, { shout: shoutRef.current, intro: introClock.current > 0 }));
     }
   };
 
@@ -847,13 +933,12 @@ function Play({ mode }: { mode: StageMode }) {
       ref={ref}
       aria-label="Tennis court"
     >
-      {!THREE && <div className="g-tennis-error"><strong>Preparing Taube Stadium…</strong></div>}
+      {!THREE && <div className="g-tennis-error"><strong>Preparing the Koo Open…</strong></div>}
       {THREE && sceneLoadFailed && shell.status === 'playing' && <div className="g-tennis-error"><strong>3D court could not load. Try restarting.</strong></div>}
       <Hud {...hud} touch={shell.touch} />
       <TouchControls dpad buttons={[
         { key: 'Space', label: 'topspin' },
         { key: 'KeyK', label: 'slice' },
-        { key: 'KeyL', label: 'flat' },
         { key: 'KeyI', label: 'lob' },
         { key: 'KeyU', label: 'drop' },
       ]} />

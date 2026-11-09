@@ -331,7 +331,7 @@ function buildStadium(THREE: Three, scene: T.Scene, lite: boolean) {
   const arms = new THREE.InstancedMesh(new THREE.CapsuleGeometry(0.025, 0.13, 1, 4), standard(THREE, '#ffffff', 0.91), count * 2);
   const hats = new THREE.InstancedMesh(new THREE.SphereGeometry(0.073, 6, 3, 0, Math.PI * 2, 0, Math.PI * 0.5), standard(THREE, '#ffffff', 0.72), count);
   const crowd: { x: number; y: number; z: number; phase: number; hue: number }[] = [];
-  const palette = ['#ece4d4', '#bd293e', '#314c68', '#caa35d', '#406453', '#e4ddd1', '#7e5969', '#b7b8ad'];
+  const palette = ['#f5f1e6', '#8c1515', '#ffd23f', '#6d3df2', '#00a558', '#ff7a3d', '#2f6fc4', '#d9f542', '#b4232b', '#f5f1e6'];
   const skinTones = ['#d4a27f', '#b67b5b', '#edc6a3', '#81583f', '#c48d69'];
   const dummy = new THREE.Object3D();
   rows.forEach(([x, seatY, z], i) => {
@@ -402,7 +402,7 @@ function buildStadium(THREE: Three, scene: T.Scene, lite: boolean) {
   scoreCtx.fillRect(0, 0, scoreCanvas.width, scoreCanvas.height);
   scoreCtx.fillStyle = '#f1eee2';
   scoreCtx.font = 'bold 42px Georgia';
-  scoreCtx.fillText('TAUBE STADIUM', 24, 60);
+  scoreCtx.fillText('KOO OPEN', 24, 60);
   const scoreTexture = new THREE.CanvasTexture(scoreCanvas);
   scoreTexture.colorSpace = THREE.SRGBColorSpace;
   scoreTexture.anisotropy = 8;
@@ -630,10 +630,10 @@ function formatScore(world: World) {
   const point = world.match.tiebreak ? `TB ${points[0]} - ${points[1]}` : world.match.points[0] >= 3 && world.match.points[1] >= 3 && world.match.points[0] === world.match.points[1]
     ? 'DEUCE'
     : `${points[0]} - ${points[1]}`;
-  return [`${sets}${game}   ${point}`, `SERVER  ${serverOf(world)?.name ?? 'PLAYER'}`, `TAUBE STADIUM   ${world.format.toUpperCase()}`];
+  return [`${sets}${game}   ${point}`, `SERVER  ${serverOf(world)?.name ?? 'PLAYER'}`, `KOO OPEN   ${world.format.toUpperCase()}`];
 }
 
-export function createScene(THREE: Three, host: HTMLElement, lite: boolean): View | null {
+export function createScene(THREE: Three, host: HTMLElement, lite: boolean, characters: readonly string[] = []): View | null {
   const gl = createGL(THREE, host, lite);
   if (!gl) return null;
   const glContext = gl;
@@ -697,7 +697,7 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
   }
 
   mergeStaticMeshes(THREE, scene);
-  const players = [0, 1, 2, 3].map((seat) => makePlayer(THREE, seat, lite));
+  const players = [0, 1, 2, 3].map((seat) => makePlayer(THREE, seat, lite, characters[seat]));
   players.forEach((model) => {
     model.root.traverse((object) => {
       const mesh = object as T.Mesh;
@@ -827,16 +827,16 @@ export function createScene(THREE: Three, host: HTMLElement, lite: boolean): Vie
     const ctx = scoreboard;
     const canvas = stadium.scoreCanvas;
     const gradient = ctx.createLinearGradient(0, 0, 0, canvas.height);
-    gradient.addColorStop(0, '#1a3931');
-    gradient.addColorStop(1, '#101d1a');
+    gradient.addColorStop(0, '#2a0f12');
+    gradient.addColorStop(1, '#14090b');
     ctx.fillStyle = gradient;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.strokeStyle = '#d7d2c0';
+    ctx.strokeStyle = '#ffd23f';
     ctx.lineWidth = 6;
     ctx.strokeRect(7, 7, canvas.width - 14, canvas.height - 14);
-    ctx.fillStyle = '#d2e2ce';
-    ctx.font = 'bold 34px Georgia,serif';
-    ctx.fillText('TAUBE STADIUM  ·  STANFORD', 28, 54);
+    ctx.fillStyle = '#ffd23f';
+    ctx.font = '900 36px "Arial Black",Impact,sans-serif';
+    ctx.fillText('KOO OPEN  ·  PALO ALTO', 28, 54);
     ctx.fillStyle = '#d9dfd0';
     ctx.font = '24px Arial,sans-serif';
     const lines = formatScore(world);

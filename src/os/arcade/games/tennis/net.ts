@@ -1,4 +1,5 @@
 import { rng32, type Command, type Event, type Format, type Level, type MatchLength, type MoveInput, type Swing, type World } from './logic.ts';
+import { isCharacterId, TEMPO_MAX } from './roster.ts';
 
 export type ConfigPacket = { t?: 'tennis'; k: 'cfg'; r: number; format: Format; length: MatchLength; level: Level };
 export type SwingPacket = { t?: 'tennis'; k: 'sw'; r: number; shot: number; delta: number; kind: Swing['kind']; aim: number; swipe: number };
@@ -57,7 +58,8 @@ function validState(value: unknown): value is World {
     && kindOk(player.swingKind) && bounded(player.swingLunge, 1) && bounded(player.lungeX, 1) && bounded(player.lungeZ, 1)
     && bounded(player.facing, Math.PI * 2) && bounded(player.swing, 2) && bounded(player.anim, 1e9)
     && typeof player.name === 'string' && player.name.length <= 32
-    && (player.ai === null || levelOk(player.ai)) && typeof player.connected === 'boolean')) return false;
+    && (player.ai === null || levelOk(player.ai)) && typeof player.connected === 'boolean'
+    && (player.character === '' || isCharacterId(player.character)) && bounded(player.tempo, TEMPO_MAX))) return false;
   const ball = state.ball;
   if (!ball || !ball.p || !ball.prev || !ball.v || !ball.spin
     || !bounded(ball.p.x, 40) || !bounded(ball.p.y, 40) || !bounded(ball.p.z, 40)

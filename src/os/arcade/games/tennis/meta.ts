@@ -2,8 +2,8 @@ import type { GameMeta } from '../../types';
 
 export const meta: GameMeta = {
   id: 'tennis',
-  title: 'Tennis',
-  blurb: 'Taube Stadium at golden hour, singles or doubles, vs the computer.',
+  title: 'Koo Open',
+  blurb: 'Arcade tennis at the Koo Open in Palo Alto. Pick one of six players, build tempo, singles or doubles.',
   category: '3d',
   players: '1-4P',
   controls: 'WASD / arrows move · Space/J topspin · K slice · L flat · I lob · U drop. Hold Left/Right to place shots; hold Up for short or Down for deep.',
@@ -13,6 +13,8 @@ export const meta: GameMeta = {
     'Space/J topspin, K slice, L flat power, I lob, and U drop shot.',
     'hold Left/Right to place laterally; hold Up for short, neutral for deep, or Down for very deep.',
     'high balls become smashes; near-net shots become volleys.',
+    'pick a player: each one has different speed, power, control, spin and serve.',
+    'well-timed hits build your tempo meter for a little extra pace; a mistimed swing or a lost point resets it.',
     'win points, games, and sets. online, teams can play singles or doubles.',
   ],
   accent: '#c8e632',
