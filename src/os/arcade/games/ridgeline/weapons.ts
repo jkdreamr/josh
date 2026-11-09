@@ -102,7 +102,9 @@ export const WEAPONS: Record<WeaponId, WeaponDef> = {
   // an auto shotgun off a box magazine: lighter pellets than the Mauler, but as fast as you pull
   thresher: W({ id: 'thresher', name: 'Thresher', cls: 'shotgun', price: 2600, dmg: 11, head: 2, pellets: 8, rpm: 220, auto: true, mag: 8, reserve: 24, speed: 700, reload: 3, base: 0.5, move: 1.2, air: 3, ads: 0.85, bloom: 0.6, bloomMax: 1.6, pelletSpread: 4.2, falloff: [6, 18, 0.25], kick: { up: 3.2, grow: 0, max: 3.2, side: 0.9, rate: 1, from: 1 }, weight: 0.97, zoom: 1.1 }),
   // a crossbow: one slow, heavy bolt that arcs well over range, no falloff, punches through armor; reloads after each shot
-  arbalest: W({ id: 'arbalest', name: 'Arbalest', cls: 'crossbow', price: 2200, dmg: 105, head: 2.5, leg: 0.8, rpm: 200, mag: 1, reserve: 12, speed: 95, reload: 1.9, base: 0.12, move: 3, air: 8, ads: 0.4, bloom: 0, bloomMax: 0, falloff: [999, 1000, 1], kick: { up: 2, grow: 0, max: 2, side: 0.3, rate: 1, from: 1 }, weight: 0.97, zoom: 2.2, adsTime: 0.25, equip: 0.7, armorPen: 0.6 }),
+  // (aimed through its short scope, the full screen scope view, since the scope on the model fills the middle of the
+  // screen otherwise)
+  arbalest: W({ id: 'arbalest', name: 'Arbalest', cls: 'crossbow', price: 2200, dmg: 105, head: 2.5, leg: 0.8, rpm: 200, mag: 1, reserve: 12, speed: 95, reload: 1.9, base: 0.12, move: 3, air: 8, ads: 0.4, bloom: 0, bloomMax: 0, falloff: [999, 1000, 1], kick: { up: 2, grow: 0, max: 2, side: 0.3, rate: 1, from: 1 }, weight: 0.97, zoom: 2.2, adsTime: 0.25, equip: 0.7, armorPen: 0.6, scope: true }),
 };
 
 export const WEAPON_IDS = Object.keys(WEAPONS) as WeaponId[];
