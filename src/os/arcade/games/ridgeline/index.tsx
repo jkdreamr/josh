@@ -392,6 +392,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
 
   // per match view state
   const camY = useRef<number | null>(null);
+  /** Climbing: how far the gun is lowered out of the way (eased), for the view. */
+  const climbVm = useRef(0);
   const spec = useRef(0);
   const deathLook = useRef({ yaw: 0, pitch: 0 });
   const damageFx = useRef(0);
@@ -1126,6 +1128,17 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         eye.roll += Math.sin(tt * 30.7 + 3) * 0.016 * s2;
       }
       eye.roll -= a.lean * (0.075 - 0.045 * tk);
+      // climbing: the gun goes down out of the hands' way, the head dips over a ledge and rocks with the rungs
+      climbVm.current += ((a.alive && a.climbAnim ? 1 : 0) - climbVm.current) * Math.min(1, dt * 10);
+      if (a.alive && a.climbAnim && st.shake) {
+        const ct = a.climbT;
+        if (a.climbAnim === 2) eye.roll += Math.sin(a.phase * 2.2) * 0.012;
+        else {
+          const k = Math.sin(Math.min(1, ct / 0.55) * Math.PI);
+          eye.pitch -= k * 0.16;
+          eye.roll += k * (a.climbAnim === 3 ? 0.05 : 0.025);
+        }
+      }
       // dropping in: a camera behind (the transport, or you), turned with the mouse
       if (a === you && you.alive && you.drop) {
         // just out of the door the camera eases in from the transport's distance, clear of its tail
@@ -1192,7 +1205,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
               ads: a.ads,
               scoped,
               reload: a.reloadT > 0 ? 1 - a.reloadT / wdef.reload : 0,
-              switching: a.healT > 0 ? 0.55 : a.switchT > 0 ? Math.min(1, a.switchT / wdef.equip) : 0,
+              switching: Math.max(climbVm.current * 0.85, a.healT > 0 ? 0.55 : a.switchT > 0 ? Math.min(1, a.switchT / wdef.equip) : 0),
               speed: Math.min(1, Math.hypot(a.body.vx, a.body.vz) / 5.8),
               phase: a.phase,
               air: !a.body.onGround,

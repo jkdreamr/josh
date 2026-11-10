@@ -539,6 +539,9 @@ export type Pose = {
   crawl?: number;
   /** Leaning, -1 left to 1 right (the caller rolls the body a little; here the spine bends into it). */
   lean?: number;
+  /** Climbing (see climbOf in match.ts): 1 a mantle, 2 on a ladder, 3 a vault, and how long it has been going. */
+  climb?: number;
+  climbT?: number;
 };
 
 /** Poses one soldier's bones (the gun group, a child of the chest bone, is placed too). */
@@ -671,8 +674,37 @@ export function makePoser(THREE: Three, build: Build = LOFT_BUILD) {
     const bodyPitch = (p.tilt ?? 0) + hipLean + spineX + chestX;
     bones[BONE.neck].rotation.set((p.pitch - bodyPitch) * 0.45, twist * 0.45, 0);
     bones[BONE.head].rotation.set((p.pitch - bodyPitch) * 0.55, twist * 0.55, 0);
-    // legs: seated, or a walk cycle, bent for a crouch, tucked in the air
-    if (p.seat)
+    const climb = p.climb ?? 0;
+    const ct = p.climbT ?? 0;
+    // climbing: the back bent over the ledge, or upright against the rungs
+    if (climb) {
+      const over = climb === 2 ? 0.1 : Math.sin(Math.min(1, ct / 0.5) * Math.PI) * 0.55;
+      bones[BONE.spine].rotation.x += over;
+      bones[BONE.chest].rotation.x += over * 0.6;
+    }
+    // legs: seated, or a walk cycle, bent for a crouch, tucked in the air, or climbing
+    if (climb)
+      for (const side of [1, -1]) {
+        let swing: number;
+        let knee: number;
+        if (climb === 2) {
+          // a rung at a time, one knee up while the other leg straightens
+          const s = Math.sin(p.phase * 2.2 + (side > 0 ? 0 : Math.PI));
+          swing = 0.55 + s * 0.4;
+          knee = 0.95 + Math.max(0, s) * 0.55;
+        } else {
+          // up over the edge: the lead knee drawn high, the other leg pushing off behind
+          const k = Math.min(1, ct / 0.45);
+          const lead = side > 0;
+          swing = lead ? 0.4 + k * 0.9 : 0.15 - k * 0.3;
+          knee = lead ? 0.6 + k * 1.2 : 0.35 + Math.sin(k * Math.PI) * 0.5;
+          if (climb === 3) swing += 0.25;
+        }
+        bones[side > 0 ? BONE.thighR : BONE.thighL].rotation.set(swing, 0, side * build.splay);
+        bones[side > 0 ? BONE.shinR : BONE.shinL].rotation.x = -knee;
+        bones[side > 0 ? BONE.footR : BONE.footL].rotation.x = knee - swing;
+      }
+    else if (p.seat)
       for (const side of [1, -1]) {
         bones[side > 0 ? BONE.thighR : BONE.thighL].rotation.set(1.42, 0, side * (build.splay + 0.12));
         bones[side > 0 ? BONE.shinR : BONE.shinL].rotation.x = -1.35;
@@ -689,6 +721,21 @@ export function makePoser(THREE: Three, build: Build = LOFT_BUILD) {
       bones[side > 0 ? BONE.thighR : BONE.thighL].rotation.set(swing + (lyingSwing - swing) * lie, 0, side * (build.splay + lie * (0.12 + draw * 0.35)));
       bones[side > 0 ? BONE.shinR : BONE.shinL].rotation.x = -(knee + (lyingKnee - knee) * lie);
       bones[side > 0 ? BONE.footR : BONE.footL].rotation.x = (knee - swing - hipLean * 0.5) * (1 - lie) + lie * 0.6;
+    }
+    if (climb) {
+      // the hands on the ledge (reaching up for it, then pressing down on it as the body comes over), or on the rungs
+      if (gunGroup) gunGroup.visible = false;
+      if (climb === 2) {
+        const s = Math.sin(p.phase * 2.2);
+        reach(bones, 1, target.set(0.2, 0.34 + s * 0.14, -0.3), poleR, handQ.identity());
+        reach(bones, -1, target.set(-0.2, 0.34 - s * 0.14, -0.3), poleL, handQ.identity());
+      } else {
+        const k = Math.min(1, ct / (climb === 3 ? 0.3 : 0.42));
+        const y = 0.45 - k * 0.65;
+        reach(bones, 1, target.set(0.24, y, -0.42 + k * 0.1), poleR, handQ.identity());
+        reach(bones, -1, target.set(climb === 3 ? -0.05 : -0.24, y, -0.42 + k * 0.1), poleL, handQ.identity());
+      }
+      return;
     }
     if (p.seat === 1) {
       // both hands on the wheel, out in front of the chest

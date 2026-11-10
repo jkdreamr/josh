@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { MAP_IDS } from '../src/os/arcade/games/ridgeline/maps.ts';
 import { DM_HUBS, newBrain } from '../src/os/arcade/games/ridgeline/bots.ts';
-import { fieldDist, fieldTo, findPath } from '../src/os/arcade/games/ridgeline/nav.ts';
+import { canWalk, fieldDist, fieldTo, findPath, navMark, navOf, walkable } from '../src/os/arcade/games/ridgeline/nav.ts';
+import { MANTLE_HI, findClimb, ladderSpot, sweepClear } from '../src/os/arcade/games/ridgeline/climb.ts';
 import { PRONE_H, RADIUS, STAND_H, blockedAt, clearLine, groundAt, newHit, rayWorld, stepBody, type Body } from '../src/os/arcade/games/ridgeline/physics.ts';
 import { aimPoint, shoulderCam, type Cam } from '../src/os/arcade/games/ridgeline/camera.ts';
 import { CELL, T_HALF, T_RES, floorAt, generateTerrain, heightAt, normalAt, rayTerrain } from '../src/os/arcade/games/ridgeline/terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, PAVISE, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
 
-import { ARENA, ROYALE_ARENA, SITE_R, worldFor } from '../src/os/arcade/games/ridgeline/world.ts';
+import { ARENA, ROYALE_ARENA, SITE_R, STOREY, withBoxes, worldFor, type Box, type World } from '../src/os/arcade/games/ridgeline/world.ts';
 import { AMMO_MAX, AMMO_OF, AMMO_PACK, BOOST, BOOST_DRAIN, HEAL, NADE_MAX, RED_LIVE, RED_WARN, ROYALE_PLAYERS, VEST, X4_ZOOM, ZONES, ammoCap, fits, gunLabel, healCap, magOf, richness, scopeOf, spawnLoot, zoomOf, type AmmoKind, type Item } from '../src/os/arcade/games/ridgeline/royale.ts';
 import {
   BLAST_R,
@@ -34,6 +35,7 @@ import {
   LEAN,
   PARTS,
   canProne,
+  climbOf,
   partsOf,
   spreadOf,
   idleInput,
@@ -1892,4 +1894,298 @@ test('third person: a shot leaves the eye for where the crosshair rests, and a w
     assert.equal(foe.hp, 100);
   }
   assert.ok(set, 'found a corner to look past');
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// climbing: mantles, vaults, ladders, and the floors over the ground
+
+/** A breach match on vale with only you in it, standing on open level ground (nothing near), facing -z, in a copy of
+ * the world with some boxes added round where you stand (given the spot). */
+function climbRange(boxes: (x: number, y: number, z: number) => Box[]) {
+  const base = worldFor('vale');
+  let at: [number, number, number] | null = null;
+  for (let k = 0; k < 6000 && !at; k++) {
+    const x = Math.cos(k * 2.399) * k * 0.05;
+    const z = Math.sin(k * 2.399) * k * 0.05;
+    const y = floorAt(base.terrain, x, z);
+    let ok = true;
+    for (let a = -6; a <= 6 && ok; a++) for (let b = -6; b <= 6 && ok; b++) ok = !blockedAt(base, x + a, z + b, y) && Math.abs(floorAt(base.terrain, x + a, z + b) - y) < 0.25;
+    if (ok) at = [x, y, z];
+  }
+  assert.ok(at, 'found open level ground');
+  const [x, y, z] = at;
+  const w = withBoxes(base, boxes(x, y, z));
+  const m = createMatch(w, 'breach', 'normal', { seed: 1 });
+  while (m.phase === 'buy') step(m, DT, idleInput());
+  for (const a of m.actors) {
+    a.alive = a.id === 0;
+    a.bot = false;
+    a.brain = null;
+  }
+  m.phaseT = 999;
+  const you = m.actors[0];
+  you.body.x = x;
+  you.body.y = y + 0.05;
+  you.body.z = z;
+  you.body.vx = you.body.vz = 0;
+  for (let i = 0; i < 10; i++) step(m, DT, idleInput(0, 0));
+  return { m, w, you, x, y, z };
+}
+
+/** Steps a while, checking every frame that the body is never inside anything solid (nor jumped through it). */
+function climbFor(m: Match, you: Actor, frames: number, inp: (i: number) => Input) {
+  for (let i = 0; i < frames; i++) {
+    const ox = you.body.x;
+    const oz = you.body.z;
+    step(m, DT, inp(i));
+    const b = you.body;
+    assert.ok(sweepClear(m.world, b.x, b.z, b.x, b.z, b.y + 0.06, b.y + b.height - 0.06, RADIUS * 0.75), `inside something at ${b.x.toFixed(2)} ${b.y.toFixed(2)} ${b.z.toFixed(2)}`);
+    assert.ok(Math.hypot(b.x - ox, b.z - oz) < 0.4, 'no jump through anything');
+  }
+}
+
+const slab = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): Box => ({ x0, y0, z0, x1, y1, z1, s: 'wood' });
+
+test('climbing: a mantle up onto a ledge you face, from 0.9 to 2.1 m high, never into it, and none up a taller one or under a ceiling', () => {
+  const walkUp = (m: Match, you: Actor) => climbFor(m, you, 40, (i) => ({ ...idleInput(0, 0), mz: i < 30 ? 1 : 0 }));
+  for (const h of [1, 1.5, 2.05]) {
+    const { m, you, y, z } = climbRange((x, y, z) => [slab(x - 1.5, y - 0.5, z - 3.2, x + 1.5, y + h, z - 1.2)]);
+    walkUp(m, you);
+    assert.ok(Math.abs(you.body.z - (z - 1.2 + RADIUS)) < 0.05, 'up against it');
+    climbFor(m, you, 1, () => ({ ...idleInput(0, 0), jump: true }));
+    assert.equal(you.climb?.k, 1, `a mantle up ${h} m`);
+    assert.equal(climbOf(you), 1);
+    climbFor(m, you, 70, () => idleInput(0, 0));
+    assert.ok(Math.abs(you.body.y - (y + h)) < 0.02 && you.body.onGround, `standing on top (${(you.body.y - y).toFixed(2)} m up)`);
+    assert.ok(you.body.z < z - 1.2 - 0.3, 'past the edge');
+    assert.equal(climbOf(you), 0);
+  }
+  // too tall: the same press is only a jump
+  {
+    const { m, you, y } = climbRange((x, y, z) => [slab(x - 1.5, y - 0.5, z - 3.2, x + 1.5, y + MANTLE_HI + 0.25, z - 1.2)]);
+    walkUp(m, you);
+    climbFor(m, you, 1, () => ({ ...idleInput(0, 0), jump: true }));
+    assert.equal(you.climb, null, 'no climb up 2.35 m');
+    climbFor(m, you, 60, () => idleInput(0, 0));
+    assert.ok(you.body.y < y + 0.2, 'back on the ground');
+  }
+  // a ledge with a ceiling over it too low to stand under: no climb
+  {
+    const { m, you } = climbRange((x, y, z) => [slab(x - 1.5, y - 0.5, z - 3.2, x + 1.5, y + 1.4, z - 1.2), slab(x - 1.5, y + 2.6, z - 3.2, x + 1.5, y + 2.8, z - 1.5)]);
+    walkUp(m, you);
+    climbFor(m, you, 1, () => ({ ...idleInput(0, 0), jump: true }));
+    assert.equal(you.climb, null, 'no room to stand on it');
+  }
+  // the same climb, on the same world, from the same place: the same path
+  const a = climbRange((x, y, z) => [slab(x - 1.5, y - 0.5, z - 3.2, x + 1.5, y + 1.6, z - 1.2)]);
+  const b = climbRange((x, y, z) => [slab(x - 1.5, y - 0.5, z - 3.2, x + 1.5, y + 1.6, z - 1.2)]);
+  for (const r of [a, b]) {
+    r.you.body.z = r.z - 1.2 + RADIUS + 0.01;
+    climbFor(r.m, r.you, 1, () => ({ ...idleInput(0, 0), jump: true }));
+  }
+  assert.ok(a.you.climb, 'a climb');
+  assert.deepEqual(a.you.climb, b.you.climb, 'the same climb');
+});
+
+test('climbing: running at a low wall vaults over it, through a window too, and onto a deep one instead', () => {
+  /** Runs at the face (at z = face) from 4 m back, jumping just before it (and stopping once over or up); whether it
+   * vaulted. */
+  const run = (m: Match, you: Actor, face: number) => {
+    let jumped = false;
+    let vaulted = false;
+    let climbed = false;
+    climbFor(m, you, 120, () => {
+      vaulted ||= you.climb?.k === 2;
+      climbed ||= !!you.climb;
+      const inp = { ...idleInput(0, 0), mz: climbed && !you.climb ? 0 : 1 };
+      if (!jumped && you.body.z < face + RADIUS + 0.45) {
+        inp.jump = true;
+        jumped = true;
+      }
+      return inp;
+    });
+    return vaulted;
+  };
+  // a thin wall a meter high
+  {
+    const { m, you, z } = climbRange((x, y, z) => [slab(x - 2, y - 0.5, z - 1.5, x + 2, y + 1, z - 1.2)]);
+    you.body.z = z + 4;
+    assert.ok(run(m, you, z - 1.2), 'a vault');
+    assert.ok(you.body.z < z - 1.5 - RADIUS, 'over to the far side');
+  }
+  // a window: a sill a meter up, the opening 1.3 m wide and 1.15 high, the wall all round it
+  {
+    const { m, you, z, y } = climbRange((x, y, z) => [
+      slab(x - 3, y - 0.5, z - 1.45, x + 3, y + 1, z - 1.2),
+      slab(x - 3, y + 2.15, z - 1.45, x + 3, y + 3, z - 1.2),
+      slab(x - 3, y - 0.5, z - 1.45, x - 0.65, y + 3, z - 1.2),
+      slab(x + 0.65, y - 0.5, z - 1.45, x + 3, y + 3, z - 1.2),
+    ]);
+    you.body.z = z + 4;
+    assert.ok(run(m, you, z - 1.2), 'a vault');
+    assert.ok(you.body.z < z - 1.45 - RADIUS && you.body.y < y + 0.2, `through the window (${you.body.z.toFixed(2)})`);
+  }
+  // a deep block as high: running at it climbs onto it
+  {
+    const { m, you, z, y } = climbRange((x, y, z) => [slab(x - 2, y - 0.5, z - 3.5, x + 2, y + 1, z - 1.2)]);
+    you.body.z = z + 4;
+    assert.ok(!run(m, you, z - 1.2), 'no vault');
+    assert.ok(Math.abs(you.body.y - (y + 1)) < 0.03, 'up on top of it');
+  }
+  // nothing to climb in the open
+  {
+    const { m, you } = climbRange(() => []);
+    assert.equal(findClimb(m.world, you.body.x, you.body.y, you.body.z, 0, true), null);
+  }
+});
+
+test('climbing: a ladder: walking into its foot climbs it, the top steps off onto the roof, back down from the edge, and jump lets go', () => {
+  const w = worldFor('mesa', true);
+  const li = w.ladders.findIndex((l) => l.y1 - l.y0 > 3 && l.y1 - l.y0 < 4.5);
+  assert.ok(li >= 0, 'a ladder up a roof');
+  const l = w.ladders[li];
+  const m = quietRoyale(3, [[l.x + l.nx * 1.6, l.y0 + 0.05, l.z + l.nz * 1.6]]);
+  const you = m.actors[0];
+  const yaw = Math.atan2(l.nx, l.nz);
+  const fwd = { ...idleInput(yaw, 0), mz: 1 };
+  for (let i = 0; i < 90 && you.ladder < 0; i++) step(m, DT, fwd);
+  assert.equal(you.ladder, li, 'on the ladder');
+  assert.equal(climbOf(you), 2);
+  const [px, pz] = ladderSpot(l);
+  let maxGap = 0;
+  for (let i = 0; i < 60 * 5 && (you.ladder >= 0 || you.climb); i++) {
+    step(m, DT, fwd);
+    if (you.ladder >= 0) maxGap = Math.max(maxGap, Math.hypot(you.body.x - px, you.body.z - pz));
+  }
+  assert.ok(maxGap < 1e-6, 'held at the ladder all the way up');
+  for (let i = 0; i < 20; i++) step(m, DT, idleInput(yaw, 0));
+  assert.ok(Math.abs(you.body.y - l.y1) < 0.05 && you.body.onGround, `up on the roof (${you.body.y.toFixed(2)} for ${l.y1.toFixed(2)})`);
+  assert.ok((you.body.x - l.x) * l.nx + (you.body.z - l.z) * l.nz < -0.5, 'in over the edge');
+  // walking back out over the edge, onto the top of it and down
+  const back = { ...idleInput(yaw + Math.PI, 0), mz: 1 };
+  let held = false;
+  for (let i = 0; i < 60 * 6 && !(held && you.ladder < 0 && !you.climb); i++) {
+    step(m, DT, back);
+    held ||= you.ladder >= 0;
+  }
+  assert.ok(held, 'onto the ladder from the top');
+  assert.ok(Math.abs(you.body.y - l.y0) < 0.3, `down on the ground (${you.body.y.toFixed(2)} for ${l.y0.toFixed(2)})`);
+  // half way up, jump: off it, pushed out from the wall, and down to the ground
+  you.ladder = li;
+  you.body.y = l.y0 + 1.5;
+  step(m, DT, { ...idleInput(yaw, 0), jump: true });
+  assert.equal(you.ladder, -1, 'let go');
+  for (let i = 0; i < 90; i++) step(m, DT, idleInput(yaw, 0));
+  assert.ok(you.body.onGround && you.body.y < l.y0 + 0.3, 'fell to the ground');
+  assert.ok((you.body.x - l.x) * l.nx + (you.body.z - l.z) * l.nz > 0.4, 'out from the wall');
+  // no shooting while climbing
+  you.guns[0] = gun('kestrel');
+  you.slot = 0;
+  you.switchT = 0;
+  you.ladder = li;
+  you.body.y = l.y0 + 1;
+  const shots = m.bullets.length;
+  for (let i = 0; i < 10; i++) step(m, DT, { ...idleInput(yaw, 0), fire: true });
+  assert.equal(m.bullets.length, shots, 'both hands on the ladder');
+});
+
+test('royale towns have taller buildings: two storey houses, blocks of flats, warehouses with a mezzanine and lookouts, with stairs, ladders and floors to stand on', () => {
+  for (const id of MAP_IDS) {
+    const w = worldFor(id, true);
+    const tall = w.bld.filter((b) => b.up && b.up.lv.length);
+    assert.ok(tall.length >= 8, `${id}: taller buildings (${tall.length})`);
+    assert.ok(tall.some((b) => b.up!.lv.length >= 2), `${id}: a block of three storeys`);
+    assert.ok(w.dress.some((d) => d.k === 'lookout'), `${id}: a lookout`);
+    assert.ok(w.flights.length >= tall.length && w.ladders.length > 0 && w.decks.length > 0, `${id}: stairs, ladders and decks`);
+    // every flight climbs a storey (or to the mezzanine), and its head is a floor with room to stand
+    for (const f of w.flights) {
+      assert.ok(f.by - f.ay > STOREY - 0.05 && f.by - f.ay < 3.4, `${id}: a flight a storey high`);
+      assert.ok(Math.abs(groundAt(w, f.bx, f.bz, f.by + 0.05) - f.by) < 0.02 && !blockedAt(w, f.bx, f.bz, f.by), `${id}: the head of a flight is clear`);
+    }
+    // and every ladder's top steps off onto its roof
+    for (const l of w.ladders) assert.ok(Math.abs(groundAt(w, l.x - l.nx * 0.78, l.z - l.nz * 0.78, l.y1) - l.y1) < 0.05, `${id}: the top of a ladder`);
+    // breach stays as it was: nothing up off the ground but what its plan has
+    const b = worldFor(id);
+    assert.equal(b.flights.length + b.ladders.length + b.decks.length, 0);
+  }
+});
+
+test('upper floors: a path goes up the stairs (every leg a walk), the floor over a room leaves the room walkable, and a bot fetches loot upstairs and off a roof', () => {
+  const w = worldFor('vale', true);
+  const nav = navOf(w);
+  assert.ok(nav.N > nav.n * nav.n, 'nodes over the ground');
+  const house = w.bld.find((b) => b.kind === 'house' && b.up && b.up.lv.length === 1)!;
+  assert.ok(house, 'a two storey house');
+  const f = w.flights.reduce((best, q) => (Math.hypot(q.ax - house.x, q.az - house.z) < Math.hypot(best.ax - house.x, best.az - house.z) ? q : best));
+  // from 15 m out on the ground, up to the head of its stair
+  let p: number[] | null = null;
+  const ys: number[] = [];
+  let sx = 0;
+  let sz = 0;
+  for (let k = 0; k < 16 && !p; k++) {
+    sx = house.x + Math.cos(k) * 15;
+    sz = house.z + Math.sin(k) * 15;
+    if (blockedAt(w, sx, sz, floorAt(w.terrain, sx, sz))) continue;
+    p = findPath(w, sx, sz, f.bx, f.bz, 20000, floorAt(w.terrain, sx, sz), f.by, ys);
+  }
+  assert.ok(p, 'a way up');
+  assert.equal(ys.length * 2, p.length, 'a height for every point');
+  assert.ok(Math.abs(ys[ys.length - 1] - f.by) < 0.05, 'ends upstairs');
+  // up the stairs, each leg a walk at its own height
+  const first = Array.from({ length: p.length / 2 }, (_, i) => navMark(w, p[i * 2], p[i * 2 + 1])).indexOf(2);
+  assert.ok(first >= 0, 'by the stairs');
+  for (let i = first * 2 + 2; i < p.length; i += 2) assert.ok(canWalk(w, p[i - 2], p[i - 1], p[i], p[i + 1], ys[i / 2 - 1]), `leg ${i / 2} is a walk`);
+  assert.ok(ys.slice(first).every((y, i, a) => i === 0 || y >= a[i - 1] - 0.05), 'and up all the way');
+  // the room under the upper floor: its ground cells walkable as ever
+  const c = Math.cos((-house.rot * Math.PI) / 2);
+  const s = Math.sin((-house.rot * Math.PI) / 2);
+  const lz = -house.d / 4;
+  assert.ok(walkable(w, house.x + lz * s, house.z + lz * c), 'the ground floor is walkable under the floor above');
+  // a lone bot after a vest upstairs, then one on a roof up a ladder
+  const goFor = (x: number, y: number, z: number) => {
+    const m = createMatch(w, 'royale', 'normal', { seed: 5 });
+    m.redT = 1e9;
+    for (const a of m.actors) a.alive = false;
+    const me = m.actors[0];
+    me.alive = true;
+    me.drop = 0;
+    me.body.x = x > 0 ? -300 : 300;
+    me.body.z = 300;
+    me.body.y = floorAt(w.terrain, me.body.x, me.body.z);
+    const bot = m.actors[1];
+    bot.alive = true;
+    bot.drop = 0;
+    for (let k = 0; k < 64; k++) {
+      const bx = x + Math.cos(k * 0.7) * 14;
+      const bz = z + Math.sin(k * 0.7) * 14;
+      const g = floorAt(w.terrain, bx, bz);
+      if (blockedAt(w, bx, bz, g) || Math.abs(g - floorAt(w.terrain, x, z)) > 2) continue;
+      bot.body.x = bx;
+      bot.body.y = g + 0.05;
+      bot.body.z = bz;
+      break;
+    }
+    for (const it of m.loot) it.live = false;
+    m.loot.push({ id: m.loot.length, kind: 'vest', what: '3', n: 1, x, y: y + 0.02, z, live: true });
+    m.lootVer++;
+    const zn = m.zone!;
+    zn.x = zn.nx = x;
+    zn.z = zn.nz = z;
+    zn.r = 400;
+    zn.nr = 300;
+    zn.t = 999;
+    let climbed = 0;
+    for (let i = 0; i < 30 * 60; i++) {
+      me.hp = 100;
+      me.shield = 99;
+      step(m, 1 / 30, idleInput());
+      if (bot.ladder >= 0) climbed++;
+      if (m.events.some((e) => e.t === 'pickup' && e.a === bot.id)) return { got: true, climbed };
+    }
+    return { got: false, climbed };
+  };
+  assert.ok(goFor(f.bx, f.by, f.bz).got, 'up the stairs for it');
+  const l = w.ladders.reduce((best, q) => (q.y1 - q.y0 < best.y1 - best.y0 ? q : best));
+  const r = goFor(l.x - l.nx * 1.4, l.y1, l.z - l.nz * 1.4);
+  assert.ok(r.got && r.climbed > 0, 'up the ladder for it');
 });

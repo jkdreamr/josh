@@ -40,7 +40,7 @@ import {
 } from './match.ts';
 import { CARS, carNear, type Car } from './cars.ts';
 import { clamp, mulberry32, type Rng } from './noise.ts';
-import { canWalk, fieldDist, fieldStep, fieldTo, findPath } from './nav.ts';
+import { UP_LADDER, canWalk, fieldDist, fieldStep, fieldTo, findPath, navMark } from './nav.ts';
 import { blockedAt, clearLine } from './physics.ts';
 import { floorAt, heightAt } from './terrain.ts';
 import { RED_WARN, magOf, planeAt, scopeOf } from './royale.ts';
@@ -76,8 +76,12 @@ export type Brain = {
   via: boolean;
   goalX: number;
   goalZ: number;
-  /** The planned route (flat x, z pairs), the leg being walked, and what it was planned for. */
+  /** The goal's height when it is up on a floor over the ground (loot upstairs, on a roof), else NaN. */
+  goalY: number;
+  /** The planned route (flat x, z pairs), the leg being walked, and what it was planned for (and on a map with floors
+   * over the ground, the height of each of its points). */
   path: number[] | null;
+  pathY: number[];
   pathI: number;
   pathGX: number;
   pathGZ: number;
@@ -142,6 +146,9 @@ export type Brain = {
   dropZ: number;
   loot: number;
   lootT: number;
+  /** How long it has been after the same loot, and one it gave up on (out of reach, as it turned out). */
+  lootAge: number;
+  lootSkip: number;
   healNow: boolean;
   boostNow: boolean;
   /** Royale: the supply crate it is going for (-1 none), and a bit per crate it has already made up its mind on. */
@@ -198,7 +205,9 @@ export function newBrain(level: BotLevel, seed: number): Brain {
     via: false,
     goalX: 0,
     goalZ: 0,
+    goalY: NaN,
     path: null,
+    pathY: [],
     pathI: 0,
     pathGX: 0,
     pathGZ: 0,
@@ -248,6 +257,8 @@ export function newBrain(level: BotLevel, seed: number): Brain {
     dropZ: 0,
     loot: -1,
     lootT: 0,
+    lootAge: 0,
+    lootSkip: -1,
     healNow: false,
     boostNow: false,
     supply: -1,
@@ -370,7 +381,7 @@ function route(m: Match, a: Actor, br: Brain) {
   // toward the point and the search back toward the goal, and the bot paces between the two)
   const fp = br.fieldKey && br.noFieldT <= 0 ? fieldPoint(m, br.fieldKey) : null;
   if (fp && Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z) > 14 && Math.hypot(fp.x - a.body.x, fp.z - a.body.z) > Math.hypot(fp.x - br.goalX, fp.z - br.goalZ) + 16) {
-    const next = fieldStep(m.world, fieldTo(m.world, br.fieldKey, fp.x, fp.z), a.body.x, a.body.z);
+    const next = fieldStep(m.world, fieldTo(m.world, br.fieldKey, fp.x, fp.z), a.body.x, a.body.z, 8, a.body.y);
     if (next) {
       br.wpX = next[0];
       br.wpZ = next[1];
@@ -394,7 +405,7 @@ function route(m: Match, a: Actor, br: Brain) {
       return;
     } else {
       searches++;
-      br.path = findPath(m.world, a.body.x, a.body.z, br.goalX, br.goalZ, m.mode === 'royale' ? 2200 : 3500);
+      br.path = findPath(m.world, a.body.x, a.body.z, br.goalX, br.goalZ, m.mode === 'royale' ? 2200 : 3500, a.body.y, br.goalY, br.pathY);
       if (!br.path) br.failT = 2;
       br.pathI = 0;
       br.pathGX = br.goalX;
@@ -421,10 +432,16 @@ function route(m: Match, a: Actor, br: Brain) {
   }
   // on to the next leg once near this corner, and only if that next point is a straight walk from here (cutting
   // the corner short round the end of a wall walks into it)
+  // (a ladder's point is reached only right at it: the bot lines up with the ladder before it steps on or off; and on a
+  // map with floors over the ground a point counts only on its own level, an upstairs one never from the floor below)
+  const ys = br.pathY.length * 2 === p.length ? br.pathY : null;
   for (;;) {
     if (br.pathI >= p.length - 2) break;
     const d = Math.hypot(p[br.pathI] - a.body.x, p[br.pathI + 1] - a.body.z);
-    if (d < 0.8 || (d < 2.4 && canWalk(m.world, a.body.x, a.body.z, p[br.pathI + 2], p[br.pathI + 3]))) br.pathI += 2;
+    const rung = navMark(m.world, p[br.pathI], p[br.pathI + 1]) === UP_LADDER;
+    const here = !ys || rung || Math.abs(ys[br.pathI / 2] - a.body.y) < 1.3;
+    const next = !ys || Math.abs(ys[br.pathI / 2 + 1] - a.body.y) < 1.3;
+    if ((here && d < (rung ? 0.3 : 0.8)) || (!rung && here && next && d < 2.4 && canWalk(m.world, a.body.x, a.body.z, p[br.pathI + 2], p[br.pathI + 3], a.body.y))) br.pathI += 2;
     else break;
   }
   br.wpX = p[br.pathI];
@@ -443,6 +460,12 @@ function steer(m: Match, a: Actor, br: Brain) {
   const dx = br.wpX - a.body.x;
   const dz = br.wpZ - a.body.z;
   const want = Math.atan2(dx, dz);
+  // a point up a flight of stairs or a ladder: straight at it (the steps ahead, or the wall the ladder is on, are not
+  // in the way)
+  if (navMark(m.world, br.wpX, br.wpZ) || a.ladder >= 0 || a.climb) {
+    br.heading = want;
+    return;
+  }
   // look only as far as the waypoint, so a doorway right ahead doesn't read as the wall beside it
   const look = clamp(Math.hypot(dx, dz) - 0.2, 0.8, 2.6);
   for (const off of [0, 0.45, -0.45, 0.9, -0.9, 1.4, -1.4, 2, -2]) {
@@ -455,10 +478,11 @@ function steer(m: Match, a: Actor, br: Brain) {
   br.heading = want + Math.PI * (br.rng() < 0.5 ? 0.6 : -0.6);
 }
 
-function setGoal(m: Match, br: Brain, x: number, z: number, fieldKey = '') {
+function setGoal(m: Match, br: Brain, x: number, z: number, fieldKey = '', y = NaN) {
   const A = m.world.arena;
   br.goalX = clamp(x, -A + 3, A - 3);
   br.goalZ = clamp(z, -A + 3, A - 3);
+  br.goalY = y;
   br.fieldKey = fieldKey;
 }
 
@@ -1189,6 +1213,13 @@ function planRoyale(m: Match, a: Actor, br: Brain) {
   // the loot it is after still there and still wanted?
   const cur = br.loot >= 0 ? m.loot[br.loot] : null;
   if (cur && (!cur.live || !wants(a, cur))) br.loot = -1;
+  // after the same thing for long without getting it (out of reach after all): another
+  br.lootAge = br.loot >= 0 ? br.lootAge + br.think : 0;
+  if (br.lootAge > 30) {
+    br.lootSkip = br.loot;
+    br.loot = -1;
+    br.lootAge = 0;
+  }
   br.lootT -= br.think;
   if (br.loot < 0 && br.lootT <= 0) {
     br.lootT = 1.2 + r() * 0.8;
@@ -1197,7 +1228,7 @@ function planRoyale(m: Match, a: Actor, br: Brain) {
     // guns count as much nearer while empty handed
     const need = !a.guns[0] && !a.guns[2] ? 0.35 : 1;
     for (const it of m.loot) {
-      if (!it.live) continue;
+      if (!it.live || it.id === br.lootSkip) continue;
       const d = Math.abs(it.x - b.x) + Math.abs(it.z - b.z);
       if (d > 90) continue;
       const dd = d * (it.kind === 'gun' ? need : 1);
@@ -1211,7 +1242,7 @@ function planRoyale(m: Match, a: Actor, br: Brain) {
   }
   if (br.loot >= 0) {
     const it = m.loot[br.loot];
-    setGoal(m, br, it.x, it.z);
+    setGoal(m, br, it.x, it.z, '', it.y);
     return;
   }
   // nothing to do: drift toward somewhere inside the next circle, a little at a time
@@ -1553,6 +1584,8 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     if (br.detourT <= 0) steer(m, a, br);
     // stuck: walked under a second's worth less than half a meter while trying to move
     br.stuckT += br.think;
+    const climbing = !!a.climb || a.ladder >= 0;
+    if (climbing) br.stuckT = br.blockT = br.longT = 0;
     if (br.stuckT > 1.1) {
       const moved = Math.hypot(a.body.x - br.posX, a.body.z - br.posZ);
       if (br.moving && moved < 0.6) {
@@ -1567,7 +1600,7 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     }
     // a waypoint that is not a straight walk from here for over a second: plan afresh, by search
     br.noFieldT -= br.think;
-    if (br.moving && br.detourT <= 0 && !canWalk(m.world, a.body.x, a.body.z, br.wpX, br.wpZ)) br.blockT += br.think;
+    if (br.moving && br.detourT <= 0 && !climbing && navMark(m.world, br.wpX, br.wpZ) !== UP_LADDER && !canWalk(m.world, a.body.x, a.body.z, br.wpX, br.wpZ, a.body.y)) br.blockT += br.think;
     else br.blockT = 0;
     if (br.blockT > 1) {
       br.blockT = 0;
@@ -1579,7 +1612,7 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     // over four seconds of trying to go somewhere with nobody in sight, hardly any closer: the route is wrong (a
     // corner it keeps walking into, a waypoint across a wall). Plan again from scratch, and step off to one side
     br.longT += br.think;
-    if (br.longT > 4) {
+    if (br.longT > 4 && !climbing) {
       const gd = Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z);
       const moved = Math.hypot(a.body.x - br.longX, a.body.z - br.longZ);
       if (br.target < 0 && br.waitT <= 0 && gd > Math.max(3, br.arrive + 1) && moved < 2.5) {
@@ -1805,7 +1838,8 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
       wantYaw = yawOf(moveAng);
       wantPitch = -0.04;
       const gd = Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z);
-      if (gd < (m.mode === 'royale' ? 0.9 : br.arrive)) {
+      // (there: right over or under it is not there, for a goal up on a floor)
+      if (gd < (m.mode === 'royale' ? 0.9 : br.arrive) && !(Math.abs(a.body.y - br.goalY) > 1.2)) {
         moveAng = NaN;
         if (m.mode === 'breach') {
           wantYaw = Math.atan2(-(br.faceX - a.body.x), -(br.faceZ - a.body.z)) + (br.holdA - 0.5) * 0.35;
@@ -1923,12 +1957,17 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
   const lim = br.turn * dt;
   inp.yaw = a.yaw + clamp(dy * k * 1.4, -lim, lim);
   inp.pitch = a.pitch + clamp(dp * k * 1.4, -lim, lim);
+  // on a ladder or in a climb: on along the route (up or down it), fight or no fight
+  if (a.ladder >= 0 || a.climb) {
+    moveAng = Math.atan2(br.wpX - a.body.x, br.wpZ - a.body.z);
+    br.moving = true;
+  }
   // move along the chosen world heading, expressed in the bot's own frame
   if (Number.isNaN(moveAng)) {
     br.moving = false;
   } else {
     const gd = Math.hypot(br.goalX - a.body.x, br.goalZ - a.body.z);
-    if (!tgt && !burning && gd < (m.mode === 'royale' ? 0.9 : Math.min(1.6, br.arrive)) && br.detourT <= 0) br.moving = false;
+    if (!tgt && !burning && gd < (m.mode === 'royale' ? 0.9 : Math.min(1.6, br.arrive)) && br.detourT <= 0 && a.ladder < 0 && !(Math.abs(a.body.y - br.goalY) > 1.2)) br.moving = false;
     else {
       const wx = Math.sin(moveAng);
       const wz = Math.cos(moveAng);
