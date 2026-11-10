@@ -7,6 +7,7 @@ import type { Assets } from '../assets.ts';
 import type { Actor, Match } from '../match.ts';
 import { PRONE_SPEED, RUN, currentGun } from '../match.ts';
 import { PAVISE, WEAPONS, type WeaponId } from '../weapons.ts';
+import type { World } from '../world.ts';
 import { BONE, LOFT_BUILD, OUTFIT_BUILD, SOLDIER_BUILD, makePoser, skeleton, soldierGeometry, type Build } from './body.ts';
 import { patch, roundBox, type Shared, type T, type Three } from './common.ts';
 import { OUTFITS, outfitMaterials } from './gear.ts';
@@ -76,6 +77,12 @@ const gunKey = (id: WeaponId, side: number) => GUN_IDS.indexOf(id) * 2 + side;
 const LIE_BACK = 1.5;
 const LIE_UP = 0.13;
 const LEAN_ROLL = 0.13;
+
+/** On a ladder the body faces it, wherever its owner looks. */
+function ladderYaw(w: World, x: number, z: number, yaw: number) {
+  for (const l of w.ladders) if (Math.abs(l.x - x) < 1.2 && Math.abs(l.z - z) < 1.2) return Math.atan2(l.nx, l.nz);
+  return yaw;
+}
 
 const smooth = (a: number, b: number, x: number) => {
   const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
@@ -335,7 +342,7 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, look: L
         const back = Math.sin(-tilt) * LIE_BACK;
         r.mesh.position.set(b.x + Math.sin(a.yaw) * back, b.y - (b.swim ? 0.25 : 0) - fallE * 0.08 * (1 - lie) + lie * LIE_UP, b.z + Math.cos(a.yaw) * back);
         if (car) r.mesh.rotation.set(car.pitch, seat === 1 ? car.yaw : a.yaw, car.roll, 'YXZ');
-        else r.mesh.rotation.set(dead ? (lie > 0.5 ? tilt : fallE * 1.45) : sky === 1 ? -1.25 : tilt, a.yaw, dead ? 0 : -a.lean * LEAN_ROLL, 'YXZ');
+        else r.mesh.rotation.set(dead ? (lie > 0.5 ? tilt : fallE * 1.45) : sky === 1 ? -1.25 : tilt, a.climbAnim === 2 && !dead ? ladderYaw(m.world, b.x, b.z, a.yaw) : a.yaw, dead ? 0 : -a.lean * LEAN_ROLL, 'YXZ');
         // a shield carried: up in front, or on the back
         if (a.pavise > 0 && !dead && !sky && !car) {
           const sh = shieldFor(r);
@@ -361,6 +368,8 @@ export function soldiers(THREE: Three, shared: Shared, shadows: boolean, look: L
           tilt,
           crawl: lie > 0.9 ? Math.min(1, Math.hypot(b.vx, b.vz) / PRONE_SPEED) : 0,
           lean: dead || seat ? 0 : a.lean,
+          climb: dead || seat || sky ? 0 : a.climbAnim,
+          climbT: a.climbT,
           speed: seat ? 0 : Math.min(1, Math.hypot(b.vx, b.vz) / RUN),
           phase: a.phase,
           air: !seat && !b.onGround && !b.swim,

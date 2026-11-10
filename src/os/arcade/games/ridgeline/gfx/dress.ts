@@ -10,7 +10,7 @@
 // are only put down here, and drawn by furnish.ts; the furniture's boxes stand in for them otherwise.
 import { mulberry32 } from '../noise.ts';
 import { floorAt, heightAt } from '../terrain.ts';
-import { BAGARC, STREET, TOWER, type Bld, type Dress, type Opening, type Part, type World } from '../world.ts';
+import { BAGARC, LOOKOUT, STREET, TOWER, type Bld, type Dress, type Ladder, type Opening, type Part, type World } from '../world.ts';
 import { DOUBLE, canvas, lin, patch, roundBox, type Shared, type T, type Three } from './common.ts';
 import type { PropKey, Props } from './furnish.ts';
 
@@ -256,11 +256,12 @@ function building(add: Add, b: Bld, level: number, loot: Float32Array) {
     for (const o of wall.holes) opening(L, b, wall.alongX, mid, out, wall.inner, o, level);
   }
   if (b.kind === 'ruin') return;
-  // spouts through an adobe parapet, a water tank on some flat roofs
+  // spouts through an adobe parapet, a water tank on some flat roofs (not on one you can climb to: it would stand in
+  // the way without a collider)
   if (b.flat) {
     const pt = top + 0.22;
     for (let x = -hw + 1.2; x < hw - 0.8; x += 2.6) for (const s of [-1, 1]) L.box('wood', 0x6b4a2e, x - 0.09, pt, s * (hd + 0.1), x + 0.09, pt + 0.14, s * (hd + 0.75));
-    if (level > 0 && hash(b.x, b.z, 11) < 0.5) tank(L, hw * 0.4, pt, -hd * 0.3);
+    if (level > 0 && !b.up?.roof && hash(b.x, b.z, 11) < 0.5) tank(L, hw * 0.4, pt, -hd * 0.3);
   }
   // ceiling joists under the roof slab, and the furniture (indoors, casting no shadow)
   L.add.shade = false;
@@ -273,7 +274,13 @@ function building(add: Add, b: Bld, level: number, loot: Float32Array) {
       else L.box('wood', 0x5a4632, -hw + T, top - 0.2, s - 0.06, hw - T, top, s + 0.06);
     }
   }
-  if (level > 0) furniture(L, b, loot, level);
+  if (level > 0) {
+    // a storey at a time (a house's upper floors are its bedrooms; a warehouse's mezzanine stays bare)
+    const up = b.up;
+    const ground = up?.lv.length ? { ...b, walls: b.walls.filter((w) => !w.lv) } : b;
+    furniture(L, ground, loot, level);
+    if (up && b.kind === 'house') up.lv.forEach((y, k) => furniture(L, { ...b, y: y - 0.12, walls: b.walls.filter((w) => w.lv === k + 1) }, loot, level, 1));
+  }
   L.add.shade = true;
 }
 
@@ -605,7 +612,7 @@ const ROOMS: Record<string, string[][]> = {
   barn: [['bales', 'bench', 'bales', 'ladder', 'cask']],
 };
 
-function furniture(L: Local, b: Bld, loot: Float32Array, level: number) {
+function furniture(L: Local, b: Bld, loot: Float32Array, level: number, set = 0) {
   const sets = ROOMS[b.kind];
   if (!sets) return;
   const T = 0.25;
@@ -633,8 +640,11 @@ function furniture(L: Local, b: Bld, loot: Float32Array, level: number) {
     spots.push([dx * c + dz * s, -dx * s + dz * c]);
   }
   const taken: [number, number, number, number][] = [];
+  // (clear of the stairs and the stairwells)
+  const keep = b.up?.keep ?? [];
+  for (let i = 0; i + 3 < keep.length; i += 4) taken.push([keep[i], keep[i + 1], keep[i + 2], keep[i + 3]]);
   rooms.forEach((room, ri) => {
-    const list = sets[Math.min(ri, sets.length - 1)];
+    const list = sets[Math.min(ri + set, sets.length - 1)];
     const [x0, z0, x1, z1] = room;
     for (const name of list) {
       const p = PIECES[name];
@@ -1022,6 +1032,74 @@ function tower(L: Local, y: number, steel: boolean, level: number) {
   for (let k = 0; k < steps; k++) L.at(part, board, 0, top - (k + 1) * rise - 0.03, zs + (k + 0.5) * run, 0.45, 0.03, run / 2 - 0.02);
 }
 
+/** A steel ladder up a wall (see world.ts Ladder): two rails standing off the face on brackets, rungs a foot apart, and
+ * the rails carried on over the top and bent back over the edge to hold on by. */
+function ladder(add: Add, l: Ladder) {
+  const L = new Local(add, l.x, l.z, Math.atan2(l.nx, l.nz));
+  const steel = 0x7e8482;
+  const hw = l.hw;
+  const y0 = l.y0 - 0.05;
+  const top = l.y1 + 1.05;
+  for (const s of [-1, 1]) {
+    L.at('metal', steel, s * hw, (y0 + top) / 2, 0.2, 0.025, (top - y0) / 2, 0.03);
+    L.at('metal', steel, s * hw, top - 0.03, -0.12, 0.025, 0.03, 0.35);
+    for (let y = y0 + 1.2; y < l.y1; y += 2.4) L.at('metal', 0x5a5e5c, s * hw, y, 0.09, 0.02, 0.03, 0.09);
+  }
+  for (let y = y0 + 0.3; y < l.y1 + 0.02; y += 0.3) L.at('metal', steel, 0, y, 0.2, hw, 0.016, 0.016);
+}
+
+/** A lookout tower (see world.ts tryLookout for its colliders): four legs braced on every side, a deck of planks, a
+ * parapet of boards open at the ladder, and a roof of sheet iron on corner posts, or a water tank on a ring of steel. */
+function lookout(L: Local, lo: number, top: number, steel: boolean, tank: boolean, level: number) {
+  const hs = LOOKOUT.side / 2;
+  const part: Part = steel ? 'metal' : 'wood';
+  const post = steel ? 0x5a5e52 : 0x6a5038;
+  const board = steel ? 0x6a6e60 : 0x8a6a48;
+  const g0 = lo - 0.3;
+  for (const a of [-1, 1]) for (const b of [-1, 1]) L.at(part, post, a * (hs - 0.125), (g0 + top - 0.25) / 2, b * (hs - 0.125), 0.125, (top - 0.25 - g0) / 2, 0.125);
+  // a ring of beams every couple of meters, and braces crossing between them
+  const rings = Math.max(2, Math.round((top - lo) / 2.4));
+  for (let k = 1; k < rings; k++) {
+    const y = lo + ((top - lo) * k) / rings;
+    for (const s of [-1, 1]) {
+      L.at(part, post, 0, y, s * (hs - 0.1), hs - 0.1, 0.06, 0.05);
+      L.at(part, post, s * (hs - 0.1), y, 0, 0.05, 0.06, hs - 0.1);
+    }
+  }
+  if (level > 0)
+    for (let k = 0; k < rings; k++) {
+      const ya = lo + 0.2 + ((top - 0.45 - lo) * k) / rings;
+      const yb = lo + 0.2 + ((top - 0.45 - lo) * (k + 1)) / rings;
+      for (const s of [-1, 1]) {
+        L.beam(part, post, [-hs + 0.12, ya, s * (hs - 0.06)], [hs - 0.12, yb, s * (hs - 0.06)], 0.07, 0.05);
+        L.beam(part, post, [s * (hs - 0.06), ya, -hs + 0.12], [s * (hs - 0.06), yb, hs - 0.12], 0.05, 0.07);
+      }
+    }
+  // the deck: joists and planks
+  for (let k = 0; k < 9; k++) L.at(part, mul(board, 0.94 + hash(k, top) * 0.12), 0, top - 0.04, -hs + 0.18 + k * ((2 * hs - 0.36) / 8), hs, 0.04, 0.17);
+  L.at(part, post, 0, top - 0.16, 0, hs, 0.09, hs - 0.02);
+  // the parapet: corner posts and three boards a side, the front open over the ladder
+  for (const a of [-1, 1]) for (const b of [-1, 1]) L.at(part, post, a * (hs - 0.05), top + 1.2, b * (hs - 0.05), 0.05, 1.2, 0.05);
+  for (let k = 0; k < 3; k++) {
+    const yb = top + 0.2 + k * 0.33;
+    L.at(part, board, 0, yb, hs - 0.04, hs, 0.13, 0.03);
+    for (const s of [-1, 1]) L.at(part, board, s * (hs - 0.04), yb, 0, 0.03, 0.13, hs - 0.06);
+    for (const s of [-1, 1]) L.at(part, board, (s * (hs + 0.55)) / 2, yb, -hs + 0.04, (hs - 0.55) / 2, 0.13, 0.03);
+  }
+  const roof = top + LOOKOUT.roof;
+  L.at('metal', steel ? 0x7a7e72 : 0x8a8478, 0, roof + 0.06, 0, hs + 0.3, 0.06, hs + 0.3, 0, 0.05);
+  if (!tank) return;
+  // a water tank on the roof: a drum of riveted steel bands with a conical cap
+  const c = 0x7a8680;
+  const n = level > 1 ? 16 : 10;
+  for (let k = 0; k < n; k++) {
+    const a = (k / n) * Math.PI * 2;
+    L.at('metal', mul(c, 0.92 + hash(k, roof) * 0.12), Math.sin(a) * 1.18, roof + 1.5, Math.cos(a) * 1.18, (1.25 * Math.PI) / n + 0.02, 1.38, 0.04, a);
+  }
+  for (const y of [roof + 0.4, roof + 1.5, roof + 2.6]) L.at('metal', mul(c, 0.8), 0, y, 0, 1.24, 0.04, 1.24, Math.PI / 4);
+  L.at('metal', mul(c, 1.05), 0, roof + 2.95, 0, 1.0, 0.08, 1.0, Math.PI / 8);
+}
+
 /** A ridge tent, 4.2 by 6 m: walls 1.7 high leaning out a little, a ridge at 3 m sagging between its poles, the door
  * flap tied up at the front, guy ropes and stakes. */
 function tent(add: Add, three: Three, w: World, L: Local, y: number, color: number) {
@@ -1169,6 +1247,8 @@ export function dressStatic(three: Three, add: Add, w: World, level: number) {
     for (const b of w.bld) building(add, b, level, w.loot);
     roofTrim(add, w, level);
   }
+  // (the ladders on every setting: they show where you can climb)
+  for (const l of w.ladders) ladder(add, l);
   for (const d of w.dress) {
     const L = new Local(add, d.x, d.z, yawOf(d.rot));
     switch (d.k) {
@@ -1180,6 +1260,9 @@ export function dressStatic(three: Three, add: Add, w: World, level: number) {
         break;
       case 'tower':
         tower(L, d.y, d.c === 1, level);
+        break;
+      case 'lookout':
+        lookout(L, d.y, d.y + d.s, d.c === 1, d.v === 1, level);
         break;
       case 'tent':
         tent(add, three, w, L, d.y, d.c);

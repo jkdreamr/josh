@@ -37,6 +37,7 @@ import {
   applyHit,
   buy,
   canUse,
+  climbOf,
   createMatch,
   currentGun,
   RESPAWN,
@@ -198,6 +199,8 @@ const r2 = (n: number) => Math.round(n * 100) / 100;
 /** A lean in four bits of a flags word (-1 to 1 in sevenths), and back (a bad value reads as no further than full). */
 const leanBits = (l: number) => (Math.round(Math.max(-1, Math.min(1, Number.isFinite(l) ? l : 0)) * 7) + 7) & 15;
 const leanOf = (f: number, shift: number) => Math.max(-1, Math.min(1, (((f >> shift) & 15) - 7) / 7));
+/** The climb shown (see climbOf in match.ts) in two bits: the rules' own, or for a remote player what its machine said. */
+const climbBits = (a: Actor) => (a.climb || a.ladder >= 0 ? climbOf(a) : a.climbTo) & 3;
 
 /** Everyone's place: 9 numbers each. */
 const POS_N = 9;
@@ -208,8 +211,8 @@ function encodePos(m: Match): number[] {
   const out: number[] = [];
   for (const a of m.actors) {
     const b = a.body;
-    // (lying down, and the lean in four bits)
-    const flags = (a.alive ? 1 : 0) | (b.onGround ? 2 : 0) | (a.walking ? 4 : 0) | (a.ads > 0.5 ? 8 : 0) | (a.reloadT > 0 ? 16 : 0) | (b.swim ? 32 : 0) | (a.paviseUp ? 64 : 0) | (a.proneTo ? 128 : 0) | (leanBits(a.lean) << 8);
+    // (lying down, the lean in four bits, and the climb in two)
+    const flags = (a.alive ? 1 : 0) | (b.onGround ? 2 : 0) | (a.walking ? 4 : 0) | (a.ads > 0.5 ? 8 : 0) | (a.reloadT > 0 ? 16 : 0) | (b.swim ? 32 : 0) | (a.paviseUp ? 64 : 0) | (a.proneTo ? 128 : 0) | (leanBits(a.lean) << 8) | (climbBits(a) << 12);
     out.push(Math.round(b.x * 100), Math.round(b.y * 100), Math.round(b.z * 100), Math.round(wrap(a.yaw) * 1000), Math.round(a.pitch * 1000), Math.round(b.vx * 10), Math.round(b.vz * 10), Math.round(a.crouch * 100), flags);
   }
   return out;
@@ -761,7 +764,7 @@ export class Session {
   }
 
   private addPeer(a: Actor) {
-    a.net = { use: false, ads: 0, walking: false, crouch: 0, reloading: false, prone: false, lean: 0 };
+    a.net = { use: false, ads: 0, walking: false, crouch: 0, reloading: false, prone: false, lean: 0, climb: 0 };
     a.lastX = a.body.x;
     a.lastZ = a.body.z;
     this.peers.set(a.seat, { clock: new Clock(), track: new Track(), lastMove: this.now(), budget: [], epoch: a.epoch, focus: -1, spent: AMMO_KINDS.map(() => 0), car: a.car, carTrack: new Track(), out: [], inv: true, drop: a.drop });
@@ -944,6 +947,8 @@ export class Session {
       // lying down and leaning: wanted here, done by the rules (at their pace, never into a wall)
       n.prone = !!(flags & 64);
       n.lean = leanOf(flags, 7);
+      // climbing: its machine moves its body, here only the look of it
+      n.climb = (flags >> 11) & 3;
       n.ads = Math.min(1, Math.max(0, ads));
       if ((slot === 0 || slot === 1 || slot === 2) && a.guns[slot]) a.slot = slot;
       return;
@@ -1182,7 +1187,7 @@ export class Session {
 
   private pushPos(out: number[], a: Actor) {
     const b = a.body;
-    const flags = (a.alive ? 1 : 0) | (b.onGround ? 2 : 0) | (a.walking ? 4 : 0) | (a.ads > 0.5 ? 8 : 0) | (a.reloadT > 0 ? 16 : 0) | (b.swim ? 32 : 0) | (a.drop << 6) | (a.healT > 0 ? 256 : 0) | (a.pavise > 0 ? 512 : 0) | (a.paviseUp ? 1024 : 0) | (a.proneTo ? 2048 : 0) | (leanBits(a.lean) << 12);
+    const flags = (a.alive ? 1 : 0) | (b.onGround ? 2 : 0) | (a.walking ? 4 : 0) | (a.ads > 0.5 ? 8 : 0) | (a.reloadT > 0 ? 16 : 0) | (b.swim ? 32 : 0) | (a.drop << 6) | (a.healT > 0 ? 256 : 0) | (a.pavise > 0 ? 512 : 0) | (a.paviseUp ? 1024 : 0) | (a.proneTo ? 2048 : 0) | (leanBits(a.lean) << 12) | (climbBits(a) << 16);
     const g = a.guns[a.slot];
     out.push(a.id, Math.round(b.x * 100), Math.round(b.y * 100), Math.round(b.z * 100), Math.round(wrap(a.yaw) * 1000), Math.round(a.pitch * 1000), Math.round(b.vx * 10), Math.round(b.vz * 10), Math.round(a.crouch * 100), flags, gunCode(g?.id) * 4 + a.slot, Math.round(a.hp));
   }
@@ -1499,6 +1504,7 @@ export class Session {
       a.paviseUp = !!(f & 64) && a.pavise > 0;
       a.proneTo = !!(f & 128);
       a.leanTo = leanOf(f, 8);
+      a.climbTo = (f >> 12) & 3;
     }
   }
 
@@ -1524,6 +1530,7 @@ export class Session {
       a.paviseUp = !!(f & 1024) && a.pavise > 0;
       a.proneTo = !!(f & 2048);
       a.leanTo = leanOf(f, 12);
+      a.climbTo = (f >> 16) & 3;
       const drop = (f >> 6) & 3;
       if (a.drop !== drop) {
         if (a.drop === 1) this.tracks[i].clear();
@@ -2082,7 +2089,7 @@ export class Session {
     if (me.alive && t - this.moveAt >= MOVE_EVERY) {
       this.moveAt = t;
       const b = me.body;
-      const flags = (me.walking ? 1 : 0) | (this.using ? 2 : 0) | (b.onGround ? 4 : 0) | (b.swim ? 8 : 0) | (me.reloadT > 0 ? 16 : 0) | (me.paviseUp ? 32 : 0) | (me.proneTo ? 64 : 0) | (leanBits(me.lean) << 7);
+      const flags = (me.walking ? 1 : 0) | (this.using ? 2 : 0) | (b.onGround ? 4 : 0) | (b.swim ? 8 : 0) | (me.reloadT > 0 ? 16 : 0) | (me.paviseUp ? 32 : 0) | (me.proneTo ? 64 : 0) | (leanBits(me.lean) << 7) | (climbOf(me) << 11);
       const mv: Record<string, unknown> = { k: 'mv', t, ep: this.myEpoch < 0 ? me.epoch : this.myEpoch, p: [r2(b.x), r2(b.y), r2(b.z), r2(b.vx), r2(b.vy), r2(b.vz), Math.round(wrap(me.yaw) * 1000) / 1000, Math.round(me.pitch * 1000) / 1000, r2(me.crouch), flags, r2(me.ads), me.slot, 0, 0] };
       if (m.mode === 'royale') {
         // the drop, the guns' rounds and what was loaded: when it changes, and now and then anyway
