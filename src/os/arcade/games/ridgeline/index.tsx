@@ -415,6 +415,9 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
   const thirdK = useRef(0);
   /** Lying down: N puts you down and up again (crouch or jump gets up too). */
   const proneOn = useRef(false);
+  /** Crouch locked on (C twice quickly; C again, a jump or lying down lets it go), and when C was last tapped. */
+  const crouchLock = useRef(false);
+  const lastC = useRef(-1);
   /** Freelook (held ` or the middle button): how far the view is turned from where the body faces and aims. */
   const free = useRef({ yaw: 0, pitch: 0, on: false });
   /** Third person: where the camera sits and where its crosshair rests (reused every frame). */
@@ -520,6 +523,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       camY.current = null;
       third.current = null;
       proneOn.current = false;
+      crouchLock.current = false;
       free.current.yaw = free.current.pitch = 0;
       overAt.current = null;
       finished.current = false;
@@ -823,7 +827,20 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         }
         if (you.car >= 0 || you.drop) proneOn.current = false;
         inp.prone = proneOn.current;
-        inp.crouch = k.down('KeyC') || t.crouch;
+        // crouch: held C, or locked on by tapping C twice quickly (C again lets it go, and so do a jump, lying down,
+        // a seat and dying)
+        if (cTap) {
+          const now = performance.now();
+          if (crouchLock.current) {
+            crouchLock.current = false;
+            lastC.current = -1;
+          } else if (lastC.current >= 0 && now - lastC.current < 350) {
+            crouchLock.current = true;
+            lastC.current = -1;
+          } else lastC.current = now;
+        }
+        if (crouchLock.current && (proneOn.current || k.pressed('Space') || you.car >= 0 || you.drop || you.climb || you.ladder >= 0 || !you.alive)) crouchLock.current = false;
+        inp.crouch = k.down('KeyC') || crouchLock.current || t.crouch;
         // lean out: hold Y (left) or U (right)
         inp.lean = (k.down('KeyU') ? 1 : 0) - (k.down('KeyY') ? 1 : 0);
         // (at the wheel Space is the handbrake, held)
