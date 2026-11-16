@@ -10,7 +10,7 @@ import { CELL, T_HALF, T_RES, floorAt, generateTerrain, heightAt, normalAt, rayT
 import { ARMOR, KILL_REWARD, LOSS_REWARD, PAVISE, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
 
 import { ARENA, ROYALE_ARENA, SITE_R, STOREY, withBoxes, worldFor, type Box, type World } from '../src/os/arcade/games/ridgeline/world.ts';
-import { AMMO_MAX, AMMO_OF, AMMO_PACK, BOOST, BOOST_DRAIN, HEAL, NADE_MAX, RED_LIVE, RED_WARN, ROYALE_PLAYERS, VEST, X4_ZOOM, ZONES, ammoCap, fits, gunLabel, healCap, magOf, richness, scopeOf, spawnLoot, zoomOf, type AmmoKind, type Item } from '../src/os/arcade/games/ridgeline/royale.ts';
+import { AMMO_MAX, AMMO_OF, AMMO_PACK, BOOST, BOOST_DRAIN, HEAL, HEAT_CAP, LAND_GRACE, NADE_MAX, PACE_FLOOR, PACE_KNOTS, RED_LIVE, RED_WARN, ROYALE_PLAYERS, TIERS, VEST, X4_ZOOM, ZONES, aliveTarget, ammoCap, fits, paceOf, gunLabel, healCap, magOf, richness, scopeOf, spawnLoot, zoomOf, type AmmoKind, type Item } from '../src/os/arcade/games/ridgeline/royale.ts';
 import {
   BLAST_R,
   BULLET_G,
@@ -39,6 +39,7 @@ import {
   partsOf,
   spreadOf,
   idleInput,
+  RUN,
   lootNear,
   markRed,
   plantSite,
@@ -638,7 +639,7 @@ function quietRoyale(seed: number, put: [number, number, number][]) {
 }
 
 test('royale: a supply crate comes down inside the next circle, with the best gear, and can be looted', () => {
-  const m = quietRoyale(31, []);
+  const m = quietRoyale(32, []);
   const z = m.zone!;
   const s = dropSupply(m, z.nx, z.nz, z.nr)!;
   assert.ok(s, 'a crate is on its way');
@@ -844,6 +845,204 @@ test('royale: a hundred drop in, loot, fight and the zone closes to one left sta
   assert.ok(modded > 5, `guns with attachments on (${modded} at once)`);
   assert.ok(boosts > 5, `boosts used when hurt (${boosts})`);
   assert.ok(newGear > 20, `the new guns, shields and grenades looted (${newGear})`);
+});
+
+test('royale pacing: the alive curve runs down through its knots, and the zone can always be outrun on foot', () => {
+  for (const [t, n] of PACE_KNOTS) assert.equal(aliveTarget(t), n, `the curve passes ${n} at ${t} s`);
+  for (let t = 0; t < 700; t += 0.5) assert.ok(aliveTarget(t + 0.5) <= aliveTarget(t), `the curve never rises (${t} s)`);
+  assert.equal(aliveTarget(-5), 100);
+  assert.equal(aliveTarget(900), 2);
+  // pace: full when behind the curve, down to the floor when far ahead of it
+  assert.equal(paceOf(100, 300), 1);
+  assert.equal(paceOf(5, 100), PACE_FLOOR);
+  assert.ok(paceOf(70, 195) > PACE_FLOOR && paceOf(70, 195) < 1);
+  // about ten minutes in all
+  const total = ZONES.reduce((s, z) => s + z.wait + z.shrink, 0);
+  assert.ok(total >= 600 && total <= 700, `${total} s of zone`);
+  assert.equal(ZONES[ZONES.length - 1].r, 0);
+  // the edge's worst speed: the radius closing plus the farthest the centre moves (nextCircle shifts it up to 0.92 of
+  // the radii's difference), for the first phase from the start's circle (startRoyale picks its centre within 0.75 of
+  // it), never over 80% of a run
+  const r0 = ROYALE_ARENA * 1.45;
+  ZONES.forEach((z, i) => {
+    const fr = i === 0 ? r0 : ZONES[i - 1].r;
+    const shift = z.r > 0 ? Math.max(0, (i === 0 ? r0 * 0.75 : fr) - z.r) * 0.92 : 0;
+    const speed = (fr - z.r + shift) / z.shrink;
+    assert.ok(speed <= 0.8 * RUN, `phase ${i + 1}: the edge moves ${speed.toFixed(2)} m/s`);
+    assert.ok(z.r < fr, `phase ${i + 1} closes`);
+  });
+});
+
+test('royale pacing: bots come in tiers, mostly recruits and regulars, a few veterans and aces', () => {
+  const count = [0, 0, 0, 0];
+  let n = 0;
+  for (const seed of [3, 4]) {
+    const m = createMatch(worldFor('vale', true), 'royale', 'normal', { seed });
+    for (const a of m.actors) {
+      if (!a.brain) continue;
+      count[a.brain.tier]++;
+      n++;
+      assert.ok(a.brain.skill >= 0.05 && a.brain.skill <= 0.9);
+    }
+    // the same seed gives the same tiers
+    const again = createMatch(worldFor('vale', true), 'royale', 'normal', { seed });
+    assert.deepEqual(
+      again.actors.map((a) => a.brain?.tier ?? -1),
+      m.actors.map((a) => a.brain?.tier ?? -1),
+    );
+  }
+  assert.equal(n, 198);
+  TIERS.forEach((t, i) => assert.ok(Math.abs(count[i] / n - t.share) <= 0.08, `tier ${i}: ${count[i]} of ${n}`));
+  // an ace reacts faster and aims better than a recruit of the same level
+  const m = createMatch(worldFor('vale', true), 'royale', 'hard', { seed: 3 });
+  const of = (t: number) => m.actors.filter((a) => a.brain?.tier === t).map((a) => a.brain!);
+  const mean = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / xs.length;
+  assert.ok(mean(of(3).map((b) => b.skill)) > mean(of(0).map((b) => b.skill)) + 0.2);
+  assert.ok(mean(of(3).map((b) => b.react)) < mean(of(0).map((b) => b.react)) * 0.6);
+});
+
+/** A royale with a person (seat 0, armed, landed long ago) standing in the open and `n` armed bots in a line `dist`
+ * off, 10 m apart (the rest of the lobby out of the way, though still counted). `tick` steps it, keeping the person
+ * unhurt and every bot with nobody in its sights standing on its spot looking at the person. */
+function faceOff(level: 'easy' | 'normal' | 'hard', n: number, dist: number) {
+  const w = worldFor('mesa', true);
+  const t = w.terrain;
+  const open = (x: number, z: number) => {
+    const y = floorAt(t, x, z);
+    return Math.abs(x) < w.arena - 20 && Math.abs(z) < w.arena - 20 && y > t.water + 0.5 && !blockedAt(w, x, z, y) && normalAt(t, x, z).y > 0.9;
+  };
+  for (let k = 0; k < 4000; k++) {
+    const px = Math.cos(k * 2.399) * k * 0.08;
+    const pz = Math.sin(k * 2.399) * k * 0.08;
+    const ang = k * 0.61;
+    const dx = Math.cos(ang);
+    const dz = Math.sin(ang);
+    if (!open(px, pz)) continue;
+    const py = floorAt(t, px, pz);
+    const spots: [number, number, number][] = [];
+    for (let i = 0; i < n; i++) {
+      const off = (i - (n - 1) / 2) * 10;
+      const bx = px + dx * dist - dz * off;
+      const bz = pz + dz * dist + dx * off;
+      if (!open(bx, bz)) break;
+      const by = floorAt(t, bx, bz);
+      if (!clearLine(w, bx, by + 1.6, bz, px, py + 1.2, pz)) break;
+      spots.push([bx, by + 0.05, bz]);
+    }
+    if (spots.length < n) continue;
+    const m = createMatch(w, 'royale', level, { seed: 5 });
+    m.redT = 1e9;
+    m.cars = [];
+    for (const a of m.actors) a.alive = false;
+    const place = (a: Actor, x: number, y: number, z: number) => {
+      a.alive = true;
+      a.drop = 0;
+      a.dropT = -100;
+      a.body.x = x;
+      a.body.y = y;
+      a.body.z = z;
+      a.body.onGround = true;
+      a.guns = [gun('kestrel'), null, null];
+      a.slot = 0;
+      a.ammo.rifle = 120;
+      a.vest = 2;
+      a.armor = VEST[2];
+    };
+    const you = m.actors[0];
+    place(you, px, py + 0.05, pz);
+    const bots = spots.map(([x, y, z], i) => {
+      const a = m.actors[i + 1];
+      place(a, x, y, z);
+      return a;
+    });
+    const tick = () => {
+      you.hp = 100;
+      bots.forEach((b, i) => {
+        if (b.brain!.target >= 0) return;
+        b.body.x = spots[i][0];
+        b.body.z = spots[i][2];
+        b.body.vx = b.body.vz = 0;
+        b.yaw = Math.atan2(-(px - b.body.x), -(pz - b.body.z));
+        b.pitch = 0;
+      });
+      step(m, DT, idleInput(you.yaw, you.pitch));
+    };
+    return { m, you, bots, tick };
+  }
+  throw new Error('no open ground for the face off');
+}
+
+test('royale pacing: only so many bots pick out the same person at once (two on normal, one on easy)', () => {
+  for (const [level, cap] of [
+    ['normal', 2],
+    ['easy', 1],
+  ] as const) {
+    assert.equal(HEAT_CAP[level], cap);
+    const { m, you, bots, tick } = faceOff(level, 5, 40);
+    let most = 0;
+    for (let i = 0; i < 60 * 4; i++) {
+      tick();
+      const on = bots.filter((b) => b.alive && b.brain!.target === you.id).length;
+      most = Math.max(most, on);
+      assert.ok(on <= cap, `${level}: ${on} bots on you at ${m.time.toFixed(2)} s`);
+    }
+    assert.equal(most, cap, `${level}: the cap is reached (they do see you)`);
+    // whoever you shoot at still answers back, over the cap
+    const r = faceOff(level, cap + 1, 40);
+    let spare: Actor | undefined;
+    for (let i = 0; i < 60 * 4 && !spare; i++) {
+      r.tick();
+      if (r.bots.filter((b) => b.brain!.target === r.you.id).length === cap) spare = r.bots.find((b) => b.brain!.target < 0);
+    }
+    assert.ok(spare, `${level}: the cap is reached with one bot left over`);
+    let answered = false;
+    for (let i = 0; i < 60 && !answered; i++) {
+      spare.hurtFrom = r.you.id;
+      spare.hurtT = r.m.time;
+      r.tick();
+      answered = spare.brain!.target === r.you.id;
+    }
+    assert.ok(answered, `${level}: a bot you shot at turns on you`);
+  }
+});
+
+test('royale pacing: a person just down with no gun is left alone unless close, and fair game once armed', () => {
+  const { m, you, bots, tick } = faceOff('normal', 1, 30);
+  const bot = bots[0];
+  you.guns = [null, null, null];
+  you.dropT = m.time - 2;
+  for (let i = 0; i < 60 * 4; i++) {
+    tick();
+    assert.notEqual(bot.brain!.target, you.id, 'not picked out while just landed and unarmed');
+  }
+  // once armed: picked out
+  you.guns = [gun('kestrel'), null, null];
+  let seen = false;
+  for (let i = 0; i < 60 * 4 && !seen; i++) {
+    tick();
+    seen = bot.brain!.target === you.id;
+  }
+  assert.ok(seen, 'an armed person is picked out');
+  // unarmed and just down, but close: noticed all the same
+  const { m: m2, you: you2, bots: bots2, tick: tick2 } = faceOff('normal', 1, 6);
+  you2.guns = [null, null, null];
+  you2.dropT = m2.time - 2;
+  seen = false;
+  for (let i = 0; i < 60 * 4 && !seen; i++) {
+    tick2();
+    seen = bots2[0].brain!.target === you2.id;
+  }
+  assert.ok(seen, 'close by, noticed anyway');
+  // the grace runs out
+  const { m: m3, you: you3, bots: bots3, tick: tick3 } = faceOff('normal', 1, 30);
+  you3.guns = [null, null, null];
+  you3.dropT = m3.time - LAND_GRACE - 1;
+  seen = false;
+  for (let i = 0; i < 60 * 4 && !seen; i++) {
+    tick3();
+    seen = bots3[0].brain!.target === you3.id;
+  }
+  assert.ok(seen, 'past the grace, picked out unarmed');
 });
 
 /** A royale with only you in it, on open flat ground near the middle of the zone, with nothing lying near you. */

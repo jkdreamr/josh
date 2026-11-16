@@ -30,7 +30,7 @@
 // someone joining mid match takes over a bot (breach: on the team with fewer people); if the host leaves, the next
 // host's game (a mirror until then) takes over the rules from where they stood.
 // Pure (no DOM), so it runs under node.
-import { newBrain } from './bots.ts';
+import { newBrain, royaleTier } from './bots.ts';
 import { CAR_REACH, crashHurt, enterCar, hullDist, leaveCar } from './cars.ts';
 import { clearLine } from './physics.ts';
 import {
@@ -822,13 +822,10 @@ export class Session {
     if (changed) this.sendSync();
   }
 
-  /** A bot's brain (a royale's are slower and less sure, as createMatch makes them). */
+  /** A bot's brain (a royale's with the tier createMatch gives that place, from the same seed). */
   private brainFor(m: Match, a: Actor) {
     const br = newBrain(m.level, a.id);
-    if (m.mode === 'royale') {
-      br.react *= 1.45;
-      br.skill *= 0.88;
-    }
+    if (m.mode === 'royale') royaleTier(br, this.seed, a.id);
     br.reset = true;
     return br;
   }

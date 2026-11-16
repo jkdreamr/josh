@@ -4,13 +4,13 @@
 // zone until one is left. Deathmatch:
 // everyone for themselves with quick respawns. Players and bots both act through the same Input, so the rules treat
 // them alike. Pure TS: the renderer, the sound and the HUD read the state and the events after each step.
-import { DM_HUBS, botInput, callout, newBrain, type Brain, type BotLevel } from './bots.ts';
+import { DM_HUBS, botInput, callout, newBrain, royaleTier, type Brain, type BotLevel } from './bots.ts';
 import { blastCars, carHit, carNear, enterCar, hurtCar, leaveCar, rayCars, rideInput, spawnCars, stepCars, type Car } from './cars.ts';
 import { GRAB_T, LADDER_DOWN, LADDER_UP, climbAt, climbHeight, findClimb, ladderOff, ladderOn, ladderSpot, ladderToGet, type Climb } from './climb.ts';
 import { fieldTo, navOf } from './nav.ts';
 import { clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
 import { CROUCH_H, GRAVITY, PRONE_H, STAND_H, blockedAt, clearLine, groundAt, newHit, raySphere, rayWorld, stepBody, type Body } from './physics.ts';
-import { AMMO_KINDS, AMMO_OF, BOOST, BOOST_DRAIN, BOOST_FAST, BOOST_RUN, CHUTE_GLIDE, CHUTE_OPEN, CHUTE_VY, COMP_BLOOM, COMP_KICK, FALL_FAST, FALL_SLOW, FALL_VY, HEAL, HELMET, RED_EVERY, RED_FIRST, RED_GAP, RED_LIVE, RED_R, RED_WARN, ROYALE_PLAYERS, SHELL_DMG, SHELL_R, SUPPLY_FALL, SUPPLY_HIGH, SUPPLY_MAX, USE, VEST, ZONES, adsOf, adsTimeOf, ammoCap, attach, boostCap, boostHeal, fits, fitted, hasAtt, healCap, magOf, nadeCap, nextCircle, onLand, planeAt, planePath, spawnLoot, supplyContents, type AmmoKind, type AttKind, type BoostKind, type HealKind, type Item, type Mods, type Plane, type Red, type RoyaleNade, type Supply, type UseKind, type Zone as Circle, ROYALE_NADES } from './royale.ts';
+import { AMMO_KINDS, AMMO_OF, BOOST, BOOST_DRAIN, BOOST_FAST, BOOST_RUN, CHUTE_GLIDE, CHUTE_OPEN, CHUTE_VY, COMP_BLOOM, COMP_KICK, FALL_FAST, FALL_SLOW, FALL_VY, HEAL, HELMET, RED_EVERY, RED_FIRST, RED_GAP, RED_LIVE, RED_R, RED_WARN, ROYALE_PLAYERS, SHELL_DMG, SHELL_R, SUPPLY_FALL, SUPPLY_HIGH, SUPPLY_MAX, USE, VEST, ZONES, adsOf, adsTimeOf, ammoCap, attach, boostCap, boostHeal, fits, fitted, hasAtt, healCap, magOf, nadeCap, nextCircle, onLand, paceOf, planeAt, planePath, spawnLoot, supplyContents, type AmmoKind, type AttKind, type BoostKind, type HealKind, type Item, type Mods, type Plane, type Red, type RoyaleNade, type Supply, type UseKind, type Zone as Circle, ROYALE_NADES } from './royale.ts';
 import { floorAt, heightAt, normalAt } from './terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, LOSS_STREAK_BONUS, MAX_CREDITS, NADES, PAVISE, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, interval, kickOf, rangeMul, type WeaponDef, type WeaponId } from './weapons.ts';
 import { ARENA, SITE_R, SPAWN_R, yawTo, type Surface, type World } from './world.ts';
@@ -385,6 +385,11 @@ export type Match = {
   redT: number;
   /** Royale: the vehicles (none in the other modes). */
   cars: Car[];
+  /** Royale, on the machine that runs the rules: how readily bots pick fights with other bots (0 to 1, from the time
+   * and who is left, see paceOf), and per actor how many bots have it in their sights now. Never sent: a new host
+   * works both out again. */
+  pace: number;
+  heat: Uint8Array;
   /** Which actor is played on this machine, whether this machine runs the rules (solo and the online host) or only
    * mirrors them (an online guest), and a guest's line to the host. */
   me: number;
@@ -577,6 +582,8 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
     red: null,
     redT: 0,
     cars: [],
+    pace: 1,
+    heat: new Uint8Array(count),
     me,
     authority: true,
     net: null,
@@ -1156,11 +1163,9 @@ function startRoyale(m: Match, seed: number) {
     a.body.onGround = false;
     a.yaw = yaw;
     a.pitch = -0.4;
-    // a hundred bots at breach sharpness would end it in a minute: slower to react, a little less sure of aim
-    if (a.brain) {
-      a.brain.react *= 1.45;
-      a.brain.skill *= 0.88;
-    }
+    // (a hundred bots at breach sharpness would end it in a minute: each gets a tier, most of them slower to react
+    // and less sure of aim)
+    if (a.brain) royaleTier(a.brain, seed, a.id);
   }
 }
 
@@ -1565,6 +1570,10 @@ function stepRoyale(m: Match, dt: number) {
   }
   stepSupplies(m, dt);
   stepRed(m, dt);
+  // pacing: how readily bots take each other on (once a second), and who has how many bots on them
+  if (Math.floor(m.time) !== Math.floor(m.time - dt)) m.pace = paceOf(m.alive, m.time);
+  m.heat.fill(0);
+  for (const a of m.actors) if (a.alive && a.bot && a.brain && a.brain.target >= 0) m.heat[a.brain.target]++;
   // outside it hurts, once a second; a boost mends a little all the time while it drains
   for (const a of m.actors) {
     if (!a.alive || a.drop) continue;

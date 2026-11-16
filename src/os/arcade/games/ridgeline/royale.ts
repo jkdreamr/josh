@@ -130,14 +130,71 @@ export type Item = { id: number; kind: ItemKind; what: string; n: number; x: num
 
 /** One phase of the zone: it holds for `wait` seconds, then closes to radius `r` over `shrink`; outside costs `dps`. */
 export type ZonePhase = { wait: number; shrink: number; r: number; dps: number };
+// (about ten minutes in all; every close is slow enough that someone at the far side of the old circle can keep
+// ahead of it on foot, with the next centre as far off as nextCircle ever puts it)
 export const ZONES: ZonePhase[] = [
-  { wait: 90, shrink: 40, r: 220, dps: 1 },
-  { wait: 40, shrink: 30, r: 140, dps: 2 },
-  { wait: 35, shrink: 25, r: 85, dps: 4 },
-  { wait: 25, shrink: 22, r: 48, dps: 6 },
-  { wait: 20, shrink: 20, r: 22, dps: 9 },
-  { wait: 15, shrink: 22, r: 0, dps: 14 },
+  { wait: 120, shrink: 75, r: 250, dps: 1 },
+  { wait: 65, shrink: 45, r: 165, dps: 2 },
+  { wait: 50, shrink: 40, r: 105, dps: 3 },
+  { wait: 45, shrink: 35, r: 62, dps: 5 },
+  { wait: 40, shrink: 30, r: 34, dps: 8 },
+  { wait: 30, shrink: 25, r: 16, dps: 11 },
+  { wait: 20, shrink: 25, r: 0, dps: 14 },
 ];
+
+/** Pacing: how many should be left at each point of a match ([match seconds, alive] knots, read in between): a quiet
+ * landing and loot, a fight about every minute, the last ten reached around the eighth minute. */
+export const PACE_KNOTS: [number, number][] = [
+  [0, 100],
+  [45, 100],
+  [90, 92],
+  [195, 70],
+  [305, 48],
+  [395, 32],
+  [475, 20],
+  [545, 11],
+  [600, 6],
+  [645, 2],
+];
+/** The fewest left the curve wants at this match time. */
+export function aliveTarget(t: number) {
+  const K = PACE_KNOTS;
+  if (t <= K[0][0]) return K[0][1];
+  for (let i = 1; i < K.length; i++)
+    if (t <= K[i][0]) {
+      const [t0, a0] = K[i - 1];
+      const [t1, a1] = K[i];
+      return a0 + ((a1 - a0) * (t - t0)) / (t1 - t0);
+    }
+  return K[K.length - 1][1];
+}
+/** The lowest pace there is: even far ahead of the curve bots still now and then pick out one another. */
+export const PACE_FLOOR = 0.04;
+/** How readily bots pick fights with other bots, 0 to 1: full when the match is at or behind the curve (more left
+ * than it wants), less the further ahead of it the knockouts have run. */
+export const paceOf = (alive: number, t: number) => Math.min(1, Math.max(PACE_FLOOR, (alive - aliveTarget(t) + 3) / 9));
+/** The most bots that pick out the same person on their own at once, per level (whoever that person shoots at, or
+ * who is close, still notices them). */
+export const HEAT_CAP: Record<'easy' | 'normal' | 'hard', number> = { easy: 1, normal: 2, hard: 3 };
+/** A person who landed under this many seconds ago with no gun yet is left alone unless close. */
+export const LAND_GRACE = 20;
+/** Skill tiers for a royale's bots: their share of the lobby, and what each does to the level's skill and reaction
+ * time (recruits, regulars, veterans, aces). */
+export const TIERS: { share: number; skill: number; react: number }[] = [
+  { share: 0.5, skill: 0.55, react: 1.9 },
+  { share: 0.32, skill: 0.88, react: 1.45 },
+  { share: 0.14, skill: 1.2, react: 1.15 },
+  { share: 0.04, skill: 1.5, react: 0.95 },
+];
+/** The tier a roll of 0 to 1 lands on. */
+export function tierOf(roll: number) {
+  let acc = 0;
+  for (let i = 0; i < TIERS.length; i++) {
+    acc += TIERS[i].share;
+    if (roll < acc) return i;
+  }
+  return TIERS.length - 1;
+}
 
 export type Zone = {
   /** Phase index (ZONES.length once it has closed). */
