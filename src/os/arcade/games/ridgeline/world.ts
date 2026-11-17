@@ -44,13 +44,26 @@ export type Placed = { key: ModelKey; x: number; y: number; z: number; yaw: numb
 export type Opening = { c: number; w: number; b: number; t: number };
 /** One wall of a building and its openings, in the building's own frame: along local x (between z t0 and t1) or along
  * local z (between x t0 and t1); `inner` for a wall between two rooms. */
-export type BWall = { alongX: boolean; t0: number; t1: number; holes: Opening[]; inner: boolean };
+export type BWall = { alongX: boolean; t0: number; t1: number; holes: Opening[]; inner: boolean; lv?: number };
 /** A building as built, for the renderer's finer detail (frames, glass, doors, gutters, chimneys, furniture): its frame
  * (middle and quarter turns, as for a Frame), size, floor level, wall height, colors and walls. */
-export type Bld = { kind: 'house' | 'barn' | 'shed' | 'ruin'; x: number; z: number; rot: number; w: number; d: number; y: number; H: number; style: Style; part: Part; wall: number; trim: number; roof: number; flat: boolean; walls: BWall[] };
+export type Bld = { kind: 'house' | 'barn' | 'shed' | 'ruin'; x: number; z: number; rot: number; w: number; d: number; y: number; H: number; style: Style; part: Part; wall: number; trim: number; roof: number; flat: boolean; walls: BWall[]; up?: Upper };
+/** What a building has above its ground floor: the floor level (the top of the floor) of each storey over the first
+ * (a wall's `lv` says which storey it is on: 0 the ground, 1 the next), local rectangles (x0, z0, x1, z1 each) to keep
+ * the furniture off (the stairs, a stairwell), and whether its flat roof can be climbed to. */
+export type Upper = { lv: number[]; keep: number[]; roof: boolean };
+/** A ladder up an outside wall (or a tower's side): the middle of its foot on the face it stands against, that face's
+ * outward normal, the height of its foot, the height of the surface it climbs onto, and its half width. */
+export type Ladder = { x: number; z: number; nx: number; nz: number; y0: number; y1: number; hw: number };
+/** A walkable surface above the ground (an upper floor, a mezzanine, a roof or a platform): its rectangle and the height
+ * of its top. */
+export type Deck = { x0: number; z0: number; x1: number; z1: number; y: number };
+/** A straight flight of stairs: the middle of the floor just before its first step (a, at floor height ay) and just past
+ * its last (b, at by), and its half width. */
+export type Flight = { ax: number; ay: number; az: number; bx: number; by: number; bz: number; hw: number };
 /** Props drawn in detail by the renderer, whose colliders (if any) the world holds already: the military dressing, and
  * the street props against the buildings' outside walls. */
-export type DressKind = 'container' | 'bagarc' | 'pallets' | 'tower' | 'carwreck' | 'razor' | 'tent' | 'net' | StreetKind;
+export type DressKind = 'container' | 'bagarc' | 'pallets' | 'tower' | 'carwreck' | 'razor' | 'tent' | 'net' | 'lookout' | StreetKind;
 export type StreetKind = 'bench' | 'ubox' | 'bins' | 'cask' | 'bucket' | 'wcan' | 'rim';
 /** A dressed prop: its kind, the middle of its footprint at its base height, quarter turns, a size (meters, or a count),
  * a variant (0 to 1, for its look) and a color. */
@@ -82,7 +95,10 @@ export type ModelKey =
   | 'log';
 /** A team's start: spawns[0] is where the attackers start, spawns[1] the defenders. */
 export type Spawn = { x: number; y: number; z: number; yaw: number; slots: Slot[] };
-export type Town = { name: string; x: number; z: number; site: number };
+/** What a royale's place is: a town round a site, a village, or one of the places out over the land built to its own
+ * plan (see placeTowns). A breach's towns have no kind. */
+export type TownKind = 'town' | 'village' | 'compound' | 'depot' | 'farm' | 'outpost';
+export type Town = { name: string; x: number; z: number; site: number; kind?: TownKind };
 /** Uniform grid over the terrain: start[c]..start[c+1] index items, which encode kind * KIND + index. */
 export type Grid = { n: number; size: number; start: Int32Array; items: Int32Array };
 export type Minimap = { size: number; span: number; data: Uint8ClampedArray };
@@ -114,6 +130,8 @@ export type World = {
   models: Placed[];
   /** RGBA per terrain vertex: sun visibility, ambient occlusion, far object shadow, bare ground. */
   light: Uint8Array;
+  /** Buildings and big props as boxes, to bake their far shadows again for another sun (relight.ts). */
+  shade: Rect3[];
   minimap: Minimap;
   /** Half the side of the playable square. */
   arena: number;
@@ -126,6 +144,11 @@ export type World = {
   /** The buildings as built and the props drawn in detail (see Bld and Dress), for the renderer. */
   bld: Bld[];
   dress: Dress[];
+  /** What takes you above the ground: ladders, walkable floors and roofs over it, and flights of stairs (see
+   * climb.ts, and nav.ts for how the bots use them). */
+  ladders: Ladder[];
+  decks: Deck[];
+  flights: Flight[];
 };
 
 export const KIND = 1 << 22;
@@ -173,6 +196,14 @@ type Ctx = {
   dress: Dress[];
   /** Small rocks the dressing drops (never colliders), added after the rest. */
   lateRocks: Rock[];
+  ladders: Ladder[];
+  decks: Deck[];
+  flights: Flight[];
+  /** A royale's land (where the taller buildings and the ladders go). */
+  royale: boolean;
+  /** How many stacks of crates a barn or a warehouse gets on its floor (3 unless set: the royale places built to a
+   * plan of their own set it lower, as each crate is a real model to draw). */
+  stock?: number;
 };
 
 const STYLE_WALLS: Record<Style, number[]> = {
@@ -415,10 +446,17 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
       // parapet and beam ends
       const pt = top + 0.22;
       const ph = pt + 0.55;
-      f.box(-hw - ov, pt, -hd - ov, hw + ov, ph, -hd - ov + 0.2, 'wall', wc);
-      f.box(-hw - ov, pt, hd + ov - 0.2, hw + ov, ph, hd + ov, 'wall', wc);
-      f.box(-hw - ov, pt, -hd - ov + 0.2, -hw - ov + 0.2, ph, hd + ov - 0.2, 'wall', wc);
-      f.box(hw + ov - 0.2, pt, -hd - ov + 0.2, hw + ov, ph, hd + ov - 0.2, 'wall', wc);
+      // (in a royale most flat roofed houses have a ladder up the side, through a gap in the parapet)
+      const climb = c.royale && kind === 'house' && hash01(cx, cz) < 0.7;
+      const lz = ladderAt(hd);
+      parapet(f, hw, hd, ov, pt, ph, wc, climb ? [lz - 0.6, lz + 0.6] : undefined);
+      if (climb) {
+        ladder(c, f, -hw, lz, -1, 0, pt);
+        c.decks.push({ ...f.rect(-hw - ov + 0.2, -hd - ov + 0.2, hw + ov - 0.2, hd + ov - 0.2), y: pt });
+        bld.up = { lv: [], keep: [], roof: true };
+        const [lx, lzz] = f.xz(hw * 0.35, hd * 0.25);
+        c.loot.push(lx, pt + 0.02, lzz);
+      }
       if (style === 'adobe')
         for (let x = -hw + 0.8; x < hw - 0.4; x += 1.4) f.box(x - 0.1, top - 0.35, -hd - 0.5, x + 0.1, top - 0.15, -hd, 'trim', trim, false);
     } else {
@@ -440,7 +478,7 @@ function addBuilding(c: Ctx, kind: Kind, cx: number, cz: number, w: number, d: n
   } else c.blocks.push({ x0: rr.x0, y0: y, z0: rr.z0, x1: rr.x1, y1: y + H * 0.6, z1: rr.z1 });
   // inside cover for the big ones
   if (kind === 'barn') {
-    for (let k = 0; k < 3; k++) {
+    for (let k = 0; k < (c.stock ?? 3); k++) {
       const lx = (r() - 0.5) * (w - 4);
       const lz = (r() - 0.5) * (d - 6);
       crates(c, f, lx, lz, floorTop);
@@ -461,8 +499,438 @@ function crates(c: Ctx, f: Frame, lx: number, lz: number, y: number) {
   if (r() < 0.5) f.box(lx - s / 2 + 0.2, y + s, lz - s / 2 + 0.1, lx + s / 2 + 0.2, y + s * 2, lz + s / 2 + 0.1, 'wood', col);
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// up off the ground: floors over floors, stairs, ladders, and roofs and platforms to stand on
+
+/** Stairs: the most a step rises, and how far each one runs. */
+export const STAIR = { rise: 0.24, run: 0.27 };
+/** Floor to floor, a storey of the taller buildings. */
+export const STOREY = 3.1;
+/** Half the width of a ladder. */
+export const LADDER_HW = 0.3;
+/** A lookout tower: its platform's height over the highest ground under it, its side, and its roof over the platform. */
+export const LOOKOUT = { h: 7.2, side: 3.2, roof: 2.35 };
+
+type LRect = [number, number, number, number];
+
+/** A floor slab over a local rectangle, from y0 up to y1, with holes (local rectangles) left open: laid as strips
+ * between the holes, each a solid box and a deck to walk on. */
+function slab(c: Ctx, f: Frame, x0: number, z0: number, x1: number, z1: number, y0: number, y1: number, holes: LRect[], part: Part, color: number) {
+  const xs = [x0, x1];
+  for (const h of holes) xs.push(clamp(h[0], x0, x1), clamp(h[2], x0, x1));
+  xs.sort((a, b) => a - b);
+  for (let i = 0; i + 1 < xs.length; i++) {
+    const a = xs[i];
+    const b = xs[i + 1];
+    if (b - a < 0.02) continue;
+    const cover = holes
+      .filter((h) => h[0] <= a + 1e-6 && h[2] >= b - 1e-6)
+      .map((h) => [h[1], h[3]])
+      .sort((p, q) => p[0] - q[0]);
+    const put = (za: number, zb: number) => {
+      if (zb - za < 0.02) return;
+      f.box(a, y0, za, b, y1, zb, part, color);
+      c.decks.push({ ...f.rect(a, za, b, zb), y: y1 });
+    };
+    let z = z0;
+    for (const [h0, h1] of cover) {
+      if (h0 > z) put(z, Math.min(h0, z1));
+      z = Math.max(z, h1);
+    }
+    if (z < z1) put(z, z1);
+  }
+}
+
+/** How long a flight is that climbs h. */
+const flightLen = (h: number) => Math.ceil(h / STAIR.rise - 1e-6) * STAIR.run;
+
+/**
+ * A straight flight of stairs in a frame: along local x (alongX) or z, from its foot at `a` to its head at `b` along
+ * it, between s0 and s1 across, from the floor at ya up to the floor at yb. Every step stands solid from `base`, so a
+ * body walks up it (as the watchtower's) and nothing walks under it.
+ */
+function flight(c: Ctx, f: Frame, alongX: boolean, a: number, b: number, s0: number, s1: number, ya: number, yb: number, base: number, part: Part, color: number) {
+  const n = Math.max(2, Math.ceil((yb - ya) / STAIR.rise - 1e-6));
+  const rise = (yb - ya) / n;
+  const dir = Math.sign(b - a);
+  const run = Math.abs(b - a) / n;
+  for (let k = 0; k < n; k++) {
+    const u0 = a + dir * k * run;
+    const u1 = a + dir * (k + 1) * run;
+    const top = ya + (k + 1) * rise;
+    if (alongX) f.box(Math.min(u0, u1), base, s0, Math.max(u0, u1), top, s1, part, color);
+    else f.box(s0, base, Math.min(u0, u1), s1, top, Math.max(u0, u1), part, color);
+  }
+  const m = (s0 + s1) / 2;
+  const at = (u: number) => (alongX ? f.xz(u, m) : f.xz(m, u));
+  const [ax, az] = at(a - dir * 0.45);
+  const [bx, bz] = at(b + dir * 0.45);
+  c.flights.push({ ax, ay: ya, az, bx, by: yb, bz, hw: Math.abs(s1 - s0) / 2 });
+}
+
+/** A low wall a meter high along the edge of a stairwell or a mezzanine, with a cap on it: you can't walk off past
+ * it, and you can shoot over it. */
+function rail(f: Frame, x0: number, y: number, z0: number, x1: number, z1: number, part: Part, color: number) {
+  f.box(x0, y, z0, x1, y + 1, z1, part, color);
+  f.box(x0 - 0.03, y + 1, z0 - 0.03, x1 + 0.03, y + 1.06, z1 + 0.03, 'trim', 0x5a4a3a, false);
+}
+
+/** A ladder up the outside of a face in a frame: the middle of its foot at local (lx, lz) on the face, (nlx, nlz) the
+ * way out from it, from the ground there up onto the surface at y1 (drawn by the renderer, see gfx/dress.ts). */
+function ladder(c: Ctx, f: Frame, lx: number, lz: number, nlx: number, nlz: number, y1: number) {
+  const [x, z] = f.xz(lx, lz);
+  const [ax, az] = f.xz(lx + nlx, lz + nlz);
+  const nx = ax - x;
+  const nz = az - z;
+  c.ladders.push({ x, z, nx, nz, y0: floorAt(c.t, x + nx * 0.6, z + nz * 0.6), y1, hw: LADDER_HW });
+}
+
+/** A flat roof's parapet, from pt up to ph round the edge of the roof slab (ov past the walls), broken on the local -x
+ * side between gap[0] and gap[1] (along z) where a ladder comes up. */
+function parapet(f: Frame, hw: number, hd: number, ov: number, pt: number, ph: number, wc: number, gap?: [number, number]) {
+  f.box(-hw - ov, pt, -hd - ov, hw + ov, ph, -hd - ov + 0.2, 'wall', wc);
+  f.box(-hw - ov, pt, hd + ov - 0.2, hw + ov, ph, hd + ov, 'wall', wc);
+  if (gap) {
+    f.box(-hw - ov, pt, -hd - ov + 0.2, -hw - ov + 0.2, ph, gap[0], 'wall', wc);
+    f.box(-hw - ov, pt, gap[1], -hw - ov + 0.2, ph, hd + ov - 0.2, 'wall', wc);
+  } else f.box(-hw - ov, pt, -hd - ov + 0.2, -hw - ov + 0.2, ph, hd + ov - 0.2, 'wall', wc);
+  f.box(hw + ov - 0.2, pt, -hd - ov + 0.2, hw + ov, ph, hd + ov - 0.2, 'wall', wc);
+}
+
+/** The foot of a ladder up a flat roof, along the local -x wall: near its front corner, clear of the windows. */
+const ladderAt = (hd: number) => -hd + 0.75;
+
+/** Plinth round the foot of the walls (as a house's), so the building sits on the ground. */
+function plinth(f: Frame, style: Style, hw: number, hd: number, y: number, T: number) {
+  const pc = style === 'adobe' ? 0x8a7458 : 0x8d8a84;
+  const base = y - 0.4;
+  const pt = y + 0.13;
+  const o = 0.06;
+  f.box(-hw - o, base, -hd - o, hw + o, pt, -hd + T, 'concrete', pc, false);
+  f.box(-hw - o, base, hd - T, hw + o, pt, hd + o, 'concrete', pc, false);
+  f.box(-hw - o, base, -hd + T, -hw + T, pt, hd - T, 'concrete', pc, false);
+  f.box(hw - T, base, -hd + T, hw + o, pt, hd - T, 'concrete', pc, false);
+}
+
+/** Loot spots on a floor at height y, n of them inside the walls and out of a keep-clear rectangle (local). */
+function floorLoot(c: Ctx, f: Frame, hw: number, hd: number, y: number, n: number, keep: LRect | null, margin = 0.9) {
+  for (let k = 0, tries = 0; k < n && tries < 40; tries++) {
+    const lx = (c.deco() * 2 - 1) * (hw - margin);
+    const lz = (c.deco() * 2 - 1) * (hd - margin);
+    if (keep && lx > keep[0] && lx < keep[2] && lz > keep[1] && lz < keep[3]) continue;
+    const [x, z] = f.xz(lx, lz);
+    c.loot.push(x, y + 0.02, z);
+    k++;
+  }
+}
+
+/** Plain concrete and render for the blocks of flats. */
+const BLOCK_WALLS: Record<Style, number[]> = {
+  farm: [0xcfc8bc, 0xb8b0a2, 0xd6cfc0, 0xa9a397],
+  adobe: [0xc8a882, 0xd2b48e, 0xbf9e78],
+  cabin: [0xb9b6ae, 0xa8a49a, 0xc4c0b6],
+  tropic: [0xe8e0cc, 0xd8e4dc, 0xf0dcc4, 0xcfd6cc],
+};
+
+type Tall = 'house2' | 'block' | 'warehouse';
+const TALL_SIZES: Record<Tall, [number, number, number, number]> = {
+  house2: [9, 10.5, 7.6, 8.8],
+  block: [12, 13.5, 9, 10],
+  warehouse: [15, 18, 11.5, 13],
+};
+
+/**
+ * A building of two storeys (a house) or three (a small block of flats): a straight stair up the inside of the back
+ * wall (on the block, two flights either side of a core wall, turning at a landing), the floors above with windows all
+ * round to shoot from and the stairwell railed off, and a pitched roof, or a flat one behind a parapet with a ladder up
+ * the outside. y is the ground floor's level. Draws on c.rng.
+ */
+function addTall(c: Ctx, kind: 'house2' | 'block', cx: number, cz: number, w: number, d: number, rot: number, y: number) {
+  const r = c.rng;
+  const style = c.def.style;
+  const f = new Frame(c, cx, cz, rot);
+  const T = 0.25;
+  const hw = w / 2;
+  const hd = d / 2;
+  const base = y - 0.4;
+  const block = kind === 'block';
+  const n = block ? 3 : 2;
+  const F = (k: number) => y + 0.12 + k * STOREY;
+  const top = F(n) - 0.2;
+  const wc = pick(r, block ? BLOCK_WALLS[style] : STYLE_WALLS[style]);
+  const roofColor = pick(r, STYLE_ROOFS[style]);
+  const wallPart: Part = style === 'cabin' && !block ? 'wood' : 'wall';
+  const trim = style === 'cabin' ? 0x3a2a1e : style === 'adobe' ? 0x6b4a2e : 0xd8d2c4;
+  const flat = block || style === 'adobe' || (style === 'tropic' && r() < 0.4);
+  const walls: BWall[] = [];
+  const up: Upper = { lv: [], keep: [], roof: flat };
+  for (let k = 1; k < n; k++) up.lv.push(F(k));
+  c.bld.push({ kind: 'house', x: cx, z: cz, rot, w, d, y, H: top - y, style, part: wallPart, wall: wc, trim, roof: roofColor, flat, walls, up });
+  const floorColor = style === 'adobe' ? 0xa08466 : 0x8a6a4a;
+  f.box(-hw, base, -hd, hw, F(0), hd, 'floor', floorColor);
+  plinth(f, style, hw, hd, y, T);
+  // the stair core along the inside of the back wall: strip A against it (the first flight, up toward +x), and on the
+  // block strip B beside it (the second, from the landing back toward -x), a core wall between the two
+  const L = flightLen(STOREY);
+  const zA1 = hd - T;
+  const zA0 = zA1 - 1;
+  const zB1 = zA0 - 0.1;
+  const zB0 = zB1 - 1;
+  const a1 = hw - T - 1.15;
+  const a0 = a1 - L;
+  const stepPart: Part = block ? 'concrete' : 'wood';
+  const stepColor = block ? 0x9a968e : 0x7a5a3a;
+  const inner = style === 'cabin' && !block ? wc : 0xe2dccd;
+  flight(c, f, true, a0, a1, zA0, zA1, F(0), F(1), base, stepPart, stepColor);
+  if (block) {
+    flight(c, f, true, a1, a0, zB0, zB1, F(1), F(2), F(1), stepPart, stepColor);
+    f.box(a0, base, zB1, a1, top, zA0, wallPart, inner);
+  }
+  const holeA: LRect = [a0, zA0, a1, zA1];
+  const holeB: LRect = [a0, zB0, a1, zB1];
+  for (let k = 1; k < n; k++) slab(c, f, -hw + T, -hd + T, hw - T, hd - T, F(k) - 0.2, F(k), [k === 1 ? holeA : holeB], 'floor', floorColor);
+  if (!block) {
+    rail(f, a0, F(1), zA0 - 0.1, a1, zA0, wallPart, inner);
+    rail(f, a0 - 0.1, F(1), zA0 - 0.1, a0, zA1, wallPart, inner);
+  } else {
+    rail(f, a0 - 0.1, F(1), zA0, a0, zA1, wallPart, inner);
+    rail(f, a0, F(2), zB0 - 0.1, a1, zB0, wallPart, inner);
+    rail(f, a1, F(2), zB0 - 0.1, a1 + 0.1, zB1, wallPart, inner);
+  }
+  const keep: LRect = [a0 - 1, (block ? zB0 : zA0) - 0.45, hw, hd];
+  up.keep.push(...keep);
+  // the walls, a storey at a time: the door and windows below, windows all round above
+  const win = (k: number, cpos: number): Opening => (k === 0 ? { c: cpos, w: 1.3, b: y + 1, t: y + 2.15 } : { c: cpos, w: 1.3, b: F(k) + 0.9, t: F(k) + 2.05 });
+  const slots = (half: number) => {
+    const m = Math.max(2, Math.floor((2 * half - 1.4) / 2.6));
+    return Array.from({ length: m }, (_, i) => -half + 1.3 + (i * (2 * half - 2.6)) / (m - 1));
+  };
+  const dpos = block ? 0 : (r() < 0.5 ? -1 : 1) * hw * 0.3;
+  const sideDoor = !block && r() < 0.6;
+  const lz = ladderAt(hd);
+  for (let k = 0; k < n; k++) {
+    const y0 = k === 0 ? base : F(k) - 0.2;
+    const y1 = F(k + 1) - 0.2;
+    const front = slots(hw)
+      .filter((p) => k > 0 || Math.abs(p - dpos) > 1.6)
+      .map((p) => win(k, p));
+    if (k === 0) front.push({ c: dpos, w: 1.3, b: base, t: y + 2.3 });
+    const back = slots(hw)
+      .filter((p) => p < a0 - 0.8 || p > a1 + 0.8)
+      .map((p) => win(k, p));
+    const sides = [-hd * 0.38, hd * 0.38].map((p) => win(k, p));
+    const right = k === 0 && sideDoor ? [win(k, hd * 0.38), { c: -hd * 0.35, w: 1.2, b: base, t: y + 2.3 }] : sides;
+    for (const [alongX, holes, a, b] of [
+      [true, front, -hd, -hd + T],
+      [true, back, hd - T, hd],
+      [false, sides, -hw, -hw + T],
+      [false, right, hw - T, hw],
+    ] as [boolean, Opening[], number, number][]) {
+      if (alongX) wallX(f, -hw, hw, a, b, y0, y1, holes, wallPart, wc, trim, walls);
+      else wallZ(f, -hd + T, hd - T, a, b, y0, y1, holes, wallPart, wc, trim, walls);
+      walls[walls.length - 1].lv = k;
+    }
+    // a band of trim round the floor line
+    if (k > 0) {
+      const o = 0.05;
+      const yb = F(k) - 0.26;
+      const yt = F(k) - 0.12;
+      f.box(-hw - o, yb, -hd - o, hw + o, yt, -hd + T, 'trim', trim, false);
+      f.box(-hw - o, yb, hd - T, hw + o, yt, hd + o, 'trim', trim, false);
+      f.box(-hw - o, yb, -hd + T, -hw + T, yt, hd - T, 'trim', trim, false);
+      f.box(hw - T, yb, -hd + T, hw + o, yt, hd - T, 'trim', trim, false);
+    }
+  }
+  const ov = flat ? 0.15 : 0.35;
+  f.box(-hw - ov, top, -hd - ov, hw + ov, top + 0.22, hd + ov, flat ? 'wall' : 'trim', flat ? wc : trim);
+  if (flat) {
+    // the roof: behind a parapet (chest high on the block, to fight from), up a ladder by the front corner
+    const pt = top + 0.22;
+    parapet(f, hw, hd, ov, pt, pt + (block ? 1 : 0.6), wc, [lz - 0.6, lz + 0.6]);
+    ladder(c, f, -hw, lz, -1, 0, pt);
+    c.decks.push({ ...f.rect(-hw - ov + 0.2, -hd - ov + 0.2, hw + ov - 0.2, hd + ov - 0.2), y: pt });
+    floorLoot(c, f, hw, hd, pt, 1, null, 1.2);
+  } else f.gable(-hw - 0.5, -hd - 0.5, hw + 0.5, hd + 0.5, top + 0.22, 1.9, w >= d, roofColor, wc);
+  for (let k = 0; k < n; k++) floorLoot(c, f, hw, hd, F(k), block ? 3 : 2, keep);
+  const rr = f.rect(-hw, -hd, hw, hd);
+  c.interiors.push({ x0: rr.x0 + T, y0: y - 0.5, z0: rr.z0 + T, x1: rr.x1 - T, y1: top, z1: rr.z1 - T });
+  c.blocks.push({ x0: rr.x0, y0: y, z0: rr.z0, x1: rr.x1, y1: top + (flat ? 0.8 : 1.6), z1: rr.z1 });
+}
+
+/**
+ * A warehouse: a tall shed of sheet metal (or boards, or render) with a big door, a mezzanine across its back end
+ * reached by a stair up one side wall and railed along its edge, high windows to shoot from up there, crates about the
+ * floor and a low pitched roof. Draws on c.rng.
+ */
+function addWarehouse(c: Ctx, cx: number, cz: number, w: number, d: number, rot: number, y: number) {
+  const r = c.rng;
+  const style = c.def.style;
+  const f = new Frame(c, cx, cz, rot);
+  const T = 0.25;
+  const hw = w / 2;
+  const hd = d / 2;
+  const base = y - 0.4;
+  const F0 = y + 0.12;
+  const top = y + 6.4;
+  const MY = y + 3.4;
+  const MD = 4.2;
+  const wallPart: Part = style === 'cabin' ? 'wood' : style === 'adobe' ? 'wall' : 'metal';
+  const wc = style === 'adobe' ? pick(r, STYLE_WALLS.adobe) : style === 'cabin' ? pick(r, STYLE_WALLS.cabin) : pick(r, [0x7d8580, 0x6f7a72, 0x8a8a84, 0x8a6a52]);
+  const trim = 0x4a4a48;
+  const roofColor = pick(r, STYLE_ROOFS[style]);
+  const walls: BWall[] = [];
+  const L = flightLen(MY - F0);
+  const zh = hd - T - MD;
+  const zf = zh - L;
+  const sx0 = -hw + T;
+  const sx1 = sx0 + 1.1;
+  const up: Upper = { lv: [MY], keep: [-hw, zf - 1.2, sx1 + 0.5, hd], roof: false };
+  c.bld.push({ kind: 'barn', x: cx, z: cz, rot, w, d, y, H: top - y, style, part: wallPart, wall: wc, trim, roof: roofColor, flat: false, walls, up });
+  f.box(-hw, base, -hd, hw, F0, hd, 'floor', 0x8d8a84);
+  plinth(f, style, hw, hd, y, T);
+  const hiWin = (cpos: number): Opening => ({ c: cpos, w: 1.6, b: MY + 0.9, t: MY + 2 });
+  wallX(f, -hw, hw, -hd, -hd + T, base, top, [{ c: 0, w: 4.2, b: base, t: y + 4.4 }, { c: hw * 0.68, w: 1.2, b: base, t: y + 2.2 }], wallPart, wc, trim, walls);
+  wallX(f, -hw, hw, hd - T, hd, base, top, [-hw * 0.55, 0, hw * 0.55].map(hiWin), wallPart, wc, trim, walls);
+  wallZ(f, -hd + T, hd - T, -hw, -hw + T, base, top, [-hd * 0.45, hd * 0.1, hd * 0.6].map(hiWin), wallPart, wc, -1, walls);
+  wallZ(f, -hd + T, hd - T, hw - T, hw, base, top, [{ c: -hd * 0.4, w: 1.3, b: base, t: y + 2.3 }, hiWin(hd * 0.1), hiWin(hd * 0.6)], wallPart, wc, -1, walls);
+  // the mezzanine on posts, railed along its edge but where the stair comes up
+  slab(c, f, -hw + T, zh, hw - T, hd - T, MY - 0.25, MY, [], 'wood', 0x7a6a56);
+  for (const px of [-hw * 0.34, hw * 0.34]) f.box(px - 0.13, F0, zh, px + 0.13, MY - 0.25, zh + 0.26, 'metal', 0x4a4e50);
+  rail(f, sx1, MY, zh, hw - T, zh + 0.08, 'metal', 0x4a4e50);
+  flight(c, f, false, zf, zh, sx0, sx1, F0, MY, base, 'metal', 0x5a5e60);
+  // crates about the floor (off the stair and the doors) and a stack up top
+  for (let k = 0; k < (c.stock ?? 3); k++) crates(c, f, lerp(sx1 + 1.6, hw - 2.4, r()), lerp(-hd + 3.2, zh - 1.4, r()), F0);
+  crates(c, f, lerp(0, hw - 2.4, r()), lerp(zh + 1, hd - T - 1, r()), MY);
+  f.box(-hw - 0.3, top, -hd - 0.3, hw + 0.3, top + 0.22, hd + 0.3, 'trim', trim);
+  f.gable(-hw - 0.4, -hd - 0.4, hw + 0.4, hd + 0.4, top + 0.22, 1.6, w >= d, roofColor, wc);
+  floorLoot(c, f, hw, hd, F0, 4, [-hw, zf - 1, sx1 + 0.4, zh + 0.4]);
+  for (let k = 0; k < 2; k++) {
+    const [x, z] = f.xz(lerp(-hw + 2.2, hw - 1.2, c.deco()), lerp(zh + 0.9, hd - 1.1, c.deco()));
+    c.loot.push(x, MY + 0.02, z);
+  }
+  const rr = f.rect(-hw, -hd, hw, hd);
+  c.interiors.push({ x0: rr.x0 + T, y0: y - 0.5, z0: rr.z0 + T, x1: rr.x1 - T, y1: top, z1: rr.z1 - T });
+  c.blocks.push({ x0: rr.x0, y0: y, z0: rr.z0, x1: rr.x1, y1: top + 1.4, z1: rr.z1 });
+}
+
+/** Tries to put a taller building near (x, z), as tryBuilding does; returns true when placed. */
+function tryTall(c: Ctx, kind: Tall, x: number, z: number, bound: number, gap = 4) {
+  const r = c.rng;
+  const [w0, w1, d0, d1] = TALL_SIZES[kind];
+  const w = lerp(w0, w1, r());
+  const d = lerp(d0, d1, r());
+  const rot = Math.floor(r() * 4);
+  const hx = (rot & 1 ? d : w) / 2;
+  const hz = (rot & 1 ? w : d) / 2;
+  if (Math.abs(x) + hx > bound || Math.abs(z) + hz > bound) return false;
+  if (overlaps(c, x - hx - gap, z - hz - gap, x + hx + gap, z + hz + gap)) return false;
+  for (const [a, b] of [
+    [-1, -1],
+    [1, -1],
+    [-1, 1],
+    [1, 1],
+    [0, 0],
+  ])
+    if (roadDist(c, x + a * hx, z + b * hz) < 4) return false;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (let a = -1; a <= 1; a += 0.5)
+    for (let b = -1; b <= 1; b += 0.5) {
+      const h = heightAt(c.t, x + a * hx, z + b * hz);
+      lo = Math.min(lo, h);
+      hi = Math.max(hi, h);
+    }
+  if (hi - lo > 3 || lo < c.t.water + 0.8) return false;
+  const y = meanHeight(c.t, x, z, hx, hz);
+  flattenRect(c.t, x, z, hx + 0.9, hz + 0.9, y, 6);
+  c.pads.push({ x, z, hx: hx + 0.9, hz: hz + 0.9, y });
+  c.taken.push({ x0: x - hx - 2.5, z0: z - hz - 2.5, x1: x + hx + 2.5, z1: z + hz + 2.5 });
+  if (kind === 'warehouse') addWarehouse(c, x, z, w, d, rot, y);
+  else addTall(c, kind, x, z, w, d, rot, y);
+  return true;
+}
+
+/**
+ * A lookout tower on four legs: a platform high over the ground with a parapet of planks, a roof on posts (or, now and
+ * then, a water tank over it), and a ladder up its front through a gap in the parapet. Its colliders here, its look in
+ * gfx/dress.ts. Returns true when placed.
+ */
+function tryLookout(c: Ctx, x: number, z: number, bound: number) {
+  const r = c.rng;
+  const rot = Math.floor(r() * 4);
+  const { h: PH, side: S, roof } = LOOKOUT;
+  const hs = S / 2;
+  const reach = hs + 1.4;
+  if (Math.abs(x) + reach > bound || Math.abs(z) + reach > bound) return false;
+  if (overlaps(c, x - reach - 1.5, z - reach - 1.5, x + reach + 1.5, z + reach + 1.5) || roadDist(c, x, z) < reach + 3) return false;
+  const f = new Frame(c, x, z, rot);
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const [a, b] of [
+    [-1, -1],
+    [1, -1],
+    [-1, 1],
+    [1, 1],
+    [0, -1.4],
+  ]) {
+    const [px, pz] = f.xz(a * hs, b * hs);
+    const h = floorAt(c.t, px, pz);
+    lo = Math.min(lo, h);
+    hi = Math.max(hi, h);
+  }
+  if (hi - lo > 1.4 || lo < c.t.water + 0.8) return false;
+  const s: Surface = c.def.style === 'adobe' ? 'metal' : 'wood';
+  const top = hi + PH;
+  const y0 = lo - 0.3;
+  for (const lx of [-hs, hs - 0.25]) for (const lz of [-hs, hs - 0.25]) solidBox(c, f, lx, y0, lz, lx + 0.25, top - 0.25, lz + 0.25, s);
+  solidBox(c, f, -hs, top - 0.25, -hs, hs, top, hs, s);
+  const ph = top + 1.1;
+  solidBox(c, f, -hs, top, -hs, -0.55, ph, -hs + 0.08, s);
+  solidBox(c, f, 0.55, top, -hs, hs, ph, -hs + 0.08, s);
+  solidBox(c, f, -hs, top, hs - 0.08, hs, ph, hs, s);
+  solidBox(c, f, -hs, top, -hs + 0.08, -hs + 0.08, ph, hs - 0.08, s);
+  solidBox(c, f, hs - 0.08, top, -hs + 0.08, hs, ph, hs - 0.08, s);
+  solidBox(c, f, -hs - 0.3, top + roof, -hs - 0.3, hs + 0.3, top + roof + 0.12, hs + 0.3, s);
+  const tank = hash01(x, z) < 0.35;
+  if (tank) solidBox(c, f, -1.25, top + roof + 0.12, -1.25, 1.25, top + roof + 2.9, 1.25, 'metal');
+  ladder(c, f, 0, -hs, 0, -1, top);
+  c.decks.push({ ...f.rect(-hs + 0.08, -hs + 0.08, hs - 0.08, hs - 0.08), y: top });
+  c.dress.push({ k: 'lookout', x, y: lo, z, rot, s: top - lo, v: tank ? 1 : 0, c: s === 'metal' ? 1 : 0 });
+  c.loot.push(x, top + 0.02, z);
+  c.blocks.push({ ...f.rect(-hs, -hs, hs, hs), y0: top - 0.3, y1: top + roof + (tank ? 2.9 : 0.2) });
+  c.taken.push({ x0: x - reach, z0: z - reach, x1: x + reach, z1: z + reach });
+  return true;
+}
+
+/** Royale: the taller buildings, from a stream of their own so nothing laid out before them moves: two storey houses in
+ * every town, a block of flats and a warehouse in the bigger ones, and a lookout tower out on the edge of most. `salt`
+ * picks another stream, for a later pass over more towns. */
+function tallTowns(c: Ctx, towns: Town[], salt = 0) {
+  const keep = c.rng;
+  c.rng = mulberry32(c.def.seed * 131 + 17 + salt);
+  const q = c.rng;
+  for (const town of towns) {
+    // (the places built to a plan of their own have theirs already)
+    if (town.kind !== 'town' && town.kind !== 'village') continue;
+    const want: Tall[] = town.site >= 0 ? ['block', 'house2', 'warehouse', 'house2'] : town.site === -2 ? ['house2', q() < 0.5 ? 'block' : 'warehouse', 'house2'] : ['house2'];
+    for (const kind of want)
+      for (let tries = 0; tries < 80; tries++) {
+        const a = q() * Math.PI * 2;
+        const d = (town.site >= 0 ? 15 : 7) + q() * 36;
+        if (tryTall(c, kind, town.x + Math.cos(a) * d, town.z + Math.sin(a) * d, c.arena - 6)) break;
+      }
+    if (q() < 0.7)
+      for (let tries = 0; tries < 50; tries++) {
+        const a = q() * Math.PI * 2;
+        const d = 20 + q() * 28;
+        if (tryLookout(c, town.x + Math.cos(a) * d, town.z + Math.sin(a) * d, c.arena - 6)) break;
+      }
+  }
+  c.rng = keep;
+}
+
 /** Tries to put a building of some kind near (x, z); returns true when placed. */
-function tryBuilding(c: Ctx, kind: Kind, x: number, z: number, bound: number) {
+function tryBuilding(c: Ctx, kind: Kind, x: number, z: number, bound: number, gap = 3.5) {
   const r = c.rng;
   const [w0, w1, d0, d1] = SIZES[kind];
   const w = lerp(w0, w1, r());
@@ -470,7 +938,6 @@ function tryBuilding(c: Ctx, kind: Kind, x: number, z: number, bound: number) {
   const rot = Math.floor(r() * 4);
   const hx = (rot & 1 ? d : w) / 2;
   const hz = (rot & 1 ? w : d) / 2;
-  const gap = 3.5;
   if (Math.abs(x) + hx > bound || Math.abs(z) + hz > bound) return false;
   if (overlaps(c, x - hx - gap, z - hz - gap, x + hx + gap, z + hz + gap)) return false;
   for (const [a, b] of [
@@ -1152,6 +1619,12 @@ const CROWN: Record<TreeKind, [number, number]> = {
 };
 export const crownOf = (k: TreeKind) => CROWN[k];
 
+/** A copy of a world with more colliders in it (and its grid built again), for trying things out on a known shape. */
+export function withBoxes(w: World, more: Box[], extra?: Partial<Pick<World, 'ladders' | 'decks' | 'flights'>>): World {
+  const boxes = [...w.boxes, ...more];
+  return { ...w, boxes, grid: buildGrid(boxes, w.trunks, w.rocks), ladders: extra?.ladders ?? w.ladders, decks: extra?.decks ?? w.decks, flights: extra?.flights ?? w.flights };
+}
+
 function buildGrid(boxes: Box[], trunks: Trunk[], rocks: RockCol[]): Grid {
   const size = 8;
   const n = Math.ceil(T_SIZE / size);
@@ -1254,6 +1727,382 @@ function vistaTowns(c: Ctx, towns: Town[], from: number) {
   }
 }
 
+// ---------------------------------------------------------------------------------------------------------------
+// royale: the places out over the land, each built to a plan of its own
+
+/** What the places out over the land are, in turn (each named by the map's royalePois at the same index): one military
+ * compound, depots of warehouses and containers, farms, a hilltop outpost and villages. */
+export const OUTER: TownKind[] = ['compound', 'depot', 'farm', 'outpost', 'village', 'farm', 'village', 'depot', 'village'];
+/** One of those places as it is found: the town, the town its road comes from, and where that road ends. */
+type Outer = { town: Town; from: Town; end: [number, number] };
+/** The compound: half the side of its square of HESCO baskets, the width of a gate through it, how many loot spots
+ * its yard holds once the supplies are down (loot on the ground, now and then by an ammo crate or a toolbox), and the
+ * fewest and the most of those. */
+export const COMPOUND = { half: 30, gate: 6, loot: 64, supplies: [20, 44] as const };
+
+/**
+ * Gives the places out over the land their kinds and names: the compound to the one with the flattest, driest ground
+ * round it and the fewest roads through it (away from the edge of the map, and nearer the middle when it is close), the
+ * other kinds in turn to the rest in the order they were found. Draws on no random stream.
+ */
+function kindTowns(c: Ctx, outer: Outer[]) {
+  const t = c.t;
+  let best = -1;
+  let bs = Infinity;
+  let bx = 0;
+  let bz = 0;
+  outer.forEach(({ town, from }, i) => {
+    // (the compound stands back from where its road ends, best away from the road so that the road stops just inside
+    // its gate, but any way the land suits better)
+    const away = sideFacing(town.x - from.x, town.z - from.z);
+    for (let k = 0; k < 4; k++) {
+      const back = COMPOUND.half - 8;
+      const x = town.x + SIDE_N[k][0] * back;
+      const z = town.z + SIDE_N[k][1] * back;
+      const reach = COMPOUND.half + 8;
+      if (Math.abs(x) > c.arena - reach || Math.abs(z) > c.arena - reach) continue;
+      let lo = Infinity;
+      let hi = -Infinity;
+      let wet = 0;
+      let road = 0;
+      for (let a = -32; a <= 32; a += 8)
+        for (let b = -32; b <= 32; b += 8) {
+          const h = heightAt(t, x + a, z + b);
+          if (h < t.water + 0.8 && !t.ice) wet++;
+          // (roads through the yard leave no room for its buildings)
+          if (Math.abs(a) < 28 && Math.abs(b) < 28 && roadDist(c, x + a, z + b) < 5) road++;
+          lo = Math.min(lo, h);
+          hi = Math.max(hi, h);
+        }
+      const s = hi - lo + wet * 4 + road * 1.5 + Math.hypot(x, z) / 40 + (k === away ? 0 : 3);
+      if (s < bs) {
+        bs = s;
+        best = i;
+        bx = x;
+        bz = z;
+      }
+    }
+  });
+  let next = 1;
+  outer.forEach(({ town }, i) => {
+    const slot = i === best ? 0 : best < 0 && i === 0 ? 0 : next++;
+    town.kind = OUTER[slot] ?? 'village';
+    town.name = c.def.royalePois[slot];
+    if (i === best) {
+      town.x = bx;
+      town.z = bz;
+    }
+  });
+}
+
+/** The outward normal of a side of a square (see squareWall). */
+const SIDE_N: [number, number][] = [
+  [0, -1],
+  [0, 1],
+  [-1, 0],
+  [1, 0],
+];
+
+/** Whether there is land enough round (x, z) for a place: at least 10 of 25 points over a 50 m square round it dry (on
+ * an island map the first spot found may be a sandbar, whose place would be under water). */
+function dryAround(t: Terrain, x: number, z: number) {
+  let dry = 0;
+  for (let a = -25; a <= 25; a += 12.5) for (let b = -25; b <= 25; b += 12.5) if (t.ice || heightAt(t, x + a, z + b) > t.water + 0.8) dry++;
+  return dry >= 10;
+}
+
+/** A random spot round (x, z), r0 to r1 out. */
+function around(q: Rng, x: number, z: number, r0: number, r1: number): [number, number] {
+  const a = q() * Math.PI * 2;
+  const d = lerp(r0, r1, q());
+  return [x + Math.cos(a) * d, z + Math.sin(a) * d];
+}
+
+/** Tries `fn` at random spots from `at` until it has placed `n` (or run out of tries); returns how many it placed. */
+function some(n: number, tries: number, at: () => [number, number], fn: (x: number, z: number) => boolean) {
+  let placed = 0;
+  for (let k = 0; k < tries && placed < n; k++) {
+    const [x, z] = at();
+    if (fn(x, z)) placed++;
+  }
+  return placed;
+}
+
+/** Whether a rectangle overlaps anything taken before the first `upto` footprints (so a wall's own pieces, laid end
+ * to end, do not stop the next one). */
+function takenBefore(c: Ctx, upto: number, x0: number, z0: number, x1: number, z1: number) {
+  for (let i = 0; i < upto; i++) {
+    const r = c.taken[i];
+    if (x0 < r.x1 && x1 > r.x0 && z0 < r.z1 && z1 > r.z0) return true;
+  }
+  return false;
+}
+
+/**
+ * A wall of cover round a square, `half` out from (x, z): pieces of `kind` (HESCO baskets, or a fence of `key`) laid
+ * end to end, each `unit` long, along the sides in `sides` (0 and 1 along x at -half and +half, 2 and 3 along z),
+ * broken wherever a road comes through and at `gates` (a side, and a place along it, each `gate` wide). A piece that
+ * would overlap anything there before it, or that the ground will not take, is left out. Draws on c.rng.
+ */
+function squareWall(c: Ctx, kind: 'hesco' | 'fence', x: number, z: number, half: number, unit: number, sides: number[], gates: [number, number][], gate: number, key?: ModelKey) {
+  const upto = c.taken.length;
+  const n = Math.round((2 * half) / unit);
+  for (const side of sides) {
+    const alongX = side < 2;
+    const off = side % 2 === 0 ? -half : half;
+    // (baskets stand on the marks from corner to corner, the sides along z leaving the corners to the others; a fence's
+    // panels fill the spaces between the marks)
+    const hesco = kind === 'hesco';
+    const k0 = hesco && !alongX ? 1 : 0;
+    const k1 = hesco ? (alongX ? n : n - 1) : n - 1;
+    let run: number[] = [];
+    const lay = () => {
+      if (!run.length) return;
+      const units = kind === 'hesco' ? run.length : 1;
+      const tryAt = (u: number, m: number) => {
+        const px = alongX ? x + u : x + off;
+        const pz = alongX ? z + off : z + u;
+        const hl = (m * unit) / 2;
+        const [hx, hz] = alongX ? [hl, 0.6] : [0.6, hl];
+        if (takenBefore(c, upto, px - hx, pz - hz, px + hx, pz + hz)) return false;
+        return tryProp(c, kind, px, pz, c.arena - 3, undefined, false, { rot: alongX ? 0 : 1, units: m, key, force: true, bare: true });
+      };
+      const mid = (run[0] + run[run.length - 1]) / 2;
+      // a stretch of baskets as one piece where the ground allows, else one at a time
+      if (hesco && run.length > 1 && tryAt(mid, units)) run = [];
+      for (const u of run) tryAt(u, 1);
+      run = [];
+    };
+    for (let k = k0; k <= k1; k++) {
+      const u = hesco ? -half + k * unit : -half + (k + 0.5) * unit;
+      const px = alongX ? x + u : x + off;
+      const pz = alongX ? z + off : z + u;
+      const open = roadDist(c, px, pz) < 3.6 || gates.some(([s, g]) => s === side && Math.abs(u - g) < gate / 2 + unit / 2);
+      if (open) {
+        lay();
+        continue;
+      }
+      run.push(u);
+      if (run.length === 4) lay();
+    }
+    lay();
+  }
+}
+
+/** The side of a square whose outside faces most nearly along (fx, fz) (see squareWall). */
+const sideFacing = (fx: number, fz: number) => (Math.abs(fz) >= Math.abs(fx) ? (fz < 0 ? 0 : 1) : fx < 0 ? 2 : 3);
+
+/** Where along a side of a square (see squareWall) the roads come through it, if anywhere. */
+function roadsThrough(c: Ctx, x: number, z: number, half: number, side: number) {
+  const alongX = side < 2;
+  const off = side % 2 === 0 ? -half : half;
+  const out: number[] = [];
+  let a = NaN;
+  for (let u = -half; u <= half + 0.01; u += 0.5) {
+    const near = roadDist(c, alongX ? x + u : x + off, alongX ? z + off : z + u) < 3.6;
+    if (near && Number.isNaN(a)) a = u;
+    if (!near && !Number.isNaN(a)) {
+      out.push((a + u) / 2);
+      a = NaN;
+    }
+  }
+  if (!Number.isNaN(a)) out.push((a + half) / 2);
+  return out;
+}
+
+/** Containers in a row, side by side (along their short sides), from (x, z) along the row's quarter turn, now and
+ * then something to pick up at one end of one (and none of the odds and ends cover leaves about: a row is enough). */
+function containerRow(c: Ctx, x: number, z: number, rot: number, n: number) {
+  let placed = 0;
+  for (let k = 0; k < n; k++) {
+    const s = k * 3.4;
+    const [px, pz] = rot & 1 ? [x + s, z] : [x, z + s];
+    if (!tryProp(c, 'container', px, pz, c.arena - 4, undefined, false, { rot, room: 0.3, bare: true })) continue;
+    placed++;
+    if (c.deco() < 0.5) {
+      const e = (c.deco() < 0.5 ? -1 : 1) * (PROP_SIZE.container[0] / 2 + 0.7);
+      const [lx, lz] = rot & 1 ? [px, pz + e] : [px + e, pz];
+      c.loot.push(lx, heightAt(c.t, lx, lz) + 0.02, lz);
+    }
+  }
+  return placed;
+}
+
+/**
+ * The military compound round (town.x, town.z), its road ending at (ex, ez) just inside one side: a square of HESCO
+ * baskets (one high: cover to fight from, and a climb for anyone in a hurry) with two gates on that side (one where the
+ * road comes through) and a gap wherever another road does, and inside it two warehouses, a block of flats, lookout
+ * towers in opposite corners, two rows of containers, two trucks, sandbagged positions by the gates and supplies about
+ * the yard. So many floors close together, and the supplies, make its loot the richest on the map.
+ */
+function buildCompound(c: Ctx, town: Town, [ex, ez]: [number, number]) {
+  const q = c.rng;
+  const H = COMPOUND.half;
+  const side = sideFacing(ex - town.x, ez - town.z);
+  const cross = roadsThrough(c, town.x, town.z, H, side);
+  const g0 = clamp(cross.length ? cross[0] : side < 2 ? ex - town.x : ez - town.z, -H + 6, H - 6);
+  const g1 = g0 + (g0 > 0 ? -1 : 1) * 15;
+  squareWall(c, 'hesco', town.x, town.z, H, 1.06, [0, 1, 2, 3], [
+    [side, g0],
+    [side, g1],
+  ], COMPOUND.gate);
+  // (nothing stands in the way through a gate, in or out)
+  const alongX = side < 2;
+  const sg = side % 2 === 0 ? -1 : 1;
+  const at = (u: number, v: number): [number, number] => (alongX ? [town.x + u, town.z + sg * v] : [town.x + sg * v, town.z + u]);
+  for (const g of [g0, g1]) {
+    const [ax, az] = at(g - COMPOUND.gate / 2 - 1, H - 9);
+    const [bx, bz] = at(g + COMPOUND.gate / 2 + 1, H + 6);
+    c.taken.push({ x0: Math.min(ax, bx), z0: Math.min(az, bz), x1: Math.max(ax, bx), z1: Math.max(az, bz) });
+  }
+  const inside = (m: number) => (): [number, number] => [town.x + (q() * 2 - 1) * (H - m), town.z + (q() * 2 - 1) * (H - m)];
+  const bound = c.arena - 6;
+  // (the buildings closer together than in a town; where the ground will not take one, something smaller in its
+  // place: a barn for a warehouse, a two storey house for the block, or at the least a hut)
+  for (const kind of ['warehouse', 'warehouse', 'block'] as Tall[])
+    if (!some(1, 400, inside(10), (x, z) => tryTall(c, kind, x, z, bound, 2.5)))
+      if (!some(1, 300, inside(8), (x, z) => (kind === 'block' ? tryTall(c, 'house2', x, z, bound, 2.5) : tryBuilding(c, 'barn', x, z, bound, 2.5))))
+        some(1, 300, inside(7), (x, z) => tryBuilding(c, 'house', x, z, bound, 2.5));
+  const sx = q() < 0.5 ? 1 : -1;
+  for (const s of [1, -1]) some(1, 100, () => [town.x + s * sx * (H - 6.5 - q() * 8), town.z + s * (H - 6.5 - q() * 8)], (x, z) => tryLookout(c, x, z, bound));
+  for (let k = 0; k < 2; k++) {
+    const rot = Math.floor(q() * 4);
+    some(1, 80, inside(8), (x, z) => containerRow(c, x, z, rot, 3) > 0);
+  }
+  some(2, 80, inside(5), (x, z) => tryProp(c, 'truck', x, z, bound));
+  // a sandbagged position just inside each gate, beside the way through
+  for (const g of [g0, g1]) some(1, 12, () => at(g + (q() < 0.5 ? -1 : 1) * (8 + q() * 2), H - 5.5 - q() * 2), (x, z) => tryProp(c, 'bagarc', x, z, bound));
+  // and supplies left about the yard: something to take, now and then by an ammo crate or a toolbox (more where fewer
+  // buildings would fit, so the yard always holds the most loot on the map)
+  let held = 0;
+  for (let i = 0; i < c.loot.length; i += 3) if (Math.abs(c.loot[i] - town.x) < H && Math.abs(c.loot[i + 2] - town.z) < H) held++;
+  const f = new Frame(c, town.x, town.z, 0);
+  some(clamp(COMPOUND.loot - held, COMPOUND.supplies[0], COMPOUND.supplies[1]), 300, inside(3), (x, z) => {
+    if (overlaps(c, x - 1, z - 1, x + 1, z + 1) || roadDist(c, x, z) < 3 || heightAt(c.t, x, z) < c.t.water + 0.3) return false;
+    if (q() < 0.35) clutter(c, f, x - town.x, z - town.z, q() < 0.7 ? 'ammo-crate' : 'toolbox');
+    const a = q() * Math.PI * 2;
+    const lx = x + Math.cos(a) * 0.7;
+    const lz = z + Math.sin(a) * 0.7;
+    c.loot.push(lx, heightAt(c.t, lx, lz) + 0.02, lz);
+    c.taken.push({ x0: x - 0.8, z0: z - 0.8, x1: x + 0.8, z1: z + 0.8 });
+    return true;
+  });
+}
+
+/** A depot: two warehouses, two rows of containers, two houses and two sheds, a truck, pallets, and a fence
+ * round three sides of the yard (the side its road comes from left open). */
+function buildDepot(c: Ctx, town: Town, from: Town) {
+  const q = c.rng;
+  const H = 30;
+  const open = sideFacing(from.x - town.x, from.z - town.z);
+  const key = pick(q, ['fence-base', 'fence-half'] as const);
+  squareWall(c, 'fence', town.x, town.z, H, 3, [0, 1, 2, 3].filter((s) => s !== open), [], 0, key);
+  const near = (r0: number, r1: number) => () => around(q, town.x, town.z, r0, r1);
+  const bound = c.arena - 6;
+  // (where the ground will not take a warehouse, a barn)
+  for (let k = 0; k < 2; k++) if (!some(1, 300, near(3, 22), (x, z) => tryTall(c, 'warehouse', x, z, bound, 3))) some(1, 120, near(3, 24), (x, z) => tryBuilding(c, 'barn', x, z, bound, 3));
+  for (let k = 0; k < 2; k++) {
+    const rot = Math.floor(q() * 4);
+    some(1, 60, near(6, 22), (x, z) => containerRow(c, x, z, rot, 3) > 0);
+  }
+  some(2, 120, near(6, 25), (x, z) => tryBuilding(c, 'house', x, z, bound, 3));
+  some(2, 80, near(6, 25), (x, z) => tryBuilding(c, 'shed', x, z, bound, 3));
+  some(1, 40, near(6, 24), (x, z) => tryProp(c, 'truck', x, z, bound));
+  some(3, 40, near(6, 26), (x, z) => tryProp(c, 'pallets', x, z, bound));
+}
+
+/** A farm: a two storey farmhouse, a barn, two cottages and two sheds, and a fenced yard of 30 m with gates on two
+ * sides, a pile of crates, pallets and logs in it. */
+function buildFarm(c: Ctx, town: Town) {
+  const q = c.rng;
+  const near = (r0: number, r1: number) => () => around(q, town.x, town.z, r0, r1);
+  const bound = c.arena - 6;
+  some(1, 120, near(4, 14), (x, z) => tryTall(c, 'house2', x, z, bound));
+  // the yard, fenced, beside the house and clear of the road
+  const Y = 15;
+  some(1, 60, near(18, 32), (x, z) => {
+    if (Math.abs(x) + Y > bound || Math.abs(z) + Y > bound || overlaps(c, x - Y - 2, z - Y - 2, x + Y + 2, z + Y + 2)) return false;
+    for (let a = -1; a <= 1; a++) for (let b = -1; b <= 1; b++) if (roadDist(c, x + a * Y, z + b * Y) < 5 || heightAt(c.t, x + a * Y, z + b * Y) < c.t.water + 0.5) return false;
+    const gs = Math.floor(q() * 2);
+    squareWall(c, 'fence', x, z, Y, 3, [0, 1, 2, 3], [
+      [gs, 0],
+      [gs + 2, (q() - 0.5) * 12],
+    ], 6, 'fence-wood');
+    some(1, 20, () => around(q, x, z, 2, Y - 4), (px, pz) => tryProp(c, 'pile', px, pz, bound));
+    some(2, 20, () => around(q, x, z, 2, Y - 4), (px, pz) => tryProp(c, 'pallets', px, pz, bound));
+    const f = new Frame(c, x, z, 0);
+    for (let k = 0; k < 2; k++) clutter(c, f, (q() - 0.5) * (Y * 1.2), (q() - 0.5) * (Y * 1.2), 'log');
+    return true;
+  });
+  some(1, 120, near(10, 30), (x, z) => tryBuilding(c, 'barn', x, z, bound));
+  some(2, 120, near(8, 32), (x, z) => tryBuilding(c, 'house', x, z, bound));
+  some(2, 80, near(8, 32), (x, z) => tryBuilding(c, 'shed', x, z, bound));
+}
+
+/** The outpost: up on the highest ground near its spot (where its name goes), a lookout tower in a ring of sandbag
+ * walls, sandbagged positions, two sheds, two huts and a tent. */
+function buildOutpost(c: Ctx, town: Town, region: Uint8Array) {
+  const q = c.rng;
+  const t = c.t;
+  let bx = town.x;
+  let bz = town.z;
+  let bs = -Infinity;
+  for (let a = -40; a <= 40; a += 4)
+    for (let b = -40; b <= 40; b += 4) {
+      const x = town.x + a;
+      const z = town.z + b;
+      if (Math.hypot(a, b) > 40 || Math.abs(x) > c.arena - 30 || Math.abs(z) > c.arena - 30 || !onRegion(region, x, z)) continue;
+      let lo = Infinity;
+      let hi = -Infinity;
+      for (let u = -5; u <= 5; u += 2.5)
+        for (let v = -5; v <= 5; v += 2.5) {
+          const h = heightAt(t, x + u, z + v);
+          lo = Math.min(lo, h);
+          hi = Math.max(hi, h);
+        }
+      if (lo < t.water + 1 || overlaps(c, x - 6, z - 6, x + 6, z + 6)) continue;
+      const s = heightAt(t, x, z) - (hi - lo) * 2;
+      if (s > bs) {
+        bs = s;
+        bx = x;
+        bz = z;
+      }
+    }
+  town.x = bx;
+  town.z = bz;
+  const bound = c.arena - 6;
+  some(1, 40, () => around(q, bx, bz, 0, 5), (x, z) => tryLookout(c, x, z, bound));
+  // the ring of sandbags round the top, a gap between each wall and the next
+  const a0 = q() * Math.PI * 2;
+  for (let k = 0; k < 8; k++) {
+    const a = a0 + (k * Math.PI) / 4;
+    const x = bx + Math.cos(a) * 9;
+    const z = bz + Math.sin(a) * 9;
+    tryProp(c, 'sandbags', x, z, bound, undefined, false, { rot: Math.abs(Math.cos(a)) > Math.abs(Math.sin(a)) ? 1 : 0 });
+  }
+  const near = (r0: number, r1: number) => () => around(q, bx, bz, r0, r1);
+  some(2, 40, near(12, 22), (x, z) => tryProp(c, 'bagarc', x, z, bound));
+  some(2, 80, near(12, 26), (x, z) => tryBuilding(c, 'shed', x, z, bound));
+  some(2, 100, near(12, 30), (x, z) => tryBuilding(c, 'house', x, z, bound));
+  some(1, 40, near(12, 28), (x, z) => tryProp(c, 'tent', x, z, bound));
+}
+
+/** Builds the places out over the land that are not villages (the villages are built with the towns), from a stream of
+ * its own. */
+function placeTowns(c: Ctx, outer: Outer[], region: Uint8Array) {
+  const keep = c.rng;
+  c.rng = mulberry32(c.def.seed * 151 + 29);
+  c.stock = 1;
+  for (const { town, from, end } of outer) {
+    if (town.kind === 'compound') buildCompound(c, town, end);
+    else if (town.kind === 'depot') buildDepot(c, town, from);
+    else if (town.kind === 'farm') buildFarm(c, town);
+    else if (town.kind === 'outpost') buildOutpost(c, town, region);
+  }
+  c.rng = keep;
+  c.stock = undefined;
+}
+
 /** A royale's layout over the whole land: two spawns and three sites spread far apart (in a royale they only seed
  * towns), towns all over joined by roads, and cover strewn everywhere. */
 function royaleLayout(c: Ctx) {
@@ -1279,24 +2128,32 @@ function royaleLayout(c: Ctx) {
 
   // towns: one around each site, two out on the flanks, and towns over the whole land, each joined by a road to the
   // nearest one already there
-  const towns: Town[] = sites.map((s) => ({ name: s.town, x: s.x, z: s.z, site: s.id }));
+  const towns: Town[] = sites.map((s) => ({ name: s.town, x: s.x, z: s.z, site: s.id, kind: 'town' }));
   for (const sgn of [-1, 1]) {
     const p = findSpot(t, region, sgn * 135 * vx, sgn * 135 * vz, 18, [ux, uz]);
-    towns.push({ name: def.pois[sgn < 0 ? 3 : 4], x: p.x, z: p.z, site: -1 });
+    towns.push({ name: def.pois[sgn < 0 ? 3 : 4], x: p.x, z: p.z, site: -1, kind: 'village' });
   }
-  const names = ['Brook', 'Mill', 'Quarry', 'Pines', 'Harbor', 'Crossing', 'Depot', 'Farm', 'Outlook', 'Station'];
+  // (and where each one's road comes from)
+  const outer: Outer[] = [];
   for (let k = 0, made = 0; k < 160 && made < 9; k++) {
     const a = r() * Math.PI * 2;
     const d = 130 + r() * 170;
     const p = findSpot(t, region, Math.cos(a) * d, Math.sin(a) * d, 26, undefined, ARENA);
-    if (!Number.isFinite(p.score) || towns.some((q) => Math.hypot(q.x - p.x, q.z - p.z) < 85)) continue;
+    if (!Number.isFinite(p.score) || towns.some((q) => Math.hypot(q.x - p.x, q.z - p.z) < 85) || !dryAround(t, p.x, p.z)) continue;
     let near = towns[0];
     for (const q of towns) if (Math.hypot(q.x - p.x, q.z - p.z) < Math.hypot(near.x - p.x, near.z - p.z)) near = q;
     roadLine(c, near.x, near.z, p.x, p.z);
-    towns.push({ name: `${def.pois[k % def.pois.length]} ${names[made % names.length]}`, x: p.x, z: p.z, site: -2 });
+    const town: Town = { name: '', x: p.x, z: p.z, site: -2 };
+    towns.push(town);
+    outer.push({ town, from: near, end: [p.x, p.z] });
     made++;
   }
+  // what each of those is (the compound where the land suits it best, the rest in turn), and the places that are not
+  // villages built to their own plans
+  kindTowns(c, outer);
+  placeTowns(c, outer, region);
   for (const town of towns) {
+    if (town.kind !== 'town' && town.kind !== 'village') continue;
     const want = town.site >= 0 ? 6 : town.site === -2 ? 7 : 4;
     let placed = 0;
     for (let tries = 0; tries < 120 && placed < want; tries++) {
@@ -1305,7 +2162,16 @@ function royaleLayout(c: Ctx) {
       if (tryBuilding(c, KINDS[Math.floor(r() * KINDS.length)], town.x + Math.cos(a) * d, town.z + Math.sin(a) * d, ARENA - 4)) placed++;
     }
   }
+  tallTowns(c, towns);
+  const hamlets = towns.length;
   vistaTowns(c, towns, CORE);
+  // (in a royale these stand on the land, among the rest: hamlets, with names of their own)
+  for (let k = hamlets; k < towns.length; k++) {
+    towns[k].name = def.royalePois[OUTER.length + k - hamlets];
+    towns[k].kind = 'village';
+  }
+  // (and a two storey house each, from a stream of their own)
+  tallTowns(c, towns.slice(hamlets), 1);
   // lone buildings out in the open
   for (let k = 0, placed = 0; k < 400 && placed < 30; k++)
     if (tryBuilding(c, r() < 0.5 ? 'ruin' : 'shed', (r() * 2 - 1) * (ARENA - 15), (r() * 2 - 1) * (ARENA - 15), ARENA - 4)) placed++;
@@ -1953,6 +2819,8 @@ function streetProps(c: Ctx, away: { x: number; z: number; r: number }[], trunks
         let near = false;
         for (let i = 0; i < c.loot.length && !near; i += 3) near = Math.hypot(c.loot[i] - x, c.loot[i + 2] - z) < 0.9 + Math.max(pw, pd) / 2;
         for (let i = 0; i < c.doors.length && !near; i += 4) near = Math.hypot(c.doors[i] - x, c.doors[i + 1] - z) < 1.5;
+        // (and never at the foot of a ladder)
+        for (const l of c.ladders) if (Math.hypot(l.x - x, l.z - z) < 1.9) near = true;
         if (near || (solid && !gridSafe(r))) continue;
         // facing out from the wall: front (out -z) two quarter turns, back none, left one, right three
         const rot = (b.rot + [2, 0, 1, 3][si]) & 3;
@@ -1993,6 +2861,7 @@ function dressAt(c: Ctx, keep: Keep, kind: PropKind, x: number, z: number, r0: n
     let near = false;
     for (let i = 0; i < c.doors.length && !near; i += 4) near = Math.abs(c.doors[i] - px) < hx + 2.2 && Math.abs(c.doors[i + 1] - pz) < hz + 2.2;
     for (let i = 0; i < c.loot.length && !near; i += 3) near = inside(c.loot[i], c.loot[i + 2]);
+    for (const l of c.ladders) if (Math.abs(l.x - px) < hx + 1.5 && Math.abs(l.z - pz) < hz + 1.5) near = true;
     if (near) continue;
     if (tryProp(c, kind, px, pz, c.arena - 4, undefined, roadside, { rot, bare: true, room: 0.8, key })) return true;
   }
@@ -2016,7 +2885,8 @@ function dressBreach(c: Ctx, keep: Keep) {
 function dressRoyale(c: Ctx, keep: Keep, spawns: Spawn[], sites: Site[], towns: Town[]) {
   const q = c.rng;
   const camps: { x: number; z: number }[] = [...spawns, ...sites];
-  for (const t of towns) if (t.site === -2 && camps.length < 9 && q() < 0.5) camps.push(t);
+  // (never by a farm)
+  for (const t of towns) if (t.site === -2 && t.kind !== 'farm' && camps.length < 9 && q() < 0.5) camps.push(t);
   const camp: [PropKind, number][] = [
     ['tower', 1],
     ['tent', 2],
@@ -2060,6 +2930,110 @@ function dressRoyale(c: Ctx, keep: Keep, spawns: Spawn[], sites: Site[], towns: 
     const i = Math.floor(q() * (s.length / 4)) * 4;
     if (dressAt(c, keep, 'carwreck', s[i], s[i + 1], 4, 9, true, 4)) placed++;
   }
+  fieldCover(c, keep);
+}
+
+/** How much cover fieldCover adds, and the grid it looks over. */
+export const FIELD_COVER = { runs: 80, cell: 40 };
+
+/**
+ * Royale: cover out on the open fields, so that crossing them there is always something to run to a few dozen meters
+ * on. A spot in each cell of a 40 m grid, taken the most open first (no building within 25 m, no tree within 6 m,
+ * level dry ground, off the roads), gets a short run of sandbag walls or concrete barriers, two or three end to end,
+ * with something to pick up behind it. From streams of its own, after everything else, so nothing laid out before
+ * it moves.
+ */
+function fieldCover(c: Ctx, keep: Keep) {
+  const kept = [c.rng, c.deco];
+  c.rng = mulberry32(c.def.seed * 157 + 43);
+  c.deco = mulberry32(c.def.seed * 163 + 47);
+  const q = c.rng;
+  const t = c.t;
+  const A = c.arena;
+  const G = FIELD_COVER.cell;
+  const far = (r: { x0: number; z0: number; x1: number; z1: number }, x: number, z: number) => Math.hypot(Math.max(r.x0 - x, 0, x - r.x1), Math.max(r.z0 - z, 0, z - r.z1));
+  const blds = c.bld.map((b) => {
+    const hx = (b.rot & 1 ? b.d : b.w) / 2;
+    const hz = (b.rot & 1 ? b.w : b.d) / 2;
+    return { x0: b.x - hx, z0: b.z - hz, x1: b.x + hx, z1: b.z + hz };
+  });
+  const trunks = keep.trunks.filter((k) => Math.abs(k.x) < A + 10 && Math.abs(k.z) < A + 10);
+  // (the trunks and the cover there already, in buckets a cell across, to look up what is near a spot)
+  const nb = Math.ceil((2 * A) / G) + 2;
+  const bucket = (x: number, z: number) => clamp(Math.floor((z + A) / G) + 1, 0, nb - 1) * nb + clamp(Math.floor((x + A) / G) + 1, 0, nb - 1);
+  const treeB: Trunk[][] = Array.from({ length: nb * nb }, () => []);
+  for (const k of trunks) treeB[bucket(k.x, k.z)].push(k);
+  const coverB: Rect3[][] = Array.from({ length: nb * nb }, () => []);
+  for (const b of c.blocks) {
+    // (in every bucket its rectangle touches)
+    const a = bucket(b.x0, b.z0);
+    const e = bucket(b.x1, b.z1);
+    for (let j = Math.floor(a / nb); j <= Math.floor(e / nb); j++) for (let i = a % nb; i <= e % nb; i++) coverB[j * nb + i].push(b);
+  }
+  /** The least of d over what is in the buckets round (x, z): Infinity when nothing is (it is at least a cell away). */
+  const nearest = <T>(B: T[][], x: number, z: number, d: (o: T) => number) => {
+    let best = Infinity;
+    const at = bucket(x, z);
+    const i = at % nb;
+    const j = Math.floor(at / nb);
+    for (let jj = Math.max(0, j - 1); jj <= Math.min(nb - 1, j + 1); jj++) for (let ii = Math.max(0, i - 1); ii <= Math.min(nb - 1, i + 1); ii++) for (const o of B[jj * nb + ii]) best = Math.min(best, d(o));
+    return best;
+  };
+  const cells: { x: number; z: number; open: number }[] = [];
+  for (let gz = -A + G / 2; gz < A; gz += G)
+    for (let gx = -A + G / 2; gx < A; gx += G) {
+      // the most open of a few spots in the cell that will take cover
+      let pick0: { x: number; z: number; open: number } | null = null;
+      for (let k = 0; k < 8; k++) {
+        const x = gx + (q() - 0.5) * G * 0.8;
+        const z = gz + (q() - 0.5) * G * 0.8;
+        if (Math.abs(x) > A - 14 || Math.abs(z) > A - 14 || !onRegion(keep.region, x, z)) continue;
+        if (heightAt(t, x, z) < t.water + 0.4 || normalAt(t, x, z).y < 0.9 || roadDist(c, x, z) < 7) continue;
+        if (keep.away.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + 8) || blds.some((r) => far(r, x, z) < 25)) continue;
+        const tree = nearest(treeB, x, z, (o) => Math.hypot(o.x - x, o.z - z) - o.r);
+        if (tree < 6) continue;
+        const open = Math.min(nearest(coverB, x, z, (o) => far(o, x, z)), G) + Math.min(tree, 20) * 0.5;
+        if (!pick0 || open > pick0.open) pick0 = { x, z, open };
+      }
+      if (pick0) cells.push(pick0);
+    }
+  cells.sort((a, b) => b.open - a.open);
+  // (the lightest to draw: there are many of these)
+  const kinds: PropKind[] = ['sandbags', 'barrier', 'sandbags'];
+  let placed = 0;
+  for (const { x, z } of cells) {
+    if (placed >= FIELD_COVER.runs) break;
+    const kind = pick(q, kinds);
+    const rot = Math.floor(q() * 4);
+    const n = q() < 0.5 ? 2 : 3;
+    const key: ModelKey | undefined = kind === 'barrier' ? 'barricade' : undefined;
+    const [w, d] = PROP_SIZE[kind as Exclude<PropKind, 'hesco'>];
+    const len = w + 0.05;
+    const hx = rot & 1 ? d / 2 : (n * len) / 2;
+    const hz = rot & 1 ? (n * len) / 2 : d / 2;
+    if (overlaps(c, x - hx - 1.5, z - hz - 1.5, x + hx + 1.5, z + hz + 1.5)) continue;
+    const inside = (px: number, pz: number, m: number) => Math.abs(px - x) < hx + m && Math.abs(pz - z) < hz + m;
+    if (trunks.some((k) => inside(k.x, k.z, k.r + 1)) || keep.rocks.some((k) => inside(k.x, k.z, k.r + 0.3))) continue;
+    let near = false;
+    for (let i = 0; i < c.loot.length && !near; i += 3) near = inside(c.loot[i], c.loot[i + 2], 0.6);
+    if (near) continue;
+    const segs: [number, number][] = [];
+    for (let k = 0; k < n; k++) {
+      const s = (k - (n - 1) / 2) * len;
+      segs.push(rot & 1 ? [x, z + s] : [x + s, z]);
+    }
+    if (segs.some(([px, pz]) => roadDist(c, px, pz) < 2.5 + w / 2 || normalAt(t, px, pz).y < 0.9 || heightAt(t, px, pz) < t.water + 0.4)) continue;
+    let any = false;
+    for (const [px, pz] of segs) if (tryProp(c, kind, px, pz, A - 4, undefined, false, { rot, key, force: true, bare: true })) any = true;
+    if (!any) continue;
+    placed++;
+    // something to pick up behind it, on one side or the other
+    const out = (q() < 0.5 ? -1 : 1) * (d / 2 + 0.7);
+    const lx = rot & 1 ? x + out : x;
+    const lz = rot & 1 ? z : z + out;
+    c.loot.push(lx, heightAt(t, lx, lz) + 0.02, lz);
+  }
+  [c.rng, c.deco] = kept;
 }
 
 /** Builds a map: the breach arena, or with `royale` the whole land, with many more towns, cover and loot. */
@@ -2067,7 +3041,7 @@ export function buildWorld(id: MapId, royale = false): World {
   const def = MAPS[id];
   const t = generateTerrain(def);
   const arena = royale ? ROYALE_ARENA : ARENA;
-  const c: Ctx = { def, t, rng: mulberry32(def.seed * 7 + 3), n: new Noise2(def.seed + 99), pieces: [], gables: [], interiors: [], taken: [], pads: [], roadSegs: [], roads: [], blocks: [], vehicles: [], models: [], colliders: [], deco: mulberry32(def.seed * 13 + 5), arena, loot: [], doors: [], extraRocks: [], bld: [], dress: [], lateRocks: [] };
+  const c: Ctx = { def, t, rng: mulberry32(def.seed * 7 + 3), n: new Noise2(def.seed + 99), pieces: [], gables: [], interiors: [], taken: [], pads: [], roadSegs: [], roads: [], blocks: [], vehicles: [], models: [], colliders: [], deco: mulberry32(def.seed * 13 + 5), arena, loot: [], doors: [], extraRocks: [], bld: [], dress: [], lateRocks: [], ladders: [], decks: [], flights: [], royale };
   const r = c.rng;
   const { region, spawns, sites, towns, shape } = royale ? royaleLayout(c) : breachLayout(c);
 
@@ -2232,6 +3206,7 @@ export function buildWorld(id: MapId, royale = false): World {
     vehicles: c.vehicles,
     models: c.models,
     light: new Uint8Array(0),
+    shade: c.blocks,
     minimap: { size: 0, span: 0, data: new Uint8ClampedArray(0) },
     arena: arena,
     region,
@@ -2239,6 +3214,9 @@ export function buildWorld(id: MapId, royale = false): World {
     doors: new Float32Array(c.doors),
     bld: c.bld,
     dress: c.dress,
+    ladders: c.ladders,
+    decks: c.decks,
+    flights: c.flights,
   };
   world.light = bakeLight(world, c.blocks);
   world.minimap = paintMinimap(world);

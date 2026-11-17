@@ -59,27 +59,23 @@ export const AMBIENT_K = 0.5;
 export function makeShared(THREE: Three, def: MapDef, sun: [number, number, number]): Shared {
   const c = (hex: number, k = 1) => new THREE.Color(...lin(hex, k));
   const g = def.ground;
-  const skyK = 1.55;
-  const zen = lin(def.sky.zenith, skyK);
-  const hor = lin(def.sky.horizon, skyK);
-  const amb = new THREE.Color((zen[0] + hor[0] * 2) / 3, (zen[1] + hor[1] * 2) / 3, (zen[2] + hor[2] * 2) / 3).multiplyScalar(def.ambient * AMBIENT_K);
-  return {
+  const shared: Shared = {
     uTime: { value: 0 },
-    uSunDir: { value: new THREE.Vector3(...sun) },
-    uSunColor: { value: c(def.sun.color, def.sun.intensity * SUN_K) },
-    uAmbient: { value: amb },
-    uZenith: { value: new THREE.Color(...zen) },
-    uHorizon: { value: new THREE.Color(...hor) },
-    uGround: { value: c(def.sky.ground, 0.9) },
-    uGlow: { value: def.sky.glow },
-    uClouds: { value: def.sky.clouds },
-    uCloudColor: { value: c(def.sky.cloudColor, 1.9) },
-    uCloudShade: { value: c(def.sky.cloudShade, 1.1) },
+    uSunDir: { value: new THREE.Vector3() },
+    uSunColor: { value: new THREE.Color() },
+    uAmbient: { value: new THREE.Color() },
+    uZenith: { value: new THREE.Color() },
+    uHorizon: { value: new THREE.Color() },
+    uGround: { value: new THREE.Color() },
+    uGlow: { value: 0 },
+    uClouds: { value: 0 },
+    uCloudColor: { value: new THREE.Color() },
+    uCloudShade: { value: new THREE.Color() },
     uDisc: { value: 1 },
-    uFogColor: { value: c(def.fog.color, 1.25) },
-    uFogSun: { value: c(def.fog.sun, 1.6) },
-    uFogDensity: { value: def.fog.density },
-    uFogFalloff: { value: def.fog.falloff },
+    uFogColor: { value: new THREE.Color() },
+    uFogSun: { value: new THREE.Color() },
+    uFogDensity: { value: 0 },
+    uFogFalloff: { value: 0 },
     uTerrainData: { value: null },
     uLight: { value: null },
     uWater: { value: def.water ?? -1000 },
@@ -104,6 +100,31 @@ export function makeShared(THREE: Three, def: MapDef, sun: [number, number, numb
     uSkyScale: { value: 1 },
     uSkyRot: { value: new THREE.Vector2(0, 0) },
   };
+  lookShared(shared, def, sun);
+  return shared;
+}
+
+/** Writes the light of a time of day into the shared uniforms: the sun, the painted sky, the haze and the sky light
+ * (the map's own in makeShared; a royale's dusk or overcast later, see looks.ts). The sky photo is applySky's. */
+export function lookShared(shared: Shared, def: Pick<MapDef, 'sun' | 'sky' | 'fog' | 'ambient'>, sun: [number, number, number]) {
+  const c = (key: string, hex: number, k = 1) => (shared[key].value as T.Color).setRGB(...lin(hex, k));
+  const skyK = 1.55;
+  const zen = lin(def.sky.zenith, skyK);
+  const hor = lin(def.sky.horizon, skyK);
+  (shared.uSunDir.value as T.Vector3).set(...sun);
+  c('uSunColor', def.sun.color, def.sun.intensity * SUN_K);
+  (shared.uAmbient.value as T.Color).setRGB((zen[0] + hor[0] * 2) / 3, (zen[1] + hor[1] * 2) / 3, (zen[2] + hor[2] * 2) / 3).multiplyScalar(def.ambient * AMBIENT_K);
+  (shared.uZenith.value as T.Color).setRGB(...zen);
+  (shared.uHorizon.value as T.Color).setRGB(...hor);
+  c('uGround', def.sky.ground, 0.9);
+  shared.uGlow.value = def.sky.glow;
+  shared.uClouds.value = def.sky.clouds;
+  c('uCloudColor', def.sky.cloudColor, 1.9);
+  c('uCloudShade', def.sky.cloudShade, 1.1);
+  c('uFogColor', def.fog.color, 1.25);
+  c('uFogSun', def.fog.sun, 1.6);
+  shared.uFogDensity.value = def.fog.density;
+  shared.uFogFalloff.value = def.fog.falloff;
 }
 
 /** Declarations of the shared uniforms plus noise, terrain lookups, fog and the sky. */

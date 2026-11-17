@@ -3,12 +3,14 @@ import { test } from 'node:test';
 import { newBrain } from '../src/os/arcade/games/ridgeline/bots.ts';
 import { botInput } from '../src/os/arcade/games/ridgeline/bots.ts';
 import { DM_KILLS, LEAN, PARTS, currentGun, idleInput, partsOf, step, type Actor, type Input, type Match, type Mode } from '../src/os/arcade/games/ridgeline/match.ts';
-import { PRONE_H, STAND_H, blockedAt, clearLine, groundAt } from '../src/os/arcade/games/ridgeline/physics.ts';
+import { PRONE_H, RADIUS, STAND_H, blockedAt, clearLine, groundAt } from '../src/os/arcade/games/ridgeline/physics.ts';
 import { floorAt } from '../src/os/arcade/games/ridgeline/terrain.ts';
 import { CARS, hurtCar } from '../src/os/arcade/games/ridgeline/cars.ts';
 import { PAVISE, WEAPON_IDS, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
 import { Clock, NET_TAG, Session, Track, type OnlineApi } from '../src/os/arcade/games/ridgeline/online.ts';
-import { worldFor } from '../src/os/arcade/games/ridgeline/world.ts';
+import { PickupFeed, addToast, type Toast } from '../src/os/arcade/games/ridgeline/loot-feed.ts';
+import { AMMO_PACK, type AmmoKind } from '../src/os/arcade/games/ridgeline/royale.ts';
+import { withBoxes, worldFor } from '../src/os/arcade/games/ridgeline/world.ts';
 
 const DT = 1 / 60;
 
@@ -602,6 +604,8 @@ test('online royale: a leaver becomes a bot, a latecomer takes one over, and the
   const t0 = nh.time;
   const alive0 = nh.alive;
   run(30);
+  // (a knockout in the last moment is still on its way with the next batch of events: on until it has gone out)
+  for (let i = 0; i < 30 && nh.actors.some((a) => !a.alive && nh.time - a.deathT < 0.2); i++) run(1 / 30);
   settle(net, seats);
   assert.ok(nh.time - t0 > 25, 'the new host steps the match');
   assert.ok(nh.alive < alive0 || nh.phase === 'over', `the match went on (${alive0} to ${nh.alive} left)`);
@@ -659,6 +663,53 @@ test('online royale: a guest asleep while the transport flies on is jumped out b
   assert.notEqual(there.drop, 1, 'and on the host');
   assert.ok(Math.hypot(mine.body.x - there.body.x, mine.body.z - there.body.z) < 4, `in the same place (${Math.hypot(mine.body.x - there.body.x, mine.body.z - there.body.z).toFixed(1)} m apart)`);
   assert.equal(m1.plane, null, 'the transport is gone there too');
+});
+
+test("online royale: a guest walking over loot gets its pickup toast from the host's word (no count), the host its own with one", () => {
+  const world = worldFor('vale', true);
+  const { net, seats } = room(2, 4242, { mode: 'royale' });
+  const [host, g1] = seats;
+  const DT2 = 1 / 30;
+  const feeds = [new PickupFeed(), new PickupFeed()];
+  const lines: Toast[][] = [[], []];
+  const run = (sec: number) => {
+    for (let i = 0; i < sec * 30; i++) {
+      frame(net, seats, world, DT2);
+      if (host.s.match) shieldPeople(host.s.match, 1e9);
+      // (each machine reads its own frame's events, as the HUD does after the step)
+      seats.forEach((p, k) => {
+        const m = p.s.match;
+        if (m) for (const t of feeds[k].take(m, net.time)) lines[k] = addToast(lines[k], t, net.time);
+      });
+    }
+  };
+  // both down from the transport (their brains pick where), then their own hands, which press nothing
+  const landed = (p: Seat) => !!p.s.match && !p.s.match.actors[p.s.match.me].drop && p.s.match.actors[p.s.match.me].body.onGround && p.s.match.time > 5;
+  for (let i = 0; i < 30 * 200 && !(landed(host) && landed(g1)); i++) run(1 / 30);
+  assert.ok(landed(host) && landed(g1), 'both landed');
+  for (const p of [host, g1]) p.input = (_m, a) => idleInput(a.yaw, a.pitch);
+  run(1);
+  const h = host.s.match!;
+  const m1 = g1.s.match!;
+  // a box of ammo at each person's feet, on the host (the guest hears of it with the loot)
+  const box = (a: Actor, what: AmmoKind) => {
+    for (const it of h.loot) if (it.live && Math.hypot(it.x - a.body.x, it.z - a.body.z) < 4) it.live = false;
+    h.lootVer++;
+    h.loot.push({ id: h.loot.length, kind: 'ammo', what, n: AMMO_PACK[what], x: a.body.x + 0.3, y: a.body.y + 0.02, z: a.body.z, live: true });
+    h.lootVer++;
+  };
+  lines[0] = [];
+  lines[1] = [];
+  box(h.actors[m1.me], 'shells');
+  box(h.actors[h.me], 'sniper');
+  run(2);
+  const mine = (k: number, text: string) => lines[k].find((l) => l.text === text);
+  assert.ok(mine(1, '12 gauge ammo'), `the guest's own pickup shows on its machine (${lines[1].map((l) => l.text).join(', ') || 'nothing'})`);
+  assert.equal(mine(1, '12 gauge ammo')!.plus, 0, 'without a count: the host says what, not how many');
+  assert.equal(m1.actors[m1.me].ammo.shells >= AMMO_PACK.shells, true, 'and the guest has it');
+  assert.ok(!mine(1, '.338 ammo'), "the host's pickup is not the guest's");
+  assert.equal(mine(0, '.338 ammo')?.plus, AMMO_PACK.sniper, 'the host sees its own, with the count');
+  assert.ok(!mine(0, '12 gauge ammo'), "and not the guest's");
 });
 
 test('online: the host turns down a guest hit that a raised shield stopped, and takes it once the shield is down', () => {
@@ -914,3 +965,72 @@ function besideWall(m: Match, x0: number, z0: number) {
   }
   return null;
 }
+
+test("online: a guest climbs onto a ledge and the host and the other guest see it climb and end up on top; the host's own climb shows on the guests", () => {
+  // (a world of their own, so a ledge can be put down in it once everyone stands still)
+  const w = withBoxes(worldFor('vale'), []);
+  const { net, seats } = room(3);
+  const [host, g1, g2] = seats;
+  for (let i = 0; i < 60 * 40 && host.s.match?.phase !== 'live'; i++) frame(net, seats, w);
+  const h = host.s.match!;
+  assert.equal(h.phase, 'live');
+  h.phaseT = 999;
+  for (const a of h.actors) {
+    a.bot = false;
+    a.brain = null;
+  }
+  const want = { jump: false, host: false };
+  g1.input = () => ({ ...idleInput(0, 0), jump: want.jump });
+  g2.input = (_m, a) => idleInput(a.yaw, a.pitch);
+  host.input = () => ({ ...idleInput(0, 0), jump: want.host });
+  const run = (sec: number, each?: () => void) => {
+    for (let i = 0; i < sec * 60; i++) {
+      frame(net, seats, w);
+      each?.();
+    }
+  };
+  run(1);
+  const m1 = g1.s.match!;
+  const m2 = g2.s.match!;
+  const ga = m1.actors[m1.me];
+  const ha = h.actors[m1.me];
+  const seen = m2.actors[m1.me];
+  const hv = h.actors[h.me];
+  // a ledge 1.5 m high just in front of each of the two (they face -z)
+  const ledge = (a: Actor) => {
+    const y = floorAt(w.terrain, a.body.x, a.body.z);
+    return { x0: a.body.x - 1.5, x1: a.body.x + 1.5, z0: a.body.z - RADIUS - 2.05, z1: a.body.z - RADIUS - 0.05, y0: y - 0.5, y1: y + 1.5, s: 'wood' as const };
+  };
+  const top = floorAt(w.terrain, ga.body.x, ga.body.z) + 1.5;
+  const hostTop = floorAt(w.terrain, hv.body.x, hv.body.z) + 1.5;
+  Object.assign(w, withBoxes(w, [ledge(ga), ledge(hv)]));
+  run(0.3);
+  const shown = { host: 0, other: 0, guests: 0 };
+  want.jump = true;
+  run(1 / 60);
+  want.jump = false;
+  assert.equal(ga.climb?.k, 1, 'a mantle on its own machine');
+  run(1.5, () => {
+    if (ha.climbAnim === 1) shown.host++;
+    if (seen.climbAnim === 1) shown.other++;
+  });
+  assert.ok(shown.host > 5, `the host shows it climbing (${shown.host} frames)`);
+  assert.ok(shown.other > 5, `and so does the other guest (${shown.other} frames)`);
+  for (const [name, a] of [
+    ['its own machine', ga],
+    ['the host', ha],
+    ['the other guest', seen],
+  ] as [string, Actor][])
+    assert.ok(Math.abs(a.body.y - top) < 0.1, `on top on ${name} (${(a.body.y - top).toFixed(2)})`);
+  assert.equal(ha.climbAnim, 0, 'and done climbing');
+  // the host's own soldier climbs: both guests see it
+  want.host = true;
+  run(1 / 60);
+  want.host = false;
+  assert.equal(hv.climb?.k, 1, 'the host mantles');
+  run(1.5, () => {
+    if (m1.actors[h.me].climbAnim === 1 && m2.actors[h.me].climbAnim === 1) shown.guests++;
+  });
+  assert.ok(shown.guests > 5, `the guests show it climbing (${shown.guests} frames)`);
+  assert.ok(Math.abs(m1.actors[h.me].body.y - hostTop) < 0.1 && Math.abs(hv.body.y - hostTop) < 0.02, 'on top everywhere');
+});

@@ -1,7 +1,7 @@
 // The frame after the scene: HDR scene buffer (multisampled where the GPU can), a dual filter bloom at low
 // resolutions, then one composite pass: filmic tone mapping, per map color grading, contrast adaptive sharpening (so a
 // lower render scale still looks crisp), FXAA when there is no MSAA, a light film grade (split toned shadows and
-// highlights), vignette, grain and the damage and smoke washes.
+// highlights), vignette, grain and the damage and smoke washes, and a cold, drained look outside a royale's zone.
 import { CLAMP, HALF_FLOAT, NO_SPACE, type T, type Three } from './common.ts';
 
 const VERT = /* glsl */ `
@@ -85,6 +85,7 @@ uniform float uSmoke;
 uniform vec3 uSmokeColor;
 uniform float uFlash;
 uniform float uFilm;
+uniform float uOutside;
 varying vec2 vUv;
 
 const mat3 ACESIn = mat3(vec3(0.59719, 0.07600, 0.02840), vec3(0.35458, 0.90834, 0.13383), vec3(0.04823, 0.01566, 0.83777));
@@ -149,6 +150,9 @@ void main() {
   float fl = luma(c);
   c = mix(vec3(fl), c, mix(1.0 - 0.18 * uFilm, 1.0, smoothstep(0.02, 0.3, fl)));
   c += mix(vec3(-0.010, 0.002, 0.012), vec3(0.014, 0.004, -0.012), smoothstep(0.15, 0.85, fl)) * uFilm;
+  // outside a royale's safe zone: a third of the color drained, the rest turned cold, the edges darkened
+  c = mix(c, vec3(luma(c)), 0.35 * uOutside) * mix(vec3(1.0), vec3(0.82, 0.93, 1.14), uOutside);
+  c *= 1.0 - 0.3 * uOutside * smoothstep(0.2, 0.75, length(uv - 0.5));
   vec2 d = uv - 0.5;
   float vig = 1.0 - dot(d, d) * uVignette * 2.2;
   c *= vig;
@@ -161,7 +165,7 @@ void main() {
 }
 `;
 
-export type PostParams = { exposure: number; bloom: number; sat: number; contrast: number; tint: [number, number, number]; vignette: number; damage: number; low: number; smoke: number; smokeColor: [number, number, number]; flash: number; time: number };
+export type PostParams = { exposure: number; bloom: number; sat: number; contrast: number; tint: [number, number, number]; vignette: number; damage: number; low: number; smoke: number; smokeColor: [number, number, number]; flash: number; time: number; /** Outside a royale's safe zone, 0 to 1 (eased). */ outside?: number };
 
 export class Post {
   rt: T.WebGLRenderTarget;
@@ -224,6 +228,7 @@ export class Post {
       uSmokeColor: { value: new THREE.Vector3(0.6, 0.6, 0.6) },
       uFlash: { value: 0 },
       uFilm: { value: 1 },
+      uOutside: { value: 0 },
     });
     this.scene = new THREE.Scene();
     this.cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -315,6 +320,7 @@ export class Post {
     c.uSmoke.value = p.smoke;
     (c.uSmokeColor.value as T.Vector3).set(...p.smokeColor);
     c.uFlash.value = p.flash;
+    c.uOutside.value = p.outside ?? 0;
     this.pass(r, this.comp, null);
   }
 

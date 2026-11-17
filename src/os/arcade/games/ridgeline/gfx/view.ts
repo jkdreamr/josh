@@ -2,21 +2,25 @@
 // map's texels so their edges never crawl), the soldiers, effects and viewmodel, and the post chain. A governor watches
 // the frame time and trims the render scale before frames drop, then raises it again when there is room. The sky photo
 // streams in after the first frame: it lights the scene as soon as it arrives (the environment map is baked again).
+// A royale can play at another time of day (looks.ts): look() swaps the light, the sky and its photo, and bakes the
+// terrain's far shadows again for a lower sun a slice per frame.
 import { skyImage, type Assets } from '../assets.ts';
 import type { Match } from '../match.ts';
 import { currentGun, me } from '../match.ts';
 import { clamp } from '../noise.ts';
 import { newHit, rayWorld } from '../physics.ts';
 import { T_HALF, T_RES } from '../terrain.ts';
-import { ARENA, type World } from '../world.ts';
-import { AMBIENT_K, SUN_K, disposeTree, lin, makeShared, type T, type Three } from './common.ts';
+import { ARENA, sunDir as sunOf, type World } from '../world.ts';
+import { relight } from '../relight.ts';
+import { withLook, type LookId } from '../looks.ts';
+import { AMBIENT_K, SUN_K, disposeTree, lin, lookShared, makeShared, type T, type Three } from './common.ts';
 import { effects, type Fx } from './fx.ts';
 import { Post } from './post.ts';
 import { carsView } from './cars.ts';
 import { buildings, markers } from './props.ts';
 import { camoNets, nearDress } from './dress.ts';
 import { furnished, propKit } from './furnish.ts';
-import { applySky, skyDome, skyEnv } from './sky.ts';
+import { LOOK_SKIES, applySky, skyDome, skyEnv } from './sky.ts';
 import { brush } from './brush.ts';
 import { disposeGuns, installRealGuns } from './guns.ts';
 import { crateSkip, modelOf, placedModels } from './models.ts';
@@ -155,6 +159,10 @@ export type View = {
   lost(): boolean;
   /** Draw calls and triangles in the last frame, all passes. */
   info(): { calls: number; triangles: number };
+  /** The time of day to show (a royale's, see looks.ts; 'day' is the map as made). */
+  look(id: LookId): void;
+  /** A royale's loot glow (the rings and shafts over the loot) on or off. */
+  lootGlow(on: boolean): void;
   /** Live textures and geometries, and roughly how many megabytes the scene's textures take (with mipmaps). */
   memory(): { textures: number; geometries: number; texMB: number; plants: number };
   scale(): number;
@@ -169,6 +177,9 @@ function texBytes(t: T.Texture) {
   const half = (t as T.DataTexture).type === 1016 ? 2 : 1;
   return img.width * img.height * (img.depth ?? 1) * 4 * half * (t.generateMipmaps || t.mipmaps?.length ? 4 / 3 : 1);
 }
+
+/** Each world's baked light for another time of day, baked once per page (see relight). */
+const relit = new WeakMap<World, Map<LookId, Uint8Array>>();
 
 export function createView(THREE: Three, host: HTMLElement, w: World, quality: Quality, assets: Assets): View | null {
   const Q = QUALITY[quality];
@@ -242,11 +253,12 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
   scene.add(cars.group);
   scene.add(troops.group);
 
-  // baked sun visibility and occlusion on the CPU, for the gun's lighting and the particles
+  // baked sun visibility and occlusion on the CPU, for the gun's lighting and the particles (for the time of day shown)
+  let light = w.light;
   const bakedAt = (x: number, z: number, ch: number) => {
     const i = clamp(Math.round((x + T_HALF) / 2), 0, T_RES - 1);
     const j = clamp(Math.round((z + T_HALF) / 2), 0, T_RES - 1);
-    return w.light[(j * T_RES + i) * 4 + ch] / 255;
+    return light[(j * T_RES + i) * 4 + ch] / 255;
   };
   const fx: Fx = effects(THREE, w, shared, (x, z) => bakedAt(x, z, 0) * bakedAt(x, z, 2), [modelOf(THREE, assets, 'm67')?.parts[0] ?? null, modelOf(THREE, assets, 'rgd5')?.parts[0] ?? null]);
   scene.add(fx.group);
@@ -278,20 +290,73 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
   // the sky photo: once it arrives it is the sky, the haze and (baked again into the environment map) the sky light
   let skyTex: T.Texture | null = null;
   let disposed = false;
-  skyImage(def.id, Q.sky).then((img) => {
-    if (!img || disposed) return;
+  /** The time of day shown, the map as it looks then, and where its sun stands. */
+  let lookId: LookId = 'day';
+  let cur = def;
+  let curSun = w.sun;
+  /** Bumped by each look, so a photo for an earlier one arriving late is dropped. */
+  let skyGen = 0;
+  /** The far shadows being baked for the look's sun, a slice per frame. */
+  let job: Generator<void, Uint8Array> | null = null;
+  const rebakeEnv = () => {
+    const next = skyEnv(THREE, renderer, shared);
+    scene.environment = next.texture;
+    vm.setEnv(next.texture, cur.ambient * AMBIENT_K * 1.3);
+    env.dispose();
+    env = next;
+  };
+  const loadSky = () => {
+    const gen = ++skyGen;
+    skyImage(def.id, Q.sky, lookId).then((img) => {
+      if (!img || disposed || gen !== skyGen) return;
+      try {
+        skyTex = applySky(THREE, shared, def.id, cur, curSun, img, AMBIENT_K, lookId === 'day' ? undefined : LOOK_SKIES[def.id][lookId]);
+        renderer.initTexture(skyTex);
+        rebakeEnv();
+      } catch {
+        /* a lost context: the painted sky stays */
+      }
+    });
+  };
+  loadSky();
+  const setLight = (data: Uint8Array) => {
+    light = data;
+    (tex.light.image as { data: Uint8Array }).data = data;
+    tex.light.needsUpdate = true;
+  };
+  /** Another time of day: its sun, sky, haze and sky light now, its photo when it arrives, its far shadows soon. */
+  const setLook = (id: LookId) => {
+    if (id === lookId || disposed) return;
+    lookId = id;
+    cur = withLook(w.def, id);
+    curSun = id === 'day' ? w.sun : sunOf(cur);
+    lookShared(shared, cur, curSun);
+    // the painted sky (in the look's colors) until the look's photo is in
+    shared.uSkyOn.value = 0;
+    shared.uSkyTex.value = null;
+    skyTex?.dispose();
+    skyTex = null;
+    // no sun disc behind an overcast
+    shared.uDisc.value = id === 'overcast' ? 0 : 1;
+    scene.environmentIntensity = cur.ambient * AMBIENT_K;
+    sun.color.setRGB(...lin(cur.sun.color));
+    sun.intensity = cur.sun.intensity * SUN_K;
+    sunDir.set(...curSun);
+    sRight.crossVectors(new THREE.Vector3(0, 1, 0), sunDir).normalize();
+    sUp.crossVectors(sunDir, sRight).normalize();
+    vm.setSun(curSun, cur.sun.color, cur.sun.intensity * SUN_K);
     try {
-      skyTex = applySky(THREE, shared, def.id, def, w.sun, img, AMBIENT_K);
-      renderer.initTexture(skyTex);
-      const next = skyEnv(THREE, renderer, shared);
-      scene.environment = next.texture;
-      vm.setEnv(next.texture, def.ambient * AMBIENT_K * 1.3);
-      env.dispose();
-      env = next;
+      rebakeEnv();
     } catch {
-      /* a lost context: the painted sky stays */
+      /* a lost context: the old environment stays */
     }
-  });
+    loadSky();
+    // the terrain's far shadows: the map's own, one baked before, or baked now over the next frames
+    const same = curSun[0] === w.sun[0] && curSun[1] === w.sun[1] && curSun[2] === w.sun[2];
+    const done = same ? w.light : relit.get(w)?.get(id);
+    job = done ? null : relight(w, curSun);
+    if (done) setLight(done);
+  };
 
   const gl = renderer.getContext();
   const floatRT = !!renderer.extensions.has('EXT_color_buffer_float') || !!renderer.extensions.has('EXT_color_buffer_half_float');
@@ -378,6 +443,8 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
 
   let fpsAvg = 60;
   let shed = 0;
+  /** How far outside the zone the picture has turned (eased, 0 to 1). */
+  let outside = 0;
   let frameNo = 0;
   const lastInfo = { calls: 0, triangles: 0 };
   return {
@@ -396,6 +463,8 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
     },
     lost: () => isLost,
     info: () => ({ calls: lastInfo.calls, triangles: lastInfo.triangles }),
+    look: setLook,
+    lootGlow: (on) => royale.glow(on),
     memory() {
       const seen = new Set<T.Texture>();
       const add = (v: unknown) => {
@@ -439,6 +508,21 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
       }
       if (!renderer.shadowMap.autoUpdate && (frameNo & 1) === 0) renderer.shadowMap.needsUpdate = true;
       frameNo++;
+      // another time of day's far shadows, a few milliseconds of baking a frame
+      if (job) {
+        const t0 = performance.now();
+        for (let r = job.next(); ; r = job.next()) {
+          if (r.done) {
+            let byLook = relit.get(w);
+            if (!byLook) relit.set(w, (byLook = new Map()));
+            byLook.set(lookId, r.value);
+            setLight(r.value);
+            job = null;
+            break;
+          }
+          if (performance.now() - t0 > 3) break;
+        }
+      }
       shared.uTime.value = f.time;
       lastHide = f.hide;
       camera.position.set(f.eye.x, f.eye.y, f.eye.z);
@@ -507,12 +591,17 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
         // whether the gun in view is empty (an empty reload looks different), from the actor we look out of
         const held = m && f.hide >= 0 && m.actors[f.hide] ? currentGun(m.actors[f.hide]) : null;
         const empty = f.vm.empty ?? (!!held && held.id === f.vm.gun && held.mag <= 0);
-        vm.update({ ...f.vm, sun: sunVis, ambient: def.ambient * AMBIENT_K * 1.3 * (0.45 + 0.55 * ao) * (occl > 0 ? 1 : 0.7), empty }, f.dt, camera);
+        vm.update({ ...f.vm, sun: sunVis, ambient: cur.ambient * AMBIENT_K * 1.3 * (0.45 + 0.55 * ao) * (occl > 0 ? 1 : 0.7), empty }, f.dt, camera);
         if (f.fired) vm.fire();
         vmPair = { scene: vm.scene, camera: vm.camera };
       }
       const smoke = m ? fx.smokeAt(camera.position.x, camera.position.y, camera.position.z, m) : 0;
-      const g = def.grade;
+      // outside a royale's safe zone (not while still aboard the transport) the picture turns cold, over half a second
+      const z = m && m.mode === 'royale' ? m.zone : null;
+      const aboard = !!m && me(m).alive && me(m).drop === 1;
+      const out = z && z.r > 0.5 && !aboard && Math.hypot(camera.position.x - z.x, camera.position.z - z.z) > z.r ? 1 : 0;
+      outside = out > outside ? Math.min(out, outside + f.dt * 2) : Math.max(out, outside - f.dt * 2);
+      const g = cur.grade;
       const smokeTint = lin(0xd0d2d4, 0.9);
       post.render(
         renderer,
@@ -532,12 +621,14 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
           smokeColor: smokeTint,
           flash: f.flash,
           time: f.time,
+          outside: outside * outside * (3 - 2 * outside),
         },
         0.35 + (1 - gov.scale) * 1.4,
       );
     },
     dispose() {
       disposed = true;
+      job = null;
       canvas.removeEventListener('webglcontextlost', onLost);
       canvas.removeEventListener('webglcontextrestored', onRestored);
       veg.dispose();

@@ -75,7 +75,7 @@ export type AttKind = 'dot' | 'x4' | 'ext' | 'comp';
 export const ATT_NAME: Record<AttKind, string> = { dot: 'Red dot sight', x4: '4x scope', ext: 'Extended magazine', comp: 'Compensator' };
 export const ATT_SHORT: Record<AttKind, string> = { dot: 'dot', x4: '4x', ext: 'ext', comp: 'comp' };
 /** Which classes each fits: a sight only on guns without a scope of their own, nothing on the muzzle of a shotgun. */
-const ATT_FITS: Record<AttKind, WeaponClass[]> = { dot: ['smg', 'rifle', 'shotgun', 'lmg', 'crossbow'], x4: ['rifle', 'dmr', 'lmg', 'crossbow'], ext: ['smg', 'rifle', 'dmr', 'sniper', 'lmg'], comp: ['smg', 'rifle', 'dmr', 'sniper', 'lmg'] };
+const ATT_FITS: Record<AttKind, WeaponClass[]> = { dot: ['smg', 'rifle', 'shotgun', 'lmg'], x4: ['rifle', 'dmr', 'lmg', 'crossbow'], ext: ['smg', 'rifle', 'dmr', 'sniper', 'lmg'], comp: ['smg', 'rifle', 'dmr', 'sniper', 'lmg'] };
 export const DOT_ZOOM = 1.4;
 export const X4_ZOOM = 4;
 export const EXT_MAG = 1.5;
@@ -130,14 +130,95 @@ export type Item = { id: number; kind: ItemKind; what: string; n: number; x: num
 
 /** One phase of the zone: it holds for `wait` seconds, then closes to radius `r` over `shrink`; outside costs `dps`. */
 export type ZonePhase = { wait: number; shrink: number; r: number; dps: number };
+// (about ten minutes in all; every close is slow enough that someone at the far side of the old circle can keep
+// ahead of it on foot, with the next centre as far off as nextCircle ever puts it)
 export const ZONES: ZonePhase[] = [
-  { wait: 90, shrink: 40, r: 220, dps: 1 },
-  { wait: 40, shrink: 30, r: 140, dps: 2 },
-  { wait: 35, shrink: 25, r: 85, dps: 4 },
-  { wait: 25, shrink: 22, r: 48, dps: 6 },
-  { wait: 20, shrink: 20, r: 22, dps: 9 },
-  { wait: 15, shrink: 22, r: 0, dps: 14 },
+  { wait: 120, shrink: 75, r: 250, dps: 1 },
+  { wait: 65, shrink: 45, r: 165, dps: 2 },
+  { wait: 50, shrink: 40, r: 105, dps: 3 },
+  { wait: 45, shrink: 35, r: 62, dps: 5 },
+  { wait: 40, shrink: 30, r: 34, dps: 8 },
+  { wait: 30, shrink: 25, r: 16, dps: 11 },
+  { wait: 20, shrink: 25, r: 0, dps: 14 },
 ];
+
+/** Pacing: how many should be left at each point of a match ([match seconds, alive] knots, read in between). Fitted
+ * to what the bots really do on these maps: a hot drop loses about a quarter of the lobby in the first minute and a
+ * half, then the curve bends gently, with a knockout in most half minutes, the last ten around the seventh minute
+ * and the last two near the end of the zone. */
+export const PACE_KNOTS: [number, number][] = [
+  [0, 100],
+  [50, 100],
+  [100, 70],
+  [160, 49],
+  [230, 35],
+  [305, 24],
+  [395, 14],
+  [475, 9],
+  [545, 5],
+  [600, 3],
+  [645, 2],
+];
+/** The fewest left the curve wants at this match time. */
+export function aliveTarget(t: number) {
+  const K = PACE_KNOTS;
+  if (t <= K[0][0]) return K[0][1];
+  for (let i = 1; i < K.length; i++)
+    if (t <= K[i][0]) {
+      const [t0, a0] = K[i - 1];
+      const [t1, a1] = K[i];
+      return a0 + ((a1 - a0) * (t - t0)) / (t1 - t0);
+    }
+  return K[K.length - 1][1];
+}
+/** The lowest pace there is: ahead of the curve, bots leave each other be unless they bump into each other or are
+ * shot at. */
+export const PACE_FLOOR = 0;
+/** How readily bots pick fights with other bots, 0 to 1 (the chance a second that a bot sets about another it has
+ * seen): full when the match is well behind the curve (more left than it wants), down to the floor once the knockouts
+ * have run a few ahead of it. */
+export const paceOf = (alive: number, t: number) => Math.min(1, Math.max(PACE_FLOOR, (alive - aliveTarget(t) + 3) / 9));
+/** Bots within this of each other always notice (they have bumped into each other), whatever the pace. */
+export const PACE_CLOSE = 2.5;
+/** A bot hurt in a fight with a bot it did not pick, that bot over CALM_D away, may break off and leave it alone
+ * for CALM_T seconds (the further ahead of the curve, the more often). */
+export const CALM_HP = 95;
+export const CALM_D = 10;
+export const CALM_T = 5;
+/** Loot within this of another bot, or of what a nearer bot is going for, is left to that bot (on a pace roll). */
+export const CLAIM_R = 25;
+/** One bot on another aims worse while the match runs ahead of its pace: its aim error is multiplied by this, so
+ * its chance to hit goes roughly with 0.4 + 0.6 * pace (never on people). */
+export const paceAim = (pace: number) => 1 / (0.4 + 0.6 * pace);
+/** The most bots that pick out the same person on their own at once, per level (whoever that person shoots at, or
+ * who is close, still notices them; on easy none go looking for you from afar at all). */
+export const HEAT_CAP: Record<'easy' | 'normal' | 'hard', number> = { easy: 0, normal: 1, hard: 3 };
+/** A person who landed under this many seconds ago with no gun yet is left alone unless close. */
+export const LAND_GRACE = 40;
+/** Bots set about a person they see (past PACE_CLOSE, not yet fighting them) on a roll of max(pace, PERSON_FLOOR) a
+ * second, by level: a person meets fights all match long, but is never the one thing the bots go for. */
+export const PERSON_FLOOR: Record<'easy' | 'normal' | 'hard', number> = { easy: 0.1, normal: 0.1, hard: 0.25 };
+/** Warning shots: on a new target that is a person past WARN_D, a bot's first aim error is this many times its
+ * usual, by tier (recruit to ace). */
+export const WARN_D = 25;
+export const WARN_SHOT = [1.8, 1.5, 1.2, 1];
+/** Skill tiers for a royale's bots: their share of the lobby, and what each does to the level's skill and reaction
+ * time (recruits, regulars, veterans, aces). */
+export const TIERS: { share: number; skill: number; react: number }[] = [
+  { share: 0.5, skill: 0.55, react: 1.9 },
+  { share: 0.32, skill: 0.88, react: 1.45 },
+  { share: 0.14, skill: 1.2, react: 1.15 },
+  { share: 0.04, skill: 1.5, react: 0.95 },
+];
+/** The tier a roll of 0 to 1 lands on. */
+export function tierOf(roll: number) {
+  let acc = 0;
+  for (let i = 0; i < TIERS.length; i++) {
+    acc += TIERS[i].share;
+    if (roll < acc) return i;
+  }
+  return TIERS.length - 1;
+}
 
 export type Zone = {
   /** Phase index (ZONES.length once it has closed). */
