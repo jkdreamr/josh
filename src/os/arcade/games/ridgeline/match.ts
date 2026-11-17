@@ -385,6 +385,8 @@ export type Match = {
   redT: number;
   /** Royale: the vehicles (none in the other modes). */
   cars: Car[];
+  /** Royale: the match's seed (its loot, its vehicles and its time of day, alike on every machine online). */
+  seed?: number;
   /** Which actor is played on this machine, whether this machine runs the rules (solo and the online host) or only
    * mirrors them (an online guest), and a guest's line to the host. */
   me: number;
@@ -1129,6 +1131,7 @@ function respawn(m: Match, a: Actor) {
 
 function startRoyale(m: Match, seed: number) {
   const w = m.world;
+  m.seed = seed;
   m.phase = 'live';
   m.loot = spawnLoot(w, seed);
   for (const it of m.loot) if (it.kind === 'gun') it.n = WEAPONS[it.what as WeaponId].mag;

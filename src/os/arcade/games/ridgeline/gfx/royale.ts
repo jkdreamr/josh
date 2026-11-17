@@ -3,6 +3,7 @@
 // (guns, ammo, armor, backpacks, heals, boosts and attachments, each with a look of its own: drawn only near you,
 // rebuilt when it changes or you move on).
 import type { Assets } from '../assets.ts';
+import { COMMON } from './common.ts';
 import type { Match } from '../match.ts';
 import { SUPPLY_MAX, planeAt, type AmmoKind, type Item } from '../royale.ts';
 import { floorAt } from '../terrain.ts';
@@ -272,6 +273,29 @@ void main() {
   gl_FragColor = vec4(uColor, min(a, 0.8) * uFade);
 }`;
 
+/** The bright band where the zone's wall meets the ground: it follows the terrain (or the water over it), 1.5 m tall up
+ * close and taller far off (up to 6 m at 400 m), so the line reads at any distance. */
+const BAND_VERT = /* glsl */ `
+${COMMON}
+varying float vY;
+void main() {
+  vec4 wp = modelMatrix * vec4(position.x, 0.0, position.z, 1.0);
+  float ground = max(dzHeight(wp.xz), uWater);
+  float tall = 1.5 * clamp(distance(cameraPosition.xz, wp.xz) / 100.0, 1.0, 4.0);
+  // (from a little under the ground, so no gap shows where the ground dips between two vertices)
+  wp.y = ground - 0.6 + uv.y * (tall + 0.6);
+  vY = uv.y;
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}`;
+const BAND_FRAG = /* glsl */ `
+uniform float uTime;
+uniform vec3 uColor;
+varying float vY;
+void main() {
+  float a = pow(1.0 - vY, 1.5) * (0.82 + 0.18 * sin(uTime * 2.6));
+  gl_FragColor = vec4(uColor, a);
+}`;
+
 export type Royale = { group: T.Group; update(m: Match, camera: T.Camera, time: number): void; dispose(): void };
 
 export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: boolean): Royale {
@@ -323,6 +347,21 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
   zone.frustumCulled = false;
   zone.renderOrder = 3;
   group.add(zone);
+  const bandMat = keep(
+    new THREE.ShaderMaterial({
+      vertexShader: BAND_VERT,
+      fragmentShader: BAND_FRAG,
+      uniforms: { ...shared, uColor: { value: new THREE.Color(...lin(0xff7434, 2.6)) } },
+      transparent: true,
+      depthWrite: false,
+      side: DOUBLE,
+    }),
+  );
+  const bandGeo = keep(new THREE.CylinderGeometry(1, 1, 1, 720, 1, true));
+  const band = new THREE.Mesh(bandGeo, bandMat);
+  band.frustumCulled = false;
+  band.renderOrder = 3;
+  group.add(band);
 
   // a bombardment: a lower wall of red haze round its circle, faint while it is only marked
   const redMat = keep(
@@ -592,10 +631,13 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
       // the zone
       const z = m.zone;
       zone.visible = !!z && z.r > 0.5;
+      band.visible = zone.visible;
       if (z) {
         zone.position.set(z.x, -40, z.z);
         zone.scale.set(Math.max(0.5, z.r), 640, Math.max(0.5, z.r));
         zoneMat.uniforms.uTime.value = time;
+        band.position.set(z.x, 0, z.z);
+        band.scale.set(Math.max(0.5, z.r), 1, Math.max(0.5, z.r));
       }
       // the bombardment
       const red = m.red;

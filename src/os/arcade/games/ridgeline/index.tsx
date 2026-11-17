@@ -22,6 +22,8 @@ import { floorAt } from './terrain.ts';
 import { PAVISE, WEAPONS, type WeaponId } from './weapons.ts';
 
 import { buildWorld, cacheWorld, cachedWorld, type World } from './world.ts';
+import { lookOf, type LookId } from './looks.ts';
+import { SKY, SkySetting } from './sky-setup.tsx';
 import './ridgeline.css';
 
 // (a new key: the 5v5 is the main game now, so everyone starts on it once, whatever they picked before)
@@ -122,6 +124,7 @@ function Setup() {
       <Segmented label="Map" value={map} options={mapOptions} onChange={setMap} />
       {map !== 'random' && <p className="g-ridgeline-note">{MAPS[map].tag}</p>}
       <Segmented label="Bots" value={level} options={levelOptions} onChange={setLevel} />
+      {mode === 'royale' && <SkySetting />}
       {mode === 'dm' && <Segmented label="Gun" value={gun} options={gunOptions} onChange={setGun} />}
       <Segmented label="Graphics" value={quality} options={qualityOptions} onChange={setQuality} />
       {mouse && <Segmented label="Mouse" value={sens} options={sensOptions} onChange={setSens} />}
@@ -161,6 +164,7 @@ function OnlineSetup() {
           <p className="g-ridgeline-note">{onlineNotes[mode]}</p>
           <Segmented label="Map" value={map} options={mapOptions} onChange={setMap} />
           <Segmented label="Bots" value={level} options={levelOptions} onChange={setLevel} />
+          {mode === 'royale' && <SkySetting />}
         </>
       ) : (
         <p className="g-ridgeline-note">the host picks the mode (Breach 5v5, Deathmatch or Royale), the map and the bots.</p>
@@ -221,11 +225,12 @@ function OnlineStage() {
   const [level] = useSetting(LEVEL);
   const [modeSetting] = useSetting(MODE);
   const [dmGun] = useSetting(DMGUN);
+  const [sky] = useSetting(SKY);
   const [session, setSession] = useState<Session | null>(null);
   const [picked, setPicked] = useState<{ map: MapId; mode: Mode } | null>(null);
   useEffect(() => {
     const map: MapId = mapSetting === 'random' ? MAP_IDS[Math.floor(Math.random() * MAP_IDS.length)] : mapSetting;
-    const s = new Session(api, { map, level, mode: modeSetting, dmPick: dmGun as WeaponId });
+    const s = new Session(api, { map, level, mode: modeSetting, dmPick: dmGun as WeaponId, sky });
     if (s.map && s.mode) setPicked({ map: s.map, mode: s.mode });
     s.onMap = (id, mode) => setPicked({ map: id, mode });
     setSession(s);
@@ -351,6 +356,11 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
   const [glError, setGlError] = useState(false);
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<View | null>(null);
+  /** The time of day of the match on (a royale's comes from its seed, see looks.ts), and the Sky setting. */
+  const skyLook = useRef<LookId>('day');
+  const [skySetting] = useSetting(SKY);
+  const skyRef = useRef(skySetting);
+  skyRef.current = skySetting;
   const [ready, setReady] = useState(false);
   const matchRef = useRef<{ m: Match; round: number } | null>(null);
   const [hud, setHud] = useState<Hud>(() => blankHud(mode));
@@ -491,6 +501,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       return;
     }
     viewRef.current = view;
+    view.look(skyLook.current);
     const resize = () => {
       view.resize(host.clientWidth, host.clientHeight);
       shellRef.current.invalidate();
@@ -520,6 +531,9 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       const m = net ? net.attach(world) : createMatch(world, mode, st.level, { name: myName(), dmPick: st.dmGun as WeaponId });
       if (!m) return null;
       matchRef.current = { m, round: s.round };
+      // online the seed already carries the host's Sky choice, so every machine reads it alike
+      skyLook.current = lookOf(m.mode, m.seed, net ? 'auto' : skyRef.current, world.def);
+      viewRef.current?.look(skyLook.current);
       camY.current = null;
       third.current = null;
       proneOn.current = false;
