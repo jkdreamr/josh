@@ -75,7 +75,7 @@ export type AttKind = 'dot' | 'x4' | 'ext' | 'comp';
 export const ATT_NAME: Record<AttKind, string> = { dot: 'Red dot sight', x4: '4x scope', ext: 'Extended magazine', comp: 'Compensator' };
 export const ATT_SHORT: Record<AttKind, string> = { dot: 'dot', x4: '4x', ext: 'ext', comp: 'comp' };
 /** Which classes each fits: a sight only on guns without a scope of their own, nothing on the muzzle of a shotgun. */
-const ATT_FITS: Record<AttKind, WeaponClass[]> = { dot: ['smg', 'rifle', 'shotgun', 'lmg', 'crossbow'], x4: ['rifle', 'dmr', 'lmg', 'crossbow'], ext: ['smg', 'rifle', 'dmr', 'sniper', 'lmg'], comp: ['smg', 'rifle', 'dmr', 'sniper', 'lmg'] };
+const ATT_FITS: Record<AttKind, WeaponClass[]> = { dot: ['smg', 'rifle', 'shotgun', 'lmg'], x4: ['rifle', 'dmr', 'lmg', 'crossbow'], ext: ['smg', 'rifle', 'dmr', 'sniper', 'lmg'], comp: ['smg', 'rifle', 'dmr', 'sniper', 'lmg'] };
 export const DOT_ZOOM = 1.4;
 export const X4_ZOOM = 4;
 export const EXT_MAG = 1.5;
