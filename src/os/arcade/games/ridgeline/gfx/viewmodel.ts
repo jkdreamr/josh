@@ -47,6 +47,8 @@ export type ViewModel = {
   /** Where the muzzle is, in the view's own space (add the camera position for the world). */
   muzzle(out: T.Vector3): T.Vector3;
   setEnv(tex: T.Texture | null, intensity: number): void;
+  /** Another time of day's sun (a royale at dusk or overcast). */
+  setSun(dir: [number, number, number], color: number, intensity: number): void;
   dispose(): void;
 };
 
@@ -117,7 +119,8 @@ function sleeveGeometry(THREE: Three) {
   return g;
 }
 
-export function viewModel(THREE: Three, sunDir: [number, number, number], sunColor: number, sunIntensity: number, assets?: Assets | null): ViewModel {
+export function viewModel(THREE: Three, sunDir: [number, number, number], sunColor: number, sunIntensity0: number, assets?: Assets | null): ViewModel {
+  let sunIntensity = sunIntensity0;
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(55, 1, 0.01, 20);
   scene.add(camera);
@@ -400,6 +403,11 @@ export function viewModel(THREE: Three, sunDir: [number, number, number], sunCol
     setEnv(tex, intensity) {
       scene.environment = tex;
       scene.environmentIntensity = intensity;
+    },
+    setSun(dir, color, intensity) {
+      sun.position.set(dir[0], dir[1], dir[2]);
+      sun.color.setRGB(...lin(color));
+      sunIntensity = intensity;
     },
     dispose() {
       sleeveGeo.dispose();
