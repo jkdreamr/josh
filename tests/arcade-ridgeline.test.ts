@@ -10,6 +10,7 @@ import { CELL, T_HALF, T_RES, floorAt, generateTerrain, heightAt, normalAt, rayT
 import { ARMOR, KILL_REWARD, LOSS_REWARD, PAVISE, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
 
 import { ARENA, ROYALE_ARENA, SITE_R, STOREY, withBoxes, worldFor, type Box, type World } from '../src/os/arcade/games/ridgeline/world.ts';
+import { COMPOUND, OUTER } from '../src/os/arcade/games/ridgeline/world.ts';
 import { AMMO_MAX, AMMO_OF, AMMO_PACK, BOOST, BOOST_DRAIN, HEAL, NADE_MAX, RED_LIVE, RED_WARN, ROYALE_PLAYERS, VEST, X4_ZOOM, ZONES, ammoCap, fits, gunLabel, healCap, magOf, richness, scopeOf, spawnLoot, zoomOf, type AmmoKind, type Item } from '../src/os/arcade/games/ridgeline/royale.ts';
 import {
   BLAST_R,
@@ -2108,6 +2109,170 @@ test('royale towns have taller buildings: two storey houses, blocks of flats, wa
     const b = worldFor(id);
     assert.equal(b.flights.length + b.ladders.length + b.decks.length, 0);
   }
+});
+
+test('royale places: every name on a map its own, the places out over the land named from its list by what they are, and one compound inside the land', () => {
+  for (const id of MAP_IDS) {
+    const def = MAPS[id];
+    assert.equal(def.royalePois.length, OUTER.length + 3, `${id}: a name for each place and each hamlet`);
+    assert.equal(new Set([...def.pois, ...def.royalePois]).size, def.pois.length + def.royalePois.length, `${id}: no name twice in the lists`);
+    const w = worldFor(id, true);
+    const names = w.towns.map((t) => t.name);
+    assert.equal(new Set(names).size, names.length, `${id}: every place has its own name (${names.join(', ')})`);
+    const outer = w.towns.filter((t) => t.site === -2);
+    assert.ok(outer.length >= 6, `${id}: places out over the land (${outer.length})`);
+    for (const t of outer) {
+      const k = def.royalePois.indexOf(t.name);
+      assert.ok(k >= 0 && k < OUTER.length && OUTER[k] === t.kind, `${id}: ${t.name} is named for what it is (${t.kind})`);
+    }
+    const kinds = outer.map((t) => t.kind);
+    assert.equal(kinds.filter((k) => k === 'compound').length, 1, `${id}: one compound`);
+    for (const k of ['depot', 'farm', 'outpost'] as const) assert.ok(kinds.includes(k), `${id}: a ${k}`);
+    const c = outer.find((t) => t.kind === 'compound')!;
+    assert.ok(Math.abs(c.x) + COMPOUND.half < w.arena - 4 && Math.abs(c.z) + COMPOUND.half < w.arena - 4, `${id}: the compound inside the land`);
+    assert.ok(worldFor(id).towns.every((t) => t.kind === undefined), `${id}: a breach's towns have no kind`);
+  }
+});
+
+test('royale compound: a ring of HESCO with gates a bot walks in through, every building in it reachable, and the most loot on the map', () => {
+  const H = COMPOUND.half;
+  for (const id of MAP_IDS) {
+    const w = worldFor(id, true);
+    const c = w.towns.find((t) => t.kind === 'compound')!;
+    const ring = w.pieces.filter((p) => p.part === 'hesco' && Math.abs(Math.max(Math.abs((p.x0 + p.x1) / 2 - c.x), Math.abs((p.z0 + p.z1) / 2 - c.z)) - H) < 1);
+    assert.ok(ring.length > 100, `${id}: the HESCO ring (${ring.length} baskets)`);
+    // one basket high: from outside, mostly a ledge you can pull yourself up onto
+    let climbs = 0;
+    let tried = 0;
+    for (let i = 0; i < ring.length; i += 7) {
+      const p = ring[i];
+      const px = (p.x0 + p.x1) / 2;
+      const pz = (p.z0 + p.z1) / 2;
+      const [nx, nz] = Math.abs(px - c.x) > Math.abs(pz - c.z) ? [Math.sign(px - c.x), 0] : [0, Math.sign(pz - c.z)];
+      const off = (nx ? (p.x1 - p.x0) / 2 : (p.z1 - p.z0) / 2) + RADIUS + 0.15;
+      const x = px + nx * off;
+      const z = pz + nz * off;
+      const y = groundAt(w, x, z, floorAt(w.terrain, x, z) + 1);
+      if (blockedAt(w, x, z, y)) continue;
+      tried++;
+      if (findClimb(w, x, y, z, Math.atan2(nx, nz), false)) climbs++;
+    }
+    assert.ok(climbs > tried / 2, `${id}: the ring can be climbed (${climbs} of ${tried})`);
+    // round the ring, every 0.5 m: open where no basket is within reach
+    const L = 8 * H;
+    const at = (s: number): [number, number] => {
+      const side = Math.floor(s / (2 * H)) % 4;
+      const u = (s % (2 * H)) - H;
+      return [[c.x + u, c.z - H], [c.x + H, c.z + u], [c.x - u, c.z + H], [c.x - H, c.z - u]][side] as [number, number];
+    };
+    const open = (s: number) => {
+      const [x, z] = at(s);
+      return !ring.some((p) => Math.hypot(Math.max(p.x0 - x, 0, x - p.x1), Math.max(p.z0 - z, 0, z - p.z1)) < 0.5);
+    };
+    const flags = Array.from({ length: L * 2 }, (_, k) => open(k / 2));
+    const first = flags.indexOf(false);
+    const gaps: number[] = [];
+    let run = 0;
+    for (let k = 1; k <= flags.length; k++) {
+      const i = (first + k) % flags.length;
+      if (flags[i]) run++;
+      else {
+        if (run * 0.5 >= COMPOUND.gate - 1) gaps.push(((i - run / 2 + flags.length) % flags.length) / 2);
+        run = 0;
+      }
+    }
+    assert.ok(gaps.length >= 2, `${id}: openings in the ring (${gaps.length})`);
+    // from 5 m outside an opening to 5 m inside it, a bot's path goes straight through (not round to another way in)
+    const f = fieldTo(w, 'compound', c.x, c.z);
+    const through = gaps.filter((s) => {
+      const [x, z] = at(s);
+      const nx = Math.sign(Math.round((x - c.x) / H));
+      const nz = Math.sign(Math.round((z - c.z) / H));
+      const p = findPath(w, x + nx * 5, z + nz * 5, x - nx * 5, z - nz * 5, 20000);
+      if (!p) return false;
+      let len = Math.hypot(p[0] - x - nx * 5, p[1] - z - nz * 5);
+      for (let i = 2; i < p.length; i += 2) len += Math.hypot(p[i] - p[i - 2], p[i + 1] - p[i - 1]);
+      return len < 16;
+    });
+    assert.ok(through.length >= 2, `${id}: gates walked through (${through.length} of ${gaps.length})`);
+    const inside = w.interiors.filter((q) => Math.abs((q.x0 + q.x1) / 2 - c.x) < H && Math.abs((q.z0 + q.z1) / 2 - c.z) < H);
+    assert.ok(inside.length >= 3, `${id}: buildings in the compound (${inside.length})`);
+    for (const q of inside) assert.ok(Number.isFinite(fieldDist(w, f, (q.x0 + q.x1) / 2, (q.z0 + q.z1) / 2)), `${id}: a building in the compound can be walked into`);
+    // more loot than round any other place, and the best of it
+    const L3 = w.loot;
+    const rich = richness(L3);
+    const spots = (x: number, z: number) => {
+      const out: number[] = [];
+      for (let i = 0; i < L3.length; i += 3) if (Math.abs(L3[i] - x) < H && Math.abs(L3[i + 2] - z) < H) out.push(i / 3);
+      return out;
+    };
+    const mine = spots(c.x, c.z);
+    for (const t of w.towns) if (t !== c) assert.ok(spots(t.x, t.z).length < mine.length, `${id}: more loot in the compound (${mine.length}) than round ${t.name}`);
+    const mean = mine.reduce((s, i) => s + rich[i], 0) / mine.length;
+    assert.ok(mean > 0.85, `${id}: the compound's loot is rich (${mean.toFixed(2)})`);
+  }
+});
+
+test('royale places: each one built to its own plan can be walked to from a town by a site, loot spots as many as before and none inside anything, and cover over the open fields', () => {
+  // (loot spots on each map before these places were built)
+  const before: Record<string, number> = { vale: 766, mesa: 981, frost: 674, isles: 540 };
+  for (const id of MAP_IDS) {
+    const w = worldFor(id, true);
+    const fields = w.towns.filter((t) => t.site >= 0).map((t, k) => fieldTo(w, `places-site${k}`, t.x, t.z));
+    for (const t of w.towns.filter((t) => t.site === -2 && t.kind !== 'village')) assert.ok(fields.some((f) => Number.isFinite(fieldDist(w, f, t.x, t.z))), `${id}: ${t.name} (${t.kind}) can be walked to`);
+    const n = w.loot.length / 3;
+    assert.ok(n >= before[id] * 0.9 && n <= before[id] * 1.4, `${id}: loot spots (${n}, ${before[id]} before)`);
+    const inside: string[] = [];
+    for (let i = 0; i < w.loot.length; i += 3) {
+      const [x, y, z] = [w.loot[i], w.loot[i + 1], w.loot[i + 2]];
+      if (w.boxes.some((b) => x > b.x0 && x < b.x1 && z > b.z0 && z < b.z1 && b.y0 < y + 0.5 && b.y1 > y + 0.1)) inside.push(`${x.toFixed(1)},${z.toFixed(1)}`);
+    }
+    assert.deepEqual(inside, [], `${id}: loot spots inside something solid`);
+    // open dry ground: how far from anything to hide behind (a wall, a car, a tree, a big rock); seldom 20 m
+    const t = w.terrain;
+    const cover: [number, number][] = [];
+    const near = (x: number, z: number) => Math.abs(x) < w.arena + 30 && Math.abs(z) < w.arena + 30;
+    for (const b of w.boxes) if (near(b.x0, b.z0) && b.y1 - heightAt(t, (b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2) > 0.9) cover.push([(b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2]);
+    for (const k of w.trunks) if (near(k.x, k.z)) cover.push([k.x, k.z]);
+    for (const r of w.rocks) if (r.r > 0.8 && near(r.x, r.z)) cover.push([r.x, r.z]);
+    const B = 20;
+    const nb = Math.ceil((2 * w.arena + 80) / B);
+    const cell = (v: number) => Math.min(nb - 1, Math.max(0, Math.floor((v + w.arena + 40) / B)));
+    const buckets: [number, number][][] = Array.from({ length: nb * nb }, () => []);
+    for (const p of cover) buckets[cell(p[1]) * nb + cell(p[0])].push(p);
+    let open = 0;
+    let far = 0;
+    for (let x = -w.arena + 20; x < w.arena - 20; x += 10)
+      for (let z = -w.arena + 20; z < w.arena - 20; z += 10) {
+        if (heightAt(t, x, z) < t.water + 0.6 || normalAt(t, x, z).y < 0.85) continue;
+        open++;
+        let best = Infinity;
+        for (let j = cell(z) - 2; j <= cell(z) + 2; j++) for (let i = cell(x) - 2; i <= cell(x) + 2; i++) if (i >= 0 && j >= 0 && i < nb && j < nb) for (const p of buckets[j * nb + i]) best = Math.min(best, Math.hypot(p[0] - x, p[1] - z));
+        if (best > 20) far++;
+      }
+    assert.ok(far / open < 0.06, `${id}: open ground more than 20 m from cover (${far} of ${open})`);
+  }
+});
+
+test('breach worlds are as they were before the royale places: the same pieces, colliders, loot, models, trees and spawns', () => {
+  const fingerprint = (w: World) => {
+    let h = 2166136261;
+    const add = (v: number) => (h = Math.imul(h ^ Math.round(v * 100), 16777619) >>> 0);
+    for (const p of w.pieces) [p.x0, p.y0, p.z0, p.x1, p.y1, p.z1].forEach(add);
+    for (const b of w.boxes) [b.x0, b.y0, b.z0, b.x1, b.y1, b.z1].forEach(add);
+    for (const v of w.loot) add(v);
+    for (const m of w.models) [m.x, m.y, m.z].forEach(add);
+    for (const t of w.trees) [t.x, t.y, t.z].forEach(add);
+    for (const s of w.spawns) [s.x, s.y, s.z].forEach(add);
+    return `${w.pieces.length} ${w.boxes.length} ${w.loot.length / 3} ${w.models.length} ${w.trees.length} ${h.toString(16)}`;
+  };
+  const want: Record<string, string> = {
+    vale: '1323 804 148 73 6738 98f69749',
+    mesa: '1259 744 109 44 575 f5b58a5c',
+    frost: '1163 757 140 58 4025 3d3366be',
+    isles: '978 661 96 40 765 880b7fcf',
+  };
+  for (const id of MAP_IDS) assert.equal(fingerprint(worldFor(id)), want[id], `${id}: the breach world`);
 });
 
 test('upper floors: a path goes up the stairs (every leg a walk), the floor over a room leaves the room walkable, and a bot fetches loot upstairs and off a roof', () => {
