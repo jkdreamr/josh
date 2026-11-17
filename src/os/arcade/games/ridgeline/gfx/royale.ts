@@ -3,12 +3,12 @@
 // (guns, ammo, armor, backpacks, heals, boosts and attachments, each with a look of its own: drawn only near you,
 // rebuilt when it changes or you move on).
 import type { Assets } from '../assets.ts';
-import { COMMON } from './common.ts';
-import type { Match } from '../match.ts';
+import { underRoof, type Match } from '../match.ts';
 import { SUPPLY_MAX, planeAt, type AmmoKind, type Item } from '../royale.ts';
-import { floorAt } from '../terrain.ts';
+import { CELL, T_HALF, T_RES, floorAt, normalAt } from '../terrain.ts';
 import { WEAPON_IDS } from '../weapons.ts';
-import { DOUBLE, canvas, lin, patch, roundBox, type Shared, type T, type Three } from './common.ts';
+import { TIER_COLOR, lootTier } from '../loot-tier.ts';
+import { COMMON, DOUBLE, NORMAL_BLEND, canvas, lin, patch, roundBox, type Shared, type T, type Three } from './common.ts';
 import { gunLiteGeometry, gunModel } from './guns.ts';
 import { modelOf, worldMaterial, type Part } from './models.ts';
 
@@ -296,7 +296,7 @@ void main() {
   gl_FragColor = vec4(uColor, a);
 }`;
 
-export type Royale = { group: T.Group; update(m: Match, camera: T.Camera, time: number): void; dispose(): void };
+export type Royale = { group: T.Group; update(m: Match, camera: T.Camera, time: number): void; glow(on: boolean): void; dispose(): void };
 
 export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: boolean): Royale {
   const group = new THREE.Group();
@@ -566,6 +566,227 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
       o.position.set(it.x, it.y, it.z);
     }, (it) => LEVEL_COLOR[Number(it.what)]);
 
+  // the loot glow: a soft ring on the floor under each piece within GLOW_R (white, blue or gold by its tier), and a
+  // thin shaft of light over the best pieces and over any pile of four or more (a fallen player's gear) within R.
+  // Both are drawn after the solid world with the depth test on and no depth write, so walls hide them, and lit like
+  // the place they lie in (dimmer under a roof), so they read the same in the open sun and in a dark room.
+  const GLOW_R = 30;
+  const RINGS = 256;
+  const SHAFTS = 32;
+  let glowOn = true;
+  const ringGeo = keep(new THREE.PlaneGeometry(2, 2).rotateX(-Math.PI / 2));
+  const ringMat = keep(
+    new THREE.ShaderMaterial({
+      vertexShader: RING_VERT,
+      fragmentShader: RING_FRAG,
+      uniforms: { uFar: { value: GLOW_R - 3 }, uAlpha: { value: 0.35 } },
+      transparent: true,
+      depthWrite: false,
+      blending: NORMAL_BLEND,
+      side: DOUBLE,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    }),
+  );
+  const rings = new THREE.InstancedMesh(ringGeo, ringMat, RINGS);
+  const shaftGeo = keep(new THREE.PlaneGeometry(2, 1).translate(0, 0.5, 0));
+  const shaftMat = keep(
+    new THREE.ShaderMaterial({
+      vertexShader: SHAFT_VERT,
+      fragmentShader: SHAFT_FRAG,
+      uniforms: { uTime: shared.uTime, uFar: { value: R - 3 }, uAlpha: { value: 0.75 }, uWidth: { value: 0.2 }, uHeight: { value: 2.2 } },
+      transparent: true,
+      depthWrite: false,
+      // (laid over what is behind rather than added to it: a strong tint shows on pale sand and bright sky too, where
+      // added light washes out)
+      blending: NORMAL_BLEND,
+      side: DOUBLE,
+    }),
+  );
+  const shafts = new THREE.InstancedMesh(shaftGeo, shaftMat, SHAFTS);
+  for (const mesh of [rings, shafts]) {
+    mesh.count = 0;
+    // (a color on the first instance now, so the shaders are built with the per instance color)
+    mesh.setColorAt(0, new THREE.Color(1, 1, 1));
+    mesh.frustumCulled = false;
+    mesh.castShadow = false;
+    mesh.receiveShadow = false;
+    mesh.renderOrder = 2;
+    group.add(mesh);
+  }
+  /** A ring's radius by kind: wide enough to show round a gun lying on its side, small under a box of ammo. */
+  const ringR = (it: Item) => (it.kind === 'gun' ? 0.52 : it.kind === 'shield' ? 0.6 : it.kind === 'vest' || it.kind === 'helmet' || it.kind === 'pack' ? 0.4 : 0.3);
+  /** How much sun reaches each piece (0 under a roof, else the baked sun and shade there), found once per item. */
+  const sunOf = new Map<number, number>();
+  let sunMatch: Match | null = null;
+  const sunAt = (m: Match, it: Item) => {
+    if (sunMatch !== m) {
+      sunMatch = m;
+      sunOf.clear();
+    }
+    let s = sunOf.get(it.id);
+    if (s === undefined) {
+      const w = m.world;
+      if (underRoof(w, it.x, it.y + 0.3, it.z)) s = 0;
+      else {
+        const i = Math.max(0, Math.min(T_RES - 1, Math.round((it.x + T_HALF) / CELL)));
+        const j = Math.max(0, Math.min(T_RES - 1, Math.round((it.z + T_HALF) / CELL)));
+        const k = (j * T_RES + i) * 4;
+        s = w.light.length > k + 2 ? (w.light[k] / 255) * (w.light[k + 2] / 255) : 1;
+      }
+      sunOf.set(it.id, s);
+    }
+    return s;
+  };
+  const TIER_LIN = TIER_COLOR.map((c) => lin(c));
+  /** A tier's color lit like the place at (sun share s): the sky's light, a little of the sun, and a floor of its own
+   * so it still shows in the dark, held under the bloom's threshold (the common white a little dimmer). */
+  const litTier = (tier: number, s: number, gain: number) => {
+    const amb = shared.uAmbient.value as T.Color;
+    const sun = shared.uSunColor.value as T.Color;
+    const c = TIER_LIN[tier];
+    const k = gain * (tier === 0 ? 0.75 : 1);
+    const l = (a: number, b: number) => Math.min(1.5, (a * 1.5 + b * s * 0.06 + 0.05) * k);
+    return tint.setRGB(c[0] * l(amb.r, sun.r), c[1] * l(amb.g, sun.g), c[2] * l(amb.b, sun.b));
+  };
+  // (scratch for finding piles: candidates within R, a grid of PILE cells over them, and which are spoken for)
+  const PILE = 1.2;
+  const GRID = Math.ceil((R * 2) / PILE) + 2;
+  const cellHead = new Int32Array(GRID * GRID);
+  let cand: Item[] = [];
+  let candD = new Float32Array(256);
+  let cellNext = new Int32Array(256);
+  let spoken = new Uint8Array(256);
+  let order: number[] = [];
+  const ringList: number[] = [];
+  const nUp = { x: 0, y: 1, z: 0 };
+  const nVec = new THREE.Vector3();
+  const glowQ = new THREE.Quaternion();
+  const glowS = new THREE.Vector3();
+  const glowP = new THREE.Vector3();
+  const glowM = new THREE.Matrix4();
+  const yUp = new THREE.Vector3(0, 1, 0);
+  /** Calls fn on every candidate within r of (x, z), through the grid. */
+  const around = (x: number, z: number, r: number, cx: number, cz: number, fn: (k: number) => void) => {
+    const gx = Math.floor((x - cx + R) / PILE) + 1;
+    const gz = Math.floor((z - cz + R) / PILE) + 1;
+    const span = Math.ceil(r / PILE);
+    for (let b = Math.max(0, gz - span); b <= Math.min(GRID - 1, gz + span); b++)
+      for (let a = Math.max(0, gx - span); a <= Math.min(GRID - 1, gx + span); a++)
+        for (let k = cellHead[b * GRID + a]; k >= 0; k = cellNext[k]) {
+          const o = cand[k];
+          if ((o.x - x) ** 2 + (o.z - z) ** 2 <= r * r) fn(k);
+        }
+  };
+  const fillGlow = (m: Match, cx: number, cz: number) => {
+    rings.count = 0;
+    shafts.count = 0;
+    if (glowOn && m.mode === 'royale') glowNear(m, cx, cz);
+    for (const mesh of [rings, shafts]) {
+      mesh.instanceMatrix.needsUpdate = true;
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
+  };
+  const glowNear = (m: Match, cx: number, cz: number) => {
+    // candidates: everything live within R, nearest first
+    cand = [];
+    for (const it of m.loot) if (it.live && (it.x - cx) ** 2 + (it.z - cz) ** 2 < R * R) cand.push(it);
+    const n = cand.length;
+    if (candD.length < n) {
+      const size = Math.max(n, candD.length * 2);
+      candD = new Float32Array(size);
+      cellNext = new Int32Array(size);
+      spoken = new Uint8Array(size);
+    }
+    for (let k = 0; k < n; k++) candD[k] = (cand[k].x - cx) ** 2 + (cand[k].z - cz) ** 2;
+    order = Array.from({ length: n }, (_, k) => k).sort((a, b) => candD[a] - candD[b]);
+    // rings: the nearest within GLOW_R, flat on a floor, along the slope on open ground
+    ringList.length = 0;
+    for (const k of order) {
+      if (candD[k] >= GLOW_R * GLOW_R || ringList.length >= RINGS) break;
+      ringList.push(k);
+    }
+    const t = m.world.terrain;
+    for (const k of ringList) {
+      const it = cand[k];
+      const g = floorAt(t, it.x, it.z);
+      const onGround = Math.abs(it.y - g) < 0.2;
+      if (onGround) {
+        normalAt(t, it.x, it.z, nUp);
+        glowQ.setFromUnitVectors(yUp, nVec.set(nUp.x, nUp.y, nUp.z).normalize());
+      } else glowQ.identity();
+      const r = ringR(it);
+      glowP.set(it.x, (onGround ? Math.max(it.y, g) : it.y) + 0.03, it.z);
+      glowS.set(r, 1, r);
+      glowM.compose(glowP, glowQ, glowS);
+      rings.setMatrixAt(rings.count, glowM);
+      rings.setColorAt(rings.count, litTier(lootTier(it), sunAt(m, it), 1));
+      rings.count++;
+    }
+    // shafts: piles of four or more within PILE of each other, and the best pieces, nearest first
+    cellHead.fill(-1);
+    for (let k = 0; k < n; k++) {
+      const gx = Math.max(0, Math.min(GRID - 1, Math.floor((cand[k].x - cx + R) / PILE) + 1));
+      const gz = Math.max(0, Math.min(GRID - 1, Math.floor((cand[k].z - cz + R) / PILE) + 1));
+      cellNext[k] = cellHead[gz * GRID + gx];
+      cellHead[gz * GRID + gx] = k;
+      spoken[k] = 0;
+    }
+    let sx = 0;
+    let sy = 0;
+    let sz = 0;
+    let sn = 0;
+    let best = 0;
+    const sum = (k: number) => {
+      sx += cand[k].x;
+      sy += cand[k].y;
+      sz += cand[k].z;
+      sn++;
+    };
+    // (everything within 2.5 m of a shaft is spoken for: one shaft to a pile, a crate's ring of gear or a gun and
+    // its ammo)
+    const claim = (k: number) => {
+      spoken[k] = 1;
+      best = Math.max(best, lootTier(cand[k]));
+    };
+    // (piles first, then the best single pieces, so a fallen player's gear always gets one)
+    for (const piles of [true, false]) {
+      for (const k of order) {
+        if (shafts.count >= SHAFTS) break;
+        if (spoken[k]) continue;
+        const it = cand[k];
+        sx = sy = sz = sn = 0;
+        around(it.x, it.z, PILE, cx, cz, sum);
+        let x = it.x;
+        let y = it.y;
+        let z = it.z;
+        if (sn >= 4 && piles) {
+          // a pile: its middle (found twice, so a piece on its rim does not pull the shaft off to one side)
+          x = sx / sn;
+          z = sz / sn;
+          y = sy / sn;
+          sx = sy = sz = sn = 0;
+          around(x, z, PILE, cx, cz, sum);
+          if (sn >= 4) {
+            x = sx / sn;
+            z = sz / sn;
+            y = sy / sn;
+          }
+        } else if (piles || lootTier(it) < 2) continue;
+        best = 0;
+        around(x, z, 2.5, cx, cz, claim);
+        glowP.set(x, y, z);
+        glowM.makeTranslation(glowP);
+        shafts.setMatrixAt(shafts.count, glowM);
+        // (softer under a roof, where a little light goes a long way)
+        const sun = sunAt(m, it);
+        shafts.setColorAt(shafts.count, litTier(best, sun, 0.7 + 0.45 * sun));
+        shafts.count++;
+      }
+    }
+  };
+
   let lootVer = -1;
   let lootOf: Match | null = null;
   let lootX = Infinity;
@@ -592,6 +813,7 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
       b.mesh.instanceMatrix.needsUpdate = true;
       if (b.mesh.instanceColor) b.mesh.instanceColor.needsUpdate = true;
     }
+    fillGlow(m, cx, cz);
   };
 
   const up = new THREE.Vector3(0, 1, 0);
@@ -676,10 +898,87 @@ export function royaleFx(THREE: Three, shared: Shared, assets: Assets, shadows: 
         fillLoot(m, cx, cz);
       }
     },
+    glow(on) {
+      if (on === glowOn) return;
+      glowOn = on;
+      rings.visible = shafts.visible = on;
+      // (back on: filled afresh on the next frame)
+      lootVer = -1;
+    },
     dispose() {
       for (const d of disposables) d.dispose();
       canopies.dispose();
       for (const b of buckets) b.mesh.dispose();
+      rings.dispose();
+      shafts.dispose();
     },
   };
 }
+
+// the loot glow's shaders: a soft ring lying on the floor, and a thin shaft of light turned to face the camera
+const RING_VERT = /* glsl */ `
+uniform float uFar;
+varying vec2 vUv;
+varying vec3 vC;
+varying float vFade;
+void main() {
+  vUv = position.xz;
+  vC = instanceColor;
+  vec4 wp = modelMatrix * instanceMatrix * vec4(position, 1.0);
+  vFade = 1.0 - smoothstep(uFar * 0.72, uFar, distance(wp.xyz, cameraPosition));
+  gl_Position = projectionMatrix * viewMatrix * wp;
+}
+`;
+const RING_FRAG = /* glsl */ `
+uniform float uAlpha;
+varying vec2 vUv;
+varying vec3 vC;
+varying float vFade;
+void main() {
+  float r = length(vUv);
+  float ring = smoothstep(0.6, 0.78, r) * (1.0 - smoothstep(0.84, 1.0, r));
+  float fill = (1.0 - smoothstep(0.1, 0.82, r)) * 0.22;
+  float a = (ring + fill) * uAlpha * vFade;
+  if (a < 0.004) discard;
+  gl_FragColor = vec4(vC, a);
+}
+`;
+const SHAFT_VERT = /* glsl */ `
+uniform float uFar;
+uniform float uWidth;
+uniform float uHeight;
+varying vec2 vUv;
+varying vec3 vC;
+varying float vFade;
+void main() {
+  vec3 base = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+  vec3 to = cameraPosition - base;
+  float across = length(to.xz);
+  vec3 side = across > 0.001 ? vec3(to.z, 0.0, -to.x) / across : vec3(1.0, 0.0, 0.0);
+  float d = length(to);
+  // (wider and a little taller far off, so it still reads across a field)
+  vec3 p = base + side * position.x * uWidth * (1.0 + d * 0.03) + vec3(0.0, position.y * uHeight * (1.0 + d * 0.008), 0.0);
+  vUv = position.xy;
+  vC = instanceColor;
+  // gone when you stand at it (its ring shows it then), and fading out toward the edge of what is drawn
+  vFade = smoothstep(3.0, 9.0, d) * (1.0 - smoothstep(uFar * 0.75, uFar, d));
+  gl_Position = projectionMatrix * viewMatrix * vec4(p, 1.0);
+}
+`;
+const SHAFT_FRAG = /* glsl */ `
+uniform float uTime;
+uniform float uAlpha;
+varying vec2 vUv;
+varying vec3 vC;
+varying float vFade;
+void main() {
+  float x = vUv.x;
+  float y = vUv.y;
+  float core = exp(-x * x * 3.0);
+  float v = smoothstep(0.0, 0.04, y) * (1.0 - smoothstep(0.3, 1.0, y));
+  float shimmer = 0.88 + 0.12 * sin(y * 10.0 - uTime * 1.7);
+  float a = core * v * shimmer * uAlpha * vFade;
+  if (a < 0.004) discard;
+  gl_FragColor = vec4(vC, a);
+}
+`;

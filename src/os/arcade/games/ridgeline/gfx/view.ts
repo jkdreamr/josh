@@ -161,6 +161,8 @@ export type View = {
   info(): { calls: number; triangles: number };
   /** The time of day to show (a royale's, see looks.ts; 'day' is the map as made). */
   look(id: LookId): void;
+  /** A royale's loot glow (the rings and shafts over the loot) on or off. */
+  lootGlow(on: boolean): void;
   /** Live textures and geometries, and roughly how many megabytes the scene's textures take (with mipmaps). */
   memory(): { textures: number; geometries: number; texMB: number; plants: number };
   scale(): number;
@@ -462,6 +464,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
     lost: () => isLost,
     info: () => ({ calls: lastInfo.calls, triangles: lastInfo.triangles }),
     look: setLook,
+    lootGlow: (on) => royale.glow(on),
     memory() {
       const seen = new Set<T.Texture>();
       const add = (v: unknown) => {
