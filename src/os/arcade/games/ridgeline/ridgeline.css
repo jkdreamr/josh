@@ -246,6 +246,221 @@
   border-radius: 6px;
 }
 
+/* royale: the big map takes a click (a tap) to mark a spot; with a mouse the whole of it is held, so a stray click
+   beside the map does not take the mouse back */
+.g-ridgeline .g-ridgeline-bigmapWrap[data-mark='1'] .g-ridgeline-bigmap {
+  pointer-events: auto;
+  cursor: crosshair;
+  touch-action: none;
+}
+.g-ridgeline .g-ridgeline-hud[data-touch='0'] .g-ridgeline-bigmapWrap[data-mark='1'] {
+  pointer-events: auto;
+}
+.g-ridgeline .g-ridgeline-mapHint {
+  position: absolute;
+  left: 50%;
+  bottom: calc(50cqh - min(39cqh, 39cqw) - 26px);
+  margin: 0;
+  padding: 3px 10px;
+  border-radius: 3px;
+  transform: translateX(-50%);
+  font-size: 11px;
+  white-space: nowrap;
+  background: rgba(12, 16, 22, 0.7);
+}
+/* (with the map up, "click to aim" would only be in the way) */
+.g-ridgeline .g-ridgeline-hud:has(.g-ridgeline-bigmapWrap[data-mark='1']) .g-ridgeline-hint.is-center {
+  display: none;
+}
+
+/* royale: the compass under the top bar, where you face and the pips of your marker, the next circle and the crates;
+   under it how far the safe zone is (amber when a run would not get you there in time) */
+.g-ridgeline .g-ridgeline-compass {
+  position: absolute;
+  top: 62px;
+  left: 50%;
+  width: min(420px, calc(100cqw - 400px));
+  min-width: 150px;
+  height: 46px;
+  transform: translateX(-50%);
+  background: linear-gradient(180deg, transparent 6px, rgba(12, 16, 22, 0.45) 6px, rgba(12, 16, 22, 0.45) 28px, transparent 28px);
+  -webkit-mask-image: linear-gradient(90deg, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+  mask-image: linear-gradient(90deg, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+}
+.g-ridgeline .g-ridgeline-zoneGuide {
+  position: absolute;
+  top: 110px;
+  left: 50%;
+  padding: 2px 10px 3px;
+  border-radius: 3px;
+  transform: translateX(-50%);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+  background: rgba(12, 16, 22, 0.66);
+}
+.g-ridgeline .g-ridgeline-zoneGuide[data-late='1'] {
+  color: #1d1300;
+  text-shadow: none;
+  background: rgba(255, 178, 46, 0.92);
+}
+/* (with the compass and the safe zone line up, the zone and bombardment warnings sit under them) */
+.g-ridgeline .g-ridgeline-hud:has(.g-ridgeline-compass) .g-ridgeline-outside {
+  top: 136px;
+}
+.g-ridgeline .g-ridgeline-hud:has(.g-ridgeline-compass) .g-ridgeline-outside.is-red {
+  top: 168px;
+}
+.g-ridgeline .g-ridgeline-mark.is-marker b {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(0, 0, 0, 0.75);
+  border-radius: 50% 50% 50% 0;
+  transform: rotate(-45deg);
+  background: var(--g-ridgeline-gold);
+}
+.g-ridgeline .g-ridgeline-mark.is-marker small {
+  margin-top: 3px;
+  color: var(--g-ridgeline-gold);
+  font-weight: 700;
+}
+
+/* royale: the result panel, before the game over card */
+.g-ridgeline .g-ridgeline-result {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  width: min(440px, calc(100% - 32px));
+  padding: 16px 18px 14px;
+  transform: translate(-50%, -54%);
+  background: rgba(10, 14, 20, 0.9);
+  border-top: 3px solid var(--g-ridgeline-them);
+  clip-path: polygon(14px 0, calc(100% - 14px) 0, 100% 14px, 100% 100%, 0 100%, 0 14px);
+  animation: g-ridgeline-result 0.35s ease-out;
+}
+.g-ridgeline .g-ridgeline-result[data-won='1'] {
+  border-top-color: var(--g-ridgeline-gold);
+}
+.g-ridgeline .g-ridgeline-result > small {
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.7;
+}
+.g-ridgeline .g-ridgeline-result > b {
+  font-family: var(--g-ridgeline-display);
+  font-size: 46px;
+  font-weight: 800;
+  line-height: 1;
+  text-transform: uppercase;
+  text-align: center;
+}
+.g-ridgeline .g-ridgeline-result[data-won='1'] > b {
+  color: var(--g-ridgeline-gold);
+}
+.g-ridgeline .g-ridgeline-resultBy {
+  font-size: 12px;
+  opacity: 0.8;
+  text-align: center;
+}
+.g-ridgeline .g-ridgeline-result dl {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  width: 100%;
+  margin: 8px 0 2px;
+}
+.g-ridgeline .g-ridgeline-result dl > div {
+  display: grid;
+  justify-items: center;
+  gap: 1px;
+  padding: 6px 4px;
+  min-width: 0;
+  background: rgba(255, 255, 255, 0.06);
+}
+.g-ridgeline .g-ridgeline-result dt {
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.65;
+  white-space: nowrap;
+}
+.g-ridgeline .g-ridgeline-result dd {
+  max-width: 100%;
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--g-ridgeline-display);
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.g-ridgeline .g-ridgeline-resultScore {
+  display: grid;
+  justify-items: center;
+  margin: 4px 0 0;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.g-ridgeline .g-ridgeline-resultScore b {
+  font-family: var(--g-ridgeline-display);
+  font-size: 30px;
+  line-height: 1.05;
+  letter-spacing: 0;
+  color: var(--g-ridgeline-gold);
+}
+.g-ridgeline .g-ridgeline-resultScore small {
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+  opacity: 0.75;
+}
+/* (the result panel says who knocked you out: the smaller panel under it would only repeat it, and "click to aim"
+   would sit on top of it, as would the touch buttons, of no use while it is up) */
+.g-ridgeline .g-ridgeline-hud:has(.g-ridgeline-result) .g-ridgeline-dead,
+.g-ridgeline .g-ridgeline-hud:has(.g-ridgeline-result) .g-ridgeline-hint.is-center,
+.g-ridgeline .g-ridgeline-hud:has(.g-ridgeline-result) .g-ridgeline-pad {
+  display: none;
+}
+@keyframes g-ridgeline-result {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.96);
+  }
+}
+@container g-ridgeline-stage (max-width: 640px) {
+  /* (the zone line under the clock takes two lines here: everything under it a little lower) */
+  .g-ridgeline .g-ridgeline-compass {
+    top: 70px;
+    width: calc(100cqw - 240px);
+  }
+  .g-ridgeline .g-ridgeline-zoneGuide {
+    top: 118px;
+  }
+  .g-ridgeline .g-ridgeline-hud:has(.g-ridgeline-compass) .g-ridgeline-outside {
+    top: 144px;
+  }
+  .g-ridgeline .g-ridgeline-hud:has(.g-ridgeline-compass) .g-ridgeline-outside.is-red {
+    top: 176px;
+  }
+  .g-ridgeline .g-ridgeline-result > b {
+    font-size: 36px;
+  }
+  .g-ridgeline .g-ridgeline-result dd {
+    font-size: 18px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-ridgeline .g-ridgeline-result {
+    animation: none;
+  }
+}
+
 /* kill feed */
 .g-ridgeline .g-ridgeline-feed {
   position: absolute;
