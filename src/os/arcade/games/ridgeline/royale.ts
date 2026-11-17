@@ -142,18 +142,21 @@ export const ZONES: ZonePhase[] = [
   { wait: 20, shrink: 25, r: 0, dps: 14 },
 ];
 
-/** Pacing: how many should be left at each point of a match ([match seconds, alive] knots, read in between): a quiet
- * landing and loot, a fight about every minute, the last ten reached around the eighth minute. */
+/** Pacing: how many should be left at each point of a match ([match seconds, alive] knots, read in between). Fitted
+ * to what the bots really do on these maps: a hot drop loses about a quarter of the lobby in the first minute and a
+ * half, then the curve bends gently, with a knockout in most half minutes, the last ten around the seventh minute
+ * and the last two near the end of the zone. */
 export const PACE_KNOTS: [number, number][] = [
   [0, 100],
-  [45, 100],
-  [90, 92],
-  [195, 70],
-  [305, 48],
-  [395, 32],
-  [475, 20],
-  [545, 11],
-  [600, 6],
+  [50, 100],
+  [100, 70],
+  [160, 49],
+  [230, 35],
+  [305, 24],
+  [395, 14],
+  [475, 9],
+  [545, 5],
+  [600, 3],
   [645, 2],
 ];
 /** The fewest left the curve wants at this match time. */
@@ -168,11 +171,25 @@ export function aliveTarget(t: number) {
     }
   return K[K.length - 1][1];
 }
-/** The lowest pace there is: even far ahead of the curve bots still now and then pick out one another. */
-export const PACE_FLOOR = 0.04;
-/** How readily bots pick fights with other bots, 0 to 1: full when the match is at or behind the curve (more left
- * than it wants), less the further ahead of it the knockouts have run. */
+/** The lowest pace there is: ahead of the curve, bots leave each other be unless they bump into each other or are
+ * shot at. */
+export const PACE_FLOOR = 0;
+/** How readily bots pick fights with other bots, 0 to 1 (the chance a second that a bot sets about another it has
+ * seen): full when the match is well behind the curve (more left than it wants), down to the floor once the knockouts
+ * have run a few ahead of it. */
 export const paceOf = (alive: number, t: number) => Math.min(1, Math.max(PACE_FLOOR, (alive - aliveTarget(t) + 3) / 9));
+/** Bots within this of each other always notice (they have bumped into each other), whatever the pace. */
+export const PACE_CLOSE = 2.5;
+/** A bot hurt in a fight with a bot it did not pick, that bot over CALM_D away, may break off and leave it alone
+ * for CALM_T seconds (the further ahead of the curve, the more often). */
+export const CALM_HP = 95;
+export const CALM_D = 10;
+export const CALM_T = 5;
+/** Loot within this of another bot, or of what a nearer bot is going for, is left to that bot (on a pace roll). */
+export const CLAIM_R = 25;
+/** One bot on another aims worse while the match runs ahead of its pace: its aim error is multiplied by this, so
+ * its chance to hit goes roughly with 0.4 + 0.6 * pace (never on people). */
+export const paceAim = (pace: number) => 1 / (0.4 + 0.6 * pace);
 /** The most bots that pick out the same person on their own at once, per level (whoever that person shoots at, or
  * who is close, still notices them). */
 export const HEAT_CAP: Record<'easy' | 'normal' | 'hard', number> = { easy: 1, normal: 2, hard: 3 };

@@ -44,7 +44,7 @@ import { clamp, mulberry32, type Rng } from './noise.ts';
 import { UP_LADDER, canWalk, fieldDist, fieldStep, fieldTo, findPath, navMark } from './nav.ts';
 import { blockedAt, clearLine } from './physics.ts';
 import { floorAt, heightAt } from './terrain.ts';
-import { HEAT_CAP, LAND_GRACE, RED_WARN, TIERS, magOf, planeAt, scopeOf, tierOf } from './royale.ts';
+import { CALM_D, CALM_HP, CALM_T, CLAIM_R, HEAT_CAP, LAND_GRACE, PACE_CLOSE, RED_WARN, TIERS, magOf, paceAim, planeAt, scopeOf, tierOf } from './royale.ts';
 import { WEAPONS, type WeaponId } from './weapons.ts';
 import { SITE_R, type World } from './world.ts';
 import { MAPS } from './maps.ts';
@@ -171,6 +171,14 @@ export type Brain = {
   /** Carrying a shield: whether it wants it raised, and when it next thinks about that. */
   shieldUp: boolean;
   shieldT: number;
+  /** Royale pacing: whether this bot picked its fight with the bot it is on (not answering a shot, not bumping into
+   * it), one bot it has broken off from and leaves alone until `calmT` (match time), and whether the one it last lost
+   * sight of was a bot, with a roll for whether to go after it. */
+  started: boolean;
+  calmOf: number;
+  calmT: number;
+  lostBot: boolean;
+  chaseRoll: number;
 };
 
 const LEVELS: Record<BotLevel, { skill: number; react: number; turn: number }> = {
@@ -277,6 +285,11 @@ export function newBrain(level: BotLevel, seed: number): Brain {
     leaving: -1,
     shieldUp: false,
     shieldT: 0,
+    started: false,
+    calmOf: -1,
+    calmT: 0,
+    lostBot: false,
+    chaseRoll: 0,
   };
 }
 
@@ -562,6 +575,9 @@ function perceive(m: Match, a: Actor, br: Brain) {
   // breach: a stranger further off than this is a few pixels across a field; nobody picks that out (a scope helps)
   const scoped = !!currentGun(a) && scopeOf(currentGun(a)!);
   const range = m.mode === 'breach' ? (scoped ? 95 : 55) : m.mode !== 'royale' ? 230 : geared ? 130 : a.guns[0] || a.guns[2] ? 45 : 28;
+  // royale pacing: m.pace is the chance a second that a bot sets about another bot it has seen (one roll a look, however
+  // many are in view)
+  const paceOk = m.mode === 'royale' && a.bot ? br.rng() < 1 - (1 - m.pace) ** Math.max(0.1, br.think) : true;
   for (const o of m.actors) {
     if (!o.alive || !isEnemy(a, o) || o.drop === 1) continue;
     const dx = o.body.x - ex;
@@ -571,10 +587,13 @@ function perceive(m: Match, a: Actor, br: Brain) {
     if (d > (known ? 230 : range)) continue;
     // the first while after landing goes on looting, not on picking fights
     if (!known && m.mode === 'royale' && m.time - a.dropT < 22 && d > 7) continue;
-    // royale pacing, for someone not yet fought (whoever this bot fights or was shot by always counts): another bot is
-    // picked out less readily the further the match has run ahead of its curve (m.pace; within 6 m, always); a person
-    // only while few enough bots are on them already, and not while just down with no gun yet (or still coming down)
+    // royale pacing, for someone not yet fought (whoever this bot fights or was shot by always counts): another bot
+    // only on a pace roll (always when bumped into, within PACE_CLOSE), and not one it broke off from a moment ago; a
+    // person only while few enough bots are on them already, and not while just down with no gun yet (or still coming
+    // down)
     const paced = !known && m.mode === 'royale' && a.bot && o.bot;
+    if (m.mode === 'royale' && o.bot && br.calmOf === o.id && m.time < br.calmT && d > PACE_CLOSE) continue;
+    if (paced && d > PACE_CLOSE && !paceOk) continue;
     if (!known && m.mode === 'royale' && !o.bot) {
       if (d > 12 && m.heat[o.id] >= HEAT_CAP[m.level]) continue;
       if (d > 8 && !currentGun(o) && (o.drop > 0 || m.time - o.dropT < LAND_GRACE)) continue;
@@ -589,9 +608,9 @@ function perceive(m: Match, a: Actor, br: Brain) {
       const far = m.mode === 'breach' && d > 30 ? (30 / d) ** 2 : 1;
       // (lying down is harder to pick out still, and in long grass a good deal harder)
       const low = o.prone > 0.5 ? (grassy(m, o) ? 0.25 : 0.45) : o.crouch > 0.5 ? 0.7 : 1;
-      const rate = 7 * (40 / Math.max(d, 14)) ** 2 * far * (still ? 0.5 : 1) * low * (0.6 + br.skill * 0.6) * (m.mode === 'royale' ? 0.55 : 1) * (paced ? m.pace : 1);
+      const rate = 7 * (40 / Math.max(d, 14)) ** 2 * far * (still ? 0.5 : 1) * low * (0.6 + br.skill * 0.6) * (m.mode === 'royale' ? 0.55 : 1);
       if (br.rng() > 1 - Math.exp(-rate * Math.max(0.1, br.think))) continue;
-    } else if (!known && m.mode === 'royale' && d > 6 && (br.rng() > 0.3 + br.skill * 0.3 || (paced && br.rng() > m.pace))) continue; // busy looting: takes a moment to notice
+    } else if (!known && m.mode === 'royale' && d > 6 && br.rng() > 0.3 + br.skill * 0.3) continue; // busy looting: takes a moment to notice
     // the chest and the head where they are (lying down, or a head leant out past a corner)
     partsOf(o, seen);
     const low = o.prone > 0.5;
@@ -616,7 +635,10 @@ function perceive(m: Match, a: Actor, br: Brain) {
       // holding an angle (standing still, already looking where they appear) gives a quicker, truer first shot
       const off = Math.abs(angDiff(a.yaw, Math.atan2(-(o.body.x - ex), -(o.body.z - ez))));
       const holding = Math.hypot(a.body.vx, a.body.vz) < 0.8 && off < 0.35;
-      const e = ((1 - br.skill) * 0.15 + 0.02 + d * 0.0003) * (m.mode === 'royale' ? 1.5 : 1) * (holding ? 0.5 : 1);
+      // (royale: one bot on another aims worse while the match runs ahead of its pace)
+      const vsBot = m.mode === 'royale' && a.bot && o.bot;
+      const e = ((1 - br.skill) * 0.15 + 0.02 + d * 0.0003) * (m.mode === 'royale' ? 1.5 : 1) * (holding ? 0.5 : 1) * (vsBot ? paceAim(m.pace) : 1);
+      if (m.mode === 'royale') br.started = d > PACE_CLOSE && !(a.hurtFrom === o.id && m.time - a.hurtT < 2);
       br.errY = (br.rng() - 0.5) * 2 * e;
       br.errP = (br.rng() - 0.5) * e;
       br.seenFor = br.target >= 0 && m.time - br.lostAt < 0.8 ? br.react : holding ? br.react * 0.45 : 0;
@@ -625,6 +647,10 @@ function perceive(m: Match, a: Actor, br: Brain) {
     if (br.target >= 0 && best < 0) {
       br.lostAt = m.time;
       br.repath = true;
+      if (m.mode === 'royale') {
+        br.lostBot = m.actors[br.target].bot;
+        br.chaseRoll = br.rng();
+      }
     }
     // (keep the count of bots on each actor right within the step, so a crowd can't all pick the same person at once)
     if (m.mode === 'royale' && a.bot) {
@@ -790,8 +816,9 @@ function planAny(m: Match, a: Actor, br: Brain) {
     planBreach(m, a, br);
     return;
   }
-  // chase what we lost, for a while
-  if (br.hasLast && m.time - br.lostAt < 5 && Math.hypot(br.lastX - a.body.x, br.lastZ - a.body.z) < 45) {
+  // chase what we lost, for a while (royale: a bot lost sight of is gone after only as often as the pace allows)
+  const chase = m.mode !== 'royale' || !a.bot || !br.lostBot || br.chaseRoll < m.pace;
+  if (chase && br.hasLast && m.time - br.lostAt < 5 && Math.hypot(br.lastX - a.body.x, br.lastZ - a.body.z) < 45) {
     setGoal(m, br, br.lastX, br.lastZ);
     return;
   }
@@ -1262,6 +1289,16 @@ function planRoyale(m: Match, a: Actor, br: Brain) {
     let bestD = Infinity;
     // guns count as much nearer while empty handed
     const need = !a.guns[0] && !a.guns[2] ? 0.35 : 1;
+    // (pacing: loot near another bot, or near what a bot nearer to it is going for, is left to that bot, more often the
+    // further the match runs ahead of its pace; held as x, z and how near the other is to it, -1 for a bot itself)
+    const claims: number[] = [];
+    if (a.bot && r() > m.pace)
+      for (const o of m.actors) {
+        if (o === a || !o.alive || !o.bot || !o.brain || Math.abs(o.body.x - b.x) + Math.abs(o.body.z - b.z) > 100) continue;
+        claims.push(o.body.x, o.body.z, -1);
+        const it = o.brain.loot >= 0 ? m.loot[o.brain.loot] : null;
+        if (it) claims.push(it.x, it.z, Math.hypot(it.x - o.body.x, it.z - o.body.z));
+      }
     for (const it of m.loot) {
       if (!it.live || it.id === br.lootSkip) continue;
       const d = Math.abs(it.x - b.x) + Math.abs(it.z - b.z);
@@ -1270,6 +1307,7 @@ function planRoyale(m: Match, a: Actor, br: Brain) {
       if (dd >= bestD) continue;
       if (Math.hypot(it.x - z.x, it.z - z.z) > z.r - 4 || !wants(a, it)) continue;
       if (m.red && Math.hypot(it.x - m.red.x, it.z - m.red.z) < m.red.r + 4) continue;
+      if (claims.length && claimed(claims, it.x, it.z, Math.hypot(it.x - b.x, it.z - b.z))) continue;
       bestD = dd;
       best = it.id;
     }
@@ -1294,6 +1332,17 @@ function planRoyale(m: Match, a: Actor, br: Brain) {
     const step = Math.min(l, 50 + r() * 30);
     setGoal(m, br, b.x + ((gx - b.x) / l) * step, b.z + ((gz - b.z) / l) * step);
   }
+}
+
+/** Is loot here left to another bot (one within CLAIM_R of it, or going for something within CLAIM_R of it from
+ * nearer than `mine`)? */
+function claimed(claims: number[], x: number, z: number, mine: number) {
+  for (let c = 0; c < claims.length; c += 3) {
+    const dx = claims[c] - x;
+    const dz = claims[c + 1] - z;
+    if (Math.abs(dx) < CLAIM_R && Math.abs(dz) < CLAIM_R && dx * dx + dz * dz < CLAIM_R * CLAIM_R && claims[c + 2] < mine) return true;
+  }
+  return false;
 }
 
 /** Royale: whether to walk to a vehicle (and on the way to one, keeps the goal on it). */
@@ -1613,6 +1662,19 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     // far from every person in a royale nobody sees the difference: think half as often
     if (m.mode === 'royale' && br.target < 0 && nearestPerson(m, a) > 160) br.think *= 2;
     perceive(m, a, br);
+    // royale pacing: hurt in a fight with a bot it did not pick, that bot past CALM_D, and the match ahead of its pace:
+    // it may break off (and heal, loot or move on) instead of fighting it out
+    if (m.mode === 'royale' && a.bot && br.target >= 0 && !br.started && a.hp < CALM_HP) {
+      const o = m.actors[br.target];
+      if (o.bot && Math.hypot(o.body.x - a.body.x, o.body.z - a.body.z) > CALM_D && r() > m.pace) {
+        br.calmOf = o.id;
+        br.calmT = m.time + CALM_T;
+        br.target = -1;
+        br.lostAt = m.time;
+        br.hasLast = false;
+        br.repath = true;
+      }
+    }
     // empty handed in a royale: keep looking for a gun even with someone in sight; under a bombardment, get out
     if (br.target < 0 || (m.mode === 'royale' && (!currentGun(a) || inRed(m, a) || br.rush))) plan(m, a, br);
     route(m, a, br);
@@ -1768,7 +1830,7 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     if (br.errT <= 0) {
       br.errT = 0.25 + r() * 0.3;
       const tv = Math.hypot(tgt.body.vx, tgt.body.vz);
-      const j = ((1 - br.skill) * 0.01 + tv * 0.0015 * (1 - br.skill * 0.6)) * (m.mode === 'royale' ? 1.8 : 1);
+      const j = ((1 - br.skill) * 0.01 + tv * 0.0015 * (1 - br.skill * 0.6)) * (m.mode === 'royale' ? 1.8 : 1) * (m.mode === 'royale' && a.bot && tgt.bot ? paceAim(m.pace) : 1);
       br.errY += (r() - 0.5) * 2 * j;
       br.errP += (r() - 0.5) * j;
     }

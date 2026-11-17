@@ -10,7 +10,7 @@ import { CELL, T_HALF, T_RES, floorAt, generateTerrain, heightAt, normalAt, rayT
 import { ARMOR, KILL_REWARD, LOSS_REWARD, PAVISE, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
 
 import { ARENA, ROYALE_ARENA, SITE_R, STOREY, withBoxes, worldFor, type Box, type World } from '../src/os/arcade/games/ridgeline/world.ts';
-import { AMMO_MAX, AMMO_OF, AMMO_PACK, BOOST, BOOST_DRAIN, HEAL, HEAT_CAP, LAND_GRACE, NADE_MAX, PACE_FLOOR, PACE_KNOTS, RED_LIVE, RED_WARN, ROYALE_PLAYERS, TIERS, VEST, X4_ZOOM, ZONES, aliveTarget, ammoCap, fits, paceOf, gunLabel, healCap, magOf, richness, scopeOf, spawnLoot, zoomOf, type AmmoKind, type Item } from '../src/os/arcade/games/ridgeline/royale.ts';
+import { AMMO_MAX, AMMO_OF, AMMO_PACK, BOOST, BOOST_DRAIN, CALM_D, CALM_T, CLAIM_R, HEAL, HEAT_CAP, LAND_GRACE, NADE_MAX, PACE_CLOSE, PACE_FLOOR, PACE_KNOTS, RED_LIVE, RED_WARN, ROYALE_PLAYERS, TIERS, VEST, X4_ZOOM, ZONES, aliveTarget, ammoCap, fits, paceAim, paceOf, gunLabel, healCap, magOf, richness, scopeOf, spawnLoot, zoomOf, type AmmoKind, type Item } from '../src/os/arcade/games/ridgeline/royale.ts';
 import {
   BLAST_R,
   BULLET_G,
@@ -855,7 +855,10 @@ test('royale pacing: the alive curve runs down through its knots, and the zone c
   // pace: full when behind the curve, down to the floor when far ahead of it
   assert.equal(paceOf(100, 300), 1);
   assert.equal(paceOf(5, 100), PACE_FLOOR);
-  assert.ok(paceOf(70, 195) > PACE_FLOOR && paceOf(70, 195) < 1);
+  const at = Math.round(aliveTarget(195));
+  assert.ok(paceOf(at, 195) > PACE_FLOOR && paceOf(at, 195) < 1, 'part way on the curve itself');
+  assert.equal(paceAim(1), 1);
+  assert.ok(Math.abs(paceAim(0) - 1 / 0.4) < 1e-9);
   // about ten minutes in all
   const total = ZONES.reduce((s, z) => s + z.wait + z.shrink, 0);
   assert.ok(total >= 600 && total <= 700, `${total} s of zone`);
@@ -1004,6 +1007,159 @@ test('royale pacing: only so many bots pick out the same person at once (two on 
     }
     assert.ok(answered, `${level}: a bot you shot at turns on you`);
   }
+});
+
+/** A face off between two bots: seat 0 handed to a bot too (the rest as faceOff leaves them), with the pace held
+ * at `pace` on every step. */
+function botFaceOff(dist: number, pace: number) {
+  const f = faceOff('normal', 1, dist);
+  f.you.bot = true;
+  f.you.brain = newBrain('normal', 0);
+  const tick = () => {
+    f.m.pace = pace;
+    f.tick();
+  };
+  return { ...f, tick, bot: f.bots[0] };
+}
+
+test('royale pacing: bots leave each other be while the match runs ahead of its pace, but not when they bump into each other', () => {
+  // pace 0: a bot in plain sight 30 m off is never picked out
+  const calm = botFaceOff(30, 0);
+  for (let i = 0; i < 60 * 4; i++) {
+    calm.tick();
+    assert.notEqual(calm.bot.brain!.target, calm.you.id, `picked out at pace 0 (${calm.m.time.toFixed(2)} s)`);
+  }
+  // full pace: soon
+  const busy = botFaceOff(30, 1);
+  let seen = false;
+  for (let i = 0; i < 60 * 4 && !seen; i++) {
+    busy.tick();
+    seen = busy.bot.brain!.target === busy.you.id;
+  }
+  assert.ok(seen, 'picked out at full pace');
+  // bumped into: noticed at any pace
+  const bump = botFaceOff(PACE_CLOSE - 0.5, 0);
+  seen = false;
+  for (let i = 0; i < 60 * 2 && !seen; i++) {
+    bump.tick();
+    seen = bump.bot.brain!.target === bump.you.id;
+  }
+  assert.ok(seen, 'noticed within PACE_CLOSE at pace 0');
+  // and shot at: answered at any pace
+  const shot = botFaceOff(30, 0);
+  seen = false;
+  for (let i = 0; i < 60 && !seen; i++) {
+    shot.bot.hurtFrom = shot.you.id;
+    shot.bot.hurtT = shot.m.time;
+    shot.tick();
+    seen = shot.bot.brain!.target === shot.you.id;
+  }
+  assert.ok(seen, 'a bot shot at answers back at pace 0');
+});
+
+test('royale pacing: a hurt bot breaks off a fight it did not pick, and bots aim worse at each other (never at people) at a low pace', () => {
+  // in a fight it did not pick (it answered a shot), hurt, the other bot well off: at pace 0 it breaks off and leaves
+  // that one alone for a while
+  const f = botFaceOff(CALM_D + 10, 0);
+  let on = false;
+  for (let i = 0; i < 60 && !on; i++) {
+    f.bot.hurtFrom = f.you.id;
+    f.bot.hurtT = f.m.time;
+    f.tick();
+    on = f.bot.brain!.target === f.you.id;
+  }
+  assert.ok(on, 'it answers the shot');
+  assert.equal(f.bot.brain!.started, false, 'not a fight it picked');
+  f.bot.hp = 60;
+  for (let i = 0; i < 60 && f.bot.brain!.target === f.you.id; i++) f.tick();
+  assert.equal(f.bot.brain!.target, -1, 'broke off');
+  assert.equal(f.bot.brain!.calmOf, f.you.id);
+  const until = f.bot.brain!.calmT;
+  assert.ok(until > f.m.time && until <= f.m.time + CALM_T);
+  while (f.m.time < until - 0.1) {
+    f.tick();
+    assert.notEqual(f.bot.brain!.target, f.you.id, 'left alone a while');
+  }
+  // the aim: on a bot, the first error is paceAim(pace) times what it would be; on a person, the same at any pace
+  // (the same seed and the same draws, only the pace differs)
+  const firstErr = (pace: number, person: boolean) => {
+    const g = faceOff('normal', 1, PACE_CLOSE - 0.5);
+    if (!person) {
+      g.you.bot = true;
+      g.you.brain = newBrain('normal', 0);
+    }
+    for (let i = 0; i < 60 * 2; i++) {
+      g.m.pace = pace;
+      g.tick();
+      if (g.bots[0].brain!.target === g.you.id) return g.bots[0].brain!.errY;
+    }
+    throw new Error('never picked out');
+  };
+  const b0 = firstErr(0, false);
+  const b1 = firstErr(1, false);
+  assert.ok(b1 !== 0 && Math.abs(b0 / b1 - paceAim(0)) < 1e-9, `on a bot: ${b0} against ${b1}`);
+  assert.equal(firstErr(0, true), firstErr(1, true), 'on a person the pace changes nothing');
+});
+
+test('royale pacing: at a low pace a bot leaves loot near another bot to that one', () => {
+  const pick = (pace: number) => {
+    const { m, you, bots } = faceOff('normal', 1, 10);
+    const a = bots[0];
+    // both bots, empty handed (they look for a gun whatever they see)
+    you.bot = true;
+    you.brain = newBrain('normal', 0);
+    for (const o of [you, a]) o.guns = [null, null, null];
+    for (const it of m.loot) it.live = false;
+    const put = (x: number, z: number) => {
+      const it: Item = { id: m.loot.length, kind: 'gun', what: 'kestrel', n: 30, x, y: floorAt(m.world.terrain, x, z) + 0.02, z, live: true };
+      m.loot.push(it);
+      return it;
+    };
+    // one gun by the other bot (nearer to this one), one further off the other way, well clear of it
+    const ux = (a.body.x - you.body.x) / 10;
+    const uz = (a.body.z - you.body.z) / 10;
+    const near = put(you.body.x + ux * 2, you.body.z + uz * 2);
+    const far = put(a.body.x + ux * 16, a.body.z + uz * 16);
+    assert.ok(Math.hypot(far.x - you.body.x, far.z - you.body.z) > CLAIM_R);
+    m.lootVer++;
+    a.brain!.loot = -1;
+    a.brain!.lootT = 0;
+    for (let i = 0; i < 60 && a.brain!.loot < 0; i++) {
+      m.pace = pace;
+      step(m, DT, idleInput(you.yaw, you.pitch));
+    }
+    return a.brain!.loot === near.id ? 'near' : a.brain!.loot === far.id ? 'far' : String(a.brain!.loot);
+  };
+  assert.equal(pick(1), 'near', 'full pace: the nearest');
+  assert.equal(pick(0), 'far', 'pace 0: the one clear of the other bot');
+});
+
+test('royale pacing: a whole match has a middle: the field thins out along the curve and it runs most of the zone', () => {
+  // all bots (seat 0 one too, kept unhurt so the match plays out), as the balance runs play it
+  const m = createMatch(worldFor('vale', true), 'royale', 'normal', { seed: 11 });
+  m.actors[0].bot = true;
+  m.actors[0].brain = newBrain('normal', 0);
+  const at: Record<number, number> = {};
+  const per30: number[] = [];
+  const step2 = 1 / 30;
+  while (m.phase !== 'over' && m.alive > 2 && m.time < 900) {
+    m.actors[0].hp = 100;
+    m.actors[0].shield = 9;
+    step(m, step2, idleInput());
+    for (const e of m.events) if (e.t === 'kill') per30[Math.floor(m.time / 30)] = (per30[Math.floor(m.time / 30)] ?? 0) + 1;
+    for (const t of [100, 195, 305, 395]) if (at[t] === undefined && m.time >= t) at[t] = m.alive;
+  }
+  assert.ok(m.actors[0].alive, 'seat 0 stayed in');
+  assert.ok(m.time >= 470, `down to two at ${m.time.toFixed(0)} s, not long before the zone ends (${ZONES.reduce((s, z) => s + z.wait + z.shrink, 0)} s)`);
+  for (const t of [100, 195, 305, 395]) assert.ok(Math.abs(at[t] - aliveTarget(t)) <= 12, `${at[t]} left at ${t} s (the curve wants ${aliveTarget(t).toFixed(0)})`);
+  // no dead stretches: a knockout in most half minutes from the first minute on
+  let n = 0;
+  let w = 0;
+  for (let b = 2; b < Math.floor(m.time / 30); b++) {
+    n++;
+    if (per30[b]) w++;
+  }
+  assert.ok(w >= n * 0.75, `knockouts in ${w} of ${n} half minutes`);
 });
 
 test('royale pacing: a person just down with no gun is left alone unless close, and fair game once armed', () => {
