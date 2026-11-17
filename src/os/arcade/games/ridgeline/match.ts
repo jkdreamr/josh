@@ -4,7 +4,7 @@
 // zone until one is left. Deathmatch:
 // everyone for themselves with quick respawns. Players and bots both act through the same Input, so the rules treat
 // them alike. Pure TS: the renderer, the sound and the HUD read the state and the events after each step.
-import { DM_HUBS, botInput, callout, newBrain, royaleTier, type Brain, type BotLevel } from './bots.ts';
+import { DM_HUBS, botInput, callout, countHolds, newBrain, royaleTier, type Brain, type BotLevel } from './bots.ts';
 import { blastCars, carHit, carNear, enterCar, hurtCar, leaveCar, rayCars, rideInput, spawnCars, stepCars, type Car } from './cars.ts';
 import { GRAB_T, LADDER_DOWN, LADDER_UP, climbAt, climbHeight, findClimb, ladderOff, ladderOn, ladderSpot, ladderToGet, type Climb } from './climb.ts';
 import { fieldTo, navOf } from './nav.ts';
@@ -390,6 +390,8 @@ export type Match = {
    * works both out again. */
   pace: number;
   heat: Uint8Array;
+  /** Royale, the same: how many bots hold a building now (see countHolds). */
+  holders: number;
   /** Royale: the match's seed (its loot, its vehicles and its time of day, alike on every machine online). */
   seed?: number;
   /** Which actor is played on this machine, whether this machine runs the rules (solo and the online host) or only
@@ -586,6 +588,7 @@ export function createMatch(world: World, mode: Mode, level: Level, opts: { name
     cars: [],
     pace: 1,
     heat: new Uint8Array(count),
+    holders: 0,
     me,
     authority: true,
     net: null,
@@ -1604,6 +1607,8 @@ function stepRoyale(m: Match, dt: number) {
     }
     if (p.k >= 1) m.plane = null;
   }
+  // how many bots hold a building (after this step's knockouts, so never over the share)
+  countHolds(m);
   // the end: the people are all out (alone, that is you; online, everyone in the room), or one is left
   let people = 0;
   for (const a of m.actors) if (a.alive && isPerson(m, a)) people++;

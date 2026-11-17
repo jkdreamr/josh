@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { MAP_IDS } from '../src/os/arcade/games/ridgeline/maps.ts';
-import { DM_HUBS, newBrain } from '../src/os/arcade/games/ridgeline/bots.ts';
+import { COVER_CD, COVER_HP, COVER_HP_ACE, DM_HUBS, EDGE_JITTER, HOLD_PHASE, HOLD_R, HOLD_SHARE, botInput, coverFrom, newBrain, roomsOf } from '../src/os/arcade/games/ridgeline/bots.ts';
 import { canWalk, fieldDist, fieldTo, findPath, navMark, navOf, walkable } from '../src/os/arcade/games/ridgeline/nav.ts';
 import { MANTLE_HI, findClimb, ladderSpot, sweepClear } from '../src/os/arcade/games/ridgeline/climb.ts';
 import { PRONE_H, RADIUS, STAND_H, blockedAt, clearLine, groundAt, newHit, rayWorld, stepBody, type Body } from '../src/os/arcade/games/ridgeline/physics.ts';
@@ -1421,6 +1421,283 @@ test('royale pacing: a person just down with no gun is left alone unless close, 
     seen = bots3[0].brain!.target === you3.id;
   }
   assert.ok(seen, 'past the grace, picked out unarmed');
+});
+
+/** Puts an actor down on the land, alive, armed and with a vest (a royale test scene). */
+function stand(a: Actor, x: number, y: number, z: number) {
+  a.alive = true;
+  a.drop = 0;
+  a.dropT = -100;
+  a.body.x = x;
+  a.body.y = y;
+  a.body.z = z;
+  a.body.vx = a.body.vz = 0;
+  a.body.onGround = true;
+  a.guns = [gun('kestrel'), null, null];
+  a.slot = 0;
+  a.ammo.rifle = 120;
+  a.vest = 2;
+  a.armor = VEST[2];
+}
+
+/** A royale on open, level ground near the middle of a map (a strip 24 m wide, from 42 m south of the scene's center
+ * to 18 m north of it), with some boxes added there and everyone out of it; the center is (x, y, z). */
+function openRoyale(boxes: (x: number, y: number, z: number) => Box[]) {
+  const base = worldFor('mesa', true);
+  const t = base.terrain;
+  for (let k = 0; k < 6000; k++) {
+    const x = Math.cos(k * 2.399) * k * 0.05;
+    const z = Math.sin(k * 2.399) * k * 0.05;
+    const y = floorAt(t, x, z);
+    let ok = y > t.water + 0.5 && Math.abs(x) < base.arena - 60 && Math.abs(z) < base.arena - 60;
+    // (12 m to either side, from 42 m one way to 18 m the other)
+    for (let a = -12; a <= 12 && ok; a += 2) for (let b = -42; b <= 18 && ok; b += 2) ok = !blockedAt(base, x + a, z + b, y) && Math.abs(floorAt(t, x + a, z + b) - y) < 1;
+    if (!ok) continue;
+    const w = withBoxes(base, boxes(x, y, z));
+    const m = createMatch(w, 'royale', 'normal', { seed: 5 });
+    m.redT = 1e9;
+    m.cars = [];
+    for (const a of m.actors) a.alive = false;
+    return { m, w, x, y, z };
+  }
+  throw new Error('no open level ground');
+}
+
+/** A thin upright wall from (x0, z0) to (x1, z1), 4 m tall. */
+const wallAt = (x0: number, y: number, z0: number, x1: number, z1: number): Box => ({ x0, y0: y - 1, z0, x1, y1: y + 3, z1, s: 'wood' });
+
+test('royale bots: shot from afar in the open, a hurt bot runs behind a wall nearby and patches up there', () => {
+  // you 40 m off across open ground, a wall 6 m behind the bot (14 m wide): a bot hurt and fighting you from that far
+  // gets out of your sight behind it and starts a bandage, all within six seconds
+  const { m, w, x, y, z } = openRoyale((x, y, z) => [wallAt(x - 7, y, z + 6, x + 7, z + 6.4)]);
+  const you = m.actors[0];
+  const bot = m.actors[1];
+  stand(you, x, y + 0.05, z - 40);
+  stand(bot, x, y + 0.05, z);
+  bot.yaw = Math.atan2(0, 40);
+  bot.brain!.tier = 1;
+  bot.hp = 45;
+  bot.bandages = 4;
+  const seen = () => clearLine(w, you.body.x, eyeY(you), you.body.z, bot.body.x, bot.body.y + 1.25, bot.body.z);
+  assert.ok(seen(), 'in plain sight to begin with');
+  const c = coverFrom(m, bot, you.body.x, eyeY(you), you.body.z);
+  assert.ok(c && c.z > z + 6.4, 'the spot it picks is behind the wall');
+  let hid = -1;
+  let healed = -1;
+  for (let i = 0; i < 60 * 6 && healed < 0; i++) {
+    you.hp = 100;
+    // (shot at for the first half second)
+    if (i < 30) {
+      bot.hurtFrom = you.id;
+      bot.hurtT = m.time;
+    }
+    m.pace = 1;
+    step(m, DT, idleInput(you.yaw, you.pitch));
+    if (hid < 0 && !seen()) hid = m.time;
+    if (bot.healT > 0) healed = m.time;
+  }
+  assert.ok(bot.alive);
+  assert.ok(hid > 0, 'out of your sight');
+  assert.ok(healed > 0 && healed < 6, `healing within 6 s (${healed.toFixed(2)})`);
+  assert.ok(!seen() && bot.body.z > z + 6.4, 'healing behind the wall');
+  assert.ok(bot.brain!.coverCd > 0 && bot.brain!.coverCd <= COVER_CD + 1);
+});
+
+test('royale bots: tier habits: an ace breaks to cover sooner, a recruit never lies down for a long shot or throws a grenade', () => {
+  // hurt to 60 and fighting you from 40 m: an ace (under COVER_HP_ACE) breaks to cover, a regular (over COVER_HP) fights on
+  const cover = (tier: number) => {
+    const { m, x, y, z } = openRoyale((x, y, z) => [wallAt(x - 7, y, z + 6, x + 7, z + 6.4)]);
+    const you = m.actors[0];
+    const bot = m.actors[1];
+    stand(you, x, y + 0.05, z - 40);
+    stand(bot, x, y + 0.05, z);
+    bot.brain!.tier = tier;
+    for (let i = 0; i < 60 * 2; i++) {
+      you.hp = 100;
+      bot.hp = 60;
+      bot.hurtFrom = you.id;
+      bot.hurtT = m.time;
+      m.pace = 1;
+      step(m, DT, idleInput(you.yaw, you.pitch));
+      if (bot.brain!.coverEnd > 0) return true;
+    }
+    assert.equal(bot.brain!.target, you.id, 'it fights you');
+    return false;
+  };
+  assert.ok(COVER_HP < 60 && 60 < COVER_HP_ACE);
+  assert.equal(cover(3), true, 'an ace takes cover');
+  assert.equal(cover(1), false, 'a regular fights on');
+  // in a fight with you (the bot's looks held still, so it stays on you whatever it sees), each frame a new strafe
+  // and the grenade ready: a veteran soon lies down for a long shot and throws a frag at 20 m; a recruit never does
+  // either (the same sharp eye on both, so only the tier differs)
+  const habit = (tier: number, dist: number, kit: (a: Actor) => void, done: (bot: Actor, inp: Input) => boolean) => {
+    const w = worldFor('mesa', true);
+    const m = createMatch(w, 'royale', 'normal', { seed: 5 });
+    for (const a of m.actors) a.alive = false;
+    const you = m.actors[0];
+    const bot = m.actors[1];
+    stand(you, 0, floorAt(w.terrain, 0, 0) + 0.05, 0);
+    stand(bot, 0, floorAt(w.terrain, 0, dist) + 0.05, dist);
+    kit(bot);
+    const br = bot.brain!;
+    br.tier = tier;
+    br.skill = 0.6;
+    botInput(m, bot, DT);
+    for (let i = 0; i < 60 * 10; i++) {
+      br.think = 1e9;
+      br.target = you.id;
+      br.strafeT = 0;
+      br.nadeT = 0;
+      br.restT = 0;
+      if (done(bot, botInput(m, bot, DT))) return true;
+    }
+    return false;
+  };
+  const longGun = (a: Actor) => {
+    a.guns = [gun('longbow'), null, null];
+    a.ammo.sniper = 50;
+  };
+  const lies = (bot: Actor) => bot.brain!.proneT > 0;
+  assert.equal(habit(2, 70, longGun, lies), true, 'a veteran lies down for a long shot');
+  assert.equal(habit(0, 70, longGun, lies), false, 'a recruit never');
+  const frags = (a: Actor) => {
+    a.frags = 3;
+  };
+  const throws = (_b: Actor, inp: Input) => !!inp.throw;
+  assert.equal(habit(2, 20, frags, throws), true, 'a veteran throws a grenade');
+  assert.equal(habit(0, 20, frags, throws), false, 'a recruit never');
+});
+
+test('royale bots: late on a regular holds a building inside the next circle facing a door, and leaves when the circle moves off it', () => {
+  const w = worldFor('mesa', true);
+  const t = w.terrain;
+  const rooms = roomsOf(w);
+  assert.ok(rooms.length > 20, 'buildings to hold');
+  // a building near the middle, and a spot outside one of its doors (on the side away from its middle)
+  let pick: { i: number; sx: number; sz: number } | null = null;
+  for (let i = 0; i < rooms.length && !pick; i++) {
+    const q = rooms[i];
+    if (Math.hypot(q.x, q.z) > 160 || (q.doorX === q.x && q.doorZ === q.z)) continue;
+    const d = Math.hypot(q.doorX - q.x, q.doorZ - q.z) || 1;
+    const sx = q.doorX + ((q.doorX - q.x) / d) * 4;
+    const sz = q.doorZ + ((q.doorZ - q.z) / d) * 4;
+    const sy = floorAt(t, sx, sz);
+    if (sy > t.water + 0.5 && walkable(w, sx, sz) && !blockedAt(w, sx, sz, sy) && findPath(w, sx, sz, w.loot[q.spots[0] * 3], w.loot[q.spots[0] * 3 + 2], 20000, sy, w.loot[q.spots[0] * 3 + 1])) pick = { i, sx, sz };
+  }
+  assert.ok(pick, 'a building to walk into');
+  const q = rooms[pick.i];
+  const m = createMatch(w, 'royale', 'normal', { seed: 5 });
+  m.redT = 1e9;
+  m.cars = [];
+  for (const a of m.actors) a.alive = false;
+  const bot = m.actors[1];
+  const start = () => stand(bot, pick.sx, floorAt(t, pick.sx, pick.sz) + 0.05, pick.sz);
+  start();
+  bot.brain!.tier = 1;
+  // two recruits (who never hold) far off, so the share leaves room for one
+  const far: Actor[] = [];
+  for (let k = 0; k < 400 && far.length < 2; k++) {
+    const ang = k * 0.7;
+    const fx = q.x + Math.cos(ang) * (120 + k * 0.1);
+    const fz = q.z + Math.sin(ang) * (120 + k * 0.1);
+    const fy = floorAt(t, fx, fz);
+    if (Math.hypot(fx, fz) > w.arena - 30 || fy < t.water + 0.5 || !walkable(w, fx, fz) || far.some((o) => Math.hypot(o.body.x - fx, o.body.z - fz) < 60)) continue;
+    const o = m.actors[2 + far.length];
+    stand(o, fx, fy + 0.05, fz);
+    o.brain!.tier = 0;
+    far.push(o);
+  }
+  assert.equal(far.length, 2);
+  // you, out of it: far off, unarmed and just down (so left alone), there only so the match goes on
+  const you = m.actors[0];
+  for (let k = 0; k < 2000 && !you.alive; k++) {
+    const fx = Math.cos(k * 2.399) * k * 0.2;
+    const fz = Math.sin(k * 2.399) * k * 0.2;
+    if (Math.abs(fx) > w.arena - 10 || Math.abs(fz) > w.arena - 10 || floorAt(t, fx, fz) < t.water + 0.5 || Math.hypot(fx - q.x, fz - q.z) < 150 || far.some((o) => Math.hypot(o.body.x - fx, o.body.z - fz) < 150)) continue;
+    stand(you, fx, floorAt(t, fx, fz) + 0.05, fz);
+    you.guns = [null, null, null];
+  }
+  assert.ok(you.alive);
+  const z = m.zone!;
+  const zone = (i: number, nx: number, nz: number, nr: number) => {
+    z.i = i;
+    z.x = q.x;
+    z.z = q.z;
+    z.r = 220;
+    z.nx = nx;
+    z.nz = nz;
+    z.nr = nr;
+    z.shrinking = false;
+    z.t = 60;
+    z.dps = 1;
+  };
+  const landed = () => m.actors.filter((a) => a.alive && a.bot && !a.drop).length;
+  const tick = () => {
+    // (the pace at 0: the bots let each other be, so this is about holding alone)
+    m.pace = 0;
+    z.t = 60;
+    you.dropT = m.time;
+    you.hp = 100;
+    step(m, DT, idleInput());
+    assert.ok(m.holders <= Math.floor(HOLD_SHARE * landed()), 'never over the share');
+  };
+  // before the third phase: no holding
+  zone(HOLD_PHASE - 1, q.x, q.z, 120);
+  for (let i = 0; i < 60 * 3; i++) {
+    tick();
+    assert.equal(bot.brain!.holdI, -1, 'not yet');
+  }
+  // from it: goes in and holds
+  start();
+  zone(HOLD_PHASE, q.x, q.z, 120);
+  const L = w.loot;
+  const atSpot = () => {
+    const k = bot.brain!.holdSpot * 3;
+    return k >= 0 && Math.hypot(L[k] - bot.body.x, L[k + 2] - bot.body.z) < 1.2 && Math.abs(L[k + 1] - bot.body.y) < 1.2;
+  };
+  for (let i = 0; i < 60 * 30 && !atSpot(); i++) tick();
+  assert.ok(atSpot(), 'standing on a spot in the building');
+  const held = rooms[bot.brain!.holdI];
+  assert.ok(Math.hypot(held.x - q.x, held.z - q.z) < HOLD_R + 10, 'a building near it');
+  assert.equal(m.holders, 1);
+  for (let i = 0; i < 60 * 2; i++) tick();
+  assert.ok(atSpot(), 'it stays');
+  const toDoor = Math.atan2(-(held.doorX - bot.body.x), -(held.doorZ - bot.body.z));
+  assert.ok(Math.abs(Math.atan2(Math.sin(bot.yaw - toDoor), Math.cos(bot.yaw - toDoor))) < 0.35, 'facing the door');
+  // the next circle drawn well away from it: it leaves
+  zone(HOLD_PHASE + 1, held.x + (held.x > 0 ? -150 : 150), held.z, 40);
+  for (let i = 0; i < 60 && bot.brain!.holdI >= 0; i++) tick();
+  assert.equal(bot.brain!.holdI, -1, 'left');
+  assert.equal(m.holders, 0);
+});
+
+test('royale bots: running in from out of the zone, a bot makes for the near side of the next circle, never its middle', () => {
+  const w = worldFor('mesa', true);
+  const m = createMatch(w, 'royale', 'normal', { seed: 5 });
+  m.redT = 1e9;
+  m.cars = [];
+  for (const a of m.actors) a.alive = false;
+  const z = m.zone!;
+  let n = 0;
+  for (const R of ZONES.map((p) => p.r).filter((r) => r > 0))
+    for (let k = 0; k < 12; k++) {
+      const bot = m.actors[1 + k];
+      const bear = (k * Math.PI * 2) / 12 + 0.1;
+      stand(bot, Math.sin(bear) * (R + 20), 0, Math.cos(bear) * (R + 20));
+      bot.body.y = floorAt(w.terrain, bot.body.x, bot.body.z) + 0.05;
+      // (the zone closing: well outside the next circle, it heads in)
+      Object.assign(z, { i: 3, x: 0, z: 0, r: R + 40, nx: 0, nz: 0, nr: R, shrinking: true, t: 10 });
+      bot.brain!.think = 0;
+      botInput(m, bot, DT);
+      const br = bot.brain!;
+      const d = Math.hypot(br.goalX, br.goalZ);
+      assert.ok(d < R && d > 0.2 * R, `R ${R}: ${d.toFixed(1)} from the middle`);
+      const off = Math.atan2(br.goalX, br.goalZ) - bear;
+      assert.ok(Math.abs(Math.atan2(Math.sin(off), Math.cos(off))) <= EDGE_JITTER + 1e-9, 'along its own bearing');
+      bot.alive = false;
+      n++;
+    }
+  assert.equal(n, 6 * 12);
 });
 
 /** A royale with only you in it, on open flat ground near the middle of the zone, with nothing lying near you. */

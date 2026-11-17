@@ -604,6 +604,8 @@ test('online royale: a leaver becomes a bot, a latecomer takes one over, and the
   const t0 = nh.time;
   const alive0 = nh.alive;
   run(30);
+  // (a knockout in the last moment is still on its way with the next batch of events: on until it has gone out)
+  for (let i = 0; i < 30 && nh.actors.some((a) => !a.alive && nh.time - a.deathT < 0.2); i++) run(1 / 30);
   settle(net, seats);
   assert.ok(nh.time - t0 > 25, 'the new host steps the match');
   assert.ok(nh.alive < alive0 || nh.phase === 'over', `the match went on (${alive0} to ${nh.alive} left)`);
