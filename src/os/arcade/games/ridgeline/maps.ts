@@ -18,6 +18,10 @@ export type TreeRule = { kind: TreeKind; weight: number; /** only this close to 
 export type MapDef = {
   id: MapId;
   name: string;
+  /** Royale: the names of the places out over the land, one for each kind in the order world.ts builds them (OUTER:
+   * the military compound, a depot, a farm, the hilltop outpost, a village, a farm, a village, a depot, a village),
+   * then three more for the hamlets. Each different from every other name on the map. */
+  royalePois: string[];
   tag: string;
   seed: number;
   /** Water line in meters, or null for none. */
@@ -69,6 +73,7 @@ export const MAPS: Record<MapId, MapDef> = {
   vale: {
     id: 'vale',
     name: 'Verdant Vale',
+    royalePois: ['Ashcombe Barracks', 'Wickham Sidings', 'Bramble Farm', 'Beacon Knoll', 'Little Hatherley', 'Larkspur Farm', 'Fernley Green', 'Coldharbour Yard', 'Nettlecombe', 'Elmstead', 'Wren Cross', 'Saddler Row'],
     tag: 'rolling farmland, oak woods and a lake under a summer sky',
     seed: 1207,
     water: 1.5,
@@ -125,6 +130,7 @@ export const MAPS: Record<MapId, MapDef> = {
   mesa: {
     id: 'mesa',
     name: 'Red Mesa',
+    royalePois: ['Fort Caliche', 'Ocotillo Depot', 'Juniper Ranch', 'Buzzard Butte', 'Gila Flats', 'Mesquite Ranch', 'Sandstone Bend', 'Borax Siding', 'Lizard Springs', 'Cholla Corners', 'Painted Wash', 'Coyote Wells'],
     tag: 'desert canyons, layered mesas and a lone oasis in the afternoon heat',
     seed: 4451,
     water: 0,
@@ -182,6 +188,7 @@ export const MAPS: Record<MapId, MapDef> = {
   frost: {
     id: 'frost',
     name: 'Frostpeak',
+    royalePois: ['Fort Hoarfrost', 'Snowplow Depot', 'Larch Homestead', 'Cornice Watch', 'Birchwood', 'Ptarmigan Farm', 'Hearthstead', 'Sawtooth Yard', 'Wolfsbane', 'Kettle Pond', 'Snowmelt', 'Timberline'],
     tag: 'snowbound pines under jagged peaks, around a frozen lake',
     seed: 9083,
     water: 3,
@@ -237,6 +244,7 @@ export const MAPS: Record<MapId, MapDef> = {
   isles: {
     id: 'isles',
     name: 'Coral Isles',
+    royalePois: ['Fort Breakwater', 'Copra Depot', 'Breadfruit Farm', 'Frigate Point', 'Seagrape', 'Hibiscus Farm', 'Driftwood', 'Saltworks', 'Pelican Rest', 'Mangrove', 'Tidewater', 'Starfish Bay'],
     tag: 'palm islands, sandbars and turquoise shallows at sunset',
     seed: 3319,
     water: 0,
