@@ -191,10 +191,17 @@ export const CLAIM_R = 25;
  * its chance to hit goes roughly with 0.4 + 0.6 * pace (never on people). */
 export const paceAim = (pace: number) => 1 / (0.4 + 0.6 * pace);
 /** The most bots that pick out the same person on their own at once, per level (whoever that person shoots at, or
- * who is close, still notices them). */
-export const HEAT_CAP: Record<'easy' | 'normal' | 'hard', number> = { easy: 1, normal: 2, hard: 3 };
+ * who is close, still notices them; on easy none go looking for you from afar at all). */
+export const HEAT_CAP: Record<'easy' | 'normal' | 'hard', number> = { easy: 0, normal: 1, hard: 3 };
 /** A person who landed under this many seconds ago with no gun yet is left alone unless close. */
-export const LAND_GRACE = 20;
+export const LAND_GRACE = 40;
+/** Bots set about a person they see (past PACE_CLOSE, not yet fighting them) on a roll of max(pace, PERSON_FLOOR) a
+ * second, by level: a person meets fights all match long, but is never the one thing the bots go for. */
+export const PERSON_FLOOR: Record<'easy' | 'normal' | 'hard', number> = { easy: 0.1, normal: 0.1, hard: 0.25 };
+/** Warning shots: on a new target that is a person past WARN_D, a bot's first aim error is this many times its
+ * usual, by tier (recruit to ace). */
+export const WARN_D = 25;
+export const WARN_SHOT = [1.8, 1.5, 1.2, 1];
 /** Skill tiers for a royale's bots: their share of the lobby, and what each does to the level's skill and reaction
  * time (recruits, regulars, veterans, aces). */
 export const TIERS: { share: number; skill: number; react: number }[] = [

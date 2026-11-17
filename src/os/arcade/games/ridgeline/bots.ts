@@ -44,7 +44,7 @@ import { clamp, mulberry32, type Rng } from './noise.ts';
 import { UP_LADDER, canWalk, fieldDist, fieldStep, fieldTo, findPath, navMark } from './nav.ts';
 import { blockedAt, clearLine } from './physics.ts';
 import { floorAt, heightAt } from './terrain.ts';
-import { CALM_D, CALM_HP, CALM_T, CLAIM_R, HEAT_CAP, LAND_GRACE, PACE_CLOSE, RED_WARN, TIERS, magOf, paceAim, planeAt, scopeOf, tierOf } from './royale.ts';
+import { CALM_D, CALM_HP, CALM_T, CLAIM_R, HEAT_CAP, LAND_GRACE, PACE_CLOSE, PERSON_FLOOR, RED_WARN, TIERS, WARN_D, WARN_SHOT, magOf, paceAim, planeAt, scopeOf, tierOf } from './royale.ts';
 import { WEAPONS, type WeaponId } from './weapons.ts';
 import { SITE_R, type World } from './world.ts';
 import { MAPS } from './maps.ts';
@@ -578,6 +578,8 @@ function perceive(m: Match, a: Actor, br: Brain) {
   // royale pacing: m.pace is the chance a second that a bot sets about another bot it has seen (one roll a look, however
   // many are in view)
   const paceOk = m.mode === 'royale' && a.bot ? br.rng() < 1 - (1 - m.pace) ** Math.max(0.1, br.think) : true;
+  // (and a person the same way, though never less readily than PERSON_FLOOR a second: met in fights, not the only one)
+  const personOk = m.mode === 'royale' && a.bot ? br.rng() < 1 - (1 - Math.max(m.pace, PERSON_FLOOR[m.level])) ** Math.max(0.1, br.think) : true;
   for (const o of m.actors) {
     if (!o.alive || !isEnemy(a, o) || o.drop === 1) continue;
     const dx = o.body.x - ex;
@@ -588,12 +590,13 @@ function perceive(m: Match, a: Actor, br: Brain) {
     // the first while after landing goes on looting, not on picking fights
     if (!known && m.mode === 'royale' && m.time - a.dropT < 22 && d > 7) continue;
     // royale pacing, for someone not yet fought (whoever this bot fights or was shot by always counts): another bot
-    // only on a pace roll (always when bumped into, within PACE_CLOSE), and not one it broke off from a moment ago; a
-    // person only while few enough bots are on them already, and not while just down with no gun yet (or still coming
-    // down)
+    // only on a pace roll, a person only on its own roll (either always when bumped into, within PACE_CLOSE), and not
+    // one it broke off from a moment ago; a person also only while few enough bots are on them already, and not while
+    // just down with no gun yet (or still coming down)
     const paced = !known && m.mode === 'royale' && a.bot && o.bot;
-    if (m.mode === 'royale' && o.bot && br.calmOf === o.id && m.time < br.calmT && d > PACE_CLOSE) continue;
+    if (m.mode === 'royale' && br.calmOf === o.id && m.time < br.calmT && d > PACE_CLOSE) continue;
     if (paced && d > PACE_CLOSE && !paceOk) continue;
+    if (!known && m.mode === 'royale' && a.bot && !o.bot && d > PACE_CLOSE && !personOk) continue;
     if (!known && m.mode === 'royale' && !o.bot) {
       if (d > 12 && m.heat[o.id] >= HEAT_CAP[m.level]) continue;
       if (d > 8 && !currentGun(o) && (o.drop > 0 || m.time - o.dropT < LAND_GRACE)) continue;
@@ -635,9 +638,11 @@ function perceive(m: Match, a: Actor, br: Brain) {
       // holding an angle (standing still, already looking where they appear) gives a quicker, truer first shot
       const off = Math.abs(angDiff(a.yaw, Math.atan2(-(o.body.x - ex), -(o.body.z - ez))));
       const holding = Math.hypot(a.body.vx, a.body.vz) < 0.8 && off < 0.35;
-      // (royale: one bot on another aims worse while the match runs ahead of its pace)
+      // (royale: one bot on another aims worse while the match runs ahead of its pace; on a person far off the first
+      // shots go wide, the more so the weaker the bot, so they have a moment to react)
       const vsBot = m.mode === 'royale' && a.bot && o.bot;
-      const e = ((1 - br.skill) * 0.15 + 0.02 + d * 0.0003) * (m.mode === 'royale' ? 1.5 : 1) * (holding ? 0.5 : 1) * (vsBot ? paceAim(m.pace) : 1);
+      const warn = m.mode === 'royale' && a.bot && !o.bot && d > WARN_D ? WARN_SHOT[br.tier] : 1;
+      const e = ((1 - br.skill) * 0.15 + 0.02 + d * 0.0003) * (m.mode === 'royale' ? 1.5 : 1) * (holding ? 0.5 : 1) * (vsBot ? paceAim(m.pace) : 1) * warn;
       if (m.mode === 'royale') br.started = d > PACE_CLOSE && !(a.hurtFrom === o.id && m.time - a.hurtT < 2);
       br.errY = (br.rng() - 0.5) * 2 * e;
       br.errP = (br.rng() - 0.5) * e;
@@ -1662,11 +1667,11 @@ export function botInput(m: Match, a: Actor, dt: number): Input {
     // far from every person in a royale nobody sees the difference: think half as often
     if (m.mode === 'royale' && br.target < 0 && nearestPerson(m, a) > 160) br.think *= 2;
     perceive(m, a, br);
-    // royale pacing: hurt in a fight with a bot it did not pick, that bot past CALM_D, and the match ahead of its pace:
-    // it may break off (and heal, loot or move on) instead of fighting it out
+    // royale pacing: hurt in a fight it did not pick, the other (a bot or a person) past CALM_D, and the match ahead of
+    // its pace: it may break off (and heal, loot or move on) instead of fighting it out
     if (m.mode === 'royale' && a.bot && br.target >= 0 && !br.started && a.hp < CALM_HP) {
       const o = m.actors[br.target];
-      if (o.bot && Math.hypot(o.body.x - a.body.x, o.body.z - a.body.z) > CALM_D && r() > m.pace) {
+      if (Math.hypot(o.body.x - a.body.x, o.body.z - a.body.z) > CALM_D && r() > m.pace) {
         br.calmOf = o.id;
         br.calmT = m.time + CALM_T;
         br.target = -1;

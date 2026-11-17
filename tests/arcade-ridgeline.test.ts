@@ -10,7 +10,7 @@ import { CELL, T_HALF, T_RES, floorAt, generateTerrain, heightAt, normalAt, rayT
 import { ARMOR, KILL_REWARD, LOSS_REWARD, PAVISE, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
 
 import { ARENA, ROYALE_ARENA, SITE_R, STOREY, withBoxes, worldFor, type Box, type World } from '../src/os/arcade/games/ridgeline/world.ts';
-import { AMMO_MAX, AMMO_OF, AMMO_PACK, BOOST, BOOST_DRAIN, CALM_D, CALM_T, CLAIM_R, HEAL, HEAT_CAP, LAND_GRACE, NADE_MAX, PACE_CLOSE, PACE_FLOOR, PACE_KNOTS, RED_LIVE, RED_WARN, ROYALE_PLAYERS, TIERS, VEST, X4_ZOOM, ZONES, aliveTarget, ammoCap, fits, paceAim, paceOf, gunLabel, healCap, magOf, richness, scopeOf, spawnLoot, zoomOf, type AmmoKind, type Item } from '../src/os/arcade/games/ridgeline/royale.ts';
+import { AMMO_MAX, AMMO_OF, AMMO_PACK, BOOST, BOOST_DRAIN, CALM_D, CALM_T, CLAIM_R, HEAL, HEAT_CAP, LAND_GRACE, NADE_MAX, PACE_CLOSE, PERSON_FLOOR, WARN_D, WARN_SHOT, PACE_FLOOR, PACE_KNOTS, RED_LIVE, RED_WARN, ROYALE_PLAYERS, TIERS, VEST, X4_ZOOM, ZONES, aliveTarget, ammoCap, fits, paceAim, paceOf, gunLabel, healCap, magOf, richness, scopeOf, spawnLoot, zoomOf, type AmmoKind, type Item } from '../src/os/arcade/games/ridgeline/royale.ts';
 import {
   BLAST_R,
   BULLET_G,
@@ -975,10 +975,11 @@ function faceOff(level: 'easy' | 'normal' | 'hard', n: number, dist: number) {
   throw new Error('no open ground for the face off');
 }
 
-test('royale pacing: only so many bots pick out the same person at once (two on normal, one on easy)', () => {
+test('royale pacing: only so many bots pick out the same person at once (one on normal, none from afar on easy)', () => {
+  assert.equal(HEAT_CAP.hard, 3);
   for (const [level, cap] of [
-    ['normal', 2],
-    ['easy', 1],
+    ['normal', 1],
+    ['easy', 0],
   ] as const) {
     assert.equal(HEAT_CAP[level], cap);
     const { m, you, bots, tick } = faceOff(level, 5, 40);
@@ -1101,6 +1102,75 @@ test('royale pacing: a hurt bot breaks off a fight it did not pick, and bots aim
   assert.equal(firstErr(0, true), firstErr(1, true), 'on a person the pace changes nothing');
 });
 
+test('royale pacing: bots set about a person on a roll, the first shots from far off go wide, and a hurt bot may break off from a person', () => {
+  // a person in plain sight 40 m off, the pace held at 0: picked out only now and then (PERSON_FLOOR a second), at
+  // full pace almost at once; eight bots of different brains each way
+  const within = (pace: number, k: number, secs: number) => {
+    const f = faceOff('normal', 1, 40);
+    f.bots[0].brain = newBrain('normal', 100 + k);
+    for (let i = 0; i < 60 * secs; i++) {
+      f.m.pace = pace;
+      f.tick();
+      if (f.bots[0].brain!.target === f.you.id) return true;
+    }
+    return false;
+  };
+  let slow = 0;
+  let fast = 0;
+  for (let k = 0; k < 8; k++) {
+    if (within(0, k, 2)) slow++;
+    if (within(1, k, 2)) fast++;
+  }
+  assert.ok(fast >= 7, `at full pace ${fast} of 8 pick the person out within 2 s`);
+  assert.ok(slow <= 4 && slow < fast, `at pace 0 only ${slow} of 8 do (about ${(100 * (1 - (1 - PERSON_FLOOR.normal) ** 2)).toFixed(0)}% expected)`);
+  // warning shots: on a person past WARN_D the first error is WARN_SHOT[tier] times the usual (same draws, only the
+  // tier differs); on a bot there is none of it
+  const firstErr = (tier: number, person: boolean, dist: number) => {
+    const g = faceOff('normal', 1, dist);
+    if (!person) {
+      g.you.bot = true;
+      g.you.brain = newBrain('normal', 0);
+    }
+    g.bots[0].brain!.tier = tier;
+    for (let i = 0; i < 60 * 8; i++) {
+      g.m.pace = 1;
+      // (no jitter this step: only the first error, settling by the same factor)
+      g.bots[0].brain!.errT = 99;
+      g.tick();
+      if (g.bots[0].brain!.target === g.you.id) return g.bots[0].brain!.errY;
+    }
+    throw new Error('never picked out');
+  };
+  const ace = firstErr(3, true, 40);
+  assert.ok(ace !== 0);
+  for (const t of [0, 1, 2]) assert.ok(Math.abs(firstErr(t, true, 40) / ace - WARN_SHOT[t]) < 1e-9, `tier ${t}`);
+  assert.equal(firstErr(0, true, WARN_D - 5), firstErr(3, true, WARN_D - 5), 'not up close');
+  // (a bot there wanders a little, so only about the same, nowhere near WARN_SHOT[0] apart)
+  assert.ok(Math.abs(firstErr(0, false, 40) / firstErr(3, false, 40) - 1) < 0.02, 'not on a bot');
+  // break off: a bot that answered a person's shot, hurt, the person well off, at pace 0: may break off
+  const f = faceOff('normal', 1, CALM_D + 10);
+  let on = false;
+  for (let i = 0; i < 60 && !on; i++) {
+    f.bots[0].hurtFrom = f.you.id;
+    f.bots[0].hurtT = f.m.time;
+    f.m.pace = 0;
+    f.tick();
+    on = f.bots[0].brain!.target === f.you.id;
+  }
+  assert.ok(on, 'it answers the shot');
+  // hurt, and still shot at now and then (when it loses sight of the person, the next shot brings it back): within a
+  // few seconds it breaks off and leaves the person alone
+  f.bots[0].hp = 60;
+  for (let i = 0; i < 60 * 4 && f.bots[0].brain!.calmOf !== f.you.id; i++) {
+    f.bots[0].hurtFrom = f.you.id;
+    f.bots[0].hurtT = f.m.time;
+    f.m.pace = 0;
+    f.tick();
+  }
+  assert.equal(f.bots[0].brain!.calmOf, f.you.id, 'broke off from the person');
+  assert.equal(f.bots[0].brain!.target, -1);
+});
+
 test('royale pacing: at a low pace a bot leaves loot near another bot to that one', () => {
   const pick = (pace: number) => {
     const { m, you, bots } = faceOff('normal', 1, 10);
@@ -1170,6 +1240,13 @@ test('royale pacing: a person just down with no gun is left alone unless close, 
   for (let i = 0; i < 60 * 4; i++) {
     tick();
     assert.notEqual(bot.brain!.target, you.id, 'not picked out while just landed and unarmed');
+  }
+  // (still unarmed half a minute after landing: still left alone, the grace runs to LAND_GRACE)
+  assert.ok(LAND_GRACE >= 40);
+  you.dropT = m.time - 30;
+  for (let i = 0; i < 60 * 4; i++) {
+    tick();
+    assert.notEqual(bot.brain!.target, you.id, 'not picked out 30 s after landing, unarmed');
   }
   // once armed: picked out
   you.guns = [gun('kestrel'), null, null];
