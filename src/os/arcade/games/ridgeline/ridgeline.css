@@ -1556,6 +1556,85 @@
   background: conic-gradient(rgba(255, 213, 106, 0.38) var(--p), transparent 0);
 }
 
+/* royale: pickup toasts, a line for each thing you take, at the right edge above the ammo */
+.g-ridgeline .g-ridgeline-toasts {
+  position: absolute;
+  right: 14px;
+  bottom: 150px;
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  max-width: min(300px, 46%);
+  font-size: 13px;
+}
+.g-ridgeline .g-ridgeline-toasts > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 100%;
+  padding: 4px 10px 4px 8px;
+  border-radius: 4px;
+  background: var(--g-ridgeline-plate);
+  animation: g-ridgeline-toast 2.5s ease forwards;
+}
+.g-ridgeline .g-ridgeline-toasts i {
+  flex: none;
+  width: 3px;
+  height: 14px;
+  border-radius: 2px;
+  background: var(--g-ridgeline-tier);
+}
+.g-ridgeline .g-ridgeline-toasts span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.g-ridgeline .g-ridgeline-toasts > div[data-tier='1'] span,
+.g-ridgeline .g-ridgeline-toasts > div[data-tier='2'] span {
+  color: color-mix(in srgb, var(--g-ridgeline-tier) 55%, #fff);
+}
+.g-ridgeline .g-ridgeline-toasts b {
+  flex: none;
+  color: var(--g-ridgeline-tier);
+  font-weight: 700;
+}
+.g-ridgeline .g-ridgeline-hud[data-touch='1'] .g-ridgeline-toasts {
+  top: 96px;
+  bottom: auto;
+  right: 10px;
+  font-size: 12px;
+}
+@keyframes g-ridgeline-toast {
+  0% {
+    opacity: 0;
+    transform: translateX(12px);
+  }
+  8% {
+    opacity: 1;
+    transform: none;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .g-ridgeline .g-ridgeline-toasts > div {
+    animation-name: g-ridgeline-toast-still;
+  }
+}
+@keyframes g-ridgeline-toast-still {
+  0%,
+  80% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
 /* royale: the kit panel (I) */
 .g-ridgeline .g-ridgeline-kitpanel {
   position: absolute;

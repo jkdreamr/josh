@@ -8,6 +8,8 @@ import { floorAt } from '../src/os/arcade/games/ridgeline/terrain.ts';
 import { CARS, hurtCar } from '../src/os/arcade/games/ridgeline/cars.ts';
 import { PAVISE, WEAPON_IDS, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
 import { Clock, NET_TAG, Session, Track, type OnlineApi } from '../src/os/arcade/games/ridgeline/online.ts';
+import { PickupFeed, addToast, type Toast } from '../src/os/arcade/games/ridgeline/loot-feed.ts';
+import { AMMO_PACK, type AmmoKind } from '../src/os/arcade/games/ridgeline/royale.ts';
 import { withBoxes, worldFor } from '../src/os/arcade/games/ridgeline/world.ts';
 
 const DT = 1 / 60;
@@ -659,6 +661,53 @@ test('online royale: a guest asleep while the transport flies on is jumped out b
   assert.notEqual(there.drop, 1, 'and on the host');
   assert.ok(Math.hypot(mine.body.x - there.body.x, mine.body.z - there.body.z) < 4, `in the same place (${Math.hypot(mine.body.x - there.body.x, mine.body.z - there.body.z).toFixed(1)} m apart)`);
   assert.equal(m1.plane, null, 'the transport is gone there too');
+});
+
+test("online royale: a guest walking over loot gets its pickup toast from the host's word (no count), the host its own with one", () => {
+  const world = worldFor('vale', true);
+  const { net, seats } = room(2, 4242, { mode: 'royale' });
+  const [host, g1] = seats;
+  const DT2 = 1 / 30;
+  const feeds = [new PickupFeed(), new PickupFeed()];
+  const lines: Toast[][] = [[], []];
+  const run = (sec: number) => {
+    for (let i = 0; i < sec * 30; i++) {
+      frame(net, seats, world, DT2);
+      if (host.s.match) shieldPeople(host.s.match, 1e9);
+      // (each machine reads its own frame's events, as the HUD does after the step)
+      seats.forEach((p, k) => {
+        const m = p.s.match;
+        if (m) for (const t of feeds[k].take(m, net.time)) lines[k] = addToast(lines[k], t, net.time);
+      });
+    }
+  };
+  // both down from the transport (their brains pick where), then their own hands, which press nothing
+  const landed = (p: Seat) => !!p.s.match && !p.s.match.actors[p.s.match.me].drop && p.s.match.actors[p.s.match.me].body.onGround && p.s.match.time > 5;
+  for (let i = 0; i < 30 * 200 && !(landed(host) && landed(g1)); i++) run(1 / 30);
+  assert.ok(landed(host) && landed(g1), 'both landed');
+  for (const p of [host, g1]) p.input = (_m, a) => idleInput(a.yaw, a.pitch);
+  run(1);
+  const h = host.s.match!;
+  const m1 = g1.s.match!;
+  // a box of ammo at each person's feet, on the host (the guest hears of it with the loot)
+  const box = (a: Actor, what: AmmoKind) => {
+    for (const it of h.loot) if (it.live && Math.hypot(it.x - a.body.x, it.z - a.body.z) < 4) it.live = false;
+    h.lootVer++;
+    h.loot.push({ id: h.loot.length, kind: 'ammo', what, n: AMMO_PACK[what], x: a.body.x + 0.3, y: a.body.y + 0.02, z: a.body.z, live: true });
+    h.lootVer++;
+  };
+  lines[0] = [];
+  lines[1] = [];
+  box(h.actors[m1.me], 'shells');
+  box(h.actors[h.me], 'sniper');
+  run(2);
+  const mine = (k: number, text: string) => lines[k].find((l) => l.text === text);
+  assert.ok(mine(1, '12 gauge ammo'), `the guest's own pickup shows on its machine (${lines[1].map((l) => l.text).join(', ') || 'nothing'})`);
+  assert.equal(mine(1, '12 gauge ammo')!.plus, 0, 'without a count: the host says what, not how many');
+  assert.equal(m1.actors[m1.me].ammo.shells >= AMMO_PACK.shells, true, 'and the guest has it');
+  assert.ok(!mine(1, '.338 ammo'), "the host's pickup is not the guest's");
+  assert.equal(mine(0, '.338 ammo')?.plus, AMMO_PACK.sniper, 'the host sees its own, with the count');
+  assert.ok(!mine(0, '12 gauge ammo'), "and not the guest's");
 });
 
 test('online: the host turns down a guest hit that a raised shield stopped, and takes it once the shield is down', () => {

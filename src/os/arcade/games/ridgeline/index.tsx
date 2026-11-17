@@ -9,6 +9,7 @@ import { Score, type Mood } from './score.ts';
 import { useAssets } from './assets.ts';
 import { autoQuality, createView, flyover, type Quality, type View } from './gfx/view.ts';
 import { kitOf, paletteOf } from './gfx/soldiers.ts';
+import { LootGlowSetting, PickupToasts, useLootGlow, type PickupToastsApi } from './hud-loot.tsx';
 import { Ammo, BannerView, HitInfo, ItemBar, KillConfirm, KitPanel, type KillPop, BreachPrompts, BuyMenu, DeathPanel, Feed, Markers, MedalView, Minimap, Reticle, RoyalePrompts, SHOP_ORDER, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type MedalPop, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi, type HitInfoApi } from './hud.tsx';
 import { MAPS, MAP_IDS, type MapId } from './maps.ts';
 import { DEFUSE_HALF, DEFUSE_TIME, DEG, PERSON_HEALTH, PLANT_TIME, RUN, type Medal, type Mode, canDefuse, canShop, canUse, createMatch, currentGun, echoOfMine, eyeX, eyeY, eyeZ, finalScore, idleInput, lootNear, nadesOf, owns, plantSite, spareOf, sightSwap, spreadOf, standings, step, viewDir, wants, type Actor, type Cause, type Input, type Match, type NadeKind, type ShopItem } from './match.ts';
@@ -124,6 +125,7 @@ function Setup() {
       <Segmented label="Bots" value={level} options={levelOptions} onChange={setLevel} />
       {mode === 'dm' && <Segmented label="Gun" value={gun} options={gunOptions} onChange={setGun} />}
       <Segmented label="Graphics" value={quality} options={qualityOptions} onChange={setQuality} />
+      {mode === 'royale' && <LootGlowSetting />}
       {mouse && <Segmented label="Mouse" value={sens} options={sensOptions} onChange={setSens} />}
       <Segmented label="View" value={view} options={viewOptions} onChange={setView} />
       {view === 'auto' && <p className="g-ridgeline-note">over the shoulder in Royale, first person in the others. O switches while you play.</p>}
@@ -167,6 +169,7 @@ function OnlineSetup() {
       )}
       {(!host || mode === 'dm') && <Segmented label="Deathmatch gun" value={gun} options={gunOptions} onChange={setGun} />}
       <Segmented label="Graphics" value={quality} options={qualityOptions} onChange={setQuality} />
+      {(!host || mode === 'royale') && <LootGlowSetting />}
       {mouse && <Segmented label="Mouse" value={sens} options={sensOptions} onChange={setSens} />}
       <Segmented label="View" value={view} options={viewOptions} onChange={setView} />
       <Segmented label="Camera shake" value={shake} options={shakeOptions} onChange={setShake} />
@@ -381,6 +384,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
   const big = useRef<MinimapApi>(null);
   const marks = useRef<MarkersApi>(null);
   const hitInfo = useRef<HitInfoApi>(null);
+  const toasts = useRef<PickupToastsApi>(null);
+  const lootGlow = useLootGlow();
 
   // input state
   const look = useRef({ dx: 0, dy: 0 });
@@ -936,6 +941,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       net?.after(m);
       // (where lying down isn't possible, the toggle lets go of it)
       if (proneOn.current && !you.proneTo) proneOn.current = false;
+      toasts.current?.feed(m);
 
       // feedback from what happened
       for (const e of m.events) {
@@ -1071,6 +1077,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
     () => {
       const view = viewRef.current;
       if (!view || !world) return;
+      view.lootGlow(lootGlow.current);
       const s = shellRef.current;
       const dt = Math.min(0.05, Math.max(0, time.current - lastRender.current));
       lastRender.current = time.current;
@@ -1664,6 +1671,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           <MedalView m={medal} />
           <KillConfirm k={killPop} />
           <ItemBar h={hud} onUse={useItem} />
+          <PickupToasts ref={toasts} />
           <DeathPanel h={hud} touch={touchUi} />
           <RoyalePrompts h={hud} touch={touchUi} />
           <BreachPrompts h={hud} touch={touchUi} />
