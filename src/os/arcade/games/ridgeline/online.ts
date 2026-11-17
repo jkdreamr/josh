@@ -63,6 +63,7 @@ import {
   type Zone,
 } from './match.ts';
 import { MAP_IDS, type MapId } from './maps.ts';
+import { seedFor, type SkyChoice } from './looks.ts';
 import { AMMO_KINDS, AMMO_OF, AMMO_PACK, magOf, spawnLoot, type ItemKind, type Mods, type UseKind } from './royale.ts';
 import { PAVISE, WEAPONS, WEAPON_IDS, type WeaponId } from './weapons.ts';
 import { ARENA, type World } from './world.ts';
@@ -575,6 +576,8 @@ export type SessionOpts = {
   botNames?: string[];
   /** The match's seed (a test fixes it; otherwise a fresh one). */
   seed?: number;
+  /** Royale: the host's Sky choice, carried by the seed (see looks.ts seedFor), so nothing new goes on the wire. */
+  sky?: SkyChoice;
 };
 
 type Peer = {
@@ -682,6 +685,7 @@ export class Session {
     this.dmPick = opts.dmPick ?? null;
     this.now = opts.now ?? (() => (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000);
     if (opts.seed !== undefined) this.seed = opts.seed >>> 0;
+    if (opts.sky && this.mode === 'royale') this.seed = seedFor(this.seed, opts.sky);
     this.botNames = opts.botNames ?? ['Vega', 'Rook', 'Sable', 'Juno', 'Kite', 'Onyx', 'Mako', 'Pike', 'Ash', 'Bishop'];
     this.off = api.onMessage((from, d) => this.receive(from, d));
     if (!api.isHost) this.hello();

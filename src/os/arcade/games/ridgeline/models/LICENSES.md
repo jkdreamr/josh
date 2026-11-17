@@ -105,6 +105,21 @@ sky is turned so its sun stands where the map's sun does.
 | `../textures/sky-frost-*.webp` | Table Mountain 1 (Pure Sky) | Greg Zaal, Jarod Guest | CC0 1.0 | <https://polyhaven.com/a/table_mountain_1_puresky> |
 | `../textures/sky-isles-*.webp` | Qwantani Sunset (Pure Sky) | Greg Zaal, Jarod Guest | CC0 1.0 | <https://polyhaven.com/a/qwantani_sunset_puresky> |
 
+A royale can also play at dusk or under an overcast sky (`../looks.ts`). Each map has one more pure sky HDRI for each,
+made the same way (`../textures/sky-<map>-<dusk|overcast>-4k.webp` and `-2k.webp`); the game fetches only the one a
+match plays under. The dusk suns stand at their HDRI's sun height and take its color.
+
+| File | Asset | Author | License | Source |
+| --- | --- | --- | --- | --- |
+| `../textures/sky-vale-dusk-*.webp` | Kloppenheim 06 (Pure Sky) | Greg Zaal, Jarod Guest | CC0 1.0 | <https://polyhaven.com/a/kloppenheim_06_puresky> |
+| `../textures/sky-vale-overcast-*.webp` | Kloofendal Overcast (Pure Sky) | Greg Zaal | CC0 1.0 | <https://polyhaven.com/a/kloofendal_overcast_puresky> |
+| `../textures/sky-mesa-dusk-*.webp` | Rocky Ridge (Pure Sky) | Greg Zaal, Jarod Guest | CC0 1.0 | <https://polyhaven.com/a/rocky_ridge_puresky> |
+| `../textures/sky-mesa-overcast-*.webp` | Overcast Soil (Pure Sky) | Jarod Guest, Sergej Majboroda | CC0 1.0 | <https://polyhaven.com/a/overcast_soil_puresky> |
+| `../textures/sky-frost-dusk-*.webp` | Drackenstein Quarry (Pure Sky) | Andreas Mischok, Jarod Guest | CC0 1.0 | <https://polyhaven.com/a/drackenstein_quarry_puresky> |
+| `../textures/sky-frost-overcast-*.webp` | Snow Field (Pure Sky) | Jarod Guest, Sergej Majboroda | CC0 1.0 | <https://polyhaven.com/a/snow_field_puresky> |
+| `../textures/sky-isles-dusk-*.webp` | Qwantani Dusk 2 (Pure Sky) | Greg Zaal, Jarod Guest | CC0 1.0 | <https://polyhaven.com/a/qwantani_dusk_2_puresky> |
+| `../textures/sky-isles-overcast-*.webp` | Mud Road (Pure Sky) | Sergey Rudavin, Jarod Guest | CC0 1.0 | <https://polyhaven.com/a/mud_road_puresky> |
+
 The ground textures are 1K PBR sets packed into two strips of five layers (grass, dirt, rock, sand, snow):
 `../textures/ground-albedo.webp` (1024 per layer: color with its mean taken out, so each map's palette tints it, and
 roughness in alpha) and `../textures/ground-normal.webp` (512 per layer: normal x and y, height, ambient occlusion).

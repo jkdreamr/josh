@@ -7,6 +7,8 @@ import type { Mode, NadeKind, Phase, ShopItem } from './match.ts';
 import { BOOST_FAST, HEAL, type UseKind } from './royale.ts';
 import { ARMOR, NADES, PAVISE, WEAPONS, type WeaponId } from './weapons.ts';
 import type { World } from './world.ts';
+import { drawRoyaleMarks, drawTownNames } from './hud-royale.tsx';
+import { zoneLabel } from './hud-royale-math.ts';
 
 export type FeedItem = { id: number; killer: string; victim: string; kc: string; vc: string; w: string; head: boolean; mine: boolean };
 export type Row = { name: string; team: number; k: number; d: number; a: number; cs: number; credits: number | null; alive: boolean; you: boolean };
@@ -119,6 +121,12 @@ export type RoyaleHud = {
   guns: string[];
   /** A supply crate with gear left near you: how far (-1 none near). */
   crate: number;
+  /** The zone's phase (1 based) of how many, meters to go to be inside the next circle (0 inside), and whether at a
+   * run you would still be outside it when this phase's closing ends (see zoneGuide). */
+  phase: number;
+  phases: number;
+  toNext: number;
+  late: boolean;
 };
 
 export const blankHud = (mode: Mode): Hud => ({
@@ -177,7 +185,7 @@ export function TopBar({ h }: { h: Hud }) {
         </div>
         <div className="g-ridgeline-clock">
           <b>{r.zoneT >= 0 ? clock(r.zoneT) : '-'}</b>
-          <small>{r.zoneT < 0 ? 'zone closed' : r.closing ? 'zone closing' : 'zone holds'}</small>
+          <small>{zoneLabel(r.phase, r.phases, r.closing, r.zoneT < 0)}</small>
         </div>
         <div className="g-ridgeline-score is-them">
           <b>{r.kills}</b>
@@ -967,6 +975,9 @@ export type MapState = {
   drops?: { x: number; z: number; landed: boolean }[];
   /** Royale: the vehicles (x, z, heading, a wreck or not, a bike or not); the same list every frame, refilled. */
   cars?: { x: number; z: number; yaw: number; wreck: boolean; bike: boolean }[];
+  /** Royale: the spot you marked, and the nearest point of the next circle while you are outside it. */
+  marker?: { x: number; z: number } | null;
+  guide?: { x: number; z: number } | null;
 };
 export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(function Minimap({ world, big }, ref) {
   const cv = useRef<HTMLCanvasElement>(null);
@@ -1044,6 +1055,7 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
         g.fill();
       }
       // the big map names the places: each site's under its letter, and the others where they are
+      if (big && s.zone) drawTownNames(g, world, toX, toY);
       if (big && s.sites && !s.zone) {
         g.font = '600 10px system-ui, sans-serif';
         g.textAlign = 'center';
@@ -1156,6 +1168,7 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
         g.lineWidth = 1.5;
         g.stroke();
       }
+      if (s.zone) drawRoyaleMarks(g, s, toX, toY, size, !!big);
       // you: an arrow along the view
       const px = toX(s.x);
       const py = toY(s.z);
@@ -1183,7 +1196,7 @@ export const Minimap = forwardRef<MinimapApi, { world: World; big?: boolean }>(f
 
 /** Screen markers: the sites, the charge, your teammates' names and (royale) supply crates, placed every frame through
  * refs. */
-export type MarkersApi = { place(list: { key: string; x: number; y: number; on: boolean; text: string; sub?: string; kind: 'site' | 'mate' | 'charge' | 'supply' }[]): void };
+export type MarkersApi = { place(list: { key: string; x: number; y: number; on: boolean; text: string; sub?: string; kind: 'site' | 'mate' | 'charge' | 'supply' | 'marker' }[]): void };
 export const Markers = forwardRef<MarkersApi, { children?: ReactNode }>(function Markers(_, ref) {
   const box = useRef<HTMLDivElement>(null);
   const els = useRef(new Map<string, HTMLDivElement>());

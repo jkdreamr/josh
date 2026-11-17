@@ -9,6 +9,10 @@ export type TreeKind = 'oak' | 'pine' | 'birch' | 'snowpine' | 'palm' | 'cactus'
 export type Style = 'farm' | 'adobe' | 'cabin' | 'tropic';
 export type Weather = 'none' | 'snow' | 'dust' | 'pollen';
 
+/** A time of day a royale can play at besides the map's own (see looks.ts): the light, sky, haze and grade it swaps in.
+ * Its sky photo is in gfx/sky.ts. */
+export type Look = Pick<MapDef, 'sun' | 'sky' | 'fog' | 'ambient' | 'grade'>;
+
 export type TreeRule = { kind: TreeKind; weight: number; /** only this close to water (m above the water line) */ nearWater?: number; /** only above this height above water */ minUp?: number };
 
 export type MapDef = {
@@ -57,6 +61,8 @@ export type MapDef = {
   waterColor: { shallow: number; deep: number };
   grade: { exposure: number; saturation: number; contrast: number; tint: [number, number, number]; vignette: number; bloom: number };
   weather: Weather;
+  /** Royale only: the dusk and overcast versions of the map (looks.ts picks one per match). */
+  looks?: Partial<Record<'dusk' | 'overcast', Look>>;
 };
 
 export const MAPS: Record<MapId, MapDef> = {
@@ -99,6 +105,22 @@ export const MAPS: Record<MapId, MapDef> = {
     waterColor: { shallow: 0x5a9486, deep: 0x17323f },
     grade: { exposure: 1, saturation: 1.08, contrast: 1.05, tint: [1.03, 1, 0.96], vignette: 0.28, bloom: 0.55 },
     weather: 'pollen',
+    looks: {
+      dusk: {
+        sun: { az: 286, el: 7, color: 0xffb46c, intensity: 5 },
+        sky: { zenith: 0x5b708f, horizon: 0xb9aea6, ground: 0x5e5448, glow: 1.2, clouds: 0.36, cloudColor: 0xffd0a4, cloudShade: 0x6c6478 },
+        fog: { color: 0xd4b49c, density: 0.0024, falloff: 0.032, sun: 0xffb070 },
+        ambient: 2.9,
+        grade: { exposure: 2, saturation: 1.12, contrast: 1.06, tint: [1.1, 1, 0.86], vignette: 0.32, bloom: 0.8 },
+      },
+      overcast: {
+        sun: { az: 118, el: 43, color: 0xe6eaf0, intensity: 0.9 },
+        sky: { zenith: 0xacb8cb, horizon: 0x989ea6, ground: 0x5c625a, glow: 0.2, clouds: 0.95, cloudColor: 0xe2e6ea, cloudShade: 0x7c828a },
+        fog: { color: 0xaab2ba, density: 0.0034, falloff: 0.03, sun: 0xc8ccd2 },
+        ambient: 3.5,
+        grade: { exposure: 1.3, saturation: 0.86, contrast: 1.1, tint: [0.98, 1, 1.03], vignette: 0.3, bloom: 0.3 },
+      },
+    },
   },
   mesa: {
     id: 'mesa',
@@ -140,6 +162,22 @@ export const MAPS: Record<MapId, MapDef> = {
     waterColor: { shallow: 0x4f9a88, deep: 0x1e4a48 },
     grade: { exposure: 0.95, saturation: 1.06, contrast: 1.08, tint: [1.05, 0.99, 0.92], vignette: 0.3, bloom: 0.5 },
     weather: 'dust',
+    looks: {
+      dusk: {
+        sun: { az: 262, el: 6, color: 0xffa852, intensity: 5.5 },
+        sky: { zenith: 0x515c77, horizon: 0xd4c1aa, ground: 0x8a5a40, glow: 1.3, clouds: 0.2, cloudColor: 0xffd2a8, cloudShade: 0x8a6a6a },
+        fog: { color: 0xe0a880, density: 0.0012, falloff: 0.02, sun: 0xffa060 },
+        ambient: 3.2,
+        grade: { exposure: 2.2, saturation: 1.12, contrast: 1.1, tint: [1.1, 0.98, 0.85], vignette: 0.32, bloom: 0.5 },
+      },
+      overcast: {
+        sun: { az: 232, el: 38, color: 0xeee6dc, intensity: 0.9 },
+        sky: { zenith: 0xcacaca, horizon: 0x898681, ground: 0x7a5e4a, glow: 0.2, clouds: 0.95, cloudColor: 0xe0dcd6, cloudShade: 0x807a74 },
+        fog: { color: 0xb8a48c, density: 0.0032, falloff: 0.02, sun: 0xd0c4b4 },
+        ambient: 4.2,
+        grade: { exposure: 1.3, saturation: 0.86, contrast: 1.1, tint: [1.02, 1, 0.97], vignette: 0.3, bloom: 0.3 },
+      },
+    },
   },
   frost: {
     id: 'frost',
@@ -179,6 +217,22 @@ export const MAPS: Record<MapId, MapDef> = {
     waterColor: { shallow: 0xb8d4e4, deep: 0x7fa6c4 },
     grade: { exposure: 0.92, saturation: 0.92, contrast: 1.04, tint: [0.96, 1, 1.06], vignette: 0.26, bloom: 0.45 },
     weather: 'snow',
+    looks: {
+      dusk: {
+        sun: { az: 204, el: 6, color: 0xffb070, intensity: 4.5 },
+        sky: { zenith: 0x51565f, horizon: 0xb39c80, ground: 0x9a96a4, glow: 1.0, clouds: 0.5, cloudColor: 0xffd8c0, cloudShade: 0x6c6880 },
+        fog: { color: 0xc8b8c0, density: 0.0036, falloff: 0.018, sun: 0xffc090 },
+        ambient: 1.1,
+        grade: { exposure: 1.4, saturation: 1, contrast: 1.05, tint: [1.05, 0.99, 0.96], vignette: 0.28, bloom: 0.6 },
+      },
+      overcast: {
+        sun: { az: 158, el: 13, color: 0xe8ecf4, intensity: 0.8 },
+        sky: { zenith: 0x9d9d9c, horizon: 0x93938f, ground: 0x9aa4b0, glow: 0.2, clouds: 0.95, cloudColor: 0xeef0f4, cloudShade: 0x868e98 },
+        fog: { color: 0xc0c8d2, density: 0.0048, falloff: 0.018, sun: 0xdde2ea },
+        ambient: 2,
+        grade: { exposure: 1, saturation: 0.85, contrast: 1.08, tint: [0.97, 1, 1.04], vignette: 0.26, bloom: 0.3 },
+      },
+    },
   },
   isles: {
     id: 'isles',
@@ -219,5 +273,21 @@ export const MAPS: Record<MapId, MapDef> = {
     waterColor: { shallow: 0x3cc4bc, deep: 0x0d4466 },
     grade: { exposure: 1, saturation: 1.1, contrast: 1.06, tint: [1.05, 0.99, 0.95], vignette: 0.3, bloom: 0.7 },
     weather: 'none',
+    looks: {
+      dusk: {
+        sun: { az: 290, el: 2, color: 0xff9a80, intensity: 1.6 },
+        sky: { zenith: 0x5b617f, horizon: 0x8e7076, ground: 0x5a5068, glow: 1.0, clouds: 0.3, cloudColor: 0xffc0b0, cloudShade: 0x6a5a80 },
+        fog: { color: 0xb898a8, density: 0.0017, falloff: 0.03, sun: 0xff9a90 },
+        ambient: 1.8,
+        grade: { exposure: 1.55, saturation: 1.05, contrast: 1.04, tint: [1.04, 0.97, 1.02], vignette: 0.3, bloom: 0.6 },
+      },
+      overcast: {
+        sun: { az: 282, el: 8, color: 0xe8eef8, intensity: 0.9 },
+        sky: { zenith: 0xb2b4c2, horizon: 0x808084, ground: 0x5a6068, glow: 0.2, clouds: 0.95, cloudColor: 0xe2e6ea, cloudShade: 0x7c828a },
+        fog: { color: 0xa8b4bc, density: 0.0026, falloff: 0.03, sun: 0xc8d0d8 },
+        ambient: 2,
+        grade: { exposure: 1.1, saturation: 0.9, contrast: 1.08, tint: [0.98, 1, 1.02], vignette: 0.3, bloom: 0.3 },
+      },
+    },
   },
 };

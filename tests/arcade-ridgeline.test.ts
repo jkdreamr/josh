@@ -8,6 +8,11 @@ import { PRONE_H, RADIUS, STAND_H, blockedAt, clearLine, groundAt, newHit, rayWo
 import { aimPoint, shoulderCam, type Cam } from '../src/os/arcade/games/ridgeline/camera.ts';
 import { CELL, T_HALF, T_RES, floorAt, generateTerrain, heightAt, normalAt, rayTerrain } from '../src/os/arcade/games/ridgeline/terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, PAVISE, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
+import { WEAPON_IDS } from '../src/os/arcade/games/ridgeline/weapons.ts';
+import { AMMO_KINDS, ROYALE_NADES, supplyContents, type AttKind, type ItemKind, type Mods } from '../src/os/arcade/games/ridgeline/royale.ts';
+import { mulberry32 } from '../src/os/arcade/games/ridgeline/noise.ts';
+import { TIER_COLOR, TIER_CSS, lootTier } from '../src/os/arcade/games/ridgeline/loot-tier.ts';
+import { PickupFeed, TOAST_LIFE, TOAST_MAX, addToast, liveToasts, nextExpiry, toastText, type Toast } from '../src/os/arcade/games/ridgeline/loot-feed.ts';
 
 import { ARENA, ROYALE_ARENA, SITE_R, STOREY, withBoxes, worldFor, type Box, type World } from '../src/os/arcade/games/ridgeline/world.ts';
 import { AMMO_MAX, AMMO_OF, AMMO_PACK, BOOST, BOOST_DRAIN, CALM_D, CALM_T, CLAIM_R, HEAL, HEAT_CAP, LAND_GRACE, NADE_MAX, PACE_CLOSE, PERSON_FLOOR, WARN_D, WARN_SHOT, PACE_FLOOR, PACE_KNOTS, RED_LIVE, RED_WARN, ROYALE_PLAYERS, TIERS, VEST, X4_ZOOM, ZONES, aliveTarget, ammoCap, fits, paceAim, paceOf, gunLabel, healCap, magOf, richness, scopeOf, spawnLoot, zoomOf, type AmmoKind, type Item } from '../src/os/arcade/games/ridgeline/royale.ts';
@@ -562,6 +567,142 @@ test('royale: walking over loot takes it, except a gun that would mean giving on
   walk();
   assert.ok(you.ammo.rifle >= AMMO_PACK.rifle, 'ammo taken');
   assert.equal(you.bandages, 2, 'heals taken');
+});
+
+test('royale loot tiers: every kind of item on the ground has a tier, gold for the best and blue for the good', () => {
+  const tier = (kind: ItemKind, what: string) => lootTier({ kind, what });
+  // every gun: gold the long range ones, blue the assault rifles, white the rest
+  const gold: WeaponId[] = ['longbow', 'lancer', 'rampart'];
+  const blue: WeaponId[] = ['kestrel', 'talon'];
+  for (const id of WEAPON_IDS) assert.equal(tier('gun', id), gold.includes(id) ? 2 : blue.includes(id) ? 1 : 0, id);
+  for (const k of ['vest', 'helmet', 'pack'] as const) assert.deepEqual(['1', '2', '3'].map((lv) => tier(k, lv)), [0, 1, 2], k);
+  assert.deepEqual((['dot', 'ext', 'comp', 'x4'] as AttKind[]).map((a) => tier('att', a)), [1, 1, 1, 2]);
+  assert.deepEqual([tier('heal', 'bandage'), tier('heal', 'kit'), tier('boost', 'drink'), tier('boost', 'pills')], [0, 2, 0, 2]);
+  for (const k of AMMO_KINDS) assert.equal(tier('ammo', k), 0, k);
+  for (const k of ROYALE_NADES) assert.equal(tier('nade', k), 0, k);
+  assert.equal(tier('shield', '1'), 1);
+  assert.equal(tier('gun', 'nonsense'), 0, 'an unknown gun is plain');
+  // and everything that really lies about (all four maps, a supply crate, a fallen player's kit) is one of those
+  const kinds = new Set<string>();
+  const seen = new Set<string>();
+  const known = new Set<string>([
+    ...WEAPON_IDS.map((id) => `gun:${id}`),
+    ...['vest', 'helmet', 'pack'].flatMap((k) => ['1', '2', '3'].map((lv) => `${k}:${lv}`)),
+    ...['dot', 'ext', 'comp', 'x4'].map((a) => `att:${a}`),
+    'heal:bandage',
+    'heal:kit',
+    'boost:drink',
+    'boost:pills',
+    ...AMMO_KINDS.map((k) => `ammo:${k}`),
+    ...ROYALE_NADES.map((k) => `nade:${k}`),
+    'shield:1',
+  ]);
+  for (const id of MAP_IDS)
+    for (const it of spawnLoot(worldFor(id, true), 5)) {
+      kinds.add(it.kind);
+      seen.add(`${it.kind}:${it.what}`);
+    }
+  for (let s = 1; s < 40; s++) for (const [kind, what] of supplyContents(mulberry32(s))) seen.add(`${kind}:${what}`);
+  for (const k of seen) assert.ok(known.has(k), `${k} has a tier`);
+  assert.deepEqual([...kinds].sort(), ['ammo', 'att', 'boost', 'gun', 'heal', 'helmet', 'nade', 'pack', 'shield', 'vest'], 'every kind lies about');
+  assert.equal(TIER_CSS.length, 3);
+  TIER_COLOR.forEach((c, i) => assert.equal(TIER_CSS[i], `#${c.toString(16).padStart(6, '0')}`, 'the HUD and the rings agree on the colors'));
+});
+
+test('royale pickup toasts: at most four, a repeat folds into its line, each runs out, and the text has no leftover count', () => {
+  const t = (key: number, text: string, plus = 0, at = 0): Toast => ({ key, text, tier: 0, plus, at });
+  let list: Toast[] = [];
+  for (let i = 0; i < 6; i++) list = addToast(list, t(i, `thing ${i}`, 0, i * 0.1), i * 0.1);
+  assert.equal(list.length, TOAST_MAX, 'four at most');
+  assert.deepEqual(
+    list.map((x) => x.key),
+    [2, 3, 4, 5],
+    'the oldest go, the newest last',
+  );
+  list = addToast(list, t(6, '5.56 ammo', 30, 1), 1);
+  list = addToast(list, t(7, 'thing 4', 0, 1.1), 1.1);
+  list = addToast(list, t(8, '5.56 ammo', 30, 1.2), 1.2);
+  assert.equal(list.filter((x) => x.text === '5.56 ammo').length, 1, 'a repeat folds into its line');
+  const ammo = list.at(-1)!;
+  assert.equal(ammo.text, '5.56 ammo');
+  assert.equal(ammo.plus, 60, 'the counts add up');
+  assert.equal(ammo.key, 8, 'and it shows afresh');
+  assert.equal(list.length, TOAST_MAX);
+  assert.ok(Math.abs(nextExpiry(list) - (0.3 + TOAST_LIFE)) < 1e-9, 'the next to run out');
+  assert.equal(liveToasts(list, 1.2 + TOAST_LIFE - 0.01).length, 1, 'all but the newest run out');
+  assert.equal(liveToasts(list, 1.2 + TOAST_LIFE).length, 0);
+  assert.equal(nextExpiry([]), Infinity);
+  assert.equal(addToast(list, t(9, 'late', 0, 9), 9).length, 1, 'run out lines are dropped on the next one');
+  // what they say: no count left on the ground, a gun with what is fitted to it
+  const it = (kind: ItemKind, what: string, n = 1, mods: Mods | null = null) => toastText({ kind, what, n, mods });
+  assert.equal(it('ammo', 'rifle', 0), '5.56 ammo');
+  assert.equal(it('heal', 'bandage', 0), 'Bandage');
+  assert.equal(it('boost', 'pills', 0), 'Painkillers');
+  assert.equal(it('nade', 'frag', 0), 'Frag grenade');
+  assert.equal(it('att', 'x4'), '4x scope');
+  assert.equal(it('vest', '3'), 'Vest, level 3');
+  assert.equal(it('gun', 'kestrel', 25, { sight: 'dot', ext: true, comp: false }), 'Kestrel · dot · ext');
+  assert.equal(it('gun', 'lancer'), 'Lancer');
+  assert.equal(it('gun', 'nonsense'), 'Gun', 'an unknown gun from the wire never breaks it');
+  assert.equal(it('shield', '1', PAVISE.hp), 'Ballistic shield (100%)');
+});
+
+test('royale pickup toasts: your own pickups make lines with how many came in, a bot\'s do not', () => {
+  const m = createMatch(worldFor('mesa', true), 'royale', 'normal', { seed: 12 });
+  const you = m.actors[0];
+  you.drop = 0;
+  you.body.x = m.zone!.x;
+  you.body.z = m.zone!.z;
+  you.body.y = 200;
+  for (let i = 0; i < 600 && !you.body.onGround; i++) step(m, DT, idleInput());
+  for (const it of m.loot) if (Math.hypot(it.x - you.body.x, it.z - you.body.z) < 6) it.live = false;
+  const feed = new PickupFeed();
+  let lines: Toast[] = [];
+  let clock = 0;
+  const walk = () => {
+    for (let i = 0; i < 20; i++) {
+      step(m, DT, idleInput(you.yaw, you.pitch));
+      clock += DT;
+      for (const t of feed.take(m, clock)) lines = addToast(lines, t, clock);
+    }
+  };
+  walk();
+  assert.equal(lines.length, 0, 'nothing taken, nothing shown');
+  const put = (kind: ItemKind, what: string, n: number) => {
+    const it: Item = { id: m.loot.length, kind, what, n, x: you.body.x + 0.5, y: you.body.y + 0.02, z: you.body.z, live: true };
+    m.loot.push(it);
+    m.lootVer++;
+    return it;
+  };
+  put('gun', 'kestrel', WEAPONS.kestrel.mag);
+  put('ammo', 'rifle', AMMO_PACK.rifle);
+  put('heal', 'kit', 1);
+  walk();
+  walk();
+  const by = (text: string) => lines.find((l) => l.text === text);
+  assert.ok(by('Kestrel'), `the gun shows (${lines.map((l) => l.text).join(', ')})`);
+  assert.equal(by('Kestrel')!.tier, 1, 'blue');
+  assert.equal(by('5.56 ammo')?.plus, AMMO_PACK.rifle, 'the ammo with how much came in');
+  assert.equal(by('Med kit')?.plus, 1);
+  assert.equal(by('Med kit')?.tier, 2, 'gold');
+  // a second box a moment later: the same line, the count added up
+  put('ammo', 'rifle', AMMO_PACK.rifle);
+  walk();
+  assert.equal(lines.filter((l) => l.text === '5.56 ammo').length, 1);
+  assert.equal(by('5.56 ammo')?.plus, AMMO_PACK.rifle * 2, 'two boxes, one line');
+  // a bot's pickup is not yours
+  const before = lines.length;
+  const bot = m.actors.find((a) => a.bot && a.alive)!;
+  m.events.push({ t: 'pickup', a: bot.id, item: { id: -1, kind: 'gun', what: 'longbow', n: 5, x: 0, y: 0, z: 0, live: false } });
+  for (const t of feed.take(m, clock)) lines = addToast(lines, t, clock);
+  assert.equal(lines.length, before, "a bot's pickup makes no line");
+  // and an online guest, told only what it took, shows it without a count
+  m.authority = false;
+  m.events = [{ t: 'pickup', a: you.id, item: { id: -1, kind: 'ammo', what: 'light', n: 0, x: 0, y: 0, z: 0, live: false } }];
+  const g = feed.take(m, clock);
+  assert.equal(g.length, 1);
+  assert.equal(g[0].text, '9mm ammo');
+  assert.equal(g[0].plus, 0, 'no count where the rules do not run');
 });
 
 test('aim assist: a shot just off a target lands, a clear miss stays a miss, and never through a wall', () => {

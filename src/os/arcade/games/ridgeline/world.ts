@@ -127,6 +127,8 @@ export type World = {
   models: Placed[];
   /** RGBA per terrain vertex: sun visibility, ambient occlusion, far object shadow, bare ground. */
   light: Uint8Array;
+  /** Buildings and big props as boxes, to bake their far shadows again for another sun (relight.ts). */
+  shade: Rect3[];
   minimap: Minimap;
   /** Half the side of the playable square. */
   arena: number;
@@ -2700,6 +2702,7 @@ export function buildWorld(id: MapId, royale = false): World {
     vehicles: c.vehicles,
     models: c.models,
     light: new Uint8Array(0),
+    shade: c.blocks,
     minimap: { size: 0, span: 0, data: new Uint8ClampedArray(0) },
     arena: arena,
     region,
