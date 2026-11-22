@@ -28,6 +28,8 @@ export type ShellApi = {
   round: number;
   /** False while inactive, except online games continue simulating in the background. */
   active: boolean;
+  /** Playing an online round: the game loop keeps stepping even when the window gets no frames (see useGameLoop). */
+  online?: boolean;
   compact: boolean;
   /** True on touch devices (phone and iPad frames). */
   touch: boolean;

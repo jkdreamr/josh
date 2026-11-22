@@ -35,3 +35,6 @@ export function every(ms: number, fn: () => void): () => void {
   const timer = setInterval(fn, period);
   return () => clearInterval(timer);
 }
+
+/** every() in setInterval's shape, (fn, ms), returning the function that stops it: for a game's network loop. */
+export const repeat = (fn: () => void, ms: number) => every(ms, fn);

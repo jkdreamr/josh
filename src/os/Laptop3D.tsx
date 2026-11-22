@@ -80,6 +80,8 @@ const Laptop3D = forwardRef<Laptop3DHandle, Laptop3DProps>(function Laptop3D(pro
     // the visitor's own keyboard presses the matching 3D keys
     const onKey = (e: KeyboardEvent) => {
       if (!e.isTrusted || (e.type === 'keydown' && e.repeat)) return;
+      // While a game has the keys, the 3D keyboard stays still: each tap would redraw the whole laptop scene mid-game.
+      if (e.type === 'keydown' && (document.activeElement as HTMLElement | null)?.closest?.('.arcade-shell')) return;
       ctl.current?.tapKey(e.code, e.type === 'keydown');
     };
     const onBlur = () => {

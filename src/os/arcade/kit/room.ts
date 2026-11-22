@@ -458,6 +458,9 @@ export class RoomLink {
       if (this.quick) this.emit('gather', this.startIn(message));
       if (typeof message.started === 'boolean') this.emit('started', message.started);
       this.updateTransport();
+      // The host links up directly with everyone as they arrive (and with all of them after a hand-off), so the first
+      // round already runs peer to peer instead of through the room's relay.
+      if (this.seat === 0) void this.beginPeers();
     } else if (message.t === 'back' && Number.isInteger(message.seat)) {
       // someone came back after their connection dropped: the host links up with them directly again
       const seat = message.seat as number;

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { GameShell, Segmented, TouchControls, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree, type GameOverInfo } from '../../kit';
+import { defineSetting, GameShell, repeat, Segmented, sfx, TouchControls, type GameOverInfo, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { TOP, ZONES, buildLevel, zoneIndex } from './level';
 import { COUNTDOWN, FALL_TOO_FAR, LAVA_DELAY, MODES, MODE_INFO, RANKED_MODES, RESPAWN_T, applyRemote, createGame, doRespawn, fmtTime, liveOf, lose, scheduleRespawn, seatSouls, step, teamHeight, win, type Ev, type Game, type Input, type Mode, type Seating, type Soul, type SoulSpec } from './logic';
@@ -670,7 +670,7 @@ function Play({ kind }: { kind: Kind }) {
         finishRef.current(p.won, p.time, p.height, p.winner);
       }
     });
-    const timer = window.setInterval(() => {
+    const timer = repeat(() => {
       const o = onlineRef.current;
       const g = game.current;
       if (!o || !g || !n.synced) return;
@@ -707,7 +707,7 @@ function Play({ kind }: { kind: Kind }) {
     }, 66);
     return () => {
       off();
-      window.clearInterval(timer);
+      timer();
     };
   }, [live]);
 

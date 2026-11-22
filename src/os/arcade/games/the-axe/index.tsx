@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type CSSProperties, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, LEVEL_NAMES, Segmented, defineSetting, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
+import { defineSetting, GameShell, LEVEL_NAMES, levelOptions, repeat, Segmented, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { PLAYER_R, assignTeams, collideObstacles, createWorld, movePlayer, soloRoster, step, takeoverDeparted, type GameEvent, type Input, type Level, type Mode, type PlayerConfig, type World } from './logic.ts';
 import { makeMemory, think, type BotMemory } from './bots.ts';
@@ -705,7 +705,7 @@ function Play({ mode }: { mode: StageMode }) {
   useEffect(() => {
     if (!onlineGame || !online) return;
     let startAt = 0;
-    const timer = window.setInterval(() => {
+    const timer = repeat(() => {
       const current = worldRef.current;
       const now = performance.now() / 1000;
       if (online.isHost) {
@@ -733,7 +733,7 @@ function Play({ mode }: { mode: StageMode }) {
         online.send(inputPacket(online.round, input, inputSeq.current++, ownMove()), { fast: true });
       }
     }, 50);
-    return () => window.clearInterval(timer);
+    return () => timer();
   }, [onlineGame, online?.round, online?.isHost, online?.watching]);
 
   function pointerPosition(event: RPointerEvent<HTMLCanvasElement>) {

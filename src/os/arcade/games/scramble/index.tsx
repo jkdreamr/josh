@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as RMouseEvent, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
+import { defineSetting, GameShell, repeat, Segmented, sfx, useCanvas, useGameLoop, useHighScore, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { buildView, type View } from './scene';
 import {
@@ -862,7 +862,7 @@ function Play({ mode }: { mode: StageMode }) {
         setViewKey((x) => x + 1);
       }
     });
-    const timer = window.setInterval(() => {
+    const timer = repeat(() => {
       // the host left and someone took over (maybe us): the match goes on
       syncRef.current();
       const o = onlineRef.current;
@@ -896,7 +896,7 @@ function Play({ mode }: { mode: StageMode }) {
     }, TICK_MS);
     return () => {
       off();
-      window.clearInterval(timer);
+      timer();
     };
   }, [live]);
 

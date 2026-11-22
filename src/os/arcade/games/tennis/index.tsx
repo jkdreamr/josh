@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
-import { GameShell, LEVEL_NAMES, Segmented, TouchControls, defineSetting, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
+import { defineSetting, GameShell, LEVEL_NAMES, levelOptions, repeat, Segmented, sfx, TouchControls, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { createAudio } from './audio.ts';
 import { Hud } from './hud.tsx';
@@ -803,8 +803,10 @@ function Play({ mode }: { mode: StageMode }) {
   const updateWorld = (_frameDt: number) => {
     const now = performance.now();
     const previous = lastWorldFrameAt.current;
-    lastWorldFrameAt.current = document.hidden ? null : now;
-    if (document.hidden) return;
+    // Online the world keeps going in a hidden tab: a host that looks away must not freeze the match for the guest.
+    const paused = document.hidden && mode !== 'online';
+    lastWorldFrameAt.current = paused ? null : now;
+    if (paused) return;
     const dt = previous === null ? 0 : Math.min(0.1, Math.max(0, (now - previous) / 1000));
     const current = world.current;
     if (!current || shellRef.current.status !== 'playing') return;
@@ -1030,7 +1032,7 @@ function Play({ mode }: { mode: StageMode }) {
       if (!o.isHost && from === 0 && packet.k === 'ev') handleEvent(packet.event, true);
     });
 
-    const timer = window.setInterval(() => {
+    const timer = repeat(() => {
       const current = world.current;
       const o = onlineRef.current;
       if (!current || !o || shellRef.current.status !== 'playing') return;
@@ -1039,7 +1041,7 @@ function Play({ mode }: { mode: StageMode }) {
     }, 1000 / 30);
     return () => {
       off();
-      window.clearInterval(timer);
+      timer();
     };
   }, [mode]);
 
