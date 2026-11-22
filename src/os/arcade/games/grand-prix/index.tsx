@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { GameShell, Segmented, TouchControls, defineSetting, sfx, useCanvas, useGameLoop, useKeys, useMuted, useOnline, useSetting, useShell, useThree } from '../../kit';
+import { defineSetting, GameShell, repeat, Segmented, sfx, TouchControls, useCanvas, useGameLoop, useKeys, useMuted, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { NO_ASSISTS, type Assists, type Input } from './car.ts';
 import { createRaceAudio, type RaceAudio } from './audio.ts';
@@ -510,7 +510,7 @@ function Play({ mode }: { mode: StageMode }) {
         finishRef.current(p.order, p.w);
       }
     });
-    const timer = window.setInterval(() => {
+    const timer = repeat(() => {
       const o = onlineRef.current;
       const r = race.current;
       if (!o || !r || !n.synced) return;
@@ -544,7 +544,7 @@ function Play({ mode }: { mode: StageMode }) {
     }, 66);
     return () => {
       off();
-      window.clearInterval(timer);
+      timer();
     };
   }, [live]);
 

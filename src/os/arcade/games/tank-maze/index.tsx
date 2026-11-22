@@ -35,6 +35,9 @@ export default function Game({ compact, onExit, roomCode }: GameProps) {
   );
 }
 
+/** How far behind a guest draws the host's snapshots: a little over one 40 ms snapshot (extrapolating up to 1.5x covers a late one). */
+const GUEST_DELAY_MS = 55;
+
 function Setup() {
   const shell = useShell();
   const [mode, setMode] = useSetting(MODE);
@@ -1104,7 +1107,7 @@ function TankMaze() {
       const sn = match.snaps;
       if (!sn.length) return null;
       if (sn.length === 1) return sn[0].tanks;
-      const renderAt = now - 90;
+      const renderAt = now - GUEST_DELAY_MS;
       const a = sn[sn.length - 2];
       const b = sn[sn.length - 1];
       const f = Math.max(0, Math.min(1.5, (renderAt - a.at) / Math.max(1, b.at - a.at)));
@@ -1190,7 +1193,7 @@ function TankMaze() {
       const sn = match.snaps;
       if (!sn.length) return [];
       if (sn.length === 1) return sn[0].shells;
-      const renderAt = now - 90;
+      const renderAt = now - GUEST_DELAY_MS;
       const a = sn[sn.length - 2];
       const b = sn[sn.length - 1];
       const f = Math.max(0, Math.min(1.5, (renderAt - a.at) / Math.max(1, b.at - a.at)));

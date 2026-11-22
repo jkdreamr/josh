@@ -936,11 +936,11 @@ export function GameShell({ meta, compact = false, onExit, children, autoStart, 
   }, [leaveRoom, onExit, onlineLink]);
   const api = useMemo<ShellApi>(
     () => ({
-      meta, status, round, active, compact, touch, keys, root, start, pause, resume, restart,
+      meta, status, round, active, online: onlineMode, compact, touch, keys, root, start, pause, resume, restart,
       ...(phoneFirstOn ? { playAgain: () => playAgain(), backToArcade } : {}),
       gameOver, updateOver, setScore, invalidate, onInvalidate,
     }),
-    [meta, status, round, active, compact, touch, keys, start, pause, resume, restart, playAgain, backToArcade, phoneFirstOn, gameOver, updateOver, setScore, invalidate, onInvalidate],
+    [meta, status, round, active, onlineMode, compact, touch, keys, start, pause, resume, restart, playAgain, backToArcade, phoneFirstOn, gameOver, updateOver, setScore, invalidate, onInvalidate],
   );
 
   return (

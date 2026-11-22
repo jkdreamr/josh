@@ -2,7 +2,7 @@
 // coffee; last student awake wins. The host schedules each game (director.ts) and every client plays it locally
 // from the shared seed (frame.ts), so lag never decides a pass or a fail.
 import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { GameShell, Segmented, defineSetting, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
+import { defineSetting, GameShell, repeat, Segmented, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell } from '../../kit';
 import type { GameProps } from '../../types';
 import { meta } from './meta';
 import { BOT_NAMES, botPasses, botRevealAt, skillOf } from './bots';
@@ -344,8 +344,8 @@ function Play({ mode }: { mode: StageMode }) {
   // the host keeps the schedule on wall time, so a backgrounded host tab still runs the room
   useEffect(() => {
     if (!isOnline || !online?.isHost) return;
-    const id = window.setInterval(hostTick, 100);
-    return () => window.clearInterval(id);
+    const id = repeat(hostTick, 100);
+    return () => id();
   }, [isOnline, online?.isHost]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {

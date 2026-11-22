@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent as RPointerEvent } from 'react';
-import { GameShell, LEVEL_NAMES, PLAY_MODES, Segmented, defineSetting, levelOptions, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
+import { defineSetting, GameShell, LEVEL_NAMES, levelOptions, PLAY_MODES, repeat, Segmented, sfx, useCanvas, useGameLoop, useKeys, useOnline, useSetting, useShell, useThree } from '../../kit';
 import type { GameProps } from '../../types';
 import { think } from './ai';
 import { CAR_COLORS, createScene, type View } from './scene';
@@ -604,7 +604,7 @@ function Play({ mode }: { mode: StageMode }) {
       }
     });
 
-    const timer = window.setInterval(() => {
+    const timer = repeat(() => {
       const o = onlineRef.current;
       const current = world.current;
       if (!o || !current) return;
@@ -655,7 +655,7 @@ function Play({ mode }: { mode: StageMode }) {
     }, 50);
     return () => {
       off();
-      window.clearInterval(timer);
+      timer();
     };
   }, [isOnline]);
 
