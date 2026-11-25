@@ -1,15 +1,21 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { MAP_IDS } from '../src/os/arcade/games/ridgeline/maps.ts';
-import { DM_HUBS, newBrain } from '../src/os/arcade/games/ridgeline/bots.ts';
-import { fieldDist, fieldTo, findPath } from '../src/os/arcade/games/ridgeline/nav.ts';
+import { COVER_CD, COVER_HP, COVER_HP_ACE, DM_HUBS, EDGE_JITTER, HOLD_PHASE, HOLD_R, HOLD_SHARE, botInput, coverFrom, newBrain, roomsOf } from '../src/os/arcade/games/ridgeline/bots.ts';
+import { canWalk, fieldDist, fieldTo, findPath, navMark, navOf, walkable } from '../src/os/arcade/games/ridgeline/nav.ts';
+import { MANTLE_HI, findClimb, ladderSpot, sweepClear } from '../src/os/arcade/games/ridgeline/climb.ts';
 import { PRONE_H, RADIUS, STAND_H, blockedAt, clearLine, groundAt, newHit, rayWorld, stepBody, type Body } from '../src/os/arcade/games/ridgeline/physics.ts';
 import { aimPoint, shoulderCam, type Cam } from '../src/os/arcade/games/ridgeline/camera.ts';
 import { CELL, T_HALF, T_RES, floorAt, generateTerrain, heightAt, normalAt, rayTerrain } from '../src/os/arcade/games/ridgeline/terrain.ts';
 import { ARMOR, KILL_REWARD, LOSS_REWARD, PAVISE, START_CREDITS, WEAPONS, WIN_REWARD, applyDamage, kickOf, rangeMul, type WeaponId } from '../src/os/arcade/games/ridgeline/weapons.ts';
+import { WEAPON_IDS } from '../src/os/arcade/games/ridgeline/weapons.ts';
+import { AMMO_KINDS, ROYALE_NADES, supplyContents, type AttKind, type ItemKind, type Mods } from '../src/os/arcade/games/ridgeline/royale.ts';
+import { mulberry32 } from '../src/os/arcade/games/ridgeline/noise.ts';
+import { TIER_COLOR, TIER_CSS, lootTier } from '../src/os/arcade/games/ridgeline/loot-tier.ts';
+import { PickupFeed, TOAST_LIFE, TOAST_MAX, addToast, liveToasts, nextExpiry, toastText, type Toast } from '../src/os/arcade/games/ridgeline/loot-feed.ts';
 
-import { ARENA, ROYALE_ARENA, SITE_R, worldFor } from '../src/os/arcade/games/ridgeline/world.ts';
-import { AMMO_MAX, AMMO_OF, AMMO_PACK, BOOST, BOOST_DRAIN, HEAL, NADE_MAX, RED_LIVE, RED_WARN, ROYALE_PLAYERS, VEST, X4_ZOOM, ZONES, ammoCap, fits, gunLabel, healCap, magOf, richness, scopeOf, spawnLoot, zoomOf, type AmmoKind, type Item } from '../src/os/arcade/games/ridgeline/royale.ts';
+import { ARENA, COMPOUND, OUTER, ROYALE_ARENA, SITE_R, STOREY, withBoxes, worldFor, type Box, type World } from '../src/os/arcade/games/ridgeline/world.ts';
+import { AMMO_MAX, AMMO_OF, AMMO_PACK, BOOST, BOOST_DRAIN, CALM_D, CALM_T, CLAIM_R, HEAL, HEAT_CAP, LAND_GRACE, NADE_MAX, PACE_CLOSE, PERSON_FLOOR, WARN_D, WARN_SHOT, PACE_FLOOR, PACE_KNOTS, RED_LIVE, RED_WARN, ROYALE_PLAYERS, TIERS, VEST, X4_ZOOM, ZONES, aliveTarget, ammoCap, fits, paceAim, paceOf, gunLabel, healCap, magOf, richness, scopeOf, spawnLoot, zoomOf, type AmmoKind, type Item } from '../src/os/arcade/games/ridgeline/royale.ts';
 import {
   BLAST_R,
   BULLET_G,
@@ -34,9 +40,11 @@ import {
   LEAN,
   PARTS,
   canProne,
+  climbOf,
   partsOf,
   spreadOf,
   idleInput,
+  RUN,
   lootNear,
   markRed,
   plantSite,
@@ -561,6 +569,142 @@ test('royale: walking over loot takes it, except a gun that would mean giving on
   assert.equal(you.bandages, 2, 'heals taken');
 });
 
+test('royale loot tiers: every kind of item on the ground has a tier, gold for the best and blue for the good', () => {
+  const tier = (kind: ItemKind, what: string) => lootTier({ kind, what });
+  // every gun: gold the long range ones, blue the assault rifles, white the rest
+  const gold: WeaponId[] = ['longbow', 'lancer', 'rampart'];
+  const blue: WeaponId[] = ['kestrel', 'talon'];
+  for (const id of WEAPON_IDS) assert.equal(tier('gun', id), gold.includes(id) ? 2 : blue.includes(id) ? 1 : 0, id);
+  for (const k of ['vest', 'helmet', 'pack'] as const) assert.deepEqual(['1', '2', '3'].map((lv) => tier(k, lv)), [0, 1, 2], k);
+  assert.deepEqual((['dot', 'ext', 'comp', 'x4'] as AttKind[]).map((a) => tier('att', a)), [1, 1, 1, 2]);
+  assert.deepEqual([tier('heal', 'bandage'), tier('heal', 'kit'), tier('boost', 'drink'), tier('boost', 'pills')], [0, 2, 0, 2]);
+  for (const k of AMMO_KINDS) assert.equal(tier('ammo', k), 0, k);
+  for (const k of ROYALE_NADES) assert.equal(tier('nade', k), 0, k);
+  assert.equal(tier('shield', '1'), 1);
+  assert.equal(tier('gun', 'nonsense'), 0, 'an unknown gun is plain');
+  // and everything that really lies about (all four maps, a supply crate, a fallen player's kit) is one of those
+  const kinds = new Set<string>();
+  const seen = new Set<string>();
+  const known = new Set<string>([
+    ...WEAPON_IDS.map((id) => `gun:${id}`),
+    ...['vest', 'helmet', 'pack'].flatMap((k) => ['1', '2', '3'].map((lv) => `${k}:${lv}`)),
+    ...['dot', 'ext', 'comp', 'x4'].map((a) => `att:${a}`),
+    'heal:bandage',
+    'heal:kit',
+    'boost:drink',
+    'boost:pills',
+    ...AMMO_KINDS.map((k) => `ammo:${k}`),
+    ...ROYALE_NADES.map((k) => `nade:${k}`),
+    'shield:1',
+  ]);
+  for (const id of MAP_IDS)
+    for (const it of spawnLoot(worldFor(id, true), 5)) {
+      kinds.add(it.kind);
+      seen.add(`${it.kind}:${it.what}`);
+    }
+  for (let s = 1; s < 40; s++) for (const [kind, what] of supplyContents(mulberry32(s))) seen.add(`${kind}:${what}`);
+  for (const k of seen) assert.ok(known.has(k), `${k} has a tier`);
+  assert.deepEqual([...kinds].sort(), ['ammo', 'att', 'boost', 'gun', 'heal', 'helmet', 'nade', 'pack', 'shield', 'vest'], 'every kind lies about');
+  assert.equal(TIER_CSS.length, 3);
+  TIER_COLOR.forEach((c, i) => assert.equal(TIER_CSS[i], `#${c.toString(16).padStart(6, '0')}`, 'the HUD and the rings agree on the colors'));
+});
+
+test('royale pickup toasts: at most four, a repeat folds into its line, each runs out, and the text has no leftover count', () => {
+  const t = (key: number, text: string, plus = 0, at = 0): Toast => ({ key, text, tier: 0, plus, at });
+  let list: Toast[] = [];
+  for (let i = 0; i < 6; i++) list = addToast(list, t(i, `thing ${i}`, 0, i * 0.1), i * 0.1);
+  assert.equal(list.length, TOAST_MAX, 'four at most');
+  assert.deepEqual(
+    list.map((x) => x.key),
+    [2, 3, 4, 5],
+    'the oldest go, the newest last',
+  );
+  list = addToast(list, t(6, '5.56 ammo', 30, 1), 1);
+  list = addToast(list, t(7, 'thing 4', 0, 1.1), 1.1);
+  list = addToast(list, t(8, '5.56 ammo', 30, 1.2), 1.2);
+  assert.equal(list.filter((x) => x.text === '5.56 ammo').length, 1, 'a repeat folds into its line');
+  const ammo = list.at(-1)!;
+  assert.equal(ammo.text, '5.56 ammo');
+  assert.equal(ammo.plus, 60, 'the counts add up');
+  assert.equal(ammo.key, 8, 'and it shows afresh');
+  assert.equal(list.length, TOAST_MAX);
+  assert.ok(Math.abs(nextExpiry(list) - (0.3 + TOAST_LIFE)) < 1e-9, 'the next to run out');
+  assert.equal(liveToasts(list, 1.2 + TOAST_LIFE - 0.01).length, 1, 'all but the newest run out');
+  assert.equal(liveToasts(list, 1.2 + TOAST_LIFE).length, 0);
+  assert.equal(nextExpiry([]), Infinity);
+  assert.equal(addToast(list, t(9, 'late', 0, 9), 9).length, 1, 'run out lines are dropped on the next one');
+  // what they say: no count left on the ground, a gun with what is fitted to it
+  const it = (kind: ItemKind, what: string, n = 1, mods: Mods | null = null) => toastText({ kind, what, n, mods });
+  assert.equal(it('ammo', 'rifle', 0), '5.56 ammo');
+  assert.equal(it('heal', 'bandage', 0), 'Bandage');
+  assert.equal(it('boost', 'pills', 0), 'Painkillers');
+  assert.equal(it('nade', 'frag', 0), 'Frag grenade');
+  assert.equal(it('att', 'x4'), '4x scope');
+  assert.equal(it('vest', '3'), 'Vest, level 3');
+  assert.equal(it('gun', 'kestrel', 25, { sight: 'dot', ext: true, comp: false }), 'Kestrel · dot · ext');
+  assert.equal(it('gun', 'lancer'), 'Lancer');
+  assert.equal(it('gun', 'nonsense'), 'Gun', 'an unknown gun from the wire never breaks it');
+  assert.equal(it('shield', '1', PAVISE.hp), 'Ballistic shield (100%)');
+});
+
+test('royale pickup toasts: your own pickups make lines with how many came in, a bot\'s do not', () => {
+  const m = createMatch(worldFor('mesa', true), 'royale', 'normal', { seed: 12 });
+  const you = m.actors[0];
+  you.drop = 0;
+  you.body.x = m.zone!.x;
+  you.body.z = m.zone!.z;
+  you.body.y = 200;
+  for (let i = 0; i < 600 && !you.body.onGround; i++) step(m, DT, idleInput());
+  for (const it of m.loot) if (Math.hypot(it.x - you.body.x, it.z - you.body.z) < 6) it.live = false;
+  const feed = new PickupFeed();
+  let lines: Toast[] = [];
+  let clock = 0;
+  const walk = () => {
+    for (let i = 0; i < 20; i++) {
+      step(m, DT, idleInput(you.yaw, you.pitch));
+      clock += DT;
+      for (const t of feed.take(m, clock)) lines = addToast(lines, t, clock);
+    }
+  };
+  walk();
+  assert.equal(lines.length, 0, 'nothing taken, nothing shown');
+  const put = (kind: ItemKind, what: string, n: number) => {
+    const it: Item = { id: m.loot.length, kind, what, n, x: you.body.x + 0.5, y: you.body.y + 0.02, z: you.body.z, live: true };
+    m.loot.push(it);
+    m.lootVer++;
+    return it;
+  };
+  put('gun', 'kestrel', WEAPONS.kestrel.mag);
+  put('ammo', 'rifle', AMMO_PACK.rifle);
+  put('heal', 'kit', 1);
+  walk();
+  walk();
+  const by = (text: string) => lines.find((l) => l.text === text);
+  assert.ok(by('Kestrel'), `the gun shows (${lines.map((l) => l.text).join(', ')})`);
+  assert.equal(by('Kestrel')!.tier, 1, 'blue');
+  assert.equal(by('5.56 ammo')?.plus, AMMO_PACK.rifle, 'the ammo with how much came in');
+  assert.equal(by('Med kit')?.plus, 1);
+  assert.equal(by('Med kit')?.tier, 2, 'gold');
+  // a second box a moment later: the same line, the count added up
+  put('ammo', 'rifle', AMMO_PACK.rifle);
+  walk();
+  assert.equal(lines.filter((l) => l.text === '5.56 ammo').length, 1);
+  assert.equal(by('5.56 ammo')?.plus, AMMO_PACK.rifle * 2, 'two boxes, one line');
+  // a bot's pickup is not yours
+  const before = lines.length;
+  const bot = m.actors.find((a) => a.bot && a.alive)!;
+  m.events.push({ t: 'pickup', a: bot.id, item: { id: -1, kind: 'gun', what: 'longbow', n: 5, x: 0, y: 0, z: 0, live: false } });
+  for (const t of feed.take(m, clock)) lines = addToast(lines, t, clock);
+  assert.equal(lines.length, before, "a bot's pickup makes no line");
+  // and an online guest, told only what it took, shows it without a count
+  m.authority = false;
+  m.events = [{ t: 'pickup', a: you.id, item: { id: -1, kind: 'ammo', what: 'light', n: 0, x: 0, y: 0, z: 0, live: false } }];
+  const g = feed.take(m, clock);
+  assert.equal(g.length, 1);
+  assert.equal(g[0].text, '9mm ammo');
+  assert.equal(g[0].plus, 0, 'no count where the rules do not run');
+});
+
 test('aim assist: a shot just off a target lands, a clear miss stays a miss, and never through a wall', () => {
   const m = createMatch(worldFor('vale'), 'breach', 'normal', { seed: 4 });
   m.phase = 'live';
@@ -636,7 +780,7 @@ function quietRoyale(seed: number, put: [number, number, number][]) {
 }
 
 test('royale: a supply crate comes down inside the next circle, with the best gear, and can be looted', () => {
-  const m = quietRoyale(31, []);
+  const m = quietRoyale(32, []);
   const z = m.zone!;
   const s = dropSupply(m, z.nx, z.nz, z.nr)!;
   assert.ok(s, 'a crate is on its way');
@@ -842,6 +986,718 @@ test('royale: a hundred drop in, loot, fight and the zone closes to one left sta
   assert.ok(modded > 5, `guns with attachments on (${modded} at once)`);
   assert.ok(boosts > 5, `boosts used when hurt (${boosts})`);
   assert.ok(newGear > 20, `the new guns, shields and grenades looted (${newGear})`);
+});
+
+test('royale pacing: the alive curve runs down through its knots, and the zone can always be outrun on foot', () => {
+  for (const [t, n] of PACE_KNOTS) assert.equal(aliveTarget(t), n, `the curve passes ${n} at ${t} s`);
+  for (let t = 0; t < 700; t += 0.5) assert.ok(aliveTarget(t + 0.5) <= aliveTarget(t), `the curve never rises (${t} s)`);
+  assert.equal(aliveTarget(-5), 100);
+  assert.equal(aliveTarget(900), 2);
+  // pace: full when behind the curve, down to the floor when far ahead of it
+  assert.equal(paceOf(100, 300), 1);
+  assert.equal(paceOf(5, 100), PACE_FLOOR);
+  const at = Math.round(aliveTarget(195));
+  assert.ok(paceOf(at, 195) > PACE_FLOOR && paceOf(at, 195) < 1, 'part way on the curve itself');
+  assert.equal(paceAim(1), 1);
+  assert.ok(Math.abs(paceAim(0) - 1 / 0.4) < 1e-9);
+  // about ten minutes in all
+  const total = ZONES.reduce((s, z) => s + z.wait + z.shrink, 0);
+  assert.ok(total >= 600 && total <= 700, `${total} s of zone`);
+  assert.equal(ZONES[ZONES.length - 1].r, 0);
+  // the edge's worst speed: the radius closing plus the farthest the centre moves (nextCircle shifts it up to 0.92 of
+  // the radii's difference), for the first phase from the start's circle (startRoyale picks its centre within 0.75 of
+  // it), never over 80% of a run
+  const r0 = ROYALE_ARENA * 1.45;
+  ZONES.forEach((z, i) => {
+    const fr = i === 0 ? r0 : ZONES[i - 1].r;
+    const shift = z.r > 0 ? Math.max(0, (i === 0 ? r0 * 0.75 : fr) - z.r) * 0.92 : 0;
+    const speed = (fr - z.r + shift) / z.shrink;
+    assert.ok(speed <= 0.8 * RUN, `phase ${i + 1}: the edge moves ${speed.toFixed(2)} m/s`);
+    assert.ok(z.r < fr, `phase ${i + 1} closes`);
+  });
+});
+
+test('royale pacing: bots come in tiers, mostly recruits and regulars, a few veterans and aces', () => {
+  const count = [0, 0, 0, 0];
+  let n = 0;
+  for (const seed of [3, 4]) {
+    const m = createMatch(worldFor('vale', true), 'royale', 'normal', { seed });
+    for (const a of m.actors) {
+      if (!a.brain) continue;
+      count[a.brain.tier]++;
+      n++;
+      assert.ok(a.brain.skill >= 0.05 && a.brain.skill <= 0.9);
+    }
+    // the same seed gives the same tiers
+    const again = createMatch(worldFor('vale', true), 'royale', 'normal', { seed });
+    assert.deepEqual(
+      again.actors.map((a) => a.brain?.tier ?? -1),
+      m.actors.map((a) => a.brain?.tier ?? -1),
+    );
+  }
+  assert.equal(n, 198);
+  TIERS.forEach((t, i) => assert.ok(Math.abs(count[i] / n - t.share) <= 0.08, `tier ${i}: ${count[i]} of ${n}`));
+  // an ace reacts faster and aims better than a recruit of the same level
+  const m = createMatch(worldFor('vale', true), 'royale', 'hard', { seed: 3 });
+  const of = (t: number) => m.actors.filter((a) => a.brain?.tier === t).map((a) => a.brain!);
+  const mean = (xs: number[]) => xs.reduce((s, x) => s + x, 0) / xs.length;
+  assert.ok(mean(of(3).map((b) => b.skill)) > mean(of(0).map((b) => b.skill)) + 0.2);
+  assert.ok(mean(of(3).map((b) => b.react)) < mean(of(0).map((b) => b.react)) * 0.6);
+});
+
+/** A royale with a person (seat 0, armed, landed long ago) standing in the open and `n` armed bots in a line `dist`
+ * off, 10 m apart (the rest of the lobby out of the way, though still counted). `tick` steps it, keeping the person
+ * unhurt and every bot with nobody in its sights standing on its spot looking at the person. */
+function faceOff(level: 'easy' | 'normal' | 'hard', n: number, dist: number) {
+  const w = worldFor('mesa', true);
+  const t = w.terrain;
+  const open = (x: number, z: number) => {
+    const y = floorAt(t, x, z);
+    return Math.abs(x) < w.arena - 20 && Math.abs(z) < w.arena - 20 && y > t.water + 0.5 && !blockedAt(w, x, z, y) && normalAt(t, x, z).y > 0.9;
+  };
+  for (let k = 0; k < 4000; k++) {
+    const px = Math.cos(k * 2.399) * k * 0.08;
+    const pz = Math.sin(k * 2.399) * k * 0.08;
+    const ang = k * 0.61;
+    const dx = Math.cos(ang);
+    const dz = Math.sin(ang);
+    if (!open(px, pz)) continue;
+    const py = floorAt(t, px, pz);
+    const spots: [number, number, number][] = [];
+    for (let i = 0; i < n; i++) {
+      const off = (i - (n - 1) / 2) * 10;
+      const bx = px + dx * dist - dz * off;
+      const bz = pz + dz * dist + dx * off;
+      if (!open(bx, bz)) break;
+      const by = floorAt(t, bx, bz);
+      if (!clearLine(w, bx, by + 1.6, bz, px, py + 1.2, pz)) break;
+      spots.push([bx, by + 0.05, bz]);
+    }
+    if (spots.length < n) continue;
+    const m = createMatch(w, 'royale', level, { seed: 5 });
+    m.redT = 1e9;
+    m.cars = [];
+    for (const a of m.actors) a.alive = false;
+    const place = (a: Actor, x: number, y: number, z: number) => {
+      a.alive = true;
+      a.drop = 0;
+      a.dropT = -100;
+      a.body.x = x;
+      a.body.y = y;
+      a.body.z = z;
+      a.body.onGround = true;
+      a.guns = [gun('kestrel'), null, null];
+      a.slot = 0;
+      a.ammo.rifle = 120;
+      a.vest = 2;
+      a.armor = VEST[2];
+    };
+    const you = m.actors[0];
+    place(you, px, py + 0.05, pz);
+    const bots = spots.map(([x, y, z], i) => {
+      const a = m.actors[i + 1];
+      place(a, x, y, z);
+      return a;
+    });
+    const tick = () => {
+      you.hp = 100;
+      bots.forEach((b, i) => {
+        if (b.brain!.target >= 0) return;
+        b.body.x = spots[i][0];
+        b.body.z = spots[i][2];
+        b.body.vx = b.body.vz = 0;
+        b.yaw = Math.atan2(-(px - b.body.x), -(pz - b.body.z));
+        b.pitch = 0;
+      });
+      step(m, DT, idleInput(you.yaw, you.pitch));
+    };
+    return { m, you, bots, tick };
+  }
+  throw new Error('no open ground for the face off');
+}
+
+test('royale pacing: only so many bots pick out the same person at once (one on normal, none from afar on easy)', () => {
+  assert.equal(HEAT_CAP.hard, 3);
+  for (const [level, cap] of [
+    ['normal', 1],
+    ['easy', 0],
+  ] as const) {
+    assert.equal(HEAT_CAP[level], cap);
+    // (the pace held at full, so this tests the cap alone and not the person gate's rolls)
+    const { m, you, bots, tick } = faceOff(level, 5, 40);
+    let most = 0;
+    for (let i = 0; i < 60 * 4; i++) {
+      m.pace = 1;
+      tick();
+      const on = bots.filter((b) => b.alive && b.brain!.target === you.id).length;
+      most = Math.max(most, on);
+      assert.ok(on <= cap, `${level}: ${on} bots on you at ${m.time.toFixed(2)} s`);
+    }
+    assert.equal(most, cap, `${level}: the cap is reached (they do see you)`);
+    // whoever you shoot at still answers back, over the cap
+    const r = faceOff(level, cap + 1, 40);
+    let spare: Actor | undefined;
+    for (let i = 0; i < 60 * 4 && !spare; i++) {
+      r.m.pace = 1;
+      r.tick();
+      if (r.bots.filter((b) => b.brain!.target === r.you.id).length === cap) spare = r.bots.find((b) => b.brain!.target < 0);
+    }
+    assert.ok(spare, `${level}: the cap is reached with one bot left over`);
+    let answered = false;
+    for (let i = 0; i < 60 && !answered; i++) {
+      spare.hurtFrom = r.you.id;
+      spare.hurtT = r.m.time;
+      r.m.pace = 1;
+      r.tick();
+      answered = spare.brain!.target === r.you.id;
+    }
+    assert.ok(answered, `${level}: a bot you shot at turns on you`);
+  }
+});
+
+/** A face off between two bots: seat 0 handed to a bot too (the rest as faceOff leaves them), with the pace held
+ * at `pace` on every step. */
+function botFaceOff(dist: number, pace: number) {
+  const f = faceOff('normal', 1, dist);
+  f.you.bot = true;
+  f.you.brain = newBrain('normal', 0);
+  const tick = () => {
+    f.m.pace = pace;
+    f.tick();
+  };
+  return { ...f, tick, bot: f.bots[0] };
+}
+
+test('royale pacing: bots leave each other be while the match runs ahead of its pace, but not when they bump into each other', () => {
+  // pace 0: a bot in plain sight 30 m off is never picked out
+  const calm = botFaceOff(30, 0);
+  for (let i = 0; i < 60 * 4; i++) {
+    calm.tick();
+    assert.notEqual(calm.bot.brain!.target, calm.you.id, `picked out at pace 0 (${calm.m.time.toFixed(2)} s)`);
+  }
+  // full pace: soon
+  const busy = botFaceOff(30, 1);
+  let seen = false;
+  for (let i = 0; i < 60 * 4 && !seen; i++) {
+    busy.tick();
+    seen = busy.bot.brain!.target === busy.you.id;
+  }
+  assert.ok(seen, 'picked out at full pace');
+  // bumped into: noticed at any pace
+  const bump = botFaceOff(PACE_CLOSE - 0.5, 0);
+  seen = false;
+  for (let i = 0; i < 60 * 2 && !seen; i++) {
+    bump.tick();
+    seen = bump.bot.brain!.target === bump.you.id;
+  }
+  assert.ok(seen, 'noticed within PACE_CLOSE at pace 0');
+  // and shot at: answered at any pace
+  const shot = botFaceOff(30, 0);
+  seen = false;
+  for (let i = 0; i < 60 && !seen; i++) {
+    shot.bot.hurtFrom = shot.you.id;
+    shot.bot.hurtT = shot.m.time;
+    shot.tick();
+    seen = shot.bot.brain!.target === shot.you.id;
+  }
+  assert.ok(seen, 'a bot shot at answers back at pace 0');
+});
+
+test('royale pacing: a hurt bot breaks off a fight it did not pick, and bots aim worse at each other (never at people) at a low pace', () => {
+  // in a fight it did not pick (it answered a shot), hurt, the other bot well off: at pace 0 it breaks off and leaves
+  // that one alone for a while
+  const f = botFaceOff(CALM_D + 10, 0);
+  let on = false;
+  for (let i = 0; i < 60 && !on; i++) {
+    f.bot.hurtFrom = f.you.id;
+    f.bot.hurtT = f.m.time;
+    f.tick();
+    on = f.bot.brain!.target === f.you.id;
+  }
+  assert.ok(on, 'it answers the shot');
+  assert.equal(f.bot.brain!.started, false, 'not a fight it picked');
+  f.bot.hp = 60;
+  for (let i = 0; i < 60 && f.bot.brain!.target === f.you.id; i++) f.tick();
+  assert.equal(f.bot.brain!.target, -1, 'broke off');
+  assert.equal(f.bot.brain!.calmOf, f.you.id);
+  const until = f.bot.brain!.calmT;
+  assert.ok(until > f.m.time && until <= f.m.time + CALM_T);
+  while (f.m.time < until - 0.1) {
+    f.tick();
+    assert.notEqual(f.bot.brain!.target, f.you.id, 'left alone a while');
+  }
+  // the aim: on a bot, the first error is paceAim(pace) times what it would be; on a person, the same at any pace
+  // (the same seed and the same draws, only the pace differs)
+  const firstErr = (pace: number, person: boolean) => {
+    const g = faceOff('normal', 1, PACE_CLOSE - 0.5);
+    if (!person) {
+      g.you.bot = true;
+      g.you.brain = newBrain('normal', 0);
+    }
+    for (let i = 0; i < 60 * 2; i++) {
+      g.m.pace = pace;
+      g.tick();
+      if (g.bots[0].brain!.target === g.you.id) return g.bots[0].brain!.errY;
+    }
+    throw new Error('never picked out');
+  };
+  const b0 = firstErr(0, false);
+  const b1 = firstErr(1, false);
+  assert.ok(b1 !== 0 && Math.abs(b0 / b1 - paceAim(0)) < 1e-9, `on a bot: ${b0} against ${b1}`);
+  assert.equal(firstErr(0, true), firstErr(1, true), 'on a person the pace changes nothing');
+});
+
+test('royale pacing: bots set about a person on a roll, the first shots from far off go wide, and a hurt bot may break off from a person', () => {
+  // a person in plain sight 40 m off, the pace held at 0: picked out only now and then (PERSON_FLOOR a second), at
+  // full pace almost at once; eight bots of different brains each way
+  const within = (pace: number, k: number, secs: number) => {
+    const f = faceOff('normal', 1, 40);
+    f.bots[0].brain = newBrain('normal', 100 + k);
+    for (let i = 0; i < 60 * secs; i++) {
+      f.m.pace = pace;
+      f.tick();
+      if (f.bots[0].brain!.target === f.you.id) return true;
+    }
+    return false;
+  };
+  let slow = 0;
+  let fast = 0;
+  for (let k = 0; k < 8; k++) {
+    if (within(0, k, 2)) slow++;
+    if (within(1, k, 2)) fast++;
+  }
+  assert.ok(fast >= 7, `at full pace ${fast} of 8 pick the person out within 2 s`);
+  assert.ok(slow <= 4 && slow < fast, `at pace 0 only ${slow} of 8 do (about ${(100 * (1 - (1 - PERSON_FLOOR.normal) ** 2)).toFixed(0)}% expected)`);
+  // warning shots: on a person past WARN_D the first error is WARN_SHOT[tier] times the usual (same draws, only the
+  // tier differs); on a bot there is none of it
+  const firstErr = (tier: number, person: boolean, dist: number) => {
+    const g = faceOff('normal', 1, dist);
+    if (!person) {
+      g.you.bot = true;
+      g.you.brain = newBrain('normal', 0);
+    }
+    g.bots[0].brain!.tier = tier;
+    for (let i = 0; i < 60 * 8; i++) {
+      g.m.pace = 1;
+      // (no jitter this step: only the first error, settling by the same factor)
+      g.bots[0].brain!.errT = 99;
+      g.tick();
+      if (g.bots[0].brain!.target === g.you.id) return g.bots[0].brain!.errY;
+    }
+    throw new Error('never picked out');
+  };
+  const ace = firstErr(3, true, 40);
+  assert.ok(ace !== 0);
+  for (const t of [0, 1, 2]) assert.ok(Math.abs(firstErr(t, true, 40) / ace - WARN_SHOT[t]) < 1e-9, `tier ${t}`);
+  assert.equal(firstErr(0, true, WARN_D - 5), firstErr(3, true, WARN_D - 5), 'not up close');
+  // (a bot there wanders a little, so only about the same, nowhere near WARN_SHOT[0] apart)
+  assert.ok(Math.abs(firstErr(0, false, 40) / firstErr(3, false, 40) - 1) < 0.02, 'not on a bot');
+  // break off: a bot that answered a person's shot, hurt, the person well off, at pace 0: may break off
+  const f = faceOff('normal', 1, CALM_D + 10);
+  let on = false;
+  for (let i = 0; i < 60 && !on; i++) {
+    f.bots[0].hurtFrom = f.you.id;
+    f.bots[0].hurtT = f.m.time;
+    f.m.pace = 0;
+    f.tick();
+    on = f.bots[0].brain!.target === f.you.id;
+  }
+  assert.ok(on, 'it answers the shot');
+  // hurt, and still shot at now and then (when it loses sight of the person, the next shot brings it back): within a
+  // few seconds it breaks off and leaves the person alone
+  f.bots[0].hp = 60;
+  for (let i = 0; i < 60 * 4 && f.bots[0].brain!.calmOf !== f.you.id; i++) {
+    f.bots[0].hurtFrom = f.you.id;
+    f.bots[0].hurtT = f.m.time;
+    f.m.pace = 0;
+    f.tick();
+  }
+  assert.equal(f.bots[0].brain!.calmOf, f.you.id, 'broke off from the person');
+  assert.equal(f.bots[0].brain!.target, -1);
+});
+
+test('royale pacing: at a low pace a bot leaves loot near another bot to that one', () => {
+  const pick = (pace: number) => {
+    const { m, you, bots } = faceOff('normal', 1, 10);
+    const a = bots[0];
+    // both bots, empty handed (they look for a gun whatever they see)
+    you.bot = true;
+    you.brain = newBrain('normal', 0);
+    for (const o of [you, a]) o.guns = [null, null, null];
+    for (const it of m.loot) it.live = false;
+    const put = (x: number, z: number) => {
+      const it: Item = { id: m.loot.length, kind: 'gun', what: 'kestrel', n: 30, x, y: floorAt(m.world.terrain, x, z) + 0.02, z, live: true };
+      m.loot.push(it);
+      return it;
+    };
+    // one gun by the other bot (nearer to this one), one further off the other way, well clear of it
+    const ux = (a.body.x - you.body.x) / 10;
+    const uz = (a.body.z - you.body.z) / 10;
+    const near = put(you.body.x + ux * 2, you.body.z + uz * 2);
+    const far = put(a.body.x + ux * 16, a.body.z + uz * 16);
+    assert.ok(Math.hypot(far.x - you.body.x, far.z - you.body.z) > CLAIM_R);
+    m.lootVer++;
+    a.brain!.loot = -1;
+    a.brain!.lootT = 0;
+    for (let i = 0; i < 60 && a.brain!.loot < 0; i++) {
+      m.pace = pace;
+      step(m, DT, idleInput(you.yaw, you.pitch));
+    }
+    return a.brain!.loot === near.id ? 'near' : a.brain!.loot === far.id ? 'far' : String(a.brain!.loot);
+  };
+  assert.equal(pick(1), 'near', 'full pace: the nearest');
+  assert.equal(pick(0), 'far', 'pace 0: the one clear of the other bot');
+});
+
+test('royale pacing: a whole match has a middle: the field thins out along the curve and it runs most of the zone', () => {
+  // all bots (seat 0 one too, kept unhurt so the match plays out), as the balance runs play it
+  const m = createMatch(worldFor('vale', true), 'royale', 'normal', { seed: 11 });
+  m.actors[0].bot = true;
+  m.actors[0].brain = newBrain('normal', 0);
+  const at: Record<number, number> = {};
+  const per30: number[] = [];
+  const step2 = 1 / 30;
+  while (m.phase !== 'over' && m.alive > 2 && m.time < 900) {
+    m.actors[0].hp = 100;
+    m.actors[0].shield = 9;
+    step(m, step2, idleInput());
+    for (const e of m.events) if (e.t === 'kill') per30[Math.floor(m.time / 30)] = (per30[Math.floor(m.time / 30)] ?? 0) + 1;
+    for (const t of [100, 195, 305, 395]) if (at[t] === undefined && m.time >= t) at[t] = m.alive;
+  }
+  assert.ok(m.actors[0].alive, 'seat 0 stayed in');
+  assert.ok(m.time >= 470, `down to two at ${m.time.toFixed(0)} s, not long before the zone ends (${ZONES.reduce((s, z) => s + z.wait + z.shrink, 0)} s)`);
+  for (const t of [100, 195, 305, 395]) assert.ok(Math.abs(at[t] - aliveTarget(t)) <= 12, `${at[t]} left at ${t} s (the curve wants ${aliveTarget(t).toFixed(0)})`);
+  // no dead stretches: a knockout in most half minutes from the first minute on
+  let n = 0;
+  let w = 0;
+  for (let b = 2; b < Math.floor(m.time / 30); b++) {
+    n++;
+    if (per30[b]) w++;
+  }
+  assert.ok(w >= n * 0.75, `knockouts in ${w} of ${n} half minutes`);
+});
+
+test('royale pacing: a person just down with no gun is left alone unless close, and fair game once armed', () => {
+  const { m, you, bots, tick } = faceOff('normal', 1, 30);
+  const bot = bots[0];
+  you.guns = [null, null, null];
+  you.dropT = m.time - 2;
+  for (let i = 0; i < 60 * 4; i++) {
+    tick();
+    assert.notEqual(bot.brain!.target, you.id, 'not picked out while just landed and unarmed');
+  }
+  // (still unarmed half a minute after landing: still left alone, the grace runs to LAND_GRACE)
+  assert.ok(LAND_GRACE >= 40);
+  you.dropT = m.time - 30;
+  for (let i = 0; i < 60 * 4; i++) {
+    tick();
+    assert.notEqual(bot.brain!.target, you.id, 'not picked out 30 s after landing, unarmed');
+  }
+  // once armed: picked out
+  you.guns = [gun('kestrel'), null, null];
+  let seen = false;
+  for (let i = 0; i < 60 * 4 && !seen; i++) {
+    tick();
+    seen = bot.brain!.target === you.id;
+  }
+  assert.ok(seen, 'an armed person is picked out');
+  // unarmed and just down, but close: noticed all the same
+  const { m: m2, you: you2, bots: bots2, tick: tick2 } = faceOff('normal', 1, 6);
+  you2.guns = [null, null, null];
+  you2.dropT = m2.time - 2;
+  seen = false;
+  for (let i = 0; i < 60 * 4 && !seen; i++) {
+    tick2();
+    seen = bots2[0].brain!.target === you2.id;
+  }
+  assert.ok(seen, 'close by, noticed anyway');
+  // the grace runs out
+  const { m: m3, you: you3, bots: bots3, tick: tick3 } = faceOff('normal', 1, 30);
+  you3.guns = [null, null, null];
+  you3.dropT = m3.time - LAND_GRACE - 1;
+  seen = false;
+  for (let i = 0; i < 60 * 4 && !seen; i++) {
+    tick3();
+    seen = bots3[0].brain!.target === you3.id;
+  }
+  assert.ok(seen, 'past the grace, picked out unarmed');
+});
+
+/** Puts an actor down on the land, alive, armed and with a vest (a royale test scene). */
+function stand(a: Actor, x: number, y: number, z: number) {
+  a.alive = true;
+  a.drop = 0;
+  a.dropT = -100;
+  a.body.x = x;
+  a.body.y = y;
+  a.body.z = z;
+  a.body.vx = a.body.vz = 0;
+  a.body.onGround = true;
+  a.guns = [gun('kestrel'), null, null];
+  a.slot = 0;
+  a.ammo.rifle = 120;
+  a.vest = 2;
+  a.armor = VEST[2];
+}
+
+/** A royale on open, level ground near the middle of a map (a strip 24 m wide, from 42 m south of the scene's center
+ * to 18 m north of it), with some boxes added there and everyone out of it; the center is (x, y, z). */
+function openRoyale(boxes: (x: number, y: number, z: number) => Box[]) {
+  const base = worldFor('mesa', true);
+  const t = base.terrain;
+  for (let k = 0; k < 6000; k++) {
+    const x = Math.cos(k * 2.399) * k * 0.05;
+    const z = Math.sin(k * 2.399) * k * 0.05;
+    const y = floorAt(t, x, z);
+    let ok = y > t.water + 0.5 && Math.abs(x) < base.arena - 60 && Math.abs(z) < base.arena - 60;
+    // (12 m to either side, from 42 m one way to 18 m the other)
+    for (let a = -12; a <= 12 && ok; a += 2) for (let b = -42; b <= 18 && ok; b += 2) ok = !blockedAt(base, x + a, z + b, y) && Math.abs(floorAt(t, x + a, z + b) - y) < 1;
+    if (!ok) continue;
+    const w = withBoxes(base, boxes(x, y, z));
+    const m = createMatch(w, 'royale', 'normal', { seed: 5 });
+    m.redT = 1e9;
+    m.cars = [];
+    for (const a of m.actors) a.alive = false;
+    return { m, w, x, y, z };
+  }
+  throw new Error('no open level ground');
+}
+
+/** A thin upright wall from (x0, z0) to (x1, z1), 4 m tall. */
+const wallAt = (x0: number, y: number, z0: number, x1: number, z1: number): Box => ({ x0, y0: y - 1, z0, x1, y1: y + 3, z1, s: 'wood' });
+
+test('royale bots: shot from afar in the open, a hurt bot runs behind a wall nearby and patches up there', () => {
+  // you 40 m off across open ground, a wall 6 m behind the bot (14 m wide): a bot hurt and fighting you from that far
+  // gets out of your sight behind it and starts a bandage, all within six seconds
+  const { m, w, x, y, z } = openRoyale((x, y, z) => [wallAt(x - 7, y, z + 6, x + 7, z + 6.4)]);
+  const you = m.actors[0];
+  const bot = m.actors[1];
+  stand(you, x, y + 0.05, z - 40);
+  stand(bot, x, y + 0.05, z);
+  bot.yaw = Math.atan2(0, 40);
+  bot.brain!.tier = 1;
+  bot.hp = 45;
+  bot.bandages = 4;
+  const seen = () => clearLine(w, you.body.x, eyeY(you), you.body.z, bot.body.x, bot.body.y + 1.25, bot.body.z);
+  assert.ok(seen(), 'in plain sight to begin with');
+  const c = coverFrom(m, bot, you.body.x, eyeY(you), you.body.z);
+  assert.ok(c && c.z > z + 6.4, 'the spot it picks is behind the wall');
+  let hid = -1;
+  let healed = -1;
+  for (let i = 0; i < 60 * 6 && healed < 0; i++) {
+    you.hp = 100;
+    // (shot at for the first half second)
+    if (i < 30) {
+      bot.hurtFrom = you.id;
+      bot.hurtT = m.time;
+    }
+    m.pace = 1;
+    step(m, DT, idleInput(you.yaw, you.pitch));
+    if (hid < 0 && !seen()) hid = m.time;
+    if (bot.healT > 0) healed = m.time;
+  }
+  assert.ok(bot.alive);
+  assert.ok(hid > 0, 'out of your sight');
+  assert.ok(healed > 0 && healed < 6, `healing within 6 s (${healed.toFixed(2)})`);
+  assert.ok(!seen() && bot.body.z > z + 6.4, 'healing behind the wall');
+  assert.ok(bot.brain!.coverCd > 0 && bot.brain!.coverCd <= COVER_CD + 1);
+});
+
+test('royale bots: tier habits: an ace breaks to cover sooner, a recruit never lies down for a long shot or throws a grenade', () => {
+  // hurt to 60 and fighting you from 40 m: an ace (under COVER_HP_ACE) breaks to cover, a regular (over COVER_HP) fights on
+  const cover = (tier: number) => {
+    const { m, x, y, z } = openRoyale((x, y, z) => [wallAt(x - 7, y, z + 6, x + 7, z + 6.4)]);
+    const you = m.actors[0];
+    const bot = m.actors[1];
+    stand(you, x, y + 0.05, z - 40);
+    stand(bot, x, y + 0.05, z);
+    bot.brain!.tier = tier;
+    for (let i = 0; i < 60 * 2; i++) {
+      you.hp = 100;
+      bot.hp = 60;
+      bot.hurtFrom = you.id;
+      bot.hurtT = m.time;
+      m.pace = 1;
+      step(m, DT, idleInput(you.yaw, you.pitch));
+      if (bot.brain!.coverEnd > 0) return true;
+    }
+    assert.equal(bot.brain!.target, you.id, 'it fights you');
+    return false;
+  };
+  assert.ok(COVER_HP < 60 && 60 < COVER_HP_ACE);
+  assert.equal(cover(3), true, 'an ace takes cover');
+  assert.equal(cover(1), false, 'a regular fights on');
+  // in a fight with you (the bot's looks held still, so it stays on you whatever it sees), each frame a new strafe
+  // and the grenade ready: a veteran soon lies down for a long shot and throws a frag at 20 m; a recruit never does
+  // either (the same sharp eye on both, so only the tier differs)
+  const habit = (tier: number, dist: number, kit: (a: Actor) => void, done: (bot: Actor, inp: Input) => boolean) => {
+    const w = worldFor('mesa', true);
+    const m = createMatch(w, 'royale', 'normal', { seed: 5 });
+    for (const a of m.actors) a.alive = false;
+    const you = m.actors[0];
+    const bot = m.actors[1];
+    stand(you, 0, floorAt(w.terrain, 0, 0) + 0.05, 0);
+    stand(bot, 0, floorAt(w.terrain, 0, dist) + 0.05, dist);
+    kit(bot);
+    const br = bot.brain!;
+    br.tier = tier;
+    br.skill = 0.6;
+    botInput(m, bot, DT);
+    for (let i = 0; i < 60 * 10; i++) {
+      br.think = 1e9;
+      br.target = you.id;
+      br.strafeT = 0;
+      br.nadeT = 0;
+      br.restT = 0;
+      if (done(bot, botInput(m, bot, DT))) return true;
+    }
+    return false;
+  };
+  const longGun = (a: Actor) => {
+    a.guns = [gun('longbow'), null, null];
+    a.ammo.sniper = 50;
+  };
+  const lies = (bot: Actor) => bot.brain!.proneT > 0;
+  assert.equal(habit(2, 70, longGun, lies), true, 'a veteran lies down for a long shot');
+  assert.equal(habit(0, 70, longGun, lies), false, 'a recruit never');
+  const frags = (a: Actor) => {
+    a.frags = 3;
+  };
+  const throws = (_b: Actor, inp: Input) => !!inp.throw;
+  assert.equal(habit(2, 20, frags, throws), true, 'a veteran throws a grenade');
+  assert.equal(habit(0, 20, frags, throws), false, 'a recruit never');
+});
+
+test('royale bots: late on a regular holds a building inside the next circle facing a door, and leaves when the circle moves off it', () => {
+  const w = worldFor('mesa', true);
+  const t = w.terrain;
+  const rooms = roomsOf(w);
+  assert.ok(rooms.length > 20, 'buildings to hold');
+  // a building near the middle, and a spot outside one of its doors (on the side away from its middle)
+  let pick: { i: number; sx: number; sz: number } | null = null;
+  for (let i = 0; i < rooms.length && !pick; i++) {
+    const q = rooms[i];
+    if (Math.hypot(q.x, q.z) > 160 || (q.doorX === q.x && q.doorZ === q.z)) continue;
+    const d = Math.hypot(q.doorX - q.x, q.doorZ - q.z) || 1;
+    const sx = q.doorX + ((q.doorX - q.x) / d) * 4;
+    const sz = q.doorZ + ((q.doorZ - q.z) / d) * 4;
+    const sy = floorAt(t, sx, sz);
+    if (sy > t.water + 0.5 && walkable(w, sx, sz) && !blockedAt(w, sx, sz, sy) && findPath(w, sx, sz, w.loot[q.spots[0] * 3], w.loot[q.spots[0] * 3 + 2], 20000, sy, w.loot[q.spots[0] * 3 + 1])) pick = { i, sx, sz };
+  }
+  assert.ok(pick, 'a building to walk into');
+  const q = rooms[pick.i];
+  const m = createMatch(w, 'royale', 'normal', { seed: 5 });
+  m.redT = 1e9;
+  m.cars = [];
+  for (const a of m.actors) a.alive = false;
+  const bot = m.actors[1];
+  const start = () => stand(bot, pick.sx, floorAt(t, pick.sx, pick.sz) + 0.05, pick.sz);
+  start();
+  bot.brain!.tier = 1;
+  // two recruits (who never hold) far off, so the share leaves room for one
+  const far: Actor[] = [];
+  for (let k = 0; k < 400 && far.length < 2; k++) {
+    const ang = k * 0.7;
+    const fx = q.x + Math.cos(ang) * (120 + k * 0.1);
+    const fz = q.z + Math.sin(ang) * (120 + k * 0.1);
+    const fy = floorAt(t, fx, fz);
+    if (Math.hypot(fx, fz) > w.arena - 30 || fy < t.water + 0.5 || !walkable(w, fx, fz) || far.some((o) => Math.hypot(o.body.x - fx, o.body.z - fz) < 60)) continue;
+    const o = m.actors[2 + far.length];
+    stand(o, fx, fy + 0.05, fz);
+    o.brain!.tier = 0;
+    far.push(o);
+  }
+  assert.equal(far.length, 2);
+  // you, out of it: far off, unarmed and just down (so left alone), there only so the match goes on
+  const you = m.actors[0];
+  for (let k = 0; k < 2000 && !you.alive; k++) {
+    const fx = Math.cos(k * 2.399) * k * 0.2;
+    const fz = Math.sin(k * 2.399) * k * 0.2;
+    if (Math.abs(fx) > w.arena - 10 || Math.abs(fz) > w.arena - 10 || floorAt(t, fx, fz) < t.water + 0.5 || Math.hypot(fx - q.x, fz - q.z) < 150 || far.some((o) => Math.hypot(o.body.x - fx, o.body.z - fz) < 150)) continue;
+    stand(you, fx, floorAt(t, fx, fz) + 0.05, fz);
+    you.guns = [null, null, null];
+  }
+  assert.ok(you.alive);
+  const z = m.zone!;
+  const zone = (i: number, nx: number, nz: number, nr: number) => {
+    z.i = i;
+    z.x = q.x;
+    z.z = q.z;
+    z.r = 220;
+    z.nx = nx;
+    z.nz = nz;
+    z.nr = nr;
+    z.shrinking = false;
+    z.t = 60;
+    z.dps = 1;
+  };
+  const landed = () => m.actors.filter((a) => a.alive && a.bot && !a.drop).length;
+  const tick = () => {
+    // (the pace at 0: the bots let each other be, so this is about holding alone)
+    m.pace = 0;
+    z.t = 60;
+    you.dropT = m.time;
+    you.hp = 100;
+    step(m, DT, idleInput());
+    assert.ok(m.holders <= Math.floor(HOLD_SHARE * landed()), 'never over the share');
+  };
+  // before the third phase: no holding
+  zone(HOLD_PHASE - 1, q.x, q.z, 120);
+  for (let i = 0; i < 60 * 3; i++) {
+    tick();
+    assert.equal(bot.brain!.holdI, -1, 'not yet');
+  }
+  // from it: goes in and holds
+  start();
+  zone(HOLD_PHASE, q.x, q.z, 120);
+  const L = w.loot;
+  const atSpot = () => {
+    const k = bot.brain!.holdSpot * 3;
+    return k >= 0 && Math.hypot(L[k] - bot.body.x, L[k + 2] - bot.body.z) < 1.2 && Math.abs(L[k + 1] - bot.body.y) < 1.2;
+  };
+  for (let i = 0; i < 60 * 30 && !atSpot(); i++) tick();
+  assert.ok(atSpot(), 'standing on a spot in the building');
+  const held = rooms[bot.brain!.holdI];
+  assert.ok(Math.hypot(held.x - q.x, held.z - q.z) < HOLD_R + 10, 'a building near it');
+  assert.equal(m.holders, 1);
+  for (let i = 0; i < 60 * 2; i++) tick();
+  assert.ok(atSpot(), 'it stays');
+  const toDoor = Math.atan2(-(held.doorX - bot.body.x), -(held.doorZ - bot.body.z));
+  assert.ok(Math.abs(Math.atan2(Math.sin(bot.yaw - toDoor), Math.cos(bot.yaw - toDoor))) < 0.35, 'facing the door');
+  // the next circle drawn well away from it: it leaves
+  zone(HOLD_PHASE + 1, held.x + (held.x > 0 ? -150 : 150), held.z, 40);
+  for (let i = 0; i < 60 && bot.brain!.holdI >= 0; i++) tick();
+  assert.equal(bot.brain!.holdI, -1, 'left');
+  assert.equal(m.holders, 0);
+});
+
+test('royale bots: running in from out of the zone, a bot makes for the near side of the next circle, never its middle', () => {
+  const w = worldFor('mesa', true);
+  const m = createMatch(w, 'royale', 'normal', { seed: 5 });
+  m.redT = 1e9;
+  m.cars = [];
+  for (const a of m.actors) a.alive = false;
+  const z = m.zone!;
+  let n = 0;
+  for (const R of ZONES.map((p) => p.r).filter((r) => r > 0))
+    for (let k = 0; k < 12; k++) {
+      const bot = m.actors[1 + k];
+      const bear = (k * Math.PI * 2) / 12 + 0.1;
+      stand(bot, Math.sin(bear) * (R + 20), 0, Math.cos(bear) * (R + 20));
+      bot.body.y = floorAt(w.terrain, bot.body.x, bot.body.z) + 0.05;
+      // (the zone closing: well outside the next circle, it heads in)
+      Object.assign(z, { i: 3, x: 0, z: 0, r: R + 40, nx: 0, nz: 0, nr: R, shrinking: true, t: 10 });
+      bot.brain!.think = 0;
+      botInput(m, bot, DT);
+      const br = bot.brain!;
+      const d = Math.hypot(br.goalX, br.goalZ);
+      assert.ok(d < R && d > 0.2 * R, `R ${R}: ${d.toFixed(1)} from the middle`);
+      const off = Math.atan2(br.goalX, br.goalZ) - bear;
+      assert.ok(Math.abs(Math.atan2(Math.sin(off), Math.cos(off))) <= EDGE_JITTER + 1e-9, 'along its own bearing');
+      bot.alive = false;
+      n++;
+    }
+  assert.equal(n, 6 * 12);
 });
 
 /** A royale with only you in it, on open flat ground near the middle of the zone, with nothing lying near you. */
@@ -1892,4 +2748,462 @@ test('third person: a shot leaves the eye for where the crosshair rests, and a w
     assert.equal(foe.hp, 100);
   }
   assert.ok(set, 'found a corner to look past');
+});
+
+// ---------------------------------------------------------------------------------------------------------------
+// climbing: mantles, vaults, ladders, and the floors over the ground
+
+/** A breach match on vale with only you in it, standing on open level ground (nothing near), facing -z, in a copy of
+ * the world with some boxes added round where you stand (given the spot). */
+function climbRange(boxes: (x: number, y: number, z: number) => Box[]) {
+  const base = worldFor('vale');
+  let at: [number, number, number] | null = null;
+  for (let k = 0; k < 6000 && !at; k++) {
+    const x = Math.cos(k * 2.399) * k * 0.05;
+    const z = Math.sin(k * 2.399) * k * 0.05;
+    const y = floorAt(base.terrain, x, z);
+    let ok = true;
+    for (let a = -6; a <= 6 && ok; a++) for (let b = -6; b <= 6 && ok; b++) ok = !blockedAt(base, x + a, z + b, y) && Math.abs(floorAt(base.terrain, x + a, z + b) - y) < 0.25;
+    if (ok) at = [x, y, z];
+  }
+  assert.ok(at, 'found open level ground');
+  const [x, y, z] = at;
+  const w = withBoxes(base, boxes(x, y, z));
+  const m = createMatch(w, 'breach', 'normal', { seed: 1 });
+  while (m.phase === 'buy') step(m, DT, idleInput());
+  for (const a of m.actors) {
+    a.alive = a.id === 0;
+    a.bot = false;
+    a.brain = null;
+  }
+  m.phaseT = 999;
+  const you = m.actors[0];
+  you.body.x = x;
+  you.body.y = y + 0.05;
+  you.body.z = z;
+  you.body.vx = you.body.vz = 0;
+  for (let i = 0; i < 10; i++) step(m, DT, idleInput(0, 0));
+  return { m, w, you, x, y, z };
+}
+
+/** Steps a while, checking every frame that the body is never inside anything solid (nor jumped through it). */
+function climbFor(m: Match, you: Actor, frames: number, inp: (i: number) => Input) {
+  for (let i = 0; i < frames; i++) {
+    const ox = you.body.x;
+    const oz = you.body.z;
+    step(m, DT, inp(i));
+    const b = you.body;
+    assert.ok(sweepClear(m.world, b.x, b.z, b.x, b.z, b.y + 0.06, b.y + b.height - 0.06, RADIUS * 0.75), `inside something at ${b.x.toFixed(2)} ${b.y.toFixed(2)} ${b.z.toFixed(2)}`);
+    assert.ok(Math.hypot(b.x - ox, b.z - oz) < 0.4, 'no jump through anything');
+  }
+}
+
+const slab = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): Box => ({ x0, y0, z0, x1, y1, z1, s: 'wood' });
+
+test('climbing: a mantle up onto a ledge you face, from 0.9 to 2.1 m high, never into it, and none up a taller one or under a ceiling', () => {
+  const walkUp = (m: Match, you: Actor) => climbFor(m, you, 40, (i) => ({ ...idleInput(0, 0), mz: i < 30 ? 1 : 0 }));
+  for (const h of [1, 1.5, 2.05]) {
+    const { m, you, y, z } = climbRange((x, y, z) => [slab(x - 1.5, y - 0.5, z - 3.2, x + 1.5, y + h, z - 1.2)]);
+    walkUp(m, you);
+    assert.ok(Math.abs(you.body.z - (z - 1.2 + RADIUS)) < 0.05, 'up against it');
+    climbFor(m, you, 1, () => ({ ...idleInput(0, 0), jump: true }));
+    assert.equal(you.climb?.k, 1, `a mantle up ${h} m`);
+    assert.equal(climbOf(you), 1);
+    climbFor(m, you, 70, () => idleInput(0, 0));
+    assert.ok(Math.abs(you.body.y - (y + h)) < 0.02 && you.body.onGround, `standing on top (${(you.body.y - y).toFixed(2)} m up)`);
+    assert.ok(you.body.z < z - 1.2 - 0.3, 'past the edge');
+    assert.equal(climbOf(you), 0);
+  }
+  // too tall: the same press is only a jump
+  {
+    const { m, you, y } = climbRange((x, y, z) => [slab(x - 1.5, y - 0.5, z - 3.2, x + 1.5, y + MANTLE_HI + 0.25, z - 1.2)]);
+    walkUp(m, you);
+    climbFor(m, you, 1, () => ({ ...idleInput(0, 0), jump: true }));
+    assert.equal(you.climb, null, 'no climb up 2.35 m');
+    climbFor(m, you, 60, () => idleInput(0, 0));
+    assert.ok(you.body.y < y + 0.2, 'back on the ground');
+  }
+  // a ledge with a ceiling over it too low to stand under: no climb
+  {
+    const { m, you } = climbRange((x, y, z) => [slab(x - 1.5, y - 0.5, z - 3.2, x + 1.5, y + 1.4, z - 1.2), slab(x - 1.5, y + 2.6, z - 3.2, x + 1.5, y + 2.8, z - 1.5)]);
+    walkUp(m, you);
+    climbFor(m, you, 1, () => ({ ...idleInput(0, 0), jump: true }));
+    assert.equal(you.climb, null, 'no room to stand on it');
+  }
+  // the same climb, on the same world, from the same place: the same path
+  const a = climbRange((x, y, z) => [slab(x - 1.5, y - 0.5, z - 3.2, x + 1.5, y + 1.6, z - 1.2)]);
+  const b = climbRange((x, y, z) => [slab(x - 1.5, y - 0.5, z - 3.2, x + 1.5, y + 1.6, z - 1.2)]);
+  for (const r of [a, b]) {
+    r.you.body.z = r.z - 1.2 + RADIUS + 0.01;
+    climbFor(r.m, r.you, 1, () => ({ ...idleInput(0, 0), jump: true }));
+  }
+  assert.ok(a.you.climb, 'a climb');
+  assert.deepEqual(a.you.climb, b.you.climb, 'the same climb');
+});
+
+test('climbing: running at a low wall vaults over it, through a window too, and onto a deep one instead', () => {
+  /** Runs at the face (at z = face) from 4 m back, jumping just before it (and stopping once over or up); whether it
+   * vaulted. */
+  const run = (m: Match, you: Actor, face: number) => {
+    let jumped = false;
+    let vaulted = false;
+    let climbed = false;
+    climbFor(m, you, 120, () => {
+      vaulted ||= you.climb?.k === 2;
+      climbed ||= !!you.climb;
+      const inp = { ...idleInput(0, 0), mz: climbed && !you.climb ? 0 : 1 };
+      if (!jumped && you.body.z < face + RADIUS + 0.45) {
+        inp.jump = true;
+        jumped = true;
+      }
+      return inp;
+    });
+    return vaulted;
+  };
+  // a thin wall a meter high
+  {
+    const { m, you, z } = climbRange((x, y, z) => [slab(x - 2, y - 0.5, z - 1.5, x + 2, y + 1, z - 1.2)]);
+    you.body.z = z + 4;
+    assert.ok(run(m, you, z - 1.2), 'a vault');
+    assert.ok(you.body.z < z - 1.5 - RADIUS, 'over to the far side');
+  }
+  // a window: a sill a meter up, the opening 1.3 m wide and 1.15 high, the wall all round it
+  {
+    const { m, you, z, y } = climbRange((x, y, z) => [
+      slab(x - 3, y - 0.5, z - 1.45, x + 3, y + 1, z - 1.2),
+      slab(x - 3, y + 2.15, z - 1.45, x + 3, y + 3, z - 1.2),
+      slab(x - 3, y - 0.5, z - 1.45, x - 0.65, y + 3, z - 1.2),
+      slab(x + 0.65, y - 0.5, z - 1.45, x + 3, y + 3, z - 1.2),
+    ]);
+    you.body.z = z + 4;
+    assert.ok(run(m, you, z - 1.2), 'a vault');
+    assert.ok(you.body.z < z - 1.45 - RADIUS && you.body.y < y + 0.2, `through the window (${you.body.z.toFixed(2)})`);
+  }
+  // a deep block as high: running at it climbs onto it
+  {
+    const { m, you, z, y } = climbRange((x, y, z) => [slab(x - 2, y - 0.5, z - 3.5, x + 2, y + 1, z - 1.2)]);
+    you.body.z = z + 4;
+    assert.ok(!run(m, you, z - 1.2), 'no vault');
+    assert.ok(Math.abs(you.body.y - (y + 1)) < 0.03, 'up on top of it');
+  }
+  // nothing to climb in the open
+  {
+    const { m, you } = climbRange(() => []);
+    assert.equal(findClimb(m.world, you.body.x, you.body.y, you.body.z, 0, true), null);
+  }
+});
+
+test('climbing: a ladder: walking into its foot climbs it, the top steps off onto the roof, back down from the edge, and jump lets go', () => {
+  const w = worldFor('mesa', true);
+  const li = w.ladders.findIndex((l) => l.y1 - l.y0 > 3 && l.y1 - l.y0 < 4.5);
+  assert.ok(li >= 0, 'a ladder up a roof');
+  const l = w.ladders[li];
+  const m = quietRoyale(3, [[l.x + l.nx * 1.6, l.y0 + 0.05, l.z + l.nz * 1.6]]);
+  const you = m.actors[0];
+  const yaw = Math.atan2(l.nx, l.nz);
+  const fwd = { ...idleInput(yaw, 0), mz: 1 };
+  for (let i = 0; i < 90 && you.ladder < 0; i++) step(m, DT, fwd);
+  assert.equal(you.ladder, li, 'on the ladder');
+  assert.equal(climbOf(you), 2);
+  const [px, pz] = ladderSpot(l);
+  let maxGap = 0;
+  for (let i = 0; i < 60 * 5 && (you.ladder >= 0 || you.climb); i++) {
+    step(m, DT, fwd);
+    if (you.ladder >= 0) maxGap = Math.max(maxGap, Math.hypot(you.body.x - px, you.body.z - pz));
+  }
+  assert.ok(maxGap < 1e-6, 'held at the ladder all the way up');
+  for (let i = 0; i < 20; i++) step(m, DT, idleInput(yaw, 0));
+  assert.ok(Math.abs(you.body.y - l.y1) < 0.05 && you.body.onGround, `up on the roof (${you.body.y.toFixed(2)} for ${l.y1.toFixed(2)})`);
+  assert.ok((you.body.x - l.x) * l.nx + (you.body.z - l.z) * l.nz < -0.5, 'in over the edge');
+  // walking back out over the edge, onto the top of it and down
+  const back = { ...idleInput(yaw + Math.PI, 0), mz: 1 };
+  let held = false;
+  for (let i = 0; i < 60 * 6 && !(held && you.ladder < 0 && !you.climb); i++) {
+    step(m, DT, back);
+    held ||= you.ladder >= 0;
+  }
+  assert.ok(held, 'onto the ladder from the top');
+  assert.ok(Math.abs(you.body.y - l.y0) < 0.3, `down on the ground (${you.body.y.toFixed(2)} for ${l.y0.toFixed(2)})`);
+  // half way up, jump: off it, pushed out from the wall, and down to the ground
+  you.ladder = li;
+  you.body.y = l.y0 + 1.5;
+  step(m, DT, { ...idleInput(yaw, 0), jump: true });
+  assert.equal(you.ladder, -1, 'let go');
+  for (let i = 0; i < 90; i++) step(m, DT, idleInput(yaw, 0));
+  assert.ok(you.body.onGround && you.body.y < l.y0 + 0.3, 'fell to the ground');
+  assert.ok((you.body.x - l.x) * l.nx + (you.body.z - l.z) * l.nz > 0.4, 'out from the wall');
+  // no shooting while climbing
+  you.guns[0] = gun('kestrel');
+  you.slot = 0;
+  you.switchT = 0;
+  you.ladder = li;
+  you.body.y = l.y0 + 1;
+  const shots = m.bullets.length;
+  for (let i = 0; i < 10; i++) step(m, DT, { ...idleInput(yaw, 0), fire: true });
+  assert.equal(m.bullets.length, shots, 'both hands on the ladder');
+});
+
+test('royale towns have taller buildings: two storey houses, blocks of flats, warehouses with a mezzanine and lookouts, with stairs, ladders and floors to stand on', () => {
+  for (const id of MAP_IDS) {
+    const w = worldFor(id, true);
+    const tall = w.bld.filter((b) => b.up && b.up.lv.length);
+    assert.ok(tall.length >= 8, `${id}: taller buildings (${tall.length})`);
+    assert.ok(tall.some((b) => b.up!.lv.length >= 2), `${id}: a block of three storeys`);
+    assert.ok(w.dress.some((d) => d.k === 'lookout'), `${id}: a lookout`);
+    assert.ok(w.flights.length >= tall.length && w.ladders.length > 0 && w.decks.length > 0, `${id}: stairs, ladders and decks`);
+    // every flight climbs a storey (or to the mezzanine), and its head is a floor with room to stand
+    for (const f of w.flights) {
+      assert.ok(f.by - f.ay > STOREY - 0.05 && f.by - f.ay < 3.4, `${id}: a flight a storey high`);
+      assert.ok(Math.abs(groundAt(w, f.bx, f.bz, f.by + 0.05) - f.by) < 0.02 && !blockedAt(w, f.bx, f.bz, f.by), `${id}: the head of a flight is clear`);
+    }
+    // and every ladder's top steps off onto its roof
+    for (const l of w.ladders) assert.ok(Math.abs(groundAt(w, l.x - l.nx * 0.78, l.z - l.nz * 0.78, l.y1) - l.y1) < 0.05, `${id}: the top of a ladder`);
+    // breach stays as it was: nothing up off the ground but what its plan has
+    const b = worldFor(id);
+    assert.equal(b.flights.length + b.ladders.length + b.decks.length, 0);
+  }
+});
+
+test('royale places: every name on a map its own, the places out over the land named from its list by what they are, and one compound inside the land', () => {
+  for (const id of MAP_IDS) {
+    const def = MAPS[id];
+    assert.equal(def.royalePois.length, OUTER.length + 3, `${id}: a name for each place and each hamlet`);
+    assert.equal(new Set([...def.pois, ...def.royalePois]).size, def.pois.length + def.royalePois.length, `${id}: no name twice in the lists`);
+    const w = worldFor(id, true);
+    const names = w.towns.map((t) => t.name);
+    assert.equal(new Set(names).size, names.length, `${id}: every place has its own name (${names.join(', ')})`);
+    const outer = w.towns.filter((t) => t.site === -2);
+    assert.ok(outer.length >= 6, `${id}: places out over the land (${outer.length})`);
+    for (const t of outer) {
+      const k = def.royalePois.indexOf(t.name);
+      assert.ok(k >= 0 && k < OUTER.length && OUTER[k] === t.kind, `${id}: ${t.name} is named for what it is (${t.kind})`);
+    }
+    const kinds = outer.map((t) => t.kind);
+    assert.equal(kinds.filter((k) => k === 'compound').length, 1, `${id}: one compound`);
+    for (const k of ['depot', 'farm', 'outpost'] as const) assert.ok(kinds.includes(k), `${id}: a ${k}`);
+    const c = outer.find((t) => t.kind === 'compound')!;
+    assert.ok(Math.abs(c.x) + COMPOUND.half < w.arena - 4 && Math.abs(c.z) + COMPOUND.half < w.arena - 4, `${id}: the compound inside the land`);
+    assert.ok(worldFor(id).towns.every((t) => t.kind === undefined), `${id}: a breach's towns have no kind`);
+  }
+});
+
+test('royale compound: a ring of HESCO with gates a bot walks in through, every building in it reachable, and the most loot on the map', () => {
+  const H = COMPOUND.half;
+  for (const id of MAP_IDS) {
+    const w = worldFor(id, true);
+    const c = w.towns.find((t) => t.kind === 'compound')!;
+    const ring = w.pieces.filter((p) => p.part === 'hesco' && Math.abs(Math.max(Math.abs((p.x0 + p.x1) / 2 - c.x), Math.abs((p.z0 + p.z1) / 2 - c.z)) - H) < 1);
+    assert.ok(ring.length > 100, `${id}: the HESCO ring (${ring.length} baskets)`);
+    // one basket high: from outside, mostly a ledge you can pull yourself up onto
+    let climbs = 0;
+    let tried = 0;
+    for (let i = 0; i < ring.length; i += 7) {
+      const p = ring[i];
+      const px = (p.x0 + p.x1) / 2;
+      const pz = (p.z0 + p.z1) / 2;
+      const [nx, nz] = Math.abs(px - c.x) > Math.abs(pz - c.z) ? [Math.sign(px - c.x), 0] : [0, Math.sign(pz - c.z)];
+      const off = (nx ? (p.x1 - p.x0) / 2 : (p.z1 - p.z0) / 2) + RADIUS + 0.15;
+      const x = px + nx * off;
+      const z = pz + nz * off;
+      const y = groundAt(w, x, z, floorAt(w.terrain, x, z) + 1);
+      if (blockedAt(w, x, z, y)) continue;
+      tried++;
+      if (findClimb(w, x, y, z, Math.atan2(nx, nz), false)) climbs++;
+    }
+    assert.ok(climbs > tried / 2, `${id}: the ring can be climbed (${climbs} of ${tried})`);
+    // round the ring, every 0.5 m: open where no basket is within reach
+    const L = 8 * H;
+    const at = (s: number): [number, number] => {
+      const side = Math.floor(s / (2 * H)) % 4;
+      const u = (s % (2 * H)) - H;
+      return [[c.x + u, c.z - H], [c.x + H, c.z + u], [c.x - u, c.z + H], [c.x - H, c.z - u]][side] as [number, number];
+    };
+    const open = (s: number) => {
+      const [x, z] = at(s);
+      return !ring.some((p) => Math.hypot(Math.max(p.x0 - x, 0, x - p.x1), Math.max(p.z0 - z, 0, z - p.z1)) < 0.5);
+    };
+    const flags = Array.from({ length: L * 2 }, (_, k) => open(k / 2));
+    const first = flags.indexOf(false);
+    const gaps: number[] = [];
+    let run = 0;
+    for (let k = 1; k <= flags.length; k++) {
+      const i = (first + k) % flags.length;
+      if (flags[i]) run++;
+      else {
+        if (run * 0.5 >= COMPOUND.gate - 1) gaps.push(((i - run / 2 + flags.length) % flags.length) / 2);
+        run = 0;
+      }
+    }
+    assert.ok(gaps.length >= 2, `${id}: openings in the ring (${gaps.length})`);
+    // from 5 m outside an opening to 5 m inside it, a bot's path goes straight through (not round to another way in)
+    const f = fieldTo(w, 'compound', c.x, c.z);
+    const through = gaps.filter((s) => {
+      const [x, z] = at(s);
+      const nx = Math.sign(Math.round((x - c.x) / H));
+      const nz = Math.sign(Math.round((z - c.z) / H));
+      const p = findPath(w, x + nx * 5, z + nz * 5, x - nx * 5, z - nz * 5, 20000);
+      if (!p) return false;
+      let len = Math.hypot(p[0] - x - nx * 5, p[1] - z - nz * 5);
+      for (let i = 2; i < p.length; i += 2) len += Math.hypot(p[i] - p[i - 2], p[i + 1] - p[i - 1]);
+      return len < 16;
+    });
+    assert.ok(through.length >= 2, `${id}: gates walked through (${through.length} of ${gaps.length})`);
+    const inside = w.interiors.filter((q) => Math.abs((q.x0 + q.x1) / 2 - c.x) < H && Math.abs((q.z0 + q.z1) / 2 - c.z) < H);
+    assert.ok(inside.length >= 3, `${id}: buildings in the compound (${inside.length})`);
+    for (const q of inside) assert.ok(Number.isFinite(fieldDist(w, f, (q.x0 + q.x1) / 2, (q.z0 + q.z1) / 2)), `${id}: a building in the compound can be walked into`);
+    // more loot than round any other place, and the best of it
+    const L3 = w.loot;
+    const rich = richness(L3);
+    const spots = (x: number, z: number) => {
+      const out: number[] = [];
+      for (let i = 0; i < L3.length; i += 3) if (Math.abs(L3[i] - x) < H && Math.abs(L3[i + 2] - z) < H) out.push(i / 3);
+      return out;
+    };
+    const mine = spots(c.x, c.z);
+    for (const t of w.towns) if (t !== c) assert.ok(spots(t.x, t.z).length < mine.length, `${id}: more loot in the compound (${mine.length}) than round ${t.name}`);
+    const mean = mine.reduce((s, i) => s + rich[i], 0) / mine.length;
+    assert.ok(mean > 0.85, `${id}: the compound's loot is rich (${mean.toFixed(2)})`);
+  }
+});
+
+test('royale places: each one built to its own plan can be walked to from a town by a site, loot spots as many as before and none inside anything, and cover over the open fields', () => {
+  // (loot spots on each map before these places were built)
+  const before: Record<string, number> = { vale: 766, mesa: 981, frost: 674, isles: 540 };
+  for (const id of MAP_IDS) {
+    const w = worldFor(id, true);
+    const fields = w.towns.filter((t) => t.site >= 0).map((t, k) => fieldTo(w, `places-site${k}`, t.x, t.z));
+    for (const t of w.towns.filter((t) => t.site === -2 && t.kind !== 'village')) assert.ok(fields.some((f) => Number.isFinite(fieldDist(w, f, t.x, t.z))), `${id}: ${t.name} (${t.kind}) can be walked to`);
+    const n = w.loot.length / 3;
+    assert.ok(n >= before[id] * 0.9 && n <= before[id] * 1.4, `${id}: loot spots (${n}, ${before[id]} before)`);
+    const inside: string[] = [];
+    for (let i = 0; i < w.loot.length; i += 3) {
+      const [x, y, z] = [w.loot[i], w.loot[i + 1], w.loot[i + 2]];
+      if (w.boxes.some((b) => x > b.x0 && x < b.x1 && z > b.z0 && z < b.z1 && b.y0 < y + 0.5 && b.y1 > y + 0.1)) inside.push(`${x.toFixed(1)},${z.toFixed(1)}`);
+    }
+    assert.deepEqual(inside, [], `${id}: loot spots inside something solid`);
+    // open dry ground: how far from anything to hide behind (a wall, a car, a tree, a big rock); seldom 20 m
+    const t = w.terrain;
+    const cover: [number, number][] = [];
+    const near = (x: number, z: number) => Math.abs(x) < w.arena + 30 && Math.abs(z) < w.arena + 30;
+    for (const b of w.boxes) if (near(b.x0, b.z0) && b.y1 - heightAt(t, (b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2) > 0.9) cover.push([(b.x0 + b.x1) / 2, (b.z0 + b.z1) / 2]);
+    for (const k of w.trunks) if (near(k.x, k.z)) cover.push([k.x, k.z]);
+    for (const r of w.rocks) if (r.r > 0.8 && near(r.x, r.z)) cover.push([r.x, r.z]);
+    const B = 20;
+    const nb = Math.ceil((2 * w.arena + 80) / B);
+    const cell = (v: number) => Math.min(nb - 1, Math.max(0, Math.floor((v + w.arena + 40) / B)));
+    const buckets: [number, number][][] = Array.from({ length: nb * nb }, () => []);
+    for (const p of cover) buckets[cell(p[1]) * nb + cell(p[0])].push(p);
+    let open = 0;
+    let far = 0;
+    for (let x = -w.arena + 20; x < w.arena - 20; x += 10)
+      for (let z = -w.arena + 20; z < w.arena - 20; z += 10) {
+        if (heightAt(t, x, z) < t.water + 0.6 || normalAt(t, x, z).y < 0.85) continue;
+        open++;
+        let best = Infinity;
+        for (let j = cell(z) - 2; j <= cell(z) + 2; j++) for (let i = cell(x) - 2; i <= cell(x) + 2; i++) if (i >= 0 && j >= 0 && i < nb && j < nb) for (const p of buckets[j * nb + i]) best = Math.min(best, Math.hypot(p[0] - x, p[1] - z));
+        if (best > 20) far++;
+      }
+    assert.ok(far / open < 0.06, `${id}: open ground more than 20 m from cover (${far} of ${open})`);
+  }
+});
+
+test('breach worlds are as they were before the royale places: the same pieces, colliders, loot, models, trees and spawns', () => {
+  const fingerprint = (w: World) => {
+    let h = 2166136261;
+    const add = (v: number) => (h = Math.imul(h ^ Math.round(v * 100), 16777619) >>> 0);
+    for (const p of w.pieces) [p.x0, p.y0, p.z0, p.x1, p.y1, p.z1].forEach(add);
+    for (const b of w.boxes) [b.x0, b.y0, b.z0, b.x1, b.y1, b.z1].forEach(add);
+    for (const v of w.loot) add(v);
+    for (const m of w.models) [m.x, m.y, m.z].forEach(add);
+    for (const t of w.trees) [t.x, t.y, t.z].forEach(add);
+    for (const s of w.spawns) [s.x, s.y, s.z].forEach(add);
+    return `${w.pieces.length} ${w.boxes.length} ${w.loot.length / 3} ${w.models.length} ${w.trees.length} ${h.toString(16)}`;
+  };
+  const want: Record<string, string> = {
+    vale: '1323 804 148 73 6738 98f69749',
+    mesa: '1259 744 109 44 575 f5b58a5c',
+    frost: '1163 757 140 58 4025 3d3366be',
+    isles: '978 661 96 40 765 880b7fcf',
+  };
+  for (const id of MAP_IDS) assert.equal(fingerprint(worldFor(id)), want[id], `${id}: the breach world`);
+});
+
+test('upper floors: a path goes up the stairs (every leg a walk), the floor over a room leaves the room walkable, and a bot fetches loot upstairs and off a roof', () => {
+  const w = worldFor('vale', true);
+  const nav = navOf(w);
+  assert.ok(nav.N > nav.n * nav.n, 'nodes over the ground');
+  const house = w.bld.find((b) => b.kind === 'house' && b.up && b.up.lv.length === 1)!;
+  assert.ok(house, 'a two storey house');
+  const f = w.flights.reduce((best, q) => (Math.hypot(q.ax - house.x, q.az - house.z) < Math.hypot(best.ax - house.x, best.az - house.z) ? q : best));
+  // from 15 m out on the ground, up to the head of its stair
+  let p: number[] | null = null;
+  const ys: number[] = [];
+  let sx = 0;
+  let sz = 0;
+  for (let k = 0; k < 16 && !p; k++) {
+    sx = house.x + Math.cos(k) * 15;
+    sz = house.z + Math.sin(k) * 15;
+    if (blockedAt(w, sx, sz, floorAt(w.terrain, sx, sz))) continue;
+    p = findPath(w, sx, sz, f.bx, f.bz, 20000, floorAt(w.terrain, sx, sz), f.by, ys);
+  }
+  assert.ok(p, 'a way up');
+  assert.equal(ys.length * 2, p.length, 'a height for every point');
+  assert.ok(Math.abs(ys[ys.length - 1] - f.by) < 0.05, 'ends upstairs');
+  // up the stairs, each leg a walk at its own height
+  const first = Array.from({ length: p.length / 2 }, (_, i) => navMark(w, p[i * 2], p[i * 2 + 1])).indexOf(2);
+  assert.ok(first >= 0, 'by the stairs');
+  for (let i = first * 2 + 2; i < p.length; i += 2) assert.ok(canWalk(w, p[i - 2], p[i - 1], p[i], p[i + 1], ys[i / 2 - 1]), `leg ${i / 2} is a walk`);
+  assert.ok(ys.slice(first).every((y, i, a) => i === 0 || y >= a[i - 1] - 0.05), 'and up all the way');
+  // the room under the upper floor: its ground cells walkable as ever
+  const c = Math.cos((-house.rot * Math.PI) / 2);
+  const s = Math.sin((-house.rot * Math.PI) / 2);
+  const lz = -house.d / 4;
+  assert.ok(walkable(w, house.x + lz * s, house.z + lz * c), 'the ground floor is walkable under the floor above');
+  // a lone bot after a vest upstairs, then one on a roof up a ladder
+  const goFor = (x: number, y: number, z: number) => {
+    const m = createMatch(w, 'royale', 'normal', { seed: 5 });
+    m.redT = 1e9;
+    for (const a of m.actors) a.alive = false;
+    const me = m.actors[0];
+    me.alive = true;
+    me.drop = 0;
+    me.body.x = x > 0 ? -300 : 300;
+    me.body.z = 300;
+    me.body.y = floorAt(w.terrain, me.body.x, me.body.z);
+    const bot = m.actors[1];
+    bot.alive = true;
+    bot.drop = 0;
+    for (let k = 0; k < 64; k++) {
+      const bx = x + Math.cos(k * 0.7) * 14;
+      const bz = z + Math.sin(k * 0.7) * 14;
+      const g = floorAt(w.terrain, bx, bz);
+      if (blockedAt(w, bx, bz, g) || Math.abs(g - floorAt(w.terrain, x, z)) > 2) continue;
+      bot.body.x = bx;
+      bot.body.y = g + 0.05;
+      bot.body.z = bz;
+      break;
+    }
+    for (const it of m.loot) it.live = false;
+    m.loot.push({ id: m.loot.length, kind: 'vest', what: '3', n: 1, x, y: y + 0.02, z, live: true });
+    m.lootVer++;
+    const zn = m.zone!;
+    zn.x = zn.nx = x;
+    zn.z = zn.nz = z;
+    zn.r = 400;
+    zn.nr = 300;
+    zn.t = 999;
+    let climbed = 0;
+    for (let i = 0; i < 30 * 60; i++) {
+      me.hp = 100;
+      me.shield = 99;
+      step(m, 1 / 30, idleInput());
+      if (bot.ladder >= 0) climbed++;
+      if (m.events.some((e) => e.t === 'pickup' && e.a === bot.id)) return { got: true, climbed };
+    }
+    return { got: false, climbed };
+  };
+  assert.ok(goFor(f.bx, f.by, f.bz).got, 'up the stairs for it');
+  const l = w.ladders.reduce((best, q) => (q.y1 - q.y0 < best.y1 - best.y0 ? q : best));
+  const r = goFor(l.x - l.nx * 1.4, l.y1, l.z - l.nz * 1.4);
+  assert.ok(r.got && r.climbed > 0, 'up the ladder for it');
 });

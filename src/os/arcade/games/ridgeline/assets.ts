@@ -88,6 +88,22 @@ import skyMesa2 from './textures/sky-mesa-2k.webp?url';
 import skyMesa4 from './textures/sky-mesa-4k.webp?url';
 import skyVale2 from './textures/sky-vale-2k.webp?url';
 import skyVale4 from './textures/sky-vale-4k.webp?url';
+import skyFrostDusk2 from './textures/sky-frost-dusk-2k.webp?url';
+import skyFrostDusk4 from './textures/sky-frost-dusk-4k.webp?url';
+import skyFrostOvercast2 from './textures/sky-frost-overcast-2k.webp?url';
+import skyFrostOvercast4 from './textures/sky-frost-overcast-4k.webp?url';
+import skyIslesDusk2 from './textures/sky-isles-dusk-2k.webp?url';
+import skyIslesDusk4 from './textures/sky-isles-dusk-4k.webp?url';
+import skyIslesOvercast2 from './textures/sky-isles-overcast-2k.webp?url';
+import skyIslesOvercast4 from './textures/sky-isles-overcast-4k.webp?url';
+import skyMesaDusk2 from './textures/sky-mesa-dusk-2k.webp?url';
+import skyMesaDusk4 from './textures/sky-mesa-dusk-4k.webp?url';
+import skyMesaOvercast2 from './textures/sky-mesa-overcast-2k.webp?url';
+import skyMesaOvercast4 from './textures/sky-mesa-overcast-4k.webp?url';
+import skyValeDusk2 from './textures/sky-vale-dusk-2k.webp?url';
+import skyValeDusk4 from './textures/sky-vale-dusk-4k.webp?url';
+import skyValeOvercast2 from './textures/sky-vale-overcast-2k.webp?url';
+import skyValeOvercast4 from './textures/sky-vale-overcast-4k.webp?url';
 import woodN from './textures/wood-n.webp?url';
 import wood from './textures/wood.webp?url';
 
@@ -186,6 +202,13 @@ const IMAGES = {
 
 /** Each map's sky photo, small and large. */
 const SKIES: Record<MapId, [string, string]> = { vale: [skyVale2, skyVale4], mesa: [skyMesa2, skyMesa4], frost: [skyFrost2, skyFrost4], isles: [skyIsles2, skyIsles4] };
+/** The same for a royale's dusk and overcast skies (looks.ts): only the one a match plays under is fetched. */
+const LOOK_SKIES: Record<MapId, Record<'dusk' | 'overcast', [string, string]>> = {
+  vale: { dusk: [skyValeDusk2, skyValeDusk4], overcast: [skyValeOvercast2, skyValeOvercast4] },
+  mesa: { dusk: [skyMesaDusk2, skyMesaDusk4], overcast: [skyMesaOvercast2, skyMesaOvercast4] },
+  frost: { dusk: [skyFrostDusk2, skyFrostDusk4], overcast: [skyFrostOvercast2, skyFrostOvercast4] },
+  isles: { dusk: [skyIslesDusk2, skyIslesDusk4], overcast: [skyIslesOvercast2, skyIslesOvercast4] },
+};
 
 export type AssetKey = keyof typeof URLS | keyof typeof FALLBACK;
 export type ImageKey = keyof typeof IMAGES;
@@ -200,9 +223,10 @@ async function bitmap(url: string) {
 }
 
 const skies = new Map<string, Promise<ImageBitmap | null>>();
-/** A map's sky photo (the large one for the higher tiers), or null when it can't be had. Fetched once per page. */
-export function skyImage(id: MapId, large: boolean): Promise<ImageBitmap | null> {
-  const url = SKIES[id][large ? 1 : 0];
+/** A map's sky photo (the large one for the higher tiers; a royale's other time of day with `look`), or null when it
+ * can't be had. Fetched once per page. */
+export function skyImage(id: MapId, large: boolean, look: 'day' | 'dusk' | 'overcast' = 'day'): Promise<ImageBitmap | null> {
+  const url = (look === 'day' ? SKIES[id] : LOOK_SKIES[id][look])[large ? 1 : 0];
   let p = skies.get(url);
   if (!p) {
     p = typeof createImageBitmap === 'function' ? bitmap(url).catch(() => null) : Promise.resolve(null);
