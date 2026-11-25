@@ -6,6 +6,7 @@
 // them alike. Pure TS: the renderer, the sound and the HUD read the state and the events after each step.
 import { DM_HUBS, botInput, callout, newBrain, type Brain, type BotLevel } from './bots.ts';
 import { blastCars, carHit, carNear, enterCar, hurtCar, leaveCar, rayCars, rideInput, spawnCars, stepCars, type Car } from './cars.ts';
+import { GRAB_T, LADDER_DOWN, LADDER_UP, climbAt, climbHeight, findClimb, ladderOff, ladderOn, ladderSpot, ladderToGet, type Climb } from './climb.ts';
 import { fieldTo, navOf } from './nav.ts';
 import { clamp, lerp, mulberry32, smoothstep, type Rng } from './noise.ts';
 import { CROUCH_H, GRAVITY, PRONE_H, STAND_H, blockedAt, clearLine, groundAt, newHit, raySphere, rayWorld, stepBody, type Body } from './physics.ts';
@@ -215,6 +216,17 @@ export type Actor = {
   car: number;
   carSeat: number;
   runT: number;
+  /** Climbing: a mantle, vault or step on or off a ladder under way (see climb.ts), the ladder held (-1 none), and
+   * for the look of it the kind of climb shown (0 none, 1 a mantle, 2 on a ladder, 3 a vault; an online guest's or
+   * someone else's as their machine or the host last said, see climbTo) and how long it has been shown. */
+  climb: Climb | null;
+  ladder: number;
+  climbTo: number;
+  climbAnim: number;
+  climbT: number;
+  /** Seconds since last on the ground, and the height of that ground (a ledge is caught from a jump off it). */
+  airT: number;
+  groundY: number;
 };
 
 /** `vis`: only seen, never hurts anyone (a shot this machine is shown but does not judge, online). */
@@ -325,7 +337,7 @@ export type NetHooks = {
   crash?(car: number, hard: number): void;
 };
 /** Online, on the host: the latest of what a remote player's own machine says it is doing. */
-export type RemoteIn = { use: boolean; ads: number; walking: boolean; crouch: number; reloading: boolean; prone: boolean; lean: number };
+export type RemoteIn = { use: boolean; ads: number; walking: boolean; crouch: number; reloading: boolean; prone: boolean; lean: number; climb: number };
 
 export type Match = {
   mode: Mode;
@@ -476,6 +488,13 @@ function newActor(id: number, name: string, team: number, bot: boolean, level: L
     car: -1,
     carSeat: -1,
     runT: -9,
+    climb: null,
+    ladder: -1,
+    climbTo: 0,
+    climbAnim: 0,
+    climbT: 0,
+    airT: 0,
+    groundY: 0,
   };
 }
 
@@ -881,6 +900,13 @@ export function damage(m: Match, v: Actor, raw: number, from: number, w: Exclude
 function die(m: Match, v: Actor, from: number, w: Cause, head: boolean) {
   // knocked out in a vehicle: the body (and what it carried) falls beside it
   if (v.car >= 0) leaveCar(m, v);
+  // knocked off a ladder or out of a climb: the body comes down where it was
+  if (v.climb || v.ladder >= 0 || v.climbTo) {
+    v.body.y = groundAt(m.world, v.body.x, v.body.z, v.body.y);
+    v.climb = null;
+    v.ladder = -1;
+    v.climbTo = 0;
+  }
   v.alive = false;
   v.hp = 0;
   v.deathT = m.time;
@@ -970,6 +996,9 @@ function place(m: Match, a: Actor, x: number, z: number, yaw: number) {
   a.lean = 0;
   a.proneTo = false;
   a.leanTo = 0;
+  a.climb = null;
+  a.ladder = -1;
+  a.climbTo = 0;
   a.yaw = yaw;
   a.pitch = 0;
 }
@@ -2489,7 +2518,7 @@ const stanceHit = newHit();
 /** Can an actor lie down where it is? Not swimming or wading deep, not in a vehicle or in the air, not on a steep bank. */
 export function canProne(m: Match, a: Actor) {
   const b = a.body;
-  if (!a.alive || a.drop || a.car >= 0 || b.swim) return false;
+  if (!a.alive || a.drop || a.car >= 0 || b.swim || a.climb || a.ladder >= 0) return false;
   const t = m.world.terrain;
   // (the face would be under the water)
   if (t.hasWater && !t.ice && b.y < t.water - 0.25) return false;
@@ -2544,6 +2573,137 @@ function stance(m: Match, a: Actor, prone: boolean, lean: number, dt: number) {
   }
   a.leanTo = a.lean;
   if (a.car < 0) b.height = stanceH(a);
+}
+
+/** The kind of climb an actor is in, for the look of it and to send online: 0 none, 1 a mantle, 2 on a ladder (or
+ * stepping on or off one), 3 a vault. */
+export const climbOf = (a: Actor) => (a.climb ? (a.climb.k === 2 ? 3 : a.climb.k >= 3 ? 2 : 1) : a.ladder >= 0 ? 2 : 0);
+
+/** Whether an actor may start a climb: on foot, up, out of the water, and not in a breach's buy phase. */
+function canClimb(m: Match, a: Actor) {
+  return a.alive && !a.drop && a.car < 0 && a.prone <= 0 && !a.body.swim && !(m.mode === 'breach' && m.phase === 'buy');
+}
+
+/** Starts a climb (not one that would end outside the playing square). */
+function startClimb(m: Match, a: Actor, c: Climb, sound = true) {
+  const A = m.world.arena - 0.5;
+  if (Math.abs(c.x1) > A || Math.abs(c.z1) > A) return false;
+  a.climb = c;
+  a.ladder = -1;
+  a.burstLeft = 0;
+  if (sound) m.events.push({ t: 'jump', a: a.id });
+  return true;
+}
+
+const climbPt = { x: 0, y: 0, z: 0 };
+/**
+ * A frame of climbing: a mantle, a vault or a step on or off a ladder plays out along its path (checked clear when it
+ * began), and on a ladder, moving toward it climbs (away from it goes down), jump lets go and pushes off, the top steps
+ * off onto the roof and the foot back onto the ground.
+ */
+function climbStep(m: Match, a: Actor, inp: Input, dt: number) {
+  const b = a.body;
+  const w = m.world;
+  a.walking = false;
+  const c = a.climb;
+  if (c) {
+    c.t += dt;
+    climbAt(c, climbPt);
+    const k = 1 / Math.max(dt, 1e-3);
+    b.vx = (climbPt.x - b.x) * k;
+    b.vy = (climbPt.y - b.y) * k;
+    b.vz = (climbPt.z - b.z) * k;
+    b.x = climbPt.x;
+    b.y = climbPt.y;
+    b.z = climbPt.z;
+    b.onGround = false;
+    b.height = Math.min(b.height, climbHeight(c));
+    if (c.t < c.dur) return;
+    a.climb = null;
+    b.vy = 0;
+    if (c.k === 4) {
+      a.ladder = c.lad;
+      b.vx = b.vz = 0;
+    } else if (c.k === 2) {
+      // out of a vault still running
+      const l = Math.hypot(c.x1 - c.x0, c.z1 - c.z0) || 1;
+      b.vx = ((c.x1 - c.x0) / l) * RUN * 0.75;
+      b.vz = ((c.z1 - c.z0) / l) * RUN * 0.75;
+      b.onGround = b.y <= groundAt(w, b.x, b.z, b.y) + 0.02;
+    } else {
+      b.vx = b.vz = 0;
+      b.onGround = true;
+      a.groundY = b.y;
+      m.events.push({ t: 'land', a: a.id });
+    }
+    return;
+  }
+  const l = w.ladders[a.ladder];
+  if (!l) {
+    a.ladder = -1;
+    return;
+  }
+  const [px, pz] = ladderSpot(l);
+  b.x = px;
+  b.z = pz;
+  b.vx = b.vz = 0;
+  b.onGround = false;
+  if (inp.jump) {
+    // let go, pushed back off it
+    a.ladder = -1;
+    b.vx = l.nx * 2.2;
+    b.vz = l.nz * 2.2;
+    b.vy = 1.5;
+    a.airT = GRAB_T;
+    return;
+  }
+  // up while moving toward it (W facing it), down while moving away
+  const sy = Math.sin(a.yaw);
+  const cy = Math.cos(a.yaw);
+  const mx = cy * inp.mx - sy * inp.mz;
+  const mz = -sy * inp.mx - cy * inp.mz;
+  const into = -(mx * l.nx + mz * l.nz);
+  const v = into > 0.25 ? LADDER_UP : into < -0.25 ? -LADDER_DOWN : 0;
+  const oy = b.y;
+  b.y += v * dt;
+  b.vy = v;
+  const g = groundAt(w, px, pz, oy);
+  if (b.y <= g) {
+    b.y = g;
+    if (v < 0) {
+      a.ladder = -1;
+      b.vy = 0;
+      b.onGround = true;
+      a.groundY = g;
+      return;
+    }
+  }
+  if (b.y >= l.y1) {
+    b.y = l.y1;
+    if (v > 0) {
+      const off = ladderOff(w, a.ladder, b.y);
+      if (off) {
+        a.ladder = -1;
+        a.climb = off;
+      }
+    }
+  }
+  // the rungs underfoot
+  const moved = Math.abs(b.y - oy);
+  a.phase += moved * 1.6;
+  a.stepDist += moved;
+  if (a.stepDist > 0.9) {
+    a.stepDist = 0;
+    m.events.push({ t: 'step', a: a.id, loud: false, s: 'metal' });
+  }
+}
+
+/** Keeps the time the climb shown has been going (see climbAnim). */
+function animClimb(a: Actor, kind: number, dt: number) {
+  if (kind !== a.climbAnim) {
+    a.climbAnim = kind;
+    a.climbT = 0;
+  } else a.climbT += dt;
 }
 
 /** Applies one actor's input for a frame. */
@@ -2685,15 +2845,17 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
   }
   // aiming (not while getting down or up)
   const settled = a.prone <= 0 || a.prone >= 1;
-  const canAds = a.reloadT <= 0 && a.switchT <= 0 && !b.swim && !a.paviseUp && settled;
+  const climbing = !!a.climb || a.ladder >= 0;
+  const canAds = a.reloadT <= 0 && a.switchT <= 0 && !b.swim && !a.paviseUp && settled && !climbing;
   const adsTarget = inp.ads && canAds ? 1 : 0;
   a.ads = clamp(a.ads + (adsTarget ? 1 : -1.6) * (dt / (g?.mods ? adsTimeOf(g) : w.adsTime)), 0, 1);
   // crouch, lying down and leaning
   // (the crouch holds where it was while getting down or up)
   if (a.prone <= 0) a.crouch = clamp(a.crouch + (inp.crouch && !b.swim ? 1 : -1) * dt * 7, 0, 1);
   stance(m, a, inp.prone, inp.lean, dt);
-  // movement (a rider is carried: the car puts it in its seat)
+  // movement (a rider is carried: the car puts it in its seat; a climb under way or a ladder moves the body its own way)
   if (a.car >= 0) a.walking = false;
+  else if (a.climb || a.ladder >= 0) climbStep(m, a, inp, dt);
   else {
     a.walking = inp.walk;
     let mx = inp.mx;
@@ -2718,19 +2880,47 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
       b.vx += (tx - b.vx) * k;
       b.vz += (tz - b.vz) * k;
       if (inp.jump && !b.swim && a.crouch < 0.5 && a.prone <= 0) {
-        b.vy = JUMP;
-        b.onGround = false;
-        m.events.push({ t: 'jump', a: a.id });
+        // facing a ledge: up onto it (or, running at something low, over it); else a jump
+        const run = mz > 0.5 && !inp.walk && Math.hypot(b.vx, b.vz) > WALK + 0.3;
+        const c = canClimb(m, a) ? findClimb(m.world, b.x, b.y, b.z, a.yaw, run) : null;
+        if (!c || !startClimb(m, a, c)) {
+          b.vy = JUMP;
+          b.onGround = false;
+          m.events.push({ t: 'jump', a: a.id });
+        }
       }
     } else {
       const k = 1 - Math.exp(-2.2 * dt);
       b.vx += (tx - b.vx) * k;
       b.vz += (tz - b.vz) * k;
+      // jump pressed again soon after leaving the ground (a jump, or off an edge): catch a ledge in reach
+      if (inp.jump && a.airT < GRAB_T && canClimb(m, a)) {
+        const c = findClimb(m.world, b.x, b.y, b.z, a.yaw, false, a.groundY);
+        if (c) startClimb(m, a, c);
+      }
     }
+    // walking into the foot of a ladder takes hold of it; walking off the roof it comes up to, onto its top
+    if (!a.climb && ml > 0.3 && m.world.ladders.length && canClimb(m, a)) {
+      const tl = Math.hypot(tx, tz) || 1;
+      const got = ladderToGet(m.world, b.x, b.y, b.z, tx / tl, tz / tl);
+      if (got && !got.top) {
+        a.ladder = got.i;
+        b.vx = b.vy = b.vz = 0;
+      } else if (got) {
+        const c = ladderOn(m.world, got.i, b.x, b.y, b.z);
+        if (c) startClimb(m, a, c, false);
+      }
+    }
+  }
+  if (a.car < 0 && !a.climb && a.ladder < 0) {
     const airborne = !b.onGround;
     const ox = b.x;
     const oz = b.z;
     stepBody(m.world, b, dt);
+    if (b.onGround) {
+      a.airT = 0;
+      a.groundY = b.y;
+    } else a.airT += dt;
     // the buy phase keeps everyone in their spawn
     if (m.mode === 'breach' && m.phase === 'buy') {
       const s = spawnOf(m, a.team);
@@ -2745,6 +2935,7 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
     if (airborne && b.onGround) m.events.push({ t: 'land', a: a.id });
     footsteps(m, a, ox, oz, inp.walk);
   }
+  animClimb(a, climbOf(a), dt);
   // fighting is off until the round goes live
   const armed = m.mode !== 'breach' || m.phase === 'live';
   if (!armed) {
@@ -2758,7 +2949,8 @@ function act(m: Match, a: Actor, input: Input, dt: number) {
     return;
   }
   // (a raised shield leaves only the sidearm's hand free; getting down or up, both hands are busy)
-  const ready = !!g && a.switchT <= 0 && a.reloadT <= 0 && !(a.paviseUp && a.slot !== 1) && settled;
+  // (nor while climbing: both hands are on the ledge or the ladder)
+  const ready = !!g && a.switchT <= 0 && a.reloadT <= 0 && !(a.paviseUp && a.slot !== 1) && settled && !climbing;
   if (g && w.burst > 0) {
     // a burst gun: one pull fires the burst on its own, then a pause before the next
     if (inp.fire && !a.fireHeld && a.burstLeft <= 0 && ready && a.fireCd <= 0 && g.mag > 0) a.burstLeft = w.burst;
@@ -2810,6 +3002,9 @@ function remoteStep(m: Match, a: Actor, dt: number) {
   a.reloadT = n.reloading ? Math.max(a.reloadT, 0.1) : 0;
   // lying down and leaning as its machine says, but at the pace and within the bounds the rules here allow
   stance(m, a, n.prone, n.lean, dt);
+  // climbing as its machine says (its body is where that machine puts it: here only the look of it)
+  a.climbTo = n.climb;
+  animClimb(a, a.climbTo, dt);
   footsteps(m, a, a.lastX, a.lastZ, n.walking);
   a.lastX = b.x;
   a.lastZ = b.z;
@@ -2840,6 +3035,7 @@ function puppet(m: Match, a: Actor, dt: number) {
   a.prone = clamp(a.prone + clamp((a.proneTo ? 1 : 0) - a.prone, -dt / PRONE_UP, dt / PRONE_DOWN), 0, 1);
   a.lean += clamp(a.leanTo - a.lean, -dt * LEAN_RATE, dt * LEAN_RATE);
   if (a.car < 0) a.body.height = stanceH(a);
+  animClimb(a, a.climbTo, dt);
   footsteps(m, a, a.lastX, a.lastZ, a.walking);
   a.lastX = a.body.x;
   a.lastZ = a.body.z;

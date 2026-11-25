@@ -155,6 +155,8 @@ export type View = {
   lost(): boolean;
   /** Draw calls and triangles in the last frame, all passes. */
   info(): { calls: number; triangles: number };
+  /** A royale's loot glow (the rings and shafts over the loot) on or off. */
+  lootGlow(on: boolean): void;
   /** Live textures and geometries, and roughly how many megabytes the scene's textures take (with mipmaps). */
   memory(): { textures: number; geometries: number; texMB: number; plants: number };
   scale(): number;
@@ -396,6 +398,7 @@ export function createView(THREE: Three, host: HTMLElement, w: World, quality: Q
     },
     lost: () => isLost,
     info: () => ({ calls: lastInfo.calls, triangles: lastInfo.triangles }),
+    lootGlow: (on) => royale.glow(on),
     memory() {
       const seen = new Set<T.Texture>();
       const add = (v: unknown) => {
