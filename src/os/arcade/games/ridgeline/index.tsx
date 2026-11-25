@@ -9,6 +9,7 @@ import { Score, type Mood } from './score.ts';
 import { useAssets } from './assets.ts';
 import { autoQuality, createView, flyover, type Quality, type View } from './gfx/view.ts';
 import { kitOf, paletteOf } from './gfx/soldiers.ts';
+import { LootGlowSetting, PickupToasts, useLootGlow, type PickupToastsApi } from './hud-loot.tsx';
 import { Ammo, BannerView, HitInfo, ItemBar, KillConfirm, KitPanel, type KillPop, BreachPrompts, BuyMenu, DeathPanel, Feed, Markers, MedalView, Minimap, Reticle, RoyalePrompts, SHOP_ORDER, Scope, Scoreboard, TopBar, Vitals, blankHud, type Banner, type MedalPop, type FastHud, type FeedItem, type Hud, type MapState, type MarkersApi, type MinimapApi, type HitInfoApi } from './hud.tsx';
 import { MAPS, MAP_IDS, type MapId } from './maps.ts';
 import { DEFUSE_HALF, DEFUSE_TIME, DEG, PERSON_HEALTH, PLANT_TIME, RUN, type Medal, type Mode, canDefuse, canShop, canUse, createMatch, currentGun, echoOfMine, eyeX, eyeY, eyeZ, finalScore, idleInput, lootNear, nadesOf, owns, plantSite, spareOf, sightSwap, spreadOf, standings, step, viewDir, wants, type Actor, type Cause, type Input, type Match, type NadeKind, type ShopItem } from './match.ts';
@@ -22,6 +23,10 @@ import { floorAt } from './terrain.ts';
 import { PAVISE, WEAPONS, type WeaponId } from './weapons.ts';
 
 import { buildWorld, cacheWorld, cachedWorld, type World } from './world.ts';
+import { lookOf, type LookId } from './looks.ts';
+import { SKY, SkySetting } from './sky-setup.tsx';
+import { BigMapFrame, Compass, RoyaleResultPanel, type CompassApi } from './hud-royale.tsx';
+import { RESULT_SECS, milestone, milestoneText, nearestOnCircle, newTally, royaleResult, tallyKill, zoneGuide, type RoyaleResult } from './hud-royale-math.ts';
 import './ridgeline.css';
 
 // (a new key: the 5v5 is the main game now, so everyone starts on it once, whatever they picked before)
@@ -122,8 +127,10 @@ function Setup() {
       <Segmented label="Map" value={map} options={mapOptions} onChange={setMap} />
       {map !== 'random' && <p className="g-ridgeline-note">{MAPS[map].tag}</p>}
       <Segmented label="Bots" value={level} options={levelOptions} onChange={setLevel} />
+      {mode === 'royale' && <SkySetting />}
       {mode === 'dm' && <Segmented label="Gun" value={gun} options={gunOptions} onChange={setGun} />}
       <Segmented label="Graphics" value={quality} options={qualityOptions} onChange={setQuality} />
+      {mode === 'royale' && <LootGlowSetting />}
       {mouse && <Segmented label="Mouse" value={sens} options={sensOptions} onChange={setSens} />}
       <Segmented label="View" value={view} options={viewOptions} onChange={setView} />
       {view === 'auto' && <p className="g-ridgeline-note">over the shoulder in Royale, first person in the others. O switches while you play.</p>}
@@ -161,12 +168,14 @@ function OnlineSetup() {
           <p className="g-ridgeline-note">{onlineNotes[mode]}</p>
           <Segmented label="Map" value={map} options={mapOptions} onChange={setMap} />
           <Segmented label="Bots" value={level} options={levelOptions} onChange={setLevel} />
+          {mode === 'royale' && <SkySetting />}
         </>
       ) : (
         <p className="g-ridgeline-note">the host picks the mode (Breach 5v5, Deathmatch or Royale), the map and the bots.</p>
       )}
       {(!host || mode === 'dm') && <Segmented label="Deathmatch gun" value={gun} options={gunOptions} onChange={setGun} />}
       <Segmented label="Graphics" value={quality} options={qualityOptions} onChange={setQuality} />
+      {(!host || mode === 'royale') && <LootGlowSetting />}
       {mouse && <Segmented label="Mouse" value={sens} options={sensOptions} onChange={setSens} />}
       <Segmented label="View" value={view} options={viewOptions} onChange={setView} />
       <Segmented label="Camera shake" value={shake} options={shakeOptions} onChange={setShake} />
@@ -221,11 +230,12 @@ function OnlineStage() {
   const [level] = useSetting(LEVEL);
   const [modeSetting] = useSetting(MODE);
   const [dmGun] = useSetting(DMGUN);
+  const [sky] = useSetting(SKY);
   const [session, setSession] = useState<Session | null>(null);
   const [picked, setPicked] = useState<{ map: MapId; mode: Mode } | null>(null);
   useEffect(() => {
     const map: MapId = mapSetting === 'random' ? MAP_IDS[Math.floor(Math.random() * MAP_IDS.length)] : mapSetting;
-    const s = new Session(api, { map, level, mode: modeSetting, dmPick: dmGun as WeaponId });
+    const s = new Session(api, { map, level, mode: modeSetting, dmPick: dmGun as WeaponId, sky });
     if (s.map && s.mode) setPicked({ map: s.map, mode: s.mode });
     s.onMap = (id, mode) => setPicked({ map: id, mode });
     setSession(s);
@@ -351,6 +361,11 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
   const [glError, setGlError] = useState(false);
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<View | null>(null);
+  /** The time of day of the match on (a royale's comes from its seed, see looks.ts), and the Sky setting. */
+  const skyLook = useRef<LookId>('day');
+  const [skySetting] = useSetting(SKY);
+  const skyRef = useRef(skySetting);
+  skyRef.current = skySetting;
   const [ready, setReady] = useState(false);
   const matchRef = useRef<{ m: Match; round: number } | null>(null);
   const [hud, setHud] = useState<Hud>(() => blankHud(mode));
@@ -381,6 +396,20 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
   const big = useRef<MinimapApi>(null);
   const marks = useRef<MarkersApi>(null);
   const hitInfo = useRef<HitInfoApi>(null);
+  const toasts = useRef<PickupToastsApi>(null);
+  const lootGlow = useLootGlow();
+  // royale: the compass, the spot marked on the big map, your knockouts (for the result panel), the players left last
+  // frame (for the milestone banners), and the result panel (until when, whether the match's end brought it, and up)
+  const compass = useRef<CompassApi>(null);
+  const marker = useRef<{ x: number; z: number } | null>(null);
+  const tally = useRef(newTally());
+  const lastAlive = useRef(0);
+  const [result, setResult] = useState<RoyaleResult | null>(null);
+  const resultAt = useRef<{ until: number; over: boolean; on: boolean } | null>(null);
+  const mapRef = useRef(false);
+  useEffect(() => {
+    mapRef.current = bigMap;
+  }, [bigMap]);
 
   // input state
   const look = useRef({ dx: 0, dy: 0 });
@@ -392,6 +421,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
 
   // per match view state
   const camY = useRef<number | null>(null);
+  /** Climbing: how far the gun is lowered out of the way (eased), for the view. */
+  const climbVm = useRef(0);
   const spec = useRef(0);
   const deathLook = useRef({ yaw: 0, pitch: 0 });
   const damageFx = useRef(0);
@@ -413,6 +444,9 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
   const thirdK = useRef(0);
   /** Lying down: N puts you down and up again (crouch or jump gets up too). */
   const proneOn = useRef(false);
+  /** Crouch locked on (C twice quickly; C again, a jump or lying down lets it go), and when C was last tapped. */
+  const crouchLock = useRef(false);
+  const lastC = useRef(-1);
   /** Freelook (held ` or the middle button): how far the view is turned from where the body faces and aims. */
   const free = useRef({ yaw: 0, pitch: 0, on: false });
   /** Third person: where the camera sits and where its crosshair rests (reused every frame). */
@@ -486,6 +520,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       return;
     }
     viewRef.current = view;
+    view.look(skyLook.current);
     const resize = () => {
       view.resize(host.clientWidth, host.clientHeight);
       shellRef.current.invalidate();
@@ -515,15 +550,26 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       const m = net ? net.attach(world) : createMatch(world, mode, st.level, { name: myName(), dmPick: st.dmGun as WeaponId });
       if (!m) return null;
       matchRef.current = { m, round: s.round };
+      // online the seed already carries the host's Sky choice, so every machine reads it alike
+      skyLook.current = lookOf(m.mode, m.seed, net ? 'auto' : skyRef.current, world.def);
+      viewRef.current?.look(skyLook.current);
       camY.current = null;
       third.current = null;
       proneOn.current = false;
+      crouchLock.current = false;
       free.current.yaw = free.current.pitch = 0;
       overAt.current = null;
       finished.current = false;
       spec.current = 0;
       firstBuy.current = true;
       supplyNote.current = 0;
+      marker.current = null;
+      tally.current = newTally();
+      lastAlive.current = m.alive;
+      resultAt.current = null;
+      setResult(null);
+      mapRef.current = false;
+      setBigMap(false);
       setFeed([]);
       setBuyOpen(false);
       setHud(blankHud(m.mode));
@@ -599,6 +645,11 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
     };
   }, []);
   useEffect(() => {
+    // (a royale's big map stays open until closed: a pause closes it)
+    if (shell.status !== 'playing' && royale) {
+      mapRef.current = false;
+      setBigMap(false);
+    }
     if (shell.status !== 'playing' && hostRef.current && document.pointerLockElement === hostRef.current) {
       unlockOnPurpose.current = true;
       document.exitPointerLock();
@@ -649,6 +700,22 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
     },
     [unlock],
   );
+  // royale: M opens the big map and frees the mouse to mark a spot on it (as the kit panel does); M again, or Esc,
+  // closes it and takes the mouse back (not when the match closes it for you)
+  const openMap = useCallback(
+    (open: boolean, relock = true) => {
+      mapRef.current = open;
+      setBigMap(open);
+      if (touchRef.current) return;
+      if (open) unlock();
+      else {
+        shellRef.current.root.current?.focus({ preventScroll: true });
+        if (relock && !kitRef.current) lock();
+      }
+    },
+    [lock, unlock],
+  );
+  const royaleMap = () => mapRef.current && matchRef.current?.m.mode === 'royale';
   const useItem = useCallback((k: UseKind) => {
     pending.current.item = k;
   }, []);
@@ -666,6 +733,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       if (m?.mode === 'royale') openKit(!kitRef.current);
     }
     if (code === 'Escape' && kitRef.current) openKit(false);
+    if (code === 'KeyM' && !e?.repeat && !touchRef.current && matchRef.current?.m.mode === 'royale') openMap(!mapRef.current);
   });
 
   // Escape closes the buy menu instead of pausing
@@ -673,15 +741,16 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
     const root = shell.root.current;
     if (!root) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.code !== 'Escape' || (!buyRef.current && !kitRef.current) || shellRef.current.status !== 'playing') return;
+      if (e.code !== 'Escape' || (!buyRef.current && !kitRef.current && !royaleMap()) || shellRef.current.status !== 'playing') return;
       e.preventDefault();
       e.stopPropagation();
+      if (royaleMap()) openMap(false);
       openBuy(false);
       openKit(false);
     };
     root.addEventListener('keydown', onKey, true);
     return () => root.removeEventListener('keydown', onKey, true);
-  }, [shell.root, openBuy, openKit]);
+  }, [shell.root, openBuy, openKit, openMap]);
 
   const pushBanner = (title: string, sub: string, tone: Banner['tone']) => setBanner({ title, sub, tone, key: Date.now() + Math.random() });
 
@@ -821,7 +890,20 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         }
         if (you.car >= 0 || you.drop) proneOn.current = false;
         inp.prone = proneOn.current;
-        inp.crouch = k.down('KeyC') || t.crouch;
+        // crouch: held C, or locked on by tapping C twice quickly (C again lets it go, and so do a jump, lying down,
+        // a seat and dying)
+        if (cTap) {
+          const now = performance.now();
+          if (crouchLock.current) {
+            crouchLock.current = false;
+            lastC.current = -1;
+          } else if (lastC.current >= 0 && now - lastC.current < 350) {
+            crouchLock.current = true;
+            lastC.current = -1;
+          } else lastC.current = now;
+        }
+        if (crouchLock.current && (proneOn.current || k.pressed('Space') || you.car >= 0 || you.drop || you.climb || you.ladder >= 0 || !you.alive)) crouchLock.current = false;
+        inp.crouch = k.down('KeyC') || crouchLock.current || t.crouch;
         // lean out: hold Y (left) or U (right)
         inp.lean = (k.down('KeyU') ? 1 : 0) - (k.down('KeyY') ? 1 : 0);
         // (at the wheel Space is the handbrake, held)
@@ -895,7 +977,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         inp.ads = false;
       }
       setBoard(k.down('Tab'));
-      if (!touchRef.current) setBigMap(k.down('KeyM'));
+      if (!touchRef.current && m.mode !== 'royale') setBigMap(k.down('KeyM'));
       // third person: the crosshair is on the camera's ray, so the shot is told the point it rests on (aiming down
       // sights is first person again, and while freelooking the shot goes where the body aims)
       if (third.current === null) third.current = st.view === 'third' || (st.view === 'auto' && m.mode === 'royale');
@@ -917,6 +999,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       net?.after(m);
       // (where lying down isn't possible, the toggle lets go of it)
       if (proneOn.current && !you.proneTo) proneOn.current = false;
+      toasts.current?.feed(m);
 
       // feedback from what happened
       for (const e of m.events) {
@@ -942,6 +1025,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
             deathLook.current = { yaw: you.yaw, pitch: you.pitch };
             spec.current = 0;
           }
+          if (m.mode === 'royale' && ka && va) tallyKill(tally.current, kk, m.me, Math.hypot(va.body.x - ka.body.x, va.body.y - ka.body.y, va.body.z - ka.body.z));
           // your knockout: the big confirmation, counting ones that come quickly together
           if (kk.killer === m.me && kk.victim !== m.me) {
             const kc = kills.current;
@@ -992,6 +1076,15 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         if (e.t === 'sides') pushBanner('Switching sides', 'everyone keeps their guns and gear', 'info');
         if (e.t === 'medal' && e.a === m.me) setMedal({ ...medalText(e.kind, e.n), key: Date.now() + Math.random() });
       }
+      // royale: a banner as the field thins (50, 25, 10, 5 and 2 left), while you are in it
+      if (m.mode === 'royale') {
+        const n = milestone(lastAlive.current, m.alive);
+        lastAlive.current = m.alive;
+        if (n && you.alive && m.phase !== 'over') {
+          const mt = milestoneText(n);
+          pushBanner(mt.title, mt.sub, 'info');
+        }
+      }
       // the camera's own motion: a landing jolts it (harder the faster the fall, a roll when coming down under the
       // canopy), explosions close by shake it
       const fe = feel.current;
@@ -1022,14 +1115,30 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       }
       damageFx.current = Math.max(0, damageFx.current - dt * 1.4);
       flashFx.current = Math.max(0, flashFx.current - dt * 3);
+      // royale: the result panel, once: when you are knocked out (online the match goes on, and it shows a while) or
+      // when the match is over (then it stays until the game over card)
+      if (m.mode === 'royale' && !resultAt.current && (m.phase === 'over' || !you.alive)) {
+        resultAt.current = { until: time.current + RESULT_SECS, over: m.phase === 'over', on: true };
+        setResult(royaleResult(m, tally.current, ROYALE_PLAYERS));
+        if (mapRef.current) openMap(false, false);
+      }
+      const ra = resultAt.current;
+      if (ra && ra.on && !ra.over && time.current > ra.until) {
+        ra.on = false;
+        setResult(null);
+      }
       if (m.phase === 'over') {
         if (overAt.current === null) {
           overAt.current = time.current;
           const won = m.mode === 'breach' ? m.winner === you.team : m.winner === m.me;
-          if (m.mode === 'royale') pushBanner(won ? 'Last one standing' : `#${you.place} of ${m.actors.length}`, `${you.kills} ${you.kills === 1 ? 'kill' : 'kills'}`, won ? 'win' : 'loss');
-          else pushBanner(m.mode === 'breach' ? (m.winner < 0 ? 'Draw' : won ? 'Victory' : 'Defeat') : won ? 'You won' : `${m.actors[m.winner]?.name ?? ''} wins`, m.mode === 'breach' ? `${m.score[you.team]} to ${m.score[1 - you.team]}` : '', won ? 'win' : 'loss');
+          // (the result panel up says it all, and stays up until the game over card)
+          const panel = m.mode === 'royale' && !!ra?.on;
+          if (ra && panel) ra.over = true;
+          if (m.mode === 'royale') {
+            if (!panel) pushBanner(won ? 'Last one standing' : `#${you.place} of ${m.actors.length}`, `${you.kills} ${you.kills === 1 ? 'kill' : 'kills'}`, won ? 'win' : 'loss');
+          } else pushBanner(m.mode === 'breach' ? (m.winner < 0 ? 'Draw' : won ? 'Victory' : 'Defeat') : won ? 'You won' : `${m.actors[m.winner]?.name ?? ''} wins`, m.mode === 'breach' ? `${m.score[you.team]} to ${m.score[1 - you.team]}` : '', won ? 'win' : 'loss');
         }
-        if (time.current - overAt.current > 3.2) finish(m);
+        if (time.current - overAt.current > (m.mode === 'royale' && ra?.over ? Math.max(3.2, ra.until - overAt.current) : 3.2)) finish(m);
       }
 
       // sound from where the camera is
@@ -1047,11 +1156,13 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       if (hudClock.current <= 0) {
         hudClock.current = 0.09;
         setHud(snapshot(m));
+        if (resultAt.current?.on) setResult(royaleResult(m, tally.current, ROYALE_PLAYERS));
       }
     },
     () => {
       const view = viewRef.current;
       if (!view || !world) return;
+      view.lootGlow(lootGlow.current);
       const s = shellRef.current;
       const dt = Math.min(0.05, Math.max(0, time.current - lastRender.current));
       lastRender.current = time.current;
@@ -1126,6 +1237,17 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         eye.roll += Math.sin(tt * 30.7 + 3) * 0.016 * s2;
       }
       eye.roll -= a.lean * (0.075 - 0.045 * tk);
+      // climbing: the gun goes down out of the hands' way, the head dips over a ledge and rocks with the rungs
+      climbVm.current += ((a.alive && a.climbAnim ? 1 : 0) - climbVm.current) * Math.min(1, dt * 10);
+      if (a.alive && a.climbAnim && st.shake) {
+        const ct = a.climbT;
+        if (a.climbAnim === 2) eye.roll += Math.sin(a.phase * 2.2) * 0.012;
+        else {
+          const k = Math.sin(Math.min(1, ct / 0.55) * Math.PI);
+          eye.pitch -= k * 0.16;
+          eye.roll += k * (a.climbAnim === 3 ? 0.05 : 0.025);
+        }
+      }
       // dropping in: a camera behind (the transport, or you), turned with the mouse
       if (a === you && you.alive && you.drop) {
         // just out of the door the camera eases in from the transport's distance, clear of its tail
@@ -1192,7 +1314,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
               ads: a.ads,
               scoped,
               reload: a.reloadT > 0 ? 1 - a.reloadT / wdef.reload : 0,
-              switching: a.healT > 0 ? 0.55 : a.switchT > 0 ? Math.min(1, a.switchT / wdef.equip) : 0,
+              switching: Math.max(climbVm.current * 0.85, a.healT > 0 ? 0.55 : a.switchT > 0 ? Math.min(1, a.switchT / wdef.equip) : 0),
               speed: Math.min(1, Math.hypot(a.body.vx, a.body.vz) / 5.8),
               phase: a.phase,
               air: !a.body.onGround,
@@ -1252,6 +1374,13 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
             const on = pt.z < 1 && pt.x > 0 && pt.x < W && pt.y > 0 && pt.y < H;
             list.push({ key: `s${s.id}`, kind: 'supply', x: pt.x, y: pt.y, on, text: 'supply', sub: `${Math.round(Math.hypot(s.x - eye.x, s.z - eye.z))} m` });
           }
+        // the spot you marked on the big map, and how far
+        const mkd = m.mode === 'royale' ? marker.current : null;
+        if (mkd) {
+          view.project(mkd.x, floorAt(m.world.terrain, mkd.x, mkd.z) + 1.6, mkd.z, pt);
+          const on = pt.z < 1 && pt.x > 0 && pt.x < W && pt.y > 0 && pt.y < H;
+          list.push({ key: 'marker', kind: 'marker', x: pt.x, y: pt.y, on, text: '', sub: `${Math.round(Math.hypot(mkd.x - eye.x, mkd.z - eye.z))} m` });
+        }
         if (m.mode === 'breach')
           for (const o of m.actors) {
             if (o.team !== you.team || o === a || !o.alive) continue;
@@ -1284,6 +1413,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
         ms.red = m.red ? { x: m.red.x, z: m.red.z, r: m.red.r, live: m.red.warn <= 0 } : null;
         ms.drops = [];
         for (const s of m.supplies) if (supplyLeft(m, s)) ms.drops.push({ x: s.x, z: s.z, landed: s.landed >= 0 });
+        ms.marker = marker.current;
+        ms.guide = z.i < ZONES.length && Math.hypot(a.body.x - z.nx, a.body.z - z.nz) > z.nr ? nearestOnCircle(a.body.x, a.body.z, z.nx, z.nz, z.nr) : null;
       }
       if (m.cars.length) {
         const list = mapCars.current;
@@ -1306,6 +1437,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       }
       mini.current?.draw(ms);
       big.current?.draw(ms);
+      if (m.mode === 'royale') compass.current?.draw(eye.yaw, a.body.x, a.body.z, ms);
     },
     { always: shell.status === 'ready' },
   );
@@ -1391,6 +1523,8 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
     const redEdge = red ? red.r - Math.hypot(you.body.x - red.x, you.body.z - red.z) : -1;
     const car = you.alive && you.car >= 0 ? m.cars[you.car] : null;
     const door = carNear(m, you);
+    // (whether you would make the next circle: at a run, or the vehicle's speed; never "late" in the air)
+    const guide = zoneGuide(z, ZONES, you.body.x, you.body.z, you.drop ? Infinity : car ? Math.max(RUN, Math.abs(car.speed)) : RUN);
     return {
       alive: m.alive,
       total: m.actors.length,
@@ -1423,6 +1557,10 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
       nades: { frag: you.frags, fragCap: nadeCap(you.pack, 'frag'), smoke: you.smokes, smokeCap: nadeCap(you.pack, 'smoke') },
       guns: [you.guns[0], you.guns[2], you.guns[1]].filter((g) => !!g).map((g) => gunLabel(g!)),
       crate: crateNear(m, you),
+      phase: guide.phase,
+      phases: guide.phases,
+      toNext: guide.toNext,
+      late: guide.late,
     };
   };
 
@@ -1626,6 +1764,7 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           <HitInfo ref={hitInfo} />
           <TopBar h={hud} />
           {world && <Minimap ref={mini} world={world} />}
+          {hud.royale && (hud.alive || hud.watching) && !result && <Compass ref={compass} h={hud} />}
           <Feed items={feed} />
           <Vitals h={hud} />
           <Ammo h={hud} />
@@ -1634,7 +1773,9 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           <MedalView m={medal} />
           <KillConfirm k={killPop} />
           <ItemBar h={hud} onUse={useItem} />
+          <PickupToasts ref={toasts} />
           <DeathPanel h={hud} touch={touchUi} />
+          {result && shell.status === 'playing' && <RoyaleResultPanel r={result} dead={hud.dead} />}
           <RoyalePrompts h={hud} touch={touchUi} />
           <BreachPrompts h={hud} touch={touchUi} />
           {kitOpen && hud.royale && <KitPanel h={hud} onUse={useItem} onClose={() => openKit(false)} />}
@@ -1645,9 +1786,9 @@ function Play({ mapId, royale, session = null }: { mapId: MapId; royale: boolean
           {buyOpen && hud.canBuy && <BuyMenu h={hud} onBuy={buy} onClose={() => openBuy(false)} />}
           {board && <Scoreboard rows={hud.rows} mode={hud.mode} />}
           {bigMap && world && (
-            <div className="g-ridgeline-bigmapWrap">
+            <BigMapFrame royale={hud.mode === 'royale'} span={world.minimap.span} mark={marker} touch={touchUi}>
               <Minimap ref={big} world={world} big />
-            </div>
+            </BigMapFrame>
           )}
           {touchUi && shell.status === 'playing' && (
             <div className="g-ridgeline-pad">
